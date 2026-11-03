@@ -1,0 +1,24 @@
+[package]
+name = "banter-server"
+version = "0.1.0"
+edition = "2021"
+description = "Local Banter server. Accounts, servers, channels, and messages stay in SQLite after the app closes."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+argon2 = "0.5"
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
+futures-util = "0.3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+rand = "0.8"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+tower-http = { version = "0.6", features = ["limit"] }
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+ureq = { version = "2.12", features = ["json"] }

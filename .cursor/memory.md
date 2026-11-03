@@ -1,0 +1,16 @@
+# Session memory
+
+- Project path: `D:\Projects\Banter`. No git repo. Do not commit or push unless Owl asks.
+- Never read, write, build, or delete anything on `E:`. Builds stay in `D:\Projects\Banter\target`.
+- Rust stable 1.99.1. Compile C/C++ with the VS 18 Build Tools `vcvars64.bat` on PATH. `cl.exe` is not on the default PowerShell path.
+- Client UI crate is `dear-imgui-rs` 0.22 (docking branch), renderer `dear-imgui-glow`, window `glfw` 0.63, loader `glow` 0.18. Set `ConfigFlags::DOCKING_ENABLE` before the first frame.
+- Server crate `banter-server`. Tests in `crates/banter-server/tests/foundation.rs` are the API contract. Do not weaken them.
+- Client tests in `crates/banter/tests/client.rs` cover session, mute/deafen, push-to-talk, resample, jpeg, and one live register/send against the server.
+- Default listen address `127.0.0.1:3970`. Data directory `%LOCALAPPDATA%\Banter` or `BANTER_DATA`.
+- Voice, calls, and presence are in memory. Messages and accounts are in `banter.db`.
+- Deferred features stay in `docs/foundation.md`. Do not implement them until Owl says so.
+- Sign-in password is masked with `*` until the Show password checkbox is on. Do not use Dear ImGui's password flag; it blocks copy. The system clipboard is installed on the ImGui context. Ctrl+C and Ctrl+V also need `Key::ModCtrl` each frame; the physical Ctrl key alone is not a shortcut.
+- Sign-in returns do not use IP addresses. Discord redirect is `discord-APPLICATION_ID:/authorize/callback` with PKCE. Google redirect is `com.googleusercontent.apps.CLIENT_PREFIX:/oauth2redirect` with PKCE. Steam OpenID only accepts an http or https hostname; Owl still needs to name that host. The Banter server still listens on `127.0.0.1:3970`.
+- Signed-in layout is a temporary Discord-like screen. Do not treat it as the final Banter look. Do not use Discord's logo. Lucide icons are vendored in `crates/banter/assets/lucide`. User Settings is Account then Voice. Camera preview is mirrored locally; the sent frame is not. Screen share does not start until Go Live. Default stream quality is 720p at 30 FPS. Resolution and frame rate are independent, up to 4K and 144 FPS, and a live change cuts over on a frame boundary. Voice settings and stream choices persist in `voice.json` and `stream.json` in the data directory, not in the repo. Hardware H.264 is not implemented. Text inside a voice channel is still deferred.
+- `D:\Projects\Banter\target` was cleared on 2026-11-03 because D: was full. The debug app was rebuilt there after Owl freed space. Never use E: again.
+- Client tests were 24 passed and server tests 10 passed on 2026-11-03 02:27 America/Chicago. A second client received a PCM tone and a screen-quality switch with no dropped frames inside one 16 ms interval. The desktop window opens. A GDI capture of the OpenGL client came back white in this session, so the pixel comparison was not repeated.

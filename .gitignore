@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+auth.json
+client-session.json
+voice.json
+stream.json
+.env
+*.pem
+secrets/
+banter-err.txt
+banter-out.txt
