@@ -6,6 +6,8 @@ Voice membership, calls, and presence are in memory and reset when the server pr
 
 ## Run
 
+### Windows
+
 Use a Visual Studio developer shell so `cl.exe` is available (SQLite and Dear ImGui compile C/C++):
 
 ```
@@ -13,7 +15,22 @@ cd D:\Projects\Banter
 cargo run -p banter
 ```
 
-The client listens for `127.0.0.1:3970`. If nothing is there, it starts the server in the background. Data goes to `%LOCALAPPDATA%\Banter` unless `BANTER_DATA` is set.
+Data goes to `%LOCALAPPDATA%\Banter` unless `BANTER_DATA` is set.
+
+### Linux
+
+Install a C toolchain, GLFW/OpenGL, ALSA or PipeWire, V4L2 headers, and X11 (for the cursor overlay). On Arch/CachyOS:
+
+```
+sudo pacman -S --needed base-devel clang cmake pkgconf glfw mesa alsa-lib pipewire libx11
+cargo run -p banter
+```
+
+Data goes to `$XDG_DATA_HOME/Banter`, or `~/.local/share/Banter`, unless `BANTER_DATA` is set. Speaker loopback and per-app stream audio stay Windows-only for now; microphone, speakers, camera, and screen share work.
+
+### Server
+
+The client listens for `127.0.0.1:3970`. If nothing is there, it starts the server in the background.
 
 To run the server on its own:
 

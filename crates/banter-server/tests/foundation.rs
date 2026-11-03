@@ -1,7 +1,7 @@
 //! Contract for the Banter foundation. These checks were written before the
 //! server implementation and describe the behavior the desktop app relies on.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -968,5 +968,21 @@ fn listen_addr_prefers_the_argument_then_env_then_loopback() {
     assert_eq!(
         banter_server::listen_addr(None, Some("10.0.0.8"), Some("4000")),
         "10.0.0.8:4000"
+    );
+}
+
+#[test]
+fn data_dir_prefers_banter_data_then_platform_home() {
+    assert_eq!(
+        banter_server::resolve_data_dir(Some("/tmp/banter-data-test"), Path::new("/home/owl/.local/share")),
+        PathBuf::from("/tmp/banter-data-test")
+    );
+    assert_eq!(
+        banter_server::resolve_data_dir(Some(""), Path::new("/home/owl/.local/share")),
+        PathBuf::from("/home/owl/.local/share").join("Banter")
+    );
+    assert_eq!(
+        banter_server::resolve_data_dir(None, Path::new("AppData").join("Local").as_path()),
+        PathBuf::from("AppData").join("Local").join("Banter")
     );
 }

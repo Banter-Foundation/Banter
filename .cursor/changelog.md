@@ -100,3 +100,16 @@ User Settings from `settings-fixes` (`ae0395c`) is merged into `ui-polish` by ha
 - My Account keeps crop-and-zoom upload and Remove Avatar from main
 - Platform maps F1–F12 for push-to-talk keybinds
 - Workspace tests: client 26, theme 16, settings 18, camera 4, device errors 6, slider 4, server 12 — all passed
+
+## 2026-11-03 12:17:12 -06:00 [Winter] — Native Linux desktop
+
+Banter builds and runs on Linux (CachyOS / KDE Wayland). The Windows path is unchanged.
+
+- Data directory uses `$XDG_DATA_HOME/Banter` or `~/.local/share/Banter` when `BANTER_DATA` is unset; `BANTER_DATA` still wins on every OS
+- Fonts load Liberation Sans, then Noto Sans, then DejaVu Sans (Segoe UI stays on Windows)
+- Screen-share cursor overlay uses X11 `XQueryPointer` (works on XWayland); pure Wayland skips the stamp
+- `xcap` bumped to 0.9 so PipeWire 1.6 / LLVM 22 bindgen works (`libspa` 0.10)
+- Speaker loopback and per-app stream audio stay Windows-only and still say so
+- README covers Linux packages; design notes list the Linux font fallbacks
+- Client live-quality test keeps the 16 ms logical gap check and only requires wall delivery to finish in under 800 ms
+- Tests on this machine: server foundation 13, client 26, theme 16, settings 18, camera 4, slider 4 — all passed. Debug `banter` stayed up, `/v1/health` was ok, and register against the embedded server succeeded

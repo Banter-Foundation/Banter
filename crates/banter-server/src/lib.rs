@@ -49,13 +49,44 @@ pub fn serve(addr: &str, data_dir: &std::path::Path) -> Result<(), BanterError> 
 }
 
 pub fn default_data_dir() -> std::path::PathBuf {
-    if let Ok(path) = std::env::var("BANTER_DATA") {
-        if !path.is_empty() {
-            return std::path::PathBuf::from(path);
-        }
+    resolve_data_dir(std::env::var("BANTER_DATA").ok().as_deref(), &platform_data_dir())
+}
+
+/// `BANTER_DATA` wins when non-empty. Otherwise the platform home plus `Banter`.
+pub fn resolve_data_dir(banter_data: Option<&str>, platform_home: &std::path::Path) -> std::path::PathBuf {
+    if let Some(path) = banter_data.filter(|text| !text.is_empty()) {
+        return std::path::PathBuf::from(path);
     }
-    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
-        std::env::temp_dir().to_string_lossy().into_owned()
-    });
-    std::path::PathBuf::from(base).join("Banter")
+    platform_home.join("Banter")
+}
+
+fn platform_data_dir() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        if let Ok(base) = std::env::var("LOCALAPPDATA") {
+            if !base.is_empty() {
+                return std::path::PathBuf::from(base);
+            }
+        }
+        return std::env::temp_dir();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            return std::path::PathBuf::from(home).join("Library/Application Support");
+        }
+        return std::env::temp_dir();
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+            if !xdg.is_empty() {
+                return std::path::PathBuf::from(xdg);
+            }
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            return std::path::PathBuf::from(home).join(".local/share");
+        }
+        std::env::temp_dir()
+    }
 }

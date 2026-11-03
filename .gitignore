@@ -9,3 +9,4 @@ stream.json
 secrets/
 banter-err.txt
 banter-out.txt
+.banter-linux-smoke/

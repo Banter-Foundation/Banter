@@ -1171,20 +1171,87 @@ fn grabber_bounds(grabber: &Grabber) -> (i32, i32, u32, u32) {
 }
 
 fn cursor_point() -> Option<(i32, i32)> {
-    #[link(name = "user32")]
-    extern "system" {
-        fn GetCursorPos(point: *mut CursorPoint) -> i32;
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetCursorPos(point: *mut CursorPoint) -> i32;
+        }
+        #[repr(C)]
+        struct CursorPoint {
+            x: i32,
+            y: i32,
+        }
+        let mut point = CursorPoint { x: 0, y: 0 };
+        if unsafe { GetCursorPos(&mut point) } == 0 {
+            None
+        } else {
+            Some((point.x, point.y))
+        }
     }
-    #[repr(C)]
-    struct CursorPoint {
-        x: i32,
-        y: i32,
+    #[cfg(target_os = "linux")]
+    {
+        cursor_point_x11()
     }
-    let mut point = CursorPoint { x: 0, y: 0 };
-    if unsafe { GetCursorPos(&mut point) } == 0 {
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
         None
-    } else {
-        Some((point.x, point.y))
+    }
+}
+
+/// Global cursor for screen-share overlay. Works on X11 and XWayland; pure Wayland returns None.
+#[cfg(target_os = "linux")]
+fn cursor_point_x11() -> Option<(i32, i32)> {
+    use std::os::raw::{c_char, c_int, c_uint, c_ulong, c_void};
+
+    #[link(name = "X11")]
+    unsafe extern "C" {
+        fn XOpenDisplay(name: *const c_char) -> *mut c_void;
+        fn XCloseDisplay(display: *mut c_void) -> c_int;
+        fn XDefaultRootWindow(display: *mut c_void) -> c_ulong;
+        fn XQueryPointer(
+            display: *mut c_void,
+            window: c_ulong,
+            root_return: *mut c_ulong,
+            child_return: *mut c_ulong,
+            root_x: *mut c_int,
+            root_y: *mut c_int,
+            win_x: *mut c_int,
+            win_y: *mut c_int,
+            mask: *mut c_uint,
+        ) -> c_int;
+    }
+
+    unsafe {
+        let display = XOpenDisplay(std::ptr::null());
+        if display.is_null() {
+            return None;
+        }
+        let root = XDefaultRootWindow(display);
+        let mut root_ret = 0;
+        let mut child_ret = 0;
+        let mut root_x = 0;
+        let mut root_y = 0;
+        let mut win_x = 0;
+        let mut win_y = 0;
+        let mut mask = 0;
+        let ok = XQueryPointer(
+            display,
+            root,
+            &mut root_ret,
+            &mut child_ret,
+            &mut root_x,
+            &mut root_y,
+            &mut win_x,
+            &mut win_y,
+            &mut mask,
+        );
+        let _ = XCloseDisplay(display);
+        if ok == 0 {
+            None
+        } else {
+            Some((root_x, root_y))
+        }
     }
 }
 

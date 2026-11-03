@@ -1,6 +1,6 @@
 # Window
 
-Dear ImGui docking branch, dark style, Segoe UI when `C:\Windows\Fonts\segoeui.ttf` is present.
+Dear ImGui docking branch, dark style. Fonts: Segoe UI on Windows when `C:\Windows\Fonts\segoeui.ttf` is present; on Linux Liberation Sans, then Noto Sans, then DejaVu Sans.
 
 After login the window is a temporary copy of Discord's screen so the controls are familiar. It is not the final Banter look, and it does not use Discord's logo.
 
@@ -33,6 +33,6 @@ All colors, sizes, radii, and font sizes come from `crates/banter/src/theme.rs`.
 - Composer 44 px, radius 8, 16 px side margin, 24 px bottom
 - Call: buttons 56, gap 16, bar 96. Tiles 16:9, gap 8, radius 8, avatar 80
 - Floating: tooltip pad 12x8 with a 5 px arrow, radius 4. Menu 220 wide, 32 px items. Modal 440 wide, radius 8, footer 70. Buttons 38 (44 on sign-in, 16 px label). Inputs 40, radius 3
-- Fonts: Segoe UI 12/14/16/20/24, semibold from `seguisb.ttf`
+- Fonts: 12/14/16/20/24 body sizes. Windows uses Segoe UI / `seguisb.ttf`. Linux uses Liberation Sans (then Noto / DejaVu), with Noto Sans Medium for semibold when present
 - Status dot: 10 px on a 32 px avatar with a 3 px cut-out ring; idle is a crescent, offline a ring
 - Screenshots of this pass: `ui-*.png` in the coordinating agent's media folder

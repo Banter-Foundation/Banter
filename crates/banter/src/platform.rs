@@ -39,7 +39,7 @@ pub(crate) fn run() -> Result<(), String> {
     let ini = banter_server::default_data_dir().join("banter-dock.ini");
     imgui.set_ini_filename(Some(ini)).map_err(|err| err.to_string())?;
     let bold_font = install_font(&mut imgui);
-    let semibold_font = load_face(imgui.font_atlas(), r"C:\Windows\Fonts\seguisb.ttf", 16.0).or(bold_font);
+    let semibold_font = load_first_face(imgui.font_atlas(), &semibold_font_paths(), 16.0).or(bold_font);
     let mut renderer = GlowRenderer::with_shared_context(Rc::clone(&gl), &mut imgui).map_err(|err| err.to_string())?;
 
     let base = format!("http://{}", banter_server::DEFAULT_ADDR);
@@ -156,16 +156,91 @@ impl ClipboardBackend for GlfwClipboard {
 
 fn install_font(imgui: &mut Context) -> Option<dear_imgui_rs::fonts::FontId> {
     // The default bitmap font is about 13 px and was still the active font, so the
-    // shell looked like 8 px text. Segoe UI at 16 px is the body size; bold is for
-    // category labels at 12 px.
+    // shell looked like 8 px text. Body text is 16 px; bold is for category labels.
+    // Windows uses Segoe UI. Linux prefers Liberation Sans, then Noto Sans, then DejaVu.
     let atlas = imgui.font_atlas();
     atlas.clear_fonts();
-    let body = load_face(atlas, r"C:\Windows\Fonts\segoeui.ttf", 16.0);
-    let bold = load_face(atlas, r"C:\Windows\Fonts\segoeuib.ttf", 16.0);
-    if body.is_none() && bold.is_none() {
-        let _ = load_face(atlas, r"C:\Windows\Fonts\segoeui.ttf", 16.0);
-    }
+    let body = load_first_face(atlas, &body_font_paths(), 16.0);
+    let bold = load_first_face(atlas, &bold_font_paths(), 16.0);
     bold.or(body)
+}
+
+fn body_font_paths() -> Vec<&'static str> {
+    #[cfg(windows)]
+    {
+        return vec![r"C:\Windows\Fonts\segoeui.ttf"];
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return vec![
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial.ttf",
+        ];
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        vec![
+            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+    }
+}
+
+fn bold_font_paths() -> Vec<&'static str> {
+    #[cfg(windows)]
+    {
+        return vec![r"C:\Windows\Fonts\segoeuib.ttf"];
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return vec![
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "/Library/Fonts/Arial Bold.ttf",
+        ];
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        vec![
+            "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ]
+    }
+}
+
+fn semibold_font_paths() -> Vec<&'static str> {
+    #[cfg(windows)]
+    {
+        return vec![r"C:\Windows\Fonts\seguisb.ttf"];
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return bold_font_paths();
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let mut paths = vec![
+            "/usr/share/fonts/noto/NotoSans-Medium.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Medium.ttf",
+        ];
+        paths.extend(bold_font_paths());
+        paths
+    }
+}
+
+fn load_first_face(
+    atlas: &dear_imgui_rs::fonts::FontAtlas,
+    paths: &[&str],
+    size: f32,
+) -> Option<dear_imgui_rs::fonts::FontId> {
+    paths.iter().find_map(|path| load_face(atlas, path, size))
 }
 
 fn load_face(atlas: &dear_imgui_rs::fonts::FontAtlas, path: &str, size: f32) -> Option<dear_imgui_rs::fonts::FontId> {
