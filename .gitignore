@@ -1,4 +1,5 @@
 /target
+/worktrees/
 **/*.rs.bk
 auth.json
 client-session.json

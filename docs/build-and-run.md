@@ -1,6 +1,6 @@
 # Build and run
 
-Prefer keeping the checkout and Cargo `target/` on `D:\Projects\Banter` (or a worktree under `D:\Projects\`). Do not use `E:` for Banter builds.
+Prefer keeping the checkout and Cargo `target/` on `D:\Projects\Project Banter` (or a worktree under `D:\Projects\Project Banter\worktrees\`). Do not use `E:` for Banter builds.
 
 ## Prerequisites (Windows)
 
@@ -9,7 +9,7 @@ Prefer keeping the checkout and Cargo `target/` on `D:\Projects\Banter` (or a wo
 3. A display (GLFW opens a real window).
 
 ```powershell
-cd D:\Projects\Banter
+cd "D:\Projects\Project Banter"
 cargo build -p banter
 cargo build -p banter-server
 ```
@@ -19,7 +19,7 @@ Debug binaries land in `target\debug\banter.exe` and `target\debug\banter-server
 ## Run the desktop client (Windows)
 
 ```powershell
-cd D:\Projects\Banter
+cd "D:\Projects\Project Banter"
 cargo run -p banter
 ```
 

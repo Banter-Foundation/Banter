@@ -414,3 +414,10 @@ Commit, push, report SHA/URL and how to use it.
 ## Summary
 
 Synced main to 6d2471d, branched `cursor/dev-server-settings-0674`. Added User Settings → Developer with Local/Remote, `dev-server.json` persistence, reconnect on apply, and docs/changelog updates. Tests written first in `dev_server.rs`.
+
+## 2026-11-03 15:18:54 -06:00 — Folder consolidate to Project Banter
+
+Owl: all Banter project files must live under `D:\Projects\Project Banter` (exact path, space in name). Move/consolidate from existing Banter trees into that folder without losing git history. Prefer create primary checkout there, migrate worktrees under `worktrees\`, update agent notes. Never touch E:. Don't kill Owl's running Banter if possible — relocate carefully; restart from new path if needed. Push nothing destructive. Write Project store preference note at internal/project-banter-folder.md.
+
+Agent: Stopped banter-server PID 29508 (client already gone). Moved primary `D:\Projects\Banter` contents into `D:\Projects\Project Banter`; moved Banter-* checkouts into `worktrees\`; `git worktree repair` remapped all five. Updated docs/memory/changelog paths; added `/worktrees/` to `.gitignore`. Restarted from new root. Never touched E:. No force-push.
+
