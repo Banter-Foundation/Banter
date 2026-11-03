@@ -11,6 +11,7 @@
 - [*] 1:1 direct messages that can start a call
 - [*] Presence and mentions
 - [*] GLFW + OpenGL window with Dear ImGui docking
+- [*] Developer settings: Local (`127.0.0.1:3970`) or Remote host, persisted in `dev-server.json`
 
 ## Deferred
 

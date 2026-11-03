@@ -25,11 +25,11 @@ Banter/
 | `realtime.rs` | WebSocket client for presence, chat events, and binary media frames |
 | `session.rs` | Load/save `client-session.json` |
 | `media.rs` (+ `media/loopback.rs`) | Mic/speakers (cpal), camera (nokhwa), screen share (xcap), stream encode (software JPEG), live quality cutover |
-| `logic.rs` | Pure helpers (key held, etc.) |
+| `logic.rs` | Pure helpers (key held, Dev Server prefs / URL normalize, etc.) |
 | `icons.rs` | Lucide SVG → texture |
-| `session` / prefs | Voice and stream JSON live under the data dir, not in git |
+| `session` / prefs | Voice, stream, and `dev-server.json` live under the data dir, not in git |
 
-Flow: `platform::run` ensures a server on `DEFAULT_ADDR`, opens the window, builds `ui::App` against `http://127.0.0.1:3970`, then frames ImGui each tick.
+Flow: `platform::run` loads `dev-server.json`, ensures a local server only when the target is Local, opens the window, builds `ui::App` against the chosen API base, then frames ImGui each tick. Developer settings can reconnect the client mid-session.
 
 The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, members). Panels are not treated as free-floating docks for day-to-day use even though docking is enabled and `banter-dock.ini` is written.
 
@@ -71,7 +71,7 @@ Contract tests live in `crates/banter-server/tests/foundation.rs`.
 - **Camera:** local preview is mirrored; outbound frames are not. Open prefers ~`1280x720` (or nearest available), FPS near 30, MJPEG on ties — not the device’s absolute highest mode. MJPEG cameras are decoded for preview/send.
 - **Screen share:** choose Screens or Applications, set resolution and FPS independently (default **720p / 30**), then **Go Live**. Nothing is sent until then. Encoder today is **software JPEG**; hardware H.264 is not implemented and the UI says so when unavailable.
 - Mid-stream changes (source, size, FPS, bitrate) **pre-warm** on a side path and cut over on a frame boundary after an encoded keyframe; viewers resize without tearing the stream identity. Stream audio can mix mic, speaker loopback, and (on Windows) per-app sources with volumes.
-- Voice & stream prefs restore from `voice.json` / `stream.json`.
+- Voice & stream prefs restore from `voice.json` / `stream.json`. Developer Local/Remote restores from `dev-server.json`.
 - Text chat **inside** a voice channel is deferred; the server rejects that path until Owl says otherwise.
 
 ## Auth note (not finished)

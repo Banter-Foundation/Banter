@@ -82,7 +82,14 @@ fn ctrl_shortcut_follows_either_ctrl_key() {
 #[test]
 fn settings_menu_lists_account_then_voice() {
     let sections = settings_sections();
-    assert_eq!(sections, [SettingsSection::Account, SettingsSection::Voice]);
+    assert_eq!(
+        sections,
+        [
+            SettingsSection::Account,
+            SettingsSection::Voice,
+            SettingsSection::Developer,
+        ]
+    );
 }
 
 #[test]

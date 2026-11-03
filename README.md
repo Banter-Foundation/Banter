@@ -40,7 +40,7 @@ Data goes to `$XDG_DATA_HOME/Banter`, or `~/.local/share/Banter`, unless `BANTER
 
 ### Server
 
-The client listens for `127.0.0.1:3970`. If nothing is there, it starts the server in the background.
+By default the client uses Local mode (`127.0.0.1:3970`). If nothing is there, it starts the server in the background. **User Settings → Developer** switches between Local and a Remote host (`host`, `host:port`, or URL); the choice is saved in `dev-server.json` under the data directory.
 
 To run the server on its own:
 
@@ -64,7 +64,7 @@ Docker uses the same file:
 docker compose up
 ```
 
-Inside the container the server binds `0.0.0.0` on port `3970` (`BANTER_BIND` and `BANTER_PORT`). Account data stays on the named volume `banter-data`. Set `BANTER_PORT` to publish a different port. A secret comes from an environment variable or from `BANTER_SECRET_FILE` pointing at a mounted file. It is not copied into the image. The desktop app still looks for `127.0.0.1:3970`.
+Inside the container the server binds `0.0.0.0` on port `3970` (`BANTER_BIND` and `BANTER_PORT`). Account data stays on the named volume `banter-data`. Set `BANTER_PORT` to publish a different port. A secret comes from an environment variable or from `BANTER_SECRET_FILE` pointing at a mounted file. It is not copied into the image. Point the desktop client at a published port with **User Settings → Developer → Remote**.
 
 Image: `ghcr.io/snowedinowl/banter:version-1-test-1`.
 

@@ -19,7 +19,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Camera on/off with mirrored local preview (~720p prefer, MJPEG) | Working (device-dependent) |
 | Screen share Go Live + quality / source switching | Working (software JPEG; H.264 not available) |
 | 1:1 DMs + start a call | Working |
-| User Settings: My Account, Voice & Video (persisted) | Working |
+| User Settings: My Account, Voice & Video, Developer (Local/Remote API, persisted) | Working |
 | Embedded + standalone server, SQLite data | Working |
 | Containerized `banter-server` (`ghcr.io/snowedinowl/banter`) | Working |
 | Linux native client (XDG paths, PipeWire-ready capture) | Working; loopback/app audio still Windows-only |

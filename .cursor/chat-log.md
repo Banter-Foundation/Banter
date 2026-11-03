@@ -390,3 +390,27 @@ Synced main to aa61044, branched `cursor/device-polish-2f7a`. Camera capture pre
 User/assignment: Document the current Banter build for collaborators; keep solid docs; clear commits; work on Black-Birb; prefer D:\Projects\Banter after sync; never touch E:; do not fight Camera/voice-bar or Voice stream hand-checks; deliver repo docs under docs/ and README; mirror to Project store docs/; commit and push.
 
 Agent: Created worktree D:\Projects\Banter-docs from origin/main (aa61044) as branch cursor/banter-build-docs-1fda because D:\Projects\Banter was dirty on cursor/device-polish-2f7a. Wrote docs/overview.md, build-and-run.md, architecture.md, feature-status.md, contributing.md, current-build.md; updated README.md and foundation.md cross-links; appended this changelog. Observed running banter pid 34512 and /v1/health ok; PrintWindow screenshot to Project store media. Rebased onto main after camera/voice-bar landed as fda9221.
+
+## User
+
+Add a Dev Settings section in Banter User Settings: switch between local server and remote, and choose/enter the remote host.
+
+Owl asked before pointing Banter at their main server: "add dev settings section and as a setting allow for switching between local server and remote and let us choose the remote"
+
+Rules: Never touch E:. Work on D:\Projects\Banter (sync origin/main first) or a clean worktree. Clear commits/docs (project rule). Prefer branch then merge/push to main as recent habit, or PR — clear messages.
+
+Behavior:
+- New settings nav section e.g. "Developer" / "Dev" (Discord-like settings chrome).
+- Toggle or radio: Local vs Remote.
+- Local = current default 127.0.0.1:3970 (respect BANTER_* if already used).
+- Remote = user-chosen host (URL or host:port); persist in local config (e.g. under %LOCALAPPDATA%\Banter).
+- Switching should reconnect the client to the chosen API base; handle invalid URL gracefully.
+- Document in repo docs / changelog.
+
+Project store: C:\Users\Winter\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5\files\ ↔ /cursor/stores/self/
+
+Commit, push, report SHA/URL and how to use it.
+
+## Summary
+
+Synced main to 6d2471d, branched `cursor/dev-server-settings-0674`. Added User Settings → Developer with Local/Remote, `dev-server.json` persistence, reconnect on apply, and docs/changelog updates. Tests written first in `dev_server.rs`.

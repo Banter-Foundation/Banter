@@ -216,10 +216,104 @@ pub const AUDIO_FRAME_SAMPLES: usize = 960;
 pub enum SettingsSection {
     Account,
     Voice,
+    Developer,
 }
 
-pub fn settings_sections() -> [SettingsSection; 2] {
-    [SettingsSection::Account, SettingsSection::Voice]
+pub fn settings_sections() -> [SettingsSection; 3] {
+    [SettingsSection::Account, SettingsSection::Voice, SettingsSection::Developer]
+}
+
+/// Which Banter API the desktop client should talk to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerTarget {
+    #[default]
+    Local,
+    Remote,
+}
+
+/// Developer server target. Lives in `dev-server.json` under the data directory.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevServerPrefs {
+    #[serde(default)]
+    pub target: ServerTarget,
+    /// Host, `host:port`, or an `http(s)://` URL. Ignored while `target` is Local.
+    #[serde(default)]
+    pub remote_host: String,
+}
+
+impl Default for DevServerPrefs {
+    fn default() -> Self {
+        Self {
+            target: ServerTarget::Local,
+            remote_host: String::new(),
+        }
+    }
+}
+
+/// Local API base for the embedded / loopback server (`http://127.0.0.1:3970`).
+pub fn local_api_base() -> String {
+    format!("http://{}", banter_server::DEFAULT_ADDR)
+}
+
+/// Turn a typed remote host into an `http`/`https` API base with no trailing slash.
+pub fn normalize_remote_base(input: &str) -> Result<String, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("enter a remote host".into());
+    }
+    if trimmed.chars().any(char::is_whitespace) {
+        return Err("remote host cannot contain spaces".into());
+    }
+
+    let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("https://") {
+        ("https", rest)
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        ("http", rest)
+    } else if trimmed.contains("://") {
+        return Err("only http and https remotes are supported".into());
+    } else {
+        ("http", trimmed)
+    };
+
+    let rest = rest.trim_start_matches('/');
+    if rest.is_empty() {
+        return Err("remote host is incomplete".into());
+    }
+
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if authority.is_empty() || authority.starts_with(':') {
+        return Err("remote host is incomplete".into());
+    }
+
+    let host_ok = if let Some(end) = authority.strip_prefix('[').and_then(|_| authority.find(']')) {
+        end > 1
+    } else {
+        let host = authority.split(':').next().unwrap_or("");
+        !host.is_empty()
+            && host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    };
+    if !host_ok {
+        return Err("remote host is incomplete".into());
+    }
+    if authority
+        .chars()
+        .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '[' | ']')))
+    {
+        return Err("remote host has invalid characters".into());
+    }
+
+    Ok(format!("{scheme}://{authority}"))
+}
+
+/// Resolve the HTTP API base for the current Developer prefs.
+pub fn api_base_for(prefs: &DevServerPrefs) -> Result<String, String> {
+    match prefs.target {
+        ServerTarget::Local => Ok(local_api_base()),
+        ServerTarget::Remote => normalize_remote_base(&prefs.remote_host),
+    }
 }
 
 /// Screen-share resolutions in Discord's Go Live menu.

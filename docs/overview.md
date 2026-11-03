@@ -9,7 +9,7 @@ Banter is a local desktop chat app with a Discord-like layout (temporary skin). 
 | Desktop client | `banter` → `banter.exe` | GLFW window, OpenGL 3.3, Dear ImGui docking UI, media capture, HTTP + WebSocket client |
 | Local server | `banter-server` | Accounts, servers, channels, messages, files in SQLite; voice/calls/presence in memory; Axum HTTP + WebSocket |
 
-The client talks to `http://127.0.0.1:3970` by default. If nothing is listening there, it starts an embedded `banter-server` in the background on that address. You can also run the server alone (host process or container) and point multiple clients at it.
+The client talks to `http://127.0.0.1:3970` by default (Developer → Local). If nothing is listening there in Local mode, it starts an embedded `banter-server` in the background on that address. User Settings → Developer can switch to a Remote host (`host`, `host:port`, or `http(s)://…`); the choice is saved in `dev-server.json` under the data directory.
 
 ## Stack
 
@@ -36,10 +36,11 @@ Typical files under the data directory:
 - `avatars/`, `files/` — blobs
 - `client-session.json` — last login token (shared across clients on this machine; last writer wins on next launch)
 - `voice.json`, `stream.json` — Voice & Video and Go Live preferences
+- `dev-server.json` — Developer Local vs Remote API target and remote host
 - `banter-dock.ini` — Dear ImGui layout
 - `auth.json` — reserved for future secrets; never commit it
 
-Do not commit anything under the Banter data directory, nor `auth.json`, `client-session.json`, `voice.json`, `stream.json`, or `.env`.
+Do not commit anything under the Banter data directory, nor `auth.json`, `client-session.json`, `voice.json`, `stream.json`, `dev-server.json`, or `.env`.
 
 ## Listen address
 

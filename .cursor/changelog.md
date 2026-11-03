@@ -126,3 +126,14 @@ Camera open no longer asks nokhwa for `AbsoluteHighestResolution` (then JPEG-dow
 ## 2026-11-03 12:32:48 -06:00 [Winter] — Collaborator docs for the current Banter build
 
 Added under `docs/`: overview (stack, data paths, bind address), build-and-run (Windows/Linux, tests, Podman/Docker `ghcr.io/snowedinowl/banter`), architecture (crates and modules, voice/camera/stream), feature-status (honest working vs deferred), contributing (worktrees, commits, `.cursor/changelog.md`), and current-build (live notes from Black-Birb without disturbing other agents). README now links those docs. Worktree `D:\Projects\Banter-docs` on `cursor/banter-build-docs-1fda`; primary `D:\Projects\Banter` left to Camera/voice-bar. Observed existing `banter` pid 34512, health ok on `127.0.0.1:3970`, PrintWindow capture of Cool Test Server / # general.
+
+## 2026-11-03 14:42:32 -06:00 [Winter] — Developer Local vs Remote server
+
+User Settings gains a Developer section so the desktop client can switch between the loopback server and a chosen remote host without rebuilding.
+
+- Settings nav: User Settings (My Account, Voice & Video) plus Developer
+- Local uses `http://127.0.0.1:3970` (`DEFAULT_ADDR`) and still starts the embedded server when nothing is listening
+- Remote accepts `host`, `host:port`, or an `http(s)://` URL; invalid input keeps the previous base and shows an error
+- Choice persists in `dev-server.json` under the data directory (`BANTER_DATA` / `%LOCALAPPDATA%\Banter`)
+- Switching reconnects HTTP and WebSocket; a token that fails on the new host clears the local session so you can sign in again
+- Docs: overview, build-and-run, architecture, feature-status, README; tests in `crates/banter/tests/dev_server.rs` written first (8 passed) alongside client 26 and settings 18

@@ -21,15 +21,15 @@ use dear_imgui_rs::{
 use crate::api::{ApiError, Client, MemberView};
 use crate::icons::rasterize_lucide;
 use crate::logic::{
-    CameraChoice, CaptureKind, MixSource, MuteMemory, ScreenShare, SettingsSection, StreamDefaults, StreamFps,
-    StreamResolution, VoicePrefs, camera_preview_mirrored, default_stream_fps, default_stream_resolution,
-    discord_shell_columns, encode_jpeg_rgba, fps_block, fps_from_key, fps_key, hardware_encoder_block,
-    jpeg_quality_for_bitrate, lerp_size, load_json, mirror_rgba, password_blocks_copy, password_is_masked,
-    push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key, save_json,
-    settings_sections, speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms,
-    stream_max_edge, stream_resolution_label, stream_resolutions, unpack_picture, upsert_message,
-    chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_is_followup,
-    message_starts_new_day, OPEN_MIC_RMS,
+    CameraChoice, CaptureKind, DevServerPrefs, MixSource, MuteMemory, ScreenShare, ServerTarget, SettingsSection,
+    StreamDefaults, StreamFps, StreamResolution, VoicePrefs, api_base_for, camera_preview_mirrored,
+    default_stream_fps, default_stream_resolution, discord_shell_columns, encode_jpeg_rgba, fps_block, fps_from_key,
+    fps_key, hardware_encoder_block, jpeg_quality_for_bitrate, lerp_size, load_json, local_api_base, mirror_rgba,
+    password_blocks_copy, password_is_masked, push_to_talk_held, remove_message, resolution_block,
+    resolution_from_key, resolution_key, save_json, speaking_from_level, stream_fps_label, stream_frame_rates,
+    stream_interval_ms, stream_max_edge, stream_resolution_label, stream_resolutions,
+    unpack_picture, upsert_message, chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba,
+    crop_window, message_is_followup, message_starts_new_day, OPEN_MIC_RMS,
 };
 use crate::media::{self, EngineUpdate, Media, VideoFrame};
 use crate::realtime::Realtime;
@@ -146,6 +146,8 @@ pub(crate) struct App {
     friend_tab: u8,
     settings: SettingsState,
     settings_error: String,
+    /// Local vs remote API target from User Settings → Developer.
+    dev_server: DevServerPrefs,
     /// A dropdown or text field was active at the end of the last frame, so Escape belongs to it.
     settings_popup_open: bool,
     share_open: bool,
@@ -281,6 +283,7 @@ impl App {
             friend_tab: 0,
             settings: SettingsState::new(),
             settings_error: String::new(),
+            dev_server: DevServerPrefs::default(),
             settings_popup_open: false,
             share_open: false,
             share: ScreenShare::new(),
@@ -3301,6 +3304,7 @@ impl App {
                     match self.settings.section() {
                         SettingsSection::Account => self.draw_account_settings(ui, layout.content_w),
                         SettingsSection::Voice => self.draw_voice_settings(ui, layout.content_w),
+                        SettingsSection::Developer => self.draw_developer_settings(ui, layout.content_w),
                     }
                     ui.dummy([layout.content_w, 80.0]);
                     ui.unindent_by(layout.content_x);
@@ -3324,16 +3328,29 @@ impl App {
         ui.indent_by(list_x);
         ui.child_window("settings-nav-list").size([list_w, 0.0]).build(ui, || {
             settings_form_label(ui, self.bold_font, "USER SETTINGS");
-            for section in settings_sections() {
+            for section in [SettingsSection::Account, SettingsSection::Voice] {
                 let (id, icon, label) = match section {
                     SettingsSection::Account => ("settings-account", "user", "My Account"),
                     SettingsSection::Voice => ("settings-voice", "headphones", "Voice & Video"),
+                    SettingsSection::Developer => unreachable!("developer is under its own heading"),
                 };
                 if nav_row(ui, id, self.icon(icon), label, self.settings.section() == section) {
                     self.select_settings(section);
                 }
                 ui.dummy([0.0, 2.0]);
             }
+            settings_divider(ui, ui.content_region_avail()[0]);
+            settings_form_label(ui, self.bold_font, "DEVELOPER");
+            if nav_row(
+                ui,
+                "settings-developer",
+                self.icon("signal"),
+                "Developer",
+                self.settings.section() == SettingsSection::Developer,
+            ) {
+                self.select_settings(SettingsSection::Developer);
+            }
+            ui.dummy([0.0, 2.0]);
             settings_divider(ui, ui.content_region_avail()[0]);
             if nav_row(ui, "settings-logout", self.icon("log-out"), "Log Out", false) {
                 self.logout();
@@ -3360,6 +3377,60 @@ impl App {
         let label_w = ui.calc_text_size("ESC")[0];
         draw.add_text([center[0] - label_w * 0.5, origin[1] + size + 6.0], MUTED, "ESC");
         clicked
+    }
+
+    fn draw_developer_settings(&mut self, ui: &Ui, width: f32) {
+        settings_page_title(ui, self.bold_font, "Developer");
+        ui.text_colored(MUTED, "Choose which Banter server this client talks to.");
+        settings_spacer(ui);
+
+        settings_form_label(ui, self.bold_font, "SERVER");
+        let local_selected = self.dev_server.target == ServerTarget::Local;
+        if settings_radio_row(ui, "dev-server-local", "Local", local_selected, width) && !local_selected {
+            self.dev_server.target = ServerTarget::Local;
+            self.apply_dev_server();
+        }
+        let remote_selected = self.dev_server.target == ServerTarget::Remote;
+        if settings_radio_row(ui, "dev-server-remote", "Remote", remote_selected, width) && !remote_selected
+        {
+            self.dev_server.target = ServerTarget::Remote;
+            self.apply_dev_server();
+        }
+        settings_spacer(ui);
+
+        settings_form_label(ui, self.bold_font, "REMOTE HOST");
+        ui.text_colored(
+            MUTED,
+            "Host, host:port, or http(s) URL. Saved under this PC's Banter data folder.",
+        );
+        settings_spacer(ui);
+        let apply_label = "Apply";
+        let apply_w = ui.calc_text_size(apply_label)[0] + 24.0;
+        let field_w = (width - apply_w - 8.0).max(120.0);
+        ui.set_next_item_width(field_w);
+        let entered = ui
+            .input_text("##dev-remote-host", &mut self.dev_server.remote_host)
+            .enter_returns_true(true)
+            .build();
+        ui.same_line();
+        let apply_clicked = {
+            let _disabled = ui.begin_disabled_with_cond(self.dev_server.target != ServerTarget::Remote);
+            ui.button(apply_label)
+        };
+        if (entered || apply_clicked) && self.dev_server.target == ServerTarget::Remote {
+            self.apply_dev_server();
+        }
+        settings_spacer(ui);
+
+        settings_form_label(ui, self.bold_font, "ACTIVE API BASE");
+        ui.text(&self.base);
+        settings_spacer(ui);
+        ui.text_colored(MUTED, &format!("Local default is {}.", local_api_base()));
+
+        if !self.settings_error.is_empty() {
+            settings_spacer(ui);
+            ui.text_colored(RED, &self.settings_error);
+        }
     }
 
     fn draw_account_settings(&mut self, ui: &Ui, width: f32) {
@@ -4075,6 +4146,9 @@ impl App {
             self.stream = stream;
             self.stream.hardware = false;
         }
+        if let Some(dev) = load_json::<DevServerPrefs>(&self.data_dir.join("dev-server.json")) {
+            self.dev_server = dev;
+        }
     }
 
     fn save_voice(&self) {
@@ -4088,6 +4162,86 @@ impl App {
         self.stream.fps = fps_key(self.stream_fps).to_string();
         self.stream.hardware = false;
         let _ = save_json(&self.data_dir.join("stream.json"), &self.stream);
+    }
+
+    fn save_dev_server(&self) {
+        let _ = save_json(&self.data_dir.join("dev-server.json"), &self.dev_server);
+    }
+
+    /// Persist Developer prefs and point the HTTP/WebSocket client at the chosen API base.
+    fn apply_dev_server(&mut self) {
+        match api_base_for(&self.dev_server) {
+            Ok(base) => {
+                self.save_dev_server();
+                if base == self.base {
+                    self.settings_error.clear();
+                    return;
+                }
+                self.reconnect_api_base(base);
+            }
+            Err(err) => {
+                self.settings_error = err;
+            }
+        }
+    }
+
+    fn reconnect_api_base(&mut self, base: String) {
+        if self.dev_server.target == ServerTarget::Local {
+            if let Err(err) = crate::platform::ensure_local_server() {
+                self.settings_error = err;
+                return;
+            }
+        }
+
+        // Drop media against the previous host without waiting on it.
+        self.voice_channel = None;
+        self.voice_members.clear();
+        self.end_media_place();
+        self.media = None;
+        self.realtime = None;
+
+        let token = self.client.token().map(str::to_string);
+        self.base = base.clone();
+        self.client.set_base(&base);
+
+        self.friends.clear();
+        self.incoming.clear();
+        self.outgoing.clear();
+        self.servers.clear();
+        self.dms.clear();
+        self.mentions.clear();
+        self.presence.clear();
+        self.layout.clear();
+        self.members.clear();
+        self.selected = None;
+        self.messages.clear();
+        self.place = Place::Home;
+
+        if let Some(token) = token {
+            self.client.set_token(Some(token));
+            match self.client.me() {
+                Ok(me) => {
+                    self.display_name = me.display_name.clone();
+                    self.account = Some(me);
+                    self.settings_error.clear();
+                    self.status = format!("Connected to {base}");
+                    self.refresh_shell();
+                    self.connect_live();
+                }
+                Err(_) => {
+                    self.client.set_token(None);
+                    let _ = std::fs::remove_file(session_path(&self.data_dir));
+                    self.account = None;
+                    self.display_name.clear();
+                    self.settings.close();
+                    self.settings_error =
+                        format!("Switched to {base}. Sign in again on this server.");
+                }
+            }
+        } else {
+            self.settings_error.clear();
+            self.status = format!("Using {base}");
+        }
     }
 
     fn engine_update(&self) -> EngineUpdate {

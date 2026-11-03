@@ -25,7 +25,15 @@ cargo run -p banter
 
 Or launch `target\debug\banter.exe` after a build. Data goes to `%LOCALAPPDATA%\Banter` unless `BANTER_DATA` is set.
 
-If port `3970` is free, the client starts an embedded server. If another Banter or `banter-server` already holds `127.0.0.1:3970`, the client uses that instance.
+If Developer is set to Local (the default) and port `3970` is free, the client starts an embedded server. If another Banter or `banter-server` already holds `127.0.0.1:3970`, the client uses that instance.
+
+### Developer: Local vs Remote
+
+Open **User Settings → Developer**:
+
+- **Local** — `http://127.0.0.1:3970` (`banter_server::DEFAULT_ADDR`). Starts the embedded server when nothing is listening.
+- **Remote** — enter a host, `host:port`, or full `http://` / `https://` URL, then **Apply** (or Enter). Invalid input stays on the previous base and shows an error.
+- Choice persists in `%LOCALAPPDATA%\Banter\dev-server.json` (or the `BANTER_DATA` folder). Switching reconnects the HTTP client and WebSocket; if the session token is invalid on the new host, Banter clears the local session and asks you to sign in again.
 
 ## Run the server alone (Windows)
 
@@ -110,7 +118,7 @@ Pull and run without compose:
 podman run --rm -p 3970:3970 -e BANTER_BIND=0.0.0.0 ghcr.io/snowedinowl/banter:version-1-test-1
 ```
 
-If host port `3970` is already taken by a desktop Banter window, publish another port (for example `3971:3970`) and hit that URL for API checks. The desktop client still expects `127.0.0.1:3970` unless you change code.
+If host port `3970` is already taken by a desktop Banter window, publish another port (for example `3971:3970`) and hit that URL for API checks. Point the desktop client at it from **User Settings → Developer → Remote** (for example `127.0.0.1:3971`).
 
 ### Pre-release artifacts
 

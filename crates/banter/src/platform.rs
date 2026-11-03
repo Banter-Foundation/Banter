@@ -12,7 +12,12 @@ use crate::logic::either_key_held;
 use crate::ui::App;
 
 pub(crate) fn run() -> Result<(), String> {
-    ensure_server()?;
+    let data = banter_server::default_data_dir();
+    let prefs = crate::load_json::<crate::DevServerPrefs>(&data.join("dev-server.json")).unwrap_or_default();
+    let base = crate::api_base_for(&prefs).unwrap_or_else(|_| crate::local_api_base());
+    if prefs.target == crate::ServerTarget::Local {
+        ensure_local_server()?;
+    }
     let mut glfw = glfw::init(glfw::fail_on_errors).map_err(|err| format!("GLFW init failed: {err}"))?;
     glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
     glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
@@ -36,14 +41,13 @@ pub(crate) fn run() -> Result<(), String> {
     let flags = imgui.io().config_flags() | ConfigFlags::DOCKING_ENABLE;
     imgui.io_mut().set_config_flags(flags);
     imgui.set_clipboard_backend(GlfwClipboard);
-    let ini = banter_server::default_data_dir().join("banter-dock.ini");
+    let ini = data.join("banter-dock.ini");
     imgui.set_ini_filename(Some(ini)).map_err(|err| err.to_string())?;
     let bold_font = install_font(&mut imgui);
     let semibold_font = load_first_face(imgui.font_atlas(), &semibold_font_paths(), 16.0).or(bold_font);
     let mut renderer = GlowRenderer::with_shared_context(Rc::clone(&gl), &mut imgui).map_err(|err| err.to_string())?;
 
-    let base = format!("http://{}", banter_server::DEFAULT_ADDR);
-    let mut app = App::open(base, banter_server::default_data_dir());
+    let mut app = App::open(base, data);
     app.set_bold_font(bold_font);
     app.set_semibold_font(semibold_font);
     let mut last_time = glfw.get_time();
@@ -103,7 +107,8 @@ pub(crate) fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_server() -> Result<(), String> {
+/// Start the loopback server when nothing is listening on `DEFAULT_ADDR`.
+pub(crate) fn ensure_local_server() -> Result<(), String> {
     let addr = banter_server::DEFAULT_ADDR;
     if std::net::TcpStream::connect_timeout(
         &addr.parse().map_err(|err: std::net::AddrParseError| err.to_string())?,

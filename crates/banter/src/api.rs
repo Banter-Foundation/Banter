@@ -79,6 +79,14 @@ impl Client {
         self.token = token.filter(|token| !token.is_empty());
     }
 
+    pub fn set_base(&mut self, base: impl Into<String>) {
+        self.base = base.into().trim_end_matches('/').to_string();
+    }
+
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
     pub fn register(
         &mut self,
         username: &str,
