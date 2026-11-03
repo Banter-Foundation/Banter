@@ -1,12 +1,51 @@
-/target
+# Rust / Cargo build output (keep Cargo.lock — Banter is an app)
+/target/
+/target-*/
 **/*.rs.bk
+*.pdb
+
+# Local Banter runtime data and secrets (also under %LOCALAPPDATA%\Banter)
 auth.json
 client-session.json
 voice.json
 stream.json
+dev-server.json
+banter.db
+banter.db-*
 .env
+.env.*
+!.env.example
 *.pem
+*.key
 secrets/
+
+# Local scratch / smoke logs
 banter-err.txt
 banter-out.txt
 .banter-linux-smoke/
+*.log
+
+# Linked worktrees and agent scratch under the primary tree
+/worktrees/
+.agent/
+.agents/
+.claude/
+.codex/
+.cursor-tmp/
+.cursor/agent-scratch/
+
+# IDE
+.idea/
+.vscode/
+.vs/
+*.suo
+*.user
+*.swp
+*~
+
+# OS junk
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+$RECYCLE.BIN/

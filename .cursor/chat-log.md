@@ -414,3 +414,18 @@ Commit, push, report SHA/URL and how to use it.
 ## Summary
 
 Synced main to 6d2471d, branched `cursor/dev-server-settings-0674`. Added User Settings → Developer with Local/Remote, `dev-server.json` persistence, reconnect on apply, and docs/changelog updates. Tests written first in `dev_server.rs`.
+
+## User
+
+Tighten Banter .gitignore so unneeded files stay out of git. Root: `D:\Projects\Project Banter`. Never touch E:. Clear commit message.
+
+1) Audit tracked + untracked junk: target/, *.pdb, local data, .env, auth secrets, IDE, OS junk, worktree clutter, agent scratch, cargo locks if appropriate (usually keep Cargo.lock for apps).
+2) Update .gitignore; untrack already-committed junk with `git rm --cached` where safe (don't delete Owl's real files on disk).
+3) Document briefly in changelog. Commit + push branch or main per habit; prefer branch + PR if main is protected, else clear push.
+4) Report what was ignored/untracked.
+
+Store note optional under C:\Users\Winter\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5\files\internal\
+
+## Summary
+
+Branched `cursor/gitignore-cleanup-da54` from `origin/main`. Tightened root `.gitignore` (alternate Cargo targets, PDBs, `dev-server.json`, DB, IDE/OS/agent/worktree junk). No `git rm --cached` needed; `Cargo.lock` and `.cursor/` project docs stay tracked.

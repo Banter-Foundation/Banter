@@ -137,3 +137,13 @@ User Settings gains a Developer section so the desktop client can switch between
 - Choice persists in `dev-server.json` under the data directory (`BANTER_DATA` / `%LOCALAPPDATA%\Banter`)
 - Switching reconnects HTTP and WebSocket; a token that fails on the new host clears the local session so you can sign in again
 - Docs: overview, build-and-run, architecture, feature-status, README; tests in `crates/banter/tests/dev_server.rs` written first (8 passed) alongside client 26 and settings 18
+
+## 2026-11-03 15:24:45 -06:00 [Winter] — Tighten root .gitignore
+
+Expanded .gitignore so build output, local Banter data/secrets, IDE/OS junk, linked worktrees, and agent scratch stay out of git. Cargo.lock stays tracked (app workspace). No already-committed junk needed git rm --cached; Owl's on-disk files were not deleted.
+
+- Ignore /target/, /target-*/ (e.g. CARGO_TARGET_DIR dirs like 	arget-device-polish/), and *.pdb
+- Ignore dev-server.json, anter.db / anter.db-*, .env.* (keep .env.example), *.key
+- Ignore /worktrees/, agent scratch (.agent/, .claude/, .codex/, .cursor-tmp/, .cursor/agent-scratch/)
+- Ignore IDE (.idea/, .vscode/, .vs/, *.suo, *.user, *.swp) and OS junk (Thumbs.db, .DS_Store, Desktop.ini)
+- Keep ignoring auth/session/voice/stream secrets, .env, *.pem, secrets/, smoke logs
