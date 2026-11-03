@@ -48,7 +48,8 @@ Never commit:
 | --- | --- |
 | `README.md` | Quick start |
 | `docs/overview.md` | Product + stack + paths + bind |
-| `docs/build-and-run.md` | Windows/Linux/container |
+| `docs/build-and-run.md` | Windows/Linux build & run |
+| `docs/docker-setup.md` | Podman/Docker server setup |
 | `docs/architecture.md` | Crates and modules |
 | `docs/feature-status.md` | What works vs deferred |
 | `docs/foundation.md` | Chosen foundation + deferred list |

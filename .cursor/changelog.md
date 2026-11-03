@@ -158,3 +158,8 @@ Expanded .gitignore so build output, local Banter data/secrets, IDE/OS junk, lin
 
 Merged path/docs hygiene PRs #3 (Project Banter folder) and #4 (.gitignore) into main. Left UI theme/layout PR #2 open. Deleted local and remote branches already contained in main (settings-fixes, ui-polish, device-polish, banter-build-docs, dev-server-settings, webrtc-screen-share, plus the merged #3/#4 heads). Removed obsolete worktrees Banter-docs, Banter-settings, Banter-ui, and Banter-handcheck; kept Banter-ui-theme. Never touched E:.
 
+
+## 2026-11-03 15:44:17 -06:00 [Winter] — Docker setup guide and refreshed server image files
+
+Refreshed the root Dockerfile (adds ca-certificates in the runtime image), docker-compose.yml, and .dockerignore for the current banter-server (including WebRTC SFU). Added docs/docker-setup.md as the Podman/Docker walkthrough. Linked it from README, build-and-run, and contributing. Verified with Podman build and health check on host port 3972. Never touched E:.
+

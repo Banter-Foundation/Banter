@@ -7,7 +7,8 @@ Local desktop chat. The window is GLFW and OpenGL 3.3. The interface is Dear ImG
 | Doc | Contents |
 | --- | --- |
 | [docs/overview.md](docs/overview.md) | What Banter is, stack, data paths, `127.0.0.1:3970` / `BANTER_BIND` / `BANTER_PORT` |
-| [docs/build-and-run.md](docs/build-and-run.md) | Windows/Linux build & run, tests, Podman/Docker image |
+| [docs/build-and-run.md](docs/build-and-run.md) | Windows/Linux build & run, tests |
+| [docs/docker-setup.md](docs/docker-setup.md) | Podman/Docker server image setup |
 | [docs/architecture.md](docs/architecture.md) | Crates, modules, voice/camera/stream notes |
 | [docs/feature-status.md](docs/feature-status.md) | What works vs deferred (honest) |
 | [docs/foundation.md](docs/foundation.md) | Chosen foundation slice + deferred list |
@@ -52,19 +53,15 @@ An optional listen address can be passed as the first argument, and that argumen
 
 ## Server container
 
-Podman and Docker both run this image. The copy published for `version-1-test-1` was built with Podman.
+Setup guide: **[docs/docker-setup.md](docs/docker-setup.md)**. Podman and Docker both run this image (the `version-1-test-1` publish was built with Podman).
 
 ```
-podman compose up
+cd "D:\Projects\Project Banter"
+podman compose up -d
+# or: docker compose up -d
 ```
 
-Docker uses the same file:
-
-```
-docker compose up
-```
-
-Inside the container the server binds `0.0.0.0` on port `3970` (`BANTER_BIND` and `BANTER_PORT`). Account data stays on the named volume `banter-data`. Set `BANTER_PORT` to publish a different port. A secret comes from an environment variable or from `BANTER_SECRET_FILE` pointing at a mounted file. It is not copied into the image. Point the desktop client at a published port with **User Settings → Developer → Remote**.
+Inside the container the server binds `0.0.0.0` on port `3970` (`BANTER_BIND` / `BANTER_PORT`). Account data stays on the named volume `banter-data`. Point the desktop client at a published port with **User Settings → Developer → Remote**.
 
 Image: `ghcr.io/snowedinowl/banter:version-1-test-1`.
 

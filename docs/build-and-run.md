@@ -88,38 +88,17 @@ Server foundation tests in `crates/banter-server/tests/foundation.rs` are the AP
 
 ## Container image (Podman / Docker)
 
-Image: **`ghcr.io/snowedinowl/banter`**  
-Published tag used for the first pre-release: **`version-1-test-1`** (also GitHub release / tag `Version-1-test-1`).
+Full walkthrough: **[docker-setup.md](docker-setup.md)**.
 
-The image contains **`banter-server` only**, not the desktop app. The build stage stubs the `banter` crate so the workspace manifest resolves without compiling GLFW/ImGui.
-
-### Compose
-
-Repo root has `Dockerfile`, `docker-compose.yml`, and `.dockerignore`.
+Image: **`ghcr.io/snowedinowl/banter`** (`version-1-test-1` for the first pre-release). Server only — not the desktop app.
 
 ```powershell
-# Podman (preferred on Black-Birb when Docker Desktop's engine is down)
-podman compose up
-
-# Docker
-docker compose up
+cd "D:\Projects\Project Banter"
+podman compose up -d
+# or: docker compose up -d
+Invoke-RestMethod http://127.0.0.1:3970/v1/health
 ```
 
-Compose defaults:
+If host port `3970` is taken, publish another (see the setup guide) and point **User Settings → Developer → Remote** at that host port.
 
-- Image `ghcr.io/snowedinowl/banter:version-1-test-1` (or local build from the Dockerfile)
-- `BANTER_BIND=0.0.0.0`, port `3970` (override host/container port with `BANTER_PORT`)
-- Named volume `banter-data` → `/data`
-- Optional secret via `BANTER_SECRET_FILE` (never baked into the image)
-
-Pull and run without compose:
-
-```powershell
-podman run --rm -p 3970:3970 -e BANTER_BIND=0.0.0.0 ghcr.io/snowedinowl/banter:version-1-test-1
-```
-
-If host port `3970` is already taken by a desktop Banter window, publish another port (for example `3971:3970`) and hit that URL for API checks. Point the desktop client at it from **User Settings → Developer → Remote** (for example `127.0.0.1:3971`).
-
-### Pre-release artifacts
-
-GitHub release [Version-1-test-1](https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-1) includes Windows zip / `banter-server.exe` attachments. Do not move that tag for later UI-only commits.
+Pre-release artifacts: [Version-1-test-1](https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-1). Do not move that tag for later UI-only commits.

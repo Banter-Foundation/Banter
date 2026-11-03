@@ -448,3 +448,14 @@ Agent: Fetched. PR #1 already merged. Merged #3 then #4 (resolved changelog/chat
 
 Branch hygiene pass: merged #3/#4, kept #2, deleted contained branches and stale worktrees. Never touched E:.
 
+
+## 2026-11-03 15:44:17 -06:00 — Docker file and setup guide
+
+Owl: ok make new docker file and a set up guide then push and commit to main
+
+Agent: Refreshed Dockerfile / docker-compose.yml / .dockerignore; added docs/docker-setup.md; linked from README, build-and-run, contributing. Podman build banter-server:local; health ok on 127.0.0.1:3972. Removed unimplemented BANTER_SECRET_FILE from compose/docs. Never touched E:. Committing to main.
+
+## Summary
+
+New Docker setup path on main: refreshed container files plus docs/docker-setup.md; smoke health passed under Podman.
+

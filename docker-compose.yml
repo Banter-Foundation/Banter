@@ -1,22 +1,25 @@
 # Banter server. The desktop app keeps its own default of 127.0.0.1:3970.
-# Change the published port with BANTER_PORT. Data stays on the named volume.
-# A secret is never built into the image. To use one:
-#   set BANTER_SECRET_FILE=/run/secrets/banter
-#   and add a read-only bind: ./secrets/banter:/run/secrets/banter:ro
+# Change the published port with BANTER_PORT. SQLite data stays on the named volume.
+#
+#   podman compose up --build
+#   docker  compose up --build
+#
+# Point the desktop client at the published port:
+#   User Settings → Developer → Remote → 127.0.0.1:3970 (or another host port)
 
 services:
   banter-server:
     build: .
-    image: ghcr.io/snowedinowl/banter:version-1-test-1
+    image: ${BANTER_IMAGE:-ghcr.io/snowedinowl/banter:version-1-test-1}
     ports:
       - "${BANTER_PORT:-3970}:${BANTER_PORT:-3970}"
     environment:
-      BANTER_BIND: 0.0.0.0
+      BANTER_BIND: "0.0.0.0"
       BANTER_PORT: ${BANTER_PORT:-3970}
       BANTER_DATA: /data
-      BANTER_SECRET_FILE: ${BANTER_SECRET_FILE:-}
     volumes:
       - banter-data:/data
+    restart: unless-stopped
 
 volumes:
   banter-data:
