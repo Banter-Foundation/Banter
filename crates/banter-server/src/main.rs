@@ -1,7 +1,8 @@
 fn main() {
-    let addr = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| banter_server::DEFAULT_ADDR.to_string());
+    let cli = std::env::args().nth(1);
+    let bind = std::env::var("BANTER_BIND").ok();
+    let port = std::env::var("BANTER_PORT").ok();
+    let addr = banter_server::listen_addr(cli.as_deref(), bind.as_deref(), port.as_deref());
     let data = banter_server::default_data_dir();
     eprintln!("Banter server listening on http://{addr}");
     eprintln!("data directory: {}", data.display());

@@ -196,3 +196,35 @@ Owl approved committing and pushing after the voice, stream, and UI pass is fini
 ## Summary
 
 Voice settings, the speaking ring, independent stream quality, and frame-boundary switching are in the client. Tests: 24 client, 10 server. Commit and push come next, then Docker.
+
+## User
+
+After the commit and push are done, do this next in the same repo. Do not start it before the push.
+
+1. Docker for the server: a multi-stage Dockerfile for banter-server, plus a docker-compose.yml. Inside the container the server must bind 0.0.0.0 and use a configurable port (default 3970). Keep the desktop app's default of 127.0.0.1. Server data goes on a named volume. Secrets come from env vars or a mounted file, never baked into the image. Add a .dockerignore.
+2. Check that Docker is available on this machine (docker version). If Docker Desktop is not installed or not running, stop at that point and report it. Do not install it yourself.
+3. Build the image, run it with compose, and verify a desktop client can register and send a message against the container.
+4. Release for testing: tag Version-1-test-1 and create a GitHub release with that name on https://github.com/SnowedInOwl/Banter, marked as a pre-release. Attach a zip of the Windows release build of the desktop app, and a standalone server binary. Add short release notes with what's in it, known gaps, and how to run the server with Docker. If pushing the image to GitHub Container Registry needs a package scope gh doesn't have, report the exact device-code step instead of skipping it.
+5. Commit the Docker files with a clear message and push.
+
+Never commit secrets. Never touch E:. Report the release URL, the tag, the image name, and each attached file.
+
+## Summary
+
+The earlier push is on main as 8ab9c04. Docker files are on disk and uncommitted. `docker version` failed because Docker is not installed, so the image, the container check, the pre-release, and the Docker commit were not done. `banter-server` still listens on argv or 127.0.0.1:3970 and does not read BANTER_BIND. gh scopes are gist, project, read:org, repo, workflow, so a later GHCR push needs `gh auth refresh -h github.com -s write:packages` and the device code at https://github.com/login/device.
+
+## User
+
+While Docker is unavailable, fix the part that doesn't need it. Make banter-server read BANTER_BIND and BANTER_PORT, with the command-line argument still taking priority, and fall back to 127.0.0.1:3970 when neither is set. Add a test. Leave the Docker files uncommitted for now. Do not tag or release yet. Owl is deciding between installing Docker Desktop and releasing without the image. Never touch E:. Report when done.
+
+## Summary
+
+`listen_addr` is in the server library and `main` reads `BANTER_BIND` and `BANTER_PORT`. The command-line argument wins. Empty or missing values for both variables keep `127.0.0.1:3970`. A bind without a port uses port 3970. A port without a bind uses `0.0.0.0`. The desktop embedded server still uses `DEFAULT_ADDR`. The new test was written before the function. Server foundation tests: 11 passed. Docker files remain untracked. No tag and no release.
+
+## User
+
+Yes. Commit the BANTER_BIND/BANTER_PORT change and its test on their own, push to main, and leave the Docker files untracked. Check that no secrets are staged. Do not tag or release. Report the commit URL. Never touch E:.
+
+## Summary
+
+The listen-address commit includes the server change, the test, the README note, and the standing docs. Docker files stay untracked. No tag and no release.

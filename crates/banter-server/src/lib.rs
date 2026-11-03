@@ -23,6 +23,27 @@ pub use store::Store;
 
 pub const DEFAULT_ADDR: &str = "127.0.0.1:3970";
 
+/// Address the server binary should bind.
+///
+/// A non-empty command-line address wins. Otherwise a non-empty `BANTER_BIND`
+/// or `BANTER_PORT` selects `{bind or 0.0.0.0}:{port or 3970}`. When the
+/// argument and both variables are absent, the desktop default is used.
+pub fn listen_addr(cli: Option<&str>, bind: Option<&str>, port: Option<&str>) -> String {
+    if let Some(addr) = present(cli) {
+        return addr.to_string();
+    }
+    let bind = present(bind);
+    let port = present(port);
+    if bind.is_none() && port.is_none() {
+        return DEFAULT_ADDR.to_string();
+    }
+    format!("{}:{}", bind.unwrap_or("0.0.0.0"), port.unwrap_or("3970"))
+}
+
+fn present(value: Option<&str>) -> Option<&str> {
+    value.filter(|text| !text.is_empty())
+}
+
 pub fn serve(addr: &str, data_dir: &std::path::Path) -> Result<(), BanterError> {
     http::serve(addr, data_dir)
 }

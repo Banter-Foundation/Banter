@@ -21,7 +21,7 @@ To run the server on its own:
 cargo run -p banter-server
 ```
 
-An optional listen address can be passed as the first argument. The default is `127.0.0.1:3970`.
+An optional listen address can be passed as the first argument, and that argument wins. Otherwise `BANTER_BIND` and `BANTER_PORT` are used, with `0.0.0.0` and `3970` filling whichever one is missing. When the argument and both variables are absent, the server uses `127.0.0.1:3970`. The desktop app still starts its own server on `127.0.0.1:3970`.
 
 Open the client twice to try voice between two accounts. They share one server. The file `client-session.json` stores one login, so the last account to sign in is the one restored the next time a client starts. Both clients can stay signed in during the same run because each keeps its token in memory.
 

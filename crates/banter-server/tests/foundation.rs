@@ -880,3 +880,35 @@ fn http_register_and_login_round_trip() {
     assert_eq!(me["username"], "ada");
     assert_eq!(me["display_name"], "Ada");
 }
+
+#[test]
+fn listen_addr_prefers_the_argument_then_env_then_loopback() {
+    assert_eq!(
+        banter_server::listen_addr(None, None, None),
+        "127.0.0.1:3970"
+    );
+    assert_eq!(
+        banter_server::listen_addr(None, Some(""), Some("")),
+        "127.0.0.1:3970"
+    );
+    assert_eq!(
+        banter_server::listen_addr(Some(""), None, None),
+        "127.0.0.1:3970"
+    );
+    assert_eq!(
+        banter_server::listen_addr(Some("10.1.2.3:9"), Some("0.0.0.0"), Some("4000")),
+        "10.1.2.3:9"
+    );
+    assert_eq!(
+        banter_server::listen_addr(None, Some("0.0.0.0"), None),
+        "0.0.0.0:3970"
+    );
+    assert_eq!(
+        banter_server::listen_addr(None, None, Some("4000")),
+        "0.0.0.0:4000"
+    );
+    assert_eq!(
+        banter_server::listen_addr(None, Some("10.0.0.8"), Some("4000")),
+        "10.0.0.8:4000"
+    );
+}
