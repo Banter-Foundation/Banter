@@ -2,6 +2,8 @@
 
 Chosen 2026-11-02. This is the slice the desktop app and local server implement.
 
+For a longer status table (what works, caveats, deferred), see [feature-status.md](feature-status.md). For stack and paths, see [overview.md](overview.md).
+
 ## In this build
 
 - Unique username, display name, avatar, and password

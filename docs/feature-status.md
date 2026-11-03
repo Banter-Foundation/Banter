@@ -1,0 +1,53 @@
+# Feature status
+
+Honest snapshot of the Discord-like **foundation** vs what still waits. The authoritative deferred list is also in [foundation.md](foundation.md). Do not implement deferred items until Owl asks.
+
+## Works in the current build
+
+| Area | Status |
+| --- | --- |
+| Register / login / logout (local username + password) | Working |
+| Display name + avatar (upload crop/zoom PNG/JPG/GIF/WebP, remove → letter) | Working |
+| Friends list + friend requests | Working |
+| Create server, invite join, member list, server nickname | Working |
+| Text + voice channels in categories (owner creates) | Working |
+| Send / reply / edit / delete / attach / search messages | Working |
+| Mentions + presence | Working |
+| Discord-like temporary skin (rail, sidebar, chat, members, modals) | Working — **not** final Banter branding |
+| Chat rows (avatar, grouping, hover toolbar, bottom-anchored history) | Working |
+| Drop-in voice: mute, deafen, PTT, connection panel | Working |
+| Camera on/off with mirrored local preview (~720p prefer, MJPEG) | Working (device-dependent) |
+| Screen share Go Live + quality / source switching | Working (software JPEG; H.264 not available) |
+| 1:1 DMs + start a call | Working |
+| User Settings: My Account, Voice & Video (persisted) | Working |
+| Embedded + standalone server, SQLite data | Working |
+| Containerized `banter-server` (`ghcr.io/snowedinowl/banter`) | Working |
+| Linux native client (XDG paths, PipeWire-ready capture) | Working; loopback/app audio still Windows-only |
+
+## Partial / caveats
+
+- **Skin is temporary.** Controls sit where Discord users expect; Banter’s own look comes later. No Discord logos.
+- **Voice / calls / presence** are process-local on the server. Restart clears who is in voice and who is online.
+- **One `client-session.json` per data dir.** Last login wins the next cold start when two clients share a machine and folder.
+- **Stream encoder** is software JPEG; hardware H.264 is explicitly unavailable on the checked Windows box.
+- **Voice-connection subtitle** shows one plain device error (Settings still lists every device error).
+- **Speaker loopback / per-app mix** for streams: Windows only.
+- **GDI / naive screenshots** of the OpenGL window can come back blank or solid; prefer PrintWindow / existing capture tooling when documenting UI.
+- **Email / 2FA / social login / passkeys:** designed in project notes, not the shipping local path yet.
+- **Roles / kick / ban / community badges:** decided in product notes, not implemented in this foundation pass.
+
+## Deferred (options kept)
+
+From [foundation.md](foundation.md):
+
+- About Me
+- Custom status
+- Reactions
+- Bold and italic
+- Text chat inside a voice channel
+- Group chats
+- Roles
+- Kick
+- Ban
+
+Messages are plain text. Channel and category mutations stay owner-only until roles exist.

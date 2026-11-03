@@ -122,3 +122,7 @@ Camera open no longer asks nokhwa for `AbsoluteHighestResolution` (then JPEG-dow
 - `voice_bar_error_lines` / `voice_bar_error_ys` in `settings.rs`; connection panel uses the first plain line; overlapping bottom draws removed
 - Tests written first: `camera_capture` (6) and `voice_bar_errors` (4). Also passed: camera_frames 4, device_errors 4, device_error_text 2, client 26, settings 18, theme 16, server foundation 13
 - README and design notes describe the 720p preference and the single voice-bar error
+
+## 2026-11-03 12:32:48 -06:00 [Winter] — Collaborator docs for the current Banter build
+
+Added under `docs/`: overview (stack, data paths, bind address), build-and-run (Windows/Linux, tests, Podman/Docker `ghcr.io/snowedinowl/banter`), architecture (crates and modules, voice/camera/stream), feature-status (honest working vs deferred), contributing (worktrees, commits, `.cursor/changelog.md`), and current-build (live notes from Black-Birb without disturbing other agents). README now links those docs. Worktree `D:\Projects\Banter-docs` on `cursor/banter-build-docs-1fda`; primary `D:\Projects\Banter` left to Camera/voice-bar. Observed existing `banter` pid 34512, health ok on `127.0.0.1:3970`, PrintWindow capture of Cool Test Server / # general.
