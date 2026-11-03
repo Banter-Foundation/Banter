@@ -150,6 +150,10 @@ pub(crate) struct App {
     settings_error: String,
     /// Local vs remote API target from User Settings → Developer.
     dev_server: DevServerPrefs,
+    /// Server options panel on the sign-in / register screen.
+    login_options: bool,
+    /// Frames the login options panel has been open (skips the opening click for dismiss).
+    login_options_frames: u32,
     /// A dropdown or text field was active at the end of the last frame, so Escape belongs to it.
     settings_popup_open: bool,
     share_open: bool,
@@ -298,6 +302,8 @@ impl App {
             settings: SettingsState::new(),
             settings_error: String::new(),
             dev_server: DevServerPrefs::default(),
+            login_options: false,
+            login_options_frames: 0,
             settings_popup_open: false,
             share_open: false,
             share: ScreenShare::new(),
@@ -563,7 +569,224 @@ impl App {
             .flags(flags)
             .position([0.0, 0.0], Condition::Always)
             .size(size, Condition::Always)
-            .build(|| self.draw_login_card(ui, size));
+            .build(|| {
+                self.draw_login_card(ui, size);
+                self.draw_login_options_button(ui, size);
+            });
+        if self.login_options {
+            self.draw_login_options(ui, size);
+        } else {
+            self.login_options_frames = 0;
+        }
+    }
+
+    /// Gear in the top-right of the auth screen opens Local / Remote server options.
+    fn draw_login_options_button(&mut self, ui: &Ui, size: [f32; 2]) {
+        let box_size = 36.0;
+        let min = [size[0] - 16.0 - box_size, 16.0];
+        if skin::icon_button(
+            ui,
+            "login-options",
+            self.icon("settings"),
+            min,
+            box_size,
+            22.0,
+            WHITE,
+            WHITE,
+            Some(with_alpha(WHITE, 0.12)),
+        ) {
+            if self.login_options {
+                self.login_options = false;
+                self.login_options_frames = 0;
+                self.settings_error.clear();
+            } else {
+                self.login_options = true;
+                self.login_options_frames = 0;
+                self.settings_error.clear();
+            }
+        }
+        skin::item_tooltip(ui, self.semibold_font, "Server options");
+    }
+
+    fn close_login_options(&mut self) {
+        self.login_options = false;
+        self.login_options_frames = 0;
+        self.settings_error.clear();
+    }
+
+    /// Overlay editor for the same prefs as User Settings → Developer.
+    /// Drawn in its own window so controls are not fighting a full-screen dismiss hit-target.
+    fn draw_login_options(&mut self, ui: &Ui, display: [f32; 2]) {
+        if ui.is_key_pressed(Key::Escape) {
+            self.close_login_options();
+            return;
+        }
+
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR
+            | WindowFlags::NO_SCROLL_WITH_MOUSE;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _gap = ui.push_style_var(StyleVar::ItemSpacing([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, skin::CLEAR);
+        ui.window("##login-options")
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size(display, Condition::Always)
+            .build(|| {
+                skin::rect(ui, [0.0, 0.0], display, OVERLAY, 0.0);
+
+                let width = MODAL_W.min(display[0] - 32.0);
+                let pad = MODAL_PAD;
+                let body_h = 28.0 + 44.0 + 4.0 + 44.0 + 16.0 + 18.0 + 36.0 + INPUT_H + 16.0 + 18.0 + 22.0 + 16.0;
+                let footer_h = MODAL_FOOTER_H;
+                let title_h = 24.0 + FONT_LG + 8.0 + 16.0 + 16.0;
+                let height = title_h + body_h + footer_h;
+                let min = [((display[0] - width) * 0.5).floor(), ((display[1] - height) * 0.5).max(16.0).floor()];
+                let max = [min[0] + width, min[1] + height];
+
+                skin::shadow(ui, min, max, MODAL_RADIUS);
+                skin::rect(ui, min, max, STAGE_BG, MODAL_RADIUS);
+                skin::rect_corners(
+                    ui,
+                    [min[0], max[1] - footer_h],
+                    max,
+                    MODAL_FOOTER_BG,
+                    MODAL_RADIUS,
+                    DrawFlags::ROUND_BOTTOM,
+                );
+
+                let inner_x = min[0] + pad;
+                let inner_w = width - pad * 2.0;
+                let mut y = min[1] + 24.0;
+                skin::text(ui, self.semibold_font, FONT_LG, [inner_x, y], TEXT, "Server options");
+                if skin::icon_button(
+                    ui,
+                    "login-options-close",
+                    self.icon("x"),
+                    [max[0] - 16.0 - 24.0, min[1] + 16.0],
+                    24.0,
+                    24.0,
+                    TEXT_SECONDARY,
+                    TEXT_NORMAL,
+                    None,
+                ) {
+                    self.close_login_options();
+                    return;
+                }
+                y += FONT_LG + 8.0;
+                skin::text(
+                    ui,
+                    None,
+                    FONT_XS,
+                    [inner_x, y],
+                    TEXT_SECONDARY,
+                    "Choose which Banter server this client talks to.",
+                );
+                y += 16.0 + 16.0;
+
+                ui.set_cursor_screen_pos([inner_x, y]);
+                skin::text(ui, self.bold_font, FONT_XS, [inner_x, y], MUTED, "SERVER");
+                y += 18.0;
+                ui.set_cursor_screen_pos([inner_x, y]);
+                let local_selected = self.dev_server.target == ServerTarget::Local;
+                if settings_radio_row(ui, "login-dev-server-local", "Local", local_selected, inner_w) && !local_selected {
+                    self.dev_server.target = ServerTarget::Local;
+                    self.apply_dev_server();
+                }
+                ui.set_cursor_screen_pos([inner_x, y + 48.0]);
+                let remote_selected = self.dev_server.target == ServerTarget::Remote;
+                if settings_radio_row(ui, "login-dev-server-remote", "Remote", remote_selected, inner_w) && !remote_selected
+                {
+                    self.dev_server.target = ServerTarget::Remote;
+                    self.apply_dev_server();
+                }
+                y += 48.0 + 48.0 + 8.0;
+
+                skin::text(ui, self.bold_font, FONT_XS, [inner_x, y], MUTED, "REMOTE HOST");
+                y += 18.0;
+                skin::text(
+                    ui,
+                    None,
+                    FONT_XS,
+                    [inner_x, y],
+                    MUTED,
+                    "Host, host:port, or http(s) URL. Example: 174.103.73.97:3970",
+                );
+                y += 36.0;
+                let apply_label = "Apply";
+                let apply_w = (skin::text_size(ui, self.semibold_font, FONT_SM, apply_label)[0] + 32.0).max(96.0);
+                let field_w = (inner_w - apply_w - 8.0).max(120.0);
+                let entered = skin::input(
+                    ui,
+                    "##login-dev-remote-host",
+                    &mut self.dev_server.remote_host,
+                    "host:3970",
+                    [inner_x, y],
+                    field_w,
+                    INPUT_H,
+                    FONT_MD,
+                    false,
+                );
+                let apply_enabled = self.dev_server.target == ServerTarget::Remote;
+                let apply_clicked = skin::button(
+                    ui,
+                    "login-dev-apply",
+                    apply_label,
+                    Tone::Brand,
+                    [inner_x + field_w + 8.0, y],
+                    [apply_w, INPUT_H],
+                    apply_enabled,
+                    self.semibold_font,
+                );
+                if (entered || apply_clicked) && apply_enabled {
+                    self.apply_dev_server();
+                }
+                y += INPUT_H + 16.0;
+
+                skin::text(ui, self.bold_font, FONT_XS, [inner_x, y], MUTED, "ACTIVE API BASE");
+                y += 18.0;
+                skin::text(ui, None, FONT_SM, [inner_x, y], TEXT_NORMAL, &self.base);
+
+                if !self.settings_error.is_empty() {
+                    let err_y = max[1] - footer_h + 12.0;
+                    skin::text(ui, None, FONT_SM, [inner_x, err_y], RED, &self.settings_error);
+                }
+
+                let done_w = (skin::text_size(ui, self.semibold_font, FONT_SM, "Done")[0] + 32.0).max(96.0);
+                let done_y = max[1] - footer_h + (footer_h - BUTTON_H) * 0.5;
+                if skin::button(
+                    ui,
+                    "login-options-done",
+                    "Done",
+                    Tone::Brand,
+                    [max[0] - pad - done_w, done_y],
+                    [done_w, BUTTON_H],
+                    true,
+                    self.semibold_font,
+                ) {
+                    self.close_login_options();
+                    return;
+                }
+
+                // Same dismiss rule as other modals: outside the card, after the opening frame.
+                if self.login_options_frames > 0 && ui.is_mouse_clicked(MouseButton::Left) {
+                    let mouse = ui.mouse_pos();
+                    let inside =
+                        mouse[0] >= min[0] && mouse[0] <= max[0] && mouse[1] >= min[1] && mouse[1] <= max[1];
+                    if !inside {
+                        self.close_login_options();
+                    }
+                }
+            });
+        if self.login_options {
+            self.login_options_frames = self.login_options_frames.saturating_add(1);
+        }
     }
 
     fn draw_login_card(&mut self, ui: &Ui, size: [f32; 2]) {
@@ -4464,7 +4687,12 @@ impl App {
             }
         } else {
             self.settings_error.clear();
-            self.status = format!("Using {base}");
+            // On the sign-in screen `status` is the auth error line; keep it clear.
+            if self.account.is_some() {
+                self.status = format!("Using {base}");
+            } else {
+                self.status.clear();
+            }
         }
     }
 
