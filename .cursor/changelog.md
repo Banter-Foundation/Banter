@@ -142,3 +142,14 @@ User Settings gains a Developer section so the desktop client can switch between
 
 Moved the primary Banter checkout from `D:\Projects\Banter` to `D:\Projects\Project Banter` (exact path; space in the name) without rewriting git history. Linked worktrees were remapped under `D:\Projects\Project Banter\worktrees\` and repaired with `git worktree repair`. `/worktrees/` is gitignored in the primary tree. Docs and agent notes now point at the new root. Never touched `E:`. Owl's previous `banter-server` was stopped for the move and restarted from the new `target\debug` path.
 
+## 2026-11-03 15:24:45 -06:00 [Winter] — Tighten root .gitignore
+
+Expanded .gitignore so build output, local Banter data/secrets, IDE/OS junk, linked worktrees, and agent scratch stay out of git. Cargo.lock stays tracked (app workspace). No already-committed junk needed git rm --cached; Owl's on-disk files were not deleted.
+
+- Ignore /target/, /target-*/ (e.g. CARGO_TARGET_DIR dirs like target-device-polish/), and *.pdb
+- Ignore dev-server.json, banter.db / banter.db-*, .env.* (keep .env.example), *.key
+- Ignore /worktrees/, agent scratch (.agent/, .claude/, .codex/, .cursor-tmp/, .cursor/agent-scratch/)
+- Ignore IDE (.idea/, .vscode/, .vs/, *.suo, *.user, *.swp) and OS junk (Thumbs.db, .DS_Store, Desktop.ini)
+- Keep ignoring auth/session/voice/stream secrets, .env, *.pem, secrets/, smoke logs
+
+

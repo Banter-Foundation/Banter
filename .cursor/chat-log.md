@@ -421,3 +421,19 @@ Owl: all Banter project files must live under `D:\Projects\Project Banter` (exac
 
 Agent: Stopped banter-server PID 29508 (client already gone). Moved primary `D:\Projects\Banter` contents into `D:\Projects\Project Banter`; moved Banter-* checkouts into `worktrees\`; `git worktree repair` remapped all five. Updated docs/memory/changelog paths; added `/worktrees/` to `.gitignore`. Restarted from new root. Never touched E:. No force-push.
 
+## User
+
+Tighten Banter .gitignore so unneeded files stay out of git. Root: `D:\Projects\Project Banter`. Never touch E:. Clear commit message.
+
+1) Audit tracked + untracked junk: target/, *.pdb, local data, .env, auth secrets, IDE, OS junk, worktree clutter, agent scratch, cargo locks if appropriate (usually keep Cargo.lock for apps).
+2) Update .gitignore; untrack already-committed junk with `git rm --cached` where safe (don't delete Owl's real files on disk).
+3) Document briefly in changelog. Commit + push branch or main per habit; prefer branch + PR if main is protected, else clear push.
+4) Report what was ignored/untracked.
+
+Store note optional under C:\Users\Winter\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5\files\internal\
+
+## Summary
+
+Branched `cursor/gitignore-cleanup-da54` from `origin/main`. Tightened root `.gitignore` (alternate Cargo targets, PDBs, `dev-server.json`, DB, IDE/OS/agent/worktree junk). No `git rm --cached` needed; `Cargo.lock` and `.cursor/` project docs stay tracked.
+
+
