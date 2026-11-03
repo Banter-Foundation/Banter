@@ -1,0 +1,15 @@
+target
+.git
+.cursor
+docs
+**/*.md
+auth.json
+client-session.json
+voice.json
+stream.json
+.env
+.env.*
+secrets
+**/*.pem
+banter-err.txt
+banter-out.txt

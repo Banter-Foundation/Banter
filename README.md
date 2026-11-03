@@ -23,6 +23,22 @@ cargo run -p banter-server
 
 An optional listen address can be passed as the first argument, and that argument wins. Otherwise `BANTER_BIND` and `BANTER_PORT` are used, with `0.0.0.0` and `3970` filling whichever one is missing. When the argument and both variables are absent, the server uses `127.0.0.1:3970`. The desktop app still starts its own server on `127.0.0.1:3970`.
 
+## Server container
+
+Podman and Docker both run this image. The copy published for `version-1-test-1` was built with Podman.
+
+```
+podman compose up
+```
+
+Docker uses the same file:
+
+```
+docker compose up
+```
+
+Inside the container the server binds `0.0.0.0` on port `3970` (`BANTER_BIND` and `BANTER_PORT`). Account data stays on the named volume `banter-data`. Set `BANTER_PORT` to publish a different port. A secret comes from an environment variable or from `BANTER_SECRET_FILE` pointing at a mounted file. It is not copied into the image. The desktop app still looks for `127.0.0.1:3970`.
+
 Open the client twice to try voice between two accounts. They share one server. The file `client-session.json` stores one login, so the last account to sign in is the one restored the next time a client starts. Both clients can stay signed in during the same run because each keeps its token in memory.
 
 ## Window

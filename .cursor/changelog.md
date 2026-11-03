@@ -47,3 +47,11 @@ Uncommitted `Dockerfile`, `docker-compose.yml`, and `.dockerignore` are in the r
 ## 2026-11-03 02:37:44 -06:00 [Winter] — Server listen address from the environment
 
 `banter-server` now chooses its listen address with `listen_addr`. A non-empty command-line argument wins. Otherwise `BANTER_BIND` and `BANTER_PORT` select the address, using `0.0.0.0` or `3970` when only one of them is set. When the argument and both variables are absent, the address stays `127.0.0.1:3970`. The desktop app still starts its embedded server on that default. `listen_addr_prefers_the_argument_then_env_then_loopback` passed with the other 10 server foundation tests. Docker files stay uncommitted. No tag and no release.
+
+## 2026-11-03 10:34:06 -06:00 [Winter] — Desktop window open, Docker Desktop engine down
+
+The debug app is open so it can be looked at: pid 15564, title Banter, responding. That exe was built at 02:24 and is newer than the UI sources. Docker Desktop's engine pipe is missing, so the image was not built and the pre-release was not created. `write:packages` is on the gh token. The default `docker` server is Podman, not Docker Desktop.
+
+## 2026-11-03 10:44:32 -06:00 [Winter] — Podman server image
+
+The server image `ghcr.io/snowedinowl/banter:version-1-test-1` was built with Podman and pushed to GHCR. Compose starts it with `BANTER_BIND=0.0.0.0`. The desktop app still defaults to `127.0.0.1:3970`. A register and a text message succeeded against the container. The Dockerfile gives the workspace a stub desktop crate so Cargo can load the manifest without compiling the app.

@@ -228,3 +228,76 @@ Yes. Commit the BANTER_BIND/BANTER_PORT change and its test on their own, push t
 ## Summary
 
 The listen-address commit includes the server change, the test, the README note, and the standing docs. Docker files stay untracked. No tag and no release.
+
+## User
+
+Owl installed Docker Desktop and ran `gh auth refresh -h github.com -s write:packages`. Resume the Docker and release work:
+1. Run `docker version` and `gh auth status`, and confirm write:packages is in the scopes. If Docker isn't running or the scope is missing, stop and report exactly what's wrong.
+2. Build the server image, run it with compose using BANTER_BIND=0.0.0.0, and verify a desktop client can register and send a message against the container.
+3. Commit and push the Dockerfile, docker-compose.yml, and .dockerignore. Check that no secrets are staged.
+4. Push the image as ghcr.io/snowedinowl/banter:version-1-test-1.
+5. Tag Version-1-test-1 and create a GitHub pre-release with that name on https://github.com/SnowedInOwl/Banter. Attach the Windows release desktop app zip and the standalone server binary. Add release notes covering what's in it, known gaps, and how to run the server with Docker.
+Report the release URL, tag, image name, commit URL, and each attached file. Never touch E:.
+
+## User
+
+Before the Docker and release work, open the Banter desktop app on this PC so Owl can look at it. Use the current build from D:\Projects\Banter, and rebuild first only if it's stale. Leave the window open and don't close it during the release work. Tell me as soon as it's open and responding, then continue with the release. Never touch E:.
+
+## User
+
+Correction from Owl: don't hold the release for the app. Open the Banter window and run the Docker and release work at the same time. If a rebuild is needed, build once and share it between both. Don't close the open window during the release. Report the window status and the release results. Never touch E:.
+
+## Summary
+
+The Banter window is open and responding (pid 15564, debug build from 02:24 America/Chicago). Release work stopped because Docker Desktop's engine is not running. `docker --context desktop-linux` cannot open `dockerDesktopLinuxEngine`. The default docker server is Podman 5.8.2. gh has `write:packages`. No image, no tag, no release, no new commit.
+
+## User
+
+Owl chose Podman. Run both of these in parallel.
+
+1. Release: use the running Podman engine (npipe:////./pipe/docker_engine) instead of Docker Desktop. Build the server image, run it with compose (podman compose or docker compose against Podman) using BANTER_BIND=0.0.0.0, and verify a desktop client can register and send a message against the container. Commit and push the Dockerfile, docker-compose.yml, and .dockerignore, checking that no secrets are staged. Log in to ghcr.io with the gh token, which has write:packages, and push ghcr.io/snowedinowl/banter:version-1-test-1. Tag Version-1-test-1 and create the GitHub pre-release with the Windows desktop zip, the standalone server binary, and release notes. Mention in the notes that the image was built with Podman and runs on Docker too.
+
+2. Message rows: Owl's screenshot is at /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/media/ui-message-row.png. Match Discord: a 40 px avatar on the left; display name, then a gap, then a smaller muted timestamp (currently "Owl00:17" runs together); edit and delete only in a floating toolbar at the top-right of the row on hover, not always under the message; no divider line between messages; grouping of consecutive messages from the same person. Rebuild, then reopen the window after the rebuild so Owl sees it.
+
+Report the release URL, tag, image, commit URLs, attached files, and the message-row result. Never touch E:.
+
+## User
+
+Owl chose Podman, which is already running on npipe:////./pipe/docker_engine. Use it instead of Docker Desktop:
+1. Build the server image with Podman, or with the docker CLI pointed at the Podman engine. Run it through compose (podman compose, or docker compose against Podman) with BANTER_BIND=0.0.0.0. Check that a desktop client can register and send a message against the container. Keep the Banter window that's already open running.
+2. Log Podman in to ghcr.io with the gh token (`gh auth token`), passed on stdin and never echoed. Push ghcr.io/snowedinowl/banter:version-1-test-1.
+3. Commit and push the Dockerfile, docker-compose.yml, and .dockerignore. Make sure no secrets are staged. The README should say Podman works too.
+4. Tag Version-1-test-1 and create a GitHub pre-release on https://github.com/SnowedInOwl/Banter. Attach the Windows release desktop zip and the standalone server binary, plus release notes.
+If a step fails, stop and report the exact error. Report the release URL, tag, image name, commit URL, and attached files. Never touch E:.
+
+## User
+
+Two requests from Owl. Do them alongside the Podman release, and don't hold the release for them. They can go in a follow-up commit.
+
+1. Text chat rows. Screenshot: /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/media/ui-text-chat.png. Problems in it: no avatar; name and timestamp jammed together ("Owl00:17"); edit and delete icons always visible under the message; a divider line under every message; small text. Match Discord: a 40 px round avatar on the left, bold display name, then a small gray timestamp after a gap ("Today at 10:17 AM", with the full date on hover). Follow-up messages from the same author within a few minutes are grouped with no repeated avatar or name, and show the time on hover in the gutter. No dividers between messages, except a date separator line. A hover background on the row, plus a floating action toolbar at the top right that only appears on hover (react placeholder hidden for now, reply, edit for own messages, delete, more). 16 px message text and Discord's spacing.
+
+2. Custom profile picture. In User Settings > My Account (and from the profile), let the user upload an image (PNG, JPG, GIF, WebP), crop and zoom it into a circle, and save it. Store it on the server, enforce a sensible size limit, and show it everywhere: chat rows, member list, voice tiles, the user panel, and DMs. Add a remove option that falls back to the letter avatar. Other clients must see the change without restarting.
+
+Keep it on D:\Projects\Banter. Never touch E:. Report what changed.
+
+## Summary
+
+Podman built `ghcr.io/snowedinowl/banter:version-1-test-1` and it is listening on `0.0.0.0:3971` because the open desktop window already holds port 3970. A register and a message against that container succeeded. The image was pushed to GHCR. The desktop window was left running. Message rows and profile pictures follow in a later commit.
+
+## User
+
+Owl says the settings seem a little broken, with no specifics yet. Run this alongside the release and chat-row work, without blocking either.
+
+Open User Settings in the running app and test every page and control by hand: My Account, Voice & Video (devices, volumes, mic test meter, input mode, sensitivity, push-to-talk key and delay, noise suppression, echo cancellation, AGC, camera preview), stream settings, and the new avatar upload once it's in. For each control check four things: it renders and lines up like Discord, it responds to input, the change takes effect in the app, and it's still there after closing settings and after restarting.
+
+Also check navigation: the sidebar sections, Escape and X to close, scrolling on long pages, the window resizing without overlap or clipping, and no stray debug text.
+
+Take screenshots of each page before and after. Save the after shots to /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/media/settings-<page>.png if that path is mounted. Fix everything you find. Then report a short list of what was broken and what you fixed, plus the screenshot paths. Keep it on D:\Projects\Banter. Never touch E:.
+
+## User
+
+Change of plan: drop the settings audit. A separate agent now owns it, in a git worktree at D:\Projects\Banter-settings on the settings-fixes branch. Don't edit or delete that folder or branch. Keep going with the Podman release, the Discord chat rows, and avatar upload. If you already changed settings code, finish only what overlaps with avatar upload in My Account, and mention it in your report. Never touch E:.
+
+## Summary
+
+The settings audit was not started here and stays on the settings-fixes worktree. No settings code was edited in D:\Projects\Banter. The Podman image is already on GHCR. The Docker commit and the pre-release are next, then chat rows and avatar upload.
