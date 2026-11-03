@@ -36,8 +36,8 @@ use crate::realtime::Realtime;
 use crate::session::{load_token, save_token, session_path};
 use crate::settings::{
     SettingsState, db_to_rms, device_error_text, display_name_dirty, display_name_error, meter_fraction,
-    percent_to_volume, rms_to_db, settings_layout, slider_fraction, slider_track_width, volume_to_percent,
-    wrap_rows, SETTINGS_NAV_LIST_W, SETTINGS_TOP_PAD,
+    percent_to_volume, rms_to_db, settings_layout, slider_fraction, slider_track_width,
+    voice_bar_error_lines, volume_to_percent, wrap_rows, SETTINGS_NAV_LIST_W, SETTINGS_TOP_PAD,
 };
 use crate::skin::{self, MenuTone, Tone};
 use crate::theme::*;
@@ -1037,12 +1037,14 @@ impl App {
         } else {
             return;
         };
-        let error = self.media.as_ref().and_then(|media| media.errors().into_iter().next());
+        // One plain device error replaces the place name, like Discord. Settings still lists every error.
+        let media_errors = self.media.as_ref().map(|media| media.errors()).unwrap_or_default();
+        let voice_errors = voice_bar_error_lines(&media_errors);
         skin::image(ui, self.icon("signal"), [origin[0] + 8.0, origin[1] + 12.0], 16.0, title_color);
         skin::text(ui, semi, FONT_SM, [origin[0] + 8.0 + 16.0 + 6.0, origin[1] + 10.0], title_color, title);
         let sub_w = width - 8.0 - 8.0 - 40.0;
-        let (sub_text, sub_color) = match &error {
-            Some(error) => (error.clone(), RED),
+        let (sub_text, sub_color) = match voice_errors.first() {
+            Some(error) => ((*error).to_string(), RED),
             None => (subtitle, TEXT_SECONDARY),
         };
         let sub_text = skin::ellipsize(ui, None, FONT_XS, &sub_text, sub_w);
@@ -1123,12 +1125,6 @@ impl App {
             self.talk_held = false;
         }
         self.video_popout = false;
-        if let Some(media) = &self.media {
-            for error in media.errors() {
-                let y = origin[1] + VOICE_PANEL_H - 18.0;
-                skin::text(ui, None, FONT_XS, [origin[0] + 8.0, y], RED, &device_error_text(&error));
-            }
-        }
     }
 
     fn panel_button(&self, ui: &Ui, id: &str, icon: &str, min: [f32; 2], width: f32, active: bool) -> bool {

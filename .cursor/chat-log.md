@@ -362,3 +362,25 @@ please fix merge confilcts as to get it to merge cleanly and then push and commi
 ## Summary
 
 settings-fixes was integrated into ui-polish by hand (auto-merge of ui.rs was too tangled). The Discord skin and chat bottom-anchor stay; User Settings and the camera MJPEG fix come from settings-fixes. Main is fast-forwarded to this commit.
+
+## User
+
+Two Banter fixes on D:\Projects\Banter after syncing to origin/main.
+
+Hard rules: Never touch E:. Stay on D:\Projects\Banter. Pull/ff origin/main first (local is behind at fa4b1e7). Prefer a short branch off main (e.g. device-polish) then PR or push and say if main should fast-forward — Owl often wants push; commit and push the branch; also update main if that's the project habit (recent merges went straight to main). Don't stop other agents; avoid fighting over Banter.exe with the QA agent — if another Banter holds the window, build and test carefully or use a separate data dir.
+
+1) Camera: stop requesting the device's highest resolution then downscaling. Prefer ~720p (1280x720) or nearest available; keep MJPEG decode working (Facecam + Elgato). Add/adjust tests.
+
+2) Voice bar: device errors currently stack/draw on top of each other. Show one clear error (or a non-overlapping stack) like Discord — readable, not layered. Tests if useful.
+
+Project store on this machine: C:\Users\Winter\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5\files\ (cloud /cursor/stores/self/). Screenshots to media/ if you capture UI. Internal notes ok under internal/.
+
+Commit, push, report SHAs/URLs and what changed.
+
+## User
+
+New Owl project rule: keep good documentation for other people working on the codebase, and make commits with clear info about what changed and why (not vague messages). Apply to this task’s commits, changelog, and any README/docs you touch.
+
+## Summary
+
+Synced main to aa61044, branched `cursor/device-polish-2f7a`. Camera capture prefers ~720p with MJPEG tie-break; voice bar shows one plain subtitle error instead of layered bottom draws. Docs and changelog updated; tests for both contracts written first and passing.

@@ -113,3 +113,12 @@ Banter builds and runs on Linux (CachyOS / KDE Wayland). The Windows path is unc
 - README covers Linux packages; design notes list the Linux font fallbacks
 - Client live-quality test keeps the 16 ms logical gap check and only requires wall delivery to finish in under 800 ms
 - Tests on this machine: server foundation 13, client 26, theme 16, settings 18, camera 4, slider 4 — all passed. Debug `banter` stayed up, `/v1/health` was ok, and register against the embedded server succeeded
+
+## 2026-11-03 12:31:26 -06:00 [Winter] — Prefer 720p camera capture and unstack voice-bar errors
+
+Camera open no longer asks nokhwa for `AbsoluteHighestResolution` (then JPEG-downscales). It prefers ~`1280x720`, or the nearest available mode that is at least that size when possible, with FPS near 30 and MJPEG favored on ties so Facecam and Elgato stay on the working decode path. The voice-connection panel shows one plain device error in the subtitle instead of drawing every error on the same bottom row.
+
+- `pick_preferred_camera_mode` / `CameraModeChoice` in `media.rs`; `open_camera` lists modes and applies the pick
+- `voice_bar_error_lines` / `voice_bar_error_ys` in `settings.rs`; connection panel uses the first plain line; overlapping bottom draws removed
+- Tests written first: `camera_capture` (6) and `voice_bar_errors` (4). Also passed: camera_frames 4, device_errors 4, device_error_text 2, client 26, settings 18, theme 16, server foundation 13
+- README and design notes describe the 720p preference and the single voice-bar error

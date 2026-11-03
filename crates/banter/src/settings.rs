@@ -265,6 +265,20 @@ pub fn device_error_text(line: &str) -> &str {
     line.split_once(": ").map_or(line, |(_, message)| message)
 }
 
+/// Plain messages for the voice-connection panel. Prefixes stay in storage for `forget_device_errors`.
+pub fn voice_bar_error_lines(errors: &[String]) -> Vec<&str> {
+    errors.iter().map(|line| device_error_text(line)).collect()
+}
+
+/// Screen Y for each voice-bar error, stacked upward from the bottom of the panel so lines never share a row.
+pub fn voice_bar_error_ys(panel_origin_y: f32, panel_h: f32, count: usize, line_h: f32) -> Vec<f32> {
+    if count == 0 || line_h <= 0.0 {
+        return Vec::new();
+    }
+    let bottom = panel_origin_y + panel_h - line_h;
+    (0..count).map(|index| bottom - index as f32 * line_h).collect()
+}
+
 /// What the Voice & Video page says when a device will not open. Library errors go to stderr instead,
 /// because they name internals (for example nokhwa's "Not available on WASM") rather than what to do.
 pub fn friendly_device_error(device: &str) -> Option<&'static str> {

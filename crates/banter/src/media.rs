@@ -913,19 +913,107 @@ pub(crate) fn camera_names() -> Vec<(u32, String)> {
         .collect()
 }
 
+/// Target capture size for a webcam. Banter asks for this (or the nearest available mode) instead of
+/// opening the device's highest resolution and then shrinking the frame.
+pub fn preferred_camera_width() -> u32 {
+    1280
+}
+
+pub fn preferred_camera_height() -> u32 {
+    720
+}
+
+/// One camera mode the picker can rank. `mjpeg` is true for MJPEG (Facecam, Elgato, and most webcams).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CameraModeChoice {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub mjpeg: bool,
+}
+
+/// Picks ~720p capture. Modes at or above 720p beat anything smaller when both exist; then nearest
+/// resolution wins; at the same size, FPS near 30 then MJPEG.
+pub fn pick_preferred_camera_mode(modes: &[CameraModeChoice]) -> Option<CameraModeChoice> {
+    const TARGET_FPS: u32 = 30;
+    let target_w = preferred_camera_width();
+    let target_h = preferred_camera_height();
+    modes
+        .iter()
+        .copied()
+        .min_by_key(|mode| {
+            let undersized = (mode.width < target_w || mode.height < target_h) as u64;
+            let dx = mode.width as i64 - target_w as i64;
+            let dy = mode.height as i64 - target_h as i64;
+            let distance = (dx * dx + dy * dy) as u64;
+            let fps_delta = (mode.fps as i64 - TARGET_FPS as i64).unsigned_abs() as u64;
+            let mjpeg_rank = if mode.mjpeg { 0u64 } else { 1 };
+            (undersized, distance, fps_delta, mjpeg_rank)
+        })
+}
+
 fn open_camera(index: u32) -> Result<nokhwa::Camera, String> {
     use nokhwa::pixel_format::RgbFormat;
-    use nokhwa::utils::{CameraIndex, RequestedFormat, RequestedFormatType};
+    use nokhwa::utils::{CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution};
     nokhwa::nokhwa_initialize(|granted| {
         if !granted {
             eprintln!("camera permission was denied");
         }
     });
+    // Open with a flexible request so we can list modes, then switch to ~720p (or nearest).
     let mut camera = nokhwa::Camera::new(
         CameraIndex::Index(index),
-        RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestResolution),
+        RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(CameraFormat::new(
+            Resolution::new(preferred_camera_width(), preferred_camera_height()),
+            FrameFormat::MJPEG,
+            30,
+        ))),
     )
+    .or_else(|_| {
+        nokhwa::Camera::new(
+            CameraIndex::Index(index),
+            RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(CameraFormat::new(
+                Resolution::new(preferred_camera_width(), preferred_camera_height()),
+                FrameFormat::YUYV,
+                30,
+            ))),
+        )
+    })
+    .or_else(|_| {
+        nokhwa::Camera::new(
+            CameraIndex::Index(index),
+            RequestedFormat::new::<RgbFormat>(RequestedFormatType::None),
+        )
+    })
     .map_err(|err| err.to_string())?;
+    if let Ok(formats) = camera.compatible_camera_formats() {
+        let modes: Vec<CameraModeChoice> = formats
+            .iter()
+            .map(|format| {
+                let resolution = format.resolution();
+                CameraModeChoice {
+                    width: resolution.width(),
+                    height: resolution.height(),
+                    fps: format.frame_rate(),
+                    mjpeg: format.format() == FrameFormat::MJPEG,
+                }
+            })
+            .collect();
+        if let Some(pick) = pick_preferred_camera_mode(&modes) {
+            if let Some(exact) = formats.iter().copied().find(|format| {
+                let resolution = format.resolution();
+                resolution.width() == pick.width
+                    && resolution.height() == pick.height
+                    && format.frame_rate() == pick.fps
+                    && (format.format() == FrameFormat::MJPEG) == pick.mjpeg
+            }) {
+                let _ = camera.set_camera_requset(RequestedFormat::with_formats(
+                    RequestedFormatType::Exact(exact),
+                    &[exact.format()],
+                ));
+            }
+        }
+    }
     camera.open_stream().map_err(|err| err.to_string())?;
     Ok(camera)
 }
