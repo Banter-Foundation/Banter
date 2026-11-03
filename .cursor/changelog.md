@@ -89,3 +89,14 @@ Worktree `D:\Projects\Banter-ui`, branch `ui-polish`. The signed-in window and s
 - Every message row now ends at its own bottom edge. A hovered row's toolbar no longer shifts the rows below it, and a history that fits no longer shows a scrollbar
 - Rows were compared pixel by pixel with `media/discord-message-row-reference.png` and `media/discord-message-row-hover.png`: name, timestamp, body, toolbar, and colors line up within 1 px
 - Tests: `a_short_history_is_pushed_to_the_bottom_of_the_pane` and `chat_follows_new_messages_only_from_the_bottom_or_after_sending` written first. Theme 16, client 26, server 12 passed
+
+## 2026-11-03 12:06:16 -06:00 [Winter] — Merge settings-fixes into ui-polish
+
+User Settings from `settings-fixes` (`ae0395c`) is merged into `ui-polish` by hand: the Discord shell skin stays, and Settings uses `SettingsState`, the centered layout, Escape that closes dropdowns first, the rebuilt Voice & Video controls, and the camera MJPEG fix.
+
+- Added `crates/banter/src/settings.rs` and its tests (settings, device errors, slider, camera frames)
+- `media.rs` takes the settings camera path: MJPEG decode, one error per failure run, clear the preview when switching cameras
+- `VoicePrefs` keeps a camera name and `#[serde(default)]` so older `voice.json` / `stream.json` still load
+- My Account keeps crop-and-zoom upload and Remove Avatar from main
+- Platform maps F1–F12 for push-to-talk keybinds
+- Workspace tests: client 26, theme 16, settings 18, camera 4, device errors 6, slider 4, server 12 — all passed

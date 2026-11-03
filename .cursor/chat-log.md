@@ -354,3 +354,11 @@ Chat must scroll so the newest messages sit at the bottom of the message pane (D
 ## Summary
 
 main was merged into ui-polish. The two reference images match Banter's own main-branch colors exactly (header rule 1B1C1F, hover 35373C, toolbar 232428, blurple letter avatar), and the hover bar in the image shows Reply, Edit, Delete, More rather than Add Reaction; reactions stay deferred. Banter's rows now match both images within 1 px. The history is bottom-anchored and follows new messages from the bottom or after sending.
+
+## User
+
+please fix merge confilcts as to get it to merge cleanly and then push and commit to main
+
+## Summary
+
+settings-fixes was integrated into ui-polish by hand (auto-merge of ui.rs was too tangled). The Discord skin and chat bottom-anchor stay; User Settings and the camera MJPEG fix come from settings-fixes. Main is fast-forwarded to this commit.

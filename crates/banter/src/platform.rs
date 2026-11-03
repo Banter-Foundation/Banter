@@ -273,6 +273,18 @@ fn map_key(key: glfw::Key) -> Option<Key> {
         glfw::Key::X => Key::X,
         glfw::Key::Y => Key::Y,
         glfw::Key::Z => Key::Z,
+        glfw::Key::F1 => Key::F1,
+        glfw::Key::F2 => Key::F2,
+        glfw::Key::F3 => Key::F3,
+        glfw::Key::F4 => Key::F4,
+        glfw::Key::F5 => Key::F5,
+        glfw::Key::F6 => Key::F6,
+        glfw::Key::F7 => Key::F7,
+        glfw::Key::F8 => Key::F8,
+        glfw::Key::F9 => Key::F9,
+        glfw::Key::F10 => Key::F10,
+        glfw::Key::F11 => Key::F11,
+        glfw::Key::F12 => Key::F12,
         _ => return None,
     })
 }

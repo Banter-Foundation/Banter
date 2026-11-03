@@ -138,7 +138,8 @@ pub struct Media {
     errors: Arc<Mutex<Vec<String>>>,
     playback: Arc<Mutex<VecDeque<f32>>>,
     output_rate: Arc<AtomicU32>,
-    local_camera: Arc<Mutex<Option<Vec<u8>>>>,
+    /// The latest local camera JPEG, tagged with the device index it came from.
+    local_camera: Arc<Mutex<Option<(u32, Vec<u8>)>>>,
     local_screen: Arc<Mutex<Option<Vec<u8>>>>,
     remote_video: Arc<Mutex<HashMap<(i64, u8), Vec<u8>>>>,
     camera_index: Arc<AtomicU32>,
@@ -330,7 +331,8 @@ impl Media {
 
     pub fn take_video(&self) -> Vec<VideoFrame> {
         let mut frames = Vec::new();
-        if let Some(jpeg) = self.local_camera.lock().expect("camera").take() {
+        let chosen = self.camera_index.load(Ordering::Relaxed);
+        if let Some(jpeg) = current_camera_frame(self.local_camera.lock().expect("camera").take(), chosen) {
             frames.push(VideoFrame { sender: None, kind: MediaKind::Camera, jpeg });
         }
         if let Some(jpeg) = self.local_screen.lock().expect("screen").take() {
@@ -478,12 +480,18 @@ fn device_loop(
             let input_name = engine.input_name.lock().expect("input device").clone();
             let output_name = engine.output_name.lock().expect("output device").clone();
             match open_input(&input_name, Arc::clone(&captured), Arc::clone(&input_rate)) {
-                Ok(stream) => streams.push(stream),
-                Err(err) => remember_error(&errors, format!("microphone: {err}")),
+                Ok(stream) => {
+                    streams.push(stream);
+                    device_recovered(&errors, "microphone");
+                }
+                Err(err) => device_failed(&errors, "microphone", &err),
             }
             match open_output(&output_name, Arc::clone(&playback), Arc::clone(&flags), Arc::clone(&engine), Arc::clone(&output_rate)) {
-                Ok(stream) => streams.push(stream),
-                Err(err) => remember_error(&errors, format!("speakers: {err}")),
+                Ok(stream) => {
+                    streams.push(stream);
+                    device_recovered(&errors, "speakers");
+                }
+                Err(err) => device_failed(&errors, "speakers", &err),
             }
             let sources = engine.sources.lock().expect("stream sources").clone();
             for source in sources.into_iter().filter(|source| source.enabled) {
@@ -791,6 +799,19 @@ fn add_i16(left: &[i16], right: &[i16]) -> Vec<i16> {
     out
 }
 
+fn device_failed(errors: &Mutex<Vec<String>>, device: &str, raw: &str) {
+    eprintln!("{device}: {raw}");
+    let mut list = errors.lock().expect("media errors");
+    match crate::settings::friendly_device_error(device) {
+        Some(message) => crate::settings::remember_device_error(&mut list, device, message),
+        None => crate::settings::remember_device_error(&mut list, device, raw),
+    }
+}
+
+fn device_recovered(errors: &Mutex<Vec<String>>, device: &str) {
+    crate::settings::forget_device_errors(&mut errors.lock().expect("media errors"), device);
+}
+
 fn remember_error(errors: &Mutex<Vec<String>>, message: String) {
     let mut list = errors.lock().expect("media errors");
     if !list.iter().any(|existing| existing == &message) {
@@ -802,7 +823,7 @@ fn camera_loop(
     flags: Arc<AtomicU32>,
     in_place: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
-    local: Arc<Mutex<Option<Vec<u8>>>>,
+    local: Arc<Mutex<Option<(u32, Vec<u8>)>>>,
     errors: Arc<Mutex<Vec<String>>>,
     camera_index: Arc<AtomicU32>,
     camera_preview: Arc<AtomicBool>,
@@ -828,6 +849,8 @@ fn camera_loop(
             camera = None;
             opened = None;
             reported = false;
+            *local.lock().expect("camera") = None;
+            device_recovered(&errors, "camera");
         }
         if camera.is_none() {
             match open_camera(choice.device_index()) {
@@ -837,7 +860,7 @@ fn camera_loop(
                 }
                 Err(err) => {
                     if !reported {
-                        remember_error(&errors, format!("camera: {err}"));
+                        device_failed(&errors, "camera", &format!("open: {err}"));
                         reported = true;
                     }
                     thread::sleep(Duration::from_secs(1));
@@ -848,15 +871,24 @@ fn camera_loop(
         let Some(device) = camera.as_mut() else { continue };
         match capture_camera(device) {
             Ok(jpeg) => {
-                *local.lock().expect("camera") = Some(jpeg.clone());
+                if reported {
+                    device_recovered(&errors, "camera");
+                    reported = false;
+                }
                 if send {
                     let frame = encode_client_media(MediaKind::Camera, &jpeg);
                     if outgoing.send(frame).is_err() {
                         break;
                     }
                 }
+                *local.lock().expect("camera") = Some((choice.device_index(), jpeg));
             }
-            Err(err) => remember_error(&errors, format!("camera: {err}")),
+            // Reported once per failure run; a failing camera fails every frame, about 30 times a second.
+            Err(err) if !reported => {
+                device_failed(&errors, "camera", &format!("frame: {err}"));
+                reported = true;
+            }
+            Err(_) => {}
         }
         thread::sleep(Duration::from_millis(33));
     }
@@ -898,13 +930,33 @@ fn open_camera(index: u32) -> Result<nokhwa::Camera, String> {
     Ok(camera)
 }
 
-fn capture_camera(camera: &mut nokhwa::Camera) -> Result<Vec<u8>, String> {
+/// Decodes one camera frame to RGB. nokhwa's own MJPEG path needs its `mjpeg` feature (mozjpeg), which Banter
+/// leaves off, and without it nokhwa answers "Not available on WASM". MJPEG frames go through `image` instead.
+pub fn decode_camera_frame(frame: &nokhwa::Buffer) -> Result<(u32, u32, Vec<u8>), String> {
     use nokhwa::pixel_format::RgbFormat;
-    let frame = camera.frame().map_err(|err| err.to_string())?;
+    use nokhwa::utils::FrameFormat;
+    if frame.source_frame_format() == FrameFormat::MJPEG {
+        let image = image::load_from_memory_with_format(frame.buffer(), image::ImageFormat::Jpeg)
+            .map_err(|err| format!("MJPEG frame: {err}"))?
+            .into_rgb8();
+        return Ok((image.width(), image.height(), image.into_raw()));
+    }
     let image = frame.decode_image::<RgbFormat>().map_err(|err| err.to_string())?;
-    let width = image.width();
-    let height = image.height();
-    let rgb = image.into_raw();
+    Ok((image.width(), image.height(), image.into_raw()))
+}
+
+/// The local preview slot holds the device index with each frame, so a frame captured just before the user
+/// picked another camera is never shown as the new camera.
+pub fn current_camera_frame(slot: Option<(u32, Vec<u8>)>, chosen_device: u32) -> Option<Vec<u8>> {
+    match slot {
+        Some((device, jpeg)) if device == chosen_device => Some(jpeg),
+        _ => None,
+    }
+}
+
+fn capture_camera(camera: &mut nokhwa::Camera) -> Result<Vec<u8>, String> {
+    let frame = camera.frame().map_err(|err| err.to_string())?;
+    let (width, height, rgb) = decode_camera_frame(&frame)?;
     let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
     for pixel in rgb.chunks_exact(3) {
         rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);

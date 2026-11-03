@@ -14,9 +14,8 @@ use banter_server::{
     Message, Presence, ServerSummary, VoiceFlags, VoiceMember,
 };
 use dear_imgui_rs::{
-    Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData, Style, StyleColor, StyleVar,
-    TextureFormat,
-    Ui, WindowFlags, fonts::FontId,
+    Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData, PopupQueryFlags, Style,
+    StyleColor, StyleVar, TextureFormat, Ui, WindowFlags, fonts::FontId,
 };
 
 use crate::api::{ApiError, Client, MemberView};
@@ -35,6 +34,11 @@ use crate::logic::{
 use crate::media::{self, EngineUpdate, Media, VideoFrame};
 use crate::realtime::Realtime;
 use crate::session::{load_token, save_token, session_path};
+use crate::settings::{
+    SettingsState, db_to_rms, device_error_text, display_name_dirty, display_name_error, meter_fraction,
+    percent_to_volume, rms_to_db, settings_layout, slider_fraction, slider_track_width, volume_to_percent,
+    wrap_rows, SETTINGS_NAV_LIST_W, SETTINGS_TOP_PAD,
+};
 use crate::skin::{self, MenuTone, Tone};
 use crate::theme::*;
 use crate::websocket_url;
@@ -140,8 +144,10 @@ pub(crate) struct App {
     composer: String,
     search: String,
     friend_tab: u8,
-    settings_open: bool,
-    settings_index: usize,
+    settings: SettingsState,
+    settings_error: String,
+    /// A dropdown or text field was active at the end of the last frame, so Escape belongs to it.
+    settings_popup_open: bool,
     share_open: bool,
     share: ScreenShare,
     share_tab: u8,
@@ -160,7 +166,6 @@ pub(crate) struct App {
     stream: StreamDefaults,
     stream_menu: bool,
     stream_anchor: [f32; 2],
-    mic_test: bool,
     capture_ptt: bool,
     ptt_until: Option<Instant>,
     devices_ready: bool,
@@ -274,8 +279,9 @@ impl App {
             composer: String::new(),
             search: String::new(),
             friend_tab: 0,
-            settings_open: false,
-            settings_index: 0,
+            settings: SettingsState::new(),
+            settings_error: String::new(),
+            settings_popup_open: false,
             share_open: false,
             share: ScreenShare::new(),
             share_tab: 0,
@@ -294,7 +300,6 @@ impl App {
             stream: StreamDefaults::default(),
             stream_menu: false,
             stream_anchor: [0.0, 0.0],
-            mic_test: false,
             capture_ptt: false,
             ptt_until: None,
             devices_ready: false,
@@ -416,7 +421,7 @@ impl App {
         self.draw_shell(ui);
         self.draw_server_dropdown(ui);
         self.draw_modal(ui);
-        if self.settings_open {
+        if self.settings.is_open() {
             self.draw_settings(ui);
         }
         if self.share_open {
@@ -438,8 +443,8 @@ impl App {
                 self.stream_menu = false;
             } else if self.share_open {
                 self.share_open = false;
-            } else if self.settings_open {
-                self.settings_open = false;
+            } else if self.settings.is_open() {
+                self.settings.escape(self.settings_popup_open);
             }
         }
         if self.crop_open {
@@ -960,8 +965,8 @@ impl App {
         let center = [origin[0] + 8.0 + 16.0, origin[1] + USER_PANEL_H * 0.5];
         ui.set_cursor_screen_pos([center[0] - 16.0, center[1] - 16.0]);
         if ui.invisible_button("profile-avatar", [32.0, 32.0]) {
-            self.settings_open = true;
-            self.settings_index = 0;
+            self.open_settings();
+            self.settings.select(SettingsSection::Account);
         }
         let avatar = account_id.and_then(|id| self.avatars.get(&id).map(|shot| shot.texture));
         paint_avatar(ui, avatar, center, 16.0, &initials(&self.display_name), None);
@@ -999,10 +1004,7 @@ impl App {
             TEXT_NORMAL,
             Some(ICON_HOVER_BG),
         ) {
-            self.settings_open = true;
-            if !self.cameras_loaded {
-                self.refresh_cameras();
-            }
+            self.open_settings();
         }
         skin::item_tooltip(ui, self.semibold_font, "User Settings");
     }
@@ -1121,6 +1123,12 @@ impl App {
             self.talk_held = false;
         }
         self.video_popout = false;
+        if let Some(media) = &self.media {
+            for error in media.errors() {
+                let y = origin[1] + VOICE_PANEL_H - 18.0;
+                skin::text(ui, None, FONT_XS, [origin[0] + 8.0, y], RED, &device_error_text(&error));
+            }
+        }
     }
 
     fn panel_button(&self, ui: &Ui, id: &str, icon: &str, min: [f32; 2], width: f32, active: bool) -> bool {
@@ -2569,7 +2577,7 @@ impl App {
             media.set_camera_choice(self.camera_choice.device_index(), preview);
             media.set_stream_choice(self.share.live_target(), stream_max_edge(self.stream_resolution), stream_interval_ms(self.stream_fps));
             media.apply_engine(&self.engine_update());
-            media.set_mic_test(self.mic_test);
+            media.set_mic_test(self.settings.mic_test());
             media.set_state(self.flags, in_place);
         }
         if in_place && self.flags != self.sent_flags {
@@ -2620,7 +2628,7 @@ impl App {
         self.friends.clear();
         self.servers.clear();
         self.status.clear();
-        self.settings_open = false;
+        self.settings.close();
         self.share_open = false;
         self.end_media_place();
     }
@@ -3147,8 +3155,33 @@ impl App {
         clicked
     }
 
+    fn open_settings(&mut self) {
+        self.settings.open();
+        self.settings_error.clear();
+        self.display_name = self.account.as_ref().map(|account| account.display_name.clone()).unwrap_or_default();
+        if self.settings.section() == SettingsSection::Voice {
+            self.devices_ready = false;
+        }
+        if !self.cameras_loaded {
+            self.refresh_cameras();
+        }
+    }
+
+    fn select_settings(&mut self, section: SettingsSection) {
+        if section == self.settings.section() {
+            return;
+        }
+        self.settings.select(section);
+        self.settings_error.clear();
+        if section == SettingsSection::Voice {
+            // Devices plugged in while settings was closed show up when the page opens.
+            self.devices_ready = false;
+            self.refresh_cameras();
+        }
+    }
+
     fn voice_settings_visible(&self) -> bool {
-        self.settings_open && settings_sections().get(self.settings_index) == Some(&SettingsSection::Voice)
+        self.settings.is_open() && self.settings.section() == SettingsSection::Voice
     }
 
     fn leave_voice(&mut self) {
@@ -3235,162 +3268,426 @@ impl App {
 
     fn draw_settings(&mut self, ui: &Ui) {
         let size = ui.io().display_size();
+        let layout = settings_layout(size[0], size[1]);
         let flags = WindowFlags::NO_DECORATION
             | WindowFlags::NO_MOVE
             | WindowFlags::NO_RESIZE
             | WindowFlags::NO_SAVED_SETTINGS
             | WindowFlags::NO_DOCKING
-            | WindowFlags::NO_SCROLLBAR;
+            | WindowFlags::NO_SCROLLBAR
+            | WindowFlags::NO_SCROLL_WITH_MOUSE;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _rounding = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, STAGE_BG);
+        let mut close = false;
         ui.window("Settings")
             .flags(flags)
             .position([0.0, 0.0], Condition::Always)
             .size(size, Condition::Always)
-            .bg_alpha(0.72)
-            .focused(true)
             .build(|| {
-                let panel_w = (size[0] - 80.0).clamp(720.0, 1040.0);
-                let panel_h = (size[1] - 80.0).clamp(460.0, 760.0);
-                ui.set_cursor_pos([size[0] - 48.0, 16.0]);
-                if self.tool(ui, "close-settings", "x", false, Some("Close")) {
-                    self.settings_open = false;
-                }
-                ui.set_cursor_pos([(size[0] - panel_w) * 0.5, (size[1] - panel_h) * 0.5]);
-                let _nav_bg = ui.push_style_color(StyleColor::ChildBg, RAIL_BG);
-                ui.child_window("settings-nav").size([220.0, panel_h]).build(ui, || {
-                    section_label(ui, "USER SETTINGS", self.bold_font, None);
-                    for (index, section) in settings_sections().into_iter().enumerate() {
-                        let (id, icon, label) = match section {
-                            SettingsSection::Account => ("settings-account", "user", "My Account"),
-                            SettingsSection::Voice => ("settings-voice", "headphones", "Voice & Video"),
-                        };
-                        if nav_row(ui, id, self.icon(icon), label, self.settings_index == index) {
-                            self.settings_index = index;
-                            if section == SettingsSection::Voice && !self.cameras_loaded {
-                                self.refresh_cameras();
-                            }
-                        }
+                // Read before drawing: a dropdown that closes on this Escape is still open here.
+                self.settings_popup_open =
+                    ui.is_popup_open_with_flags("", PopupQueryFlags::ANY_POPUP) || ui.is_any_item_active();
+                ui.set_cursor_pos([layout.nav_x, 0.0]);
+                let nav_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
+                ui.child_window("settings-nav").size([layout.nav_w, size[1]]).build(ui, || {
+                    self.draw_settings_nav(ui, layout.nav_w);
+                });
+                drop(nav_bg);
+                ui.set_cursor_pos([layout.body_x, 0.0]);
+                let body_bg = ui.push_style_color(StyleColor::ChildBg, STAGE_BG);
+                ui.child_window("settings-body").size([layout.body_w, size[1]]).build(ui, || {
+                    let window_pos = ui.window_pos();
+                    ui.set_cursor_pos([layout.content_x, SETTINGS_TOP_PAD]);
+                    ui.indent_by(layout.content_x);
+                    let _wrap = ui.push_text_wrap_pos(layout.content_x + layout.content_w);
+                    match self.settings.section() {
+                        SettingsSection::Account => self.draw_account_settings(ui, layout.content_w),
+                        SettingsSection::Voice => self.draw_voice_settings(ui, layout.content_w),
                     }
-                    ui.dummy([0.0, 12.0]);
-                    if self.tool(ui, "settings-logout", "log-out", false, Some("Log Out")) {
-                        self.logout();
+                    ui.dummy([layout.content_w, 80.0]);
+                    ui.unindent_by(layout.content_x);
+                    // Screen position, so the button stays put while the page scrolls.
+                    ui.set_cursor_screen_pos([window_pos[0] + layout.close_x - layout.body_x, window_pos[1] + layout.close_y]);
+                    if self.settings_close_button(ui, layout.close_size) {
+                        close = true;
                     }
                 });
-                drop(_nav_bg);
-                ui.same_line();
-                let _body = ui.push_style_color(StyleColor::ChildBg, STAGE_BG);
-                ui.child_window("settings-body").size([panel_w - 228.0, panel_h]).build(ui, || {
-                    match settings_sections().get(self.settings_index).copied().unwrap_or(SettingsSection::Account) {
-                        SettingsSection::Account => self.draw_account_settings(ui),
-                        SettingsSection::Voice => self.draw_voice_settings(ui),
-                    }
-                });
+                drop(body_bg);
             });
+        if close {
+            self.settings.close();
+        }
     }
 
-    fn draw_account_settings(&mut self, ui: &Ui) {
-        ui.text("My Account");
-        let username = self.account.as_ref().map(|account| account.username.clone()).unwrap_or_default();
-        let name = self.display_name.clone();
-        if let Some(id) = self.account.as_ref().map(|account| account.id) {
-            let avatar = self.avatars.get(&id).map(|shot| shot.texture);
-            let origin = ui.cursor_screen_pos();
-            ui.dummy([80.0, 80.0]);
-            paint_avatar(ui, avatar, [origin[0] + 40.0, origin[1] + 40.0], 40.0, &initials(&name), None);
+    fn draw_settings_nav(&mut self, ui: &Ui, nav_w: f32) {
+        let list_x = (nav_w - SETTINGS_NAV_LIST_W).max(0.0) + 20.0;
+        let list_w = (nav_w - list_x - 6.0).max(32.0);
+        ui.set_cursor_pos([list_x, SETTINGS_TOP_PAD]);
+        ui.indent_by(list_x);
+        ui.child_window("settings-nav-list").size([list_w, 0.0]).build(ui, || {
+            settings_form_label(ui, self.bold_font, "USER SETTINGS");
+            for section in settings_sections() {
+                let (id, icon, label) = match section {
+                    SettingsSection::Account => ("settings-account", "user", "My Account"),
+                    SettingsSection::Voice => ("settings-voice", "headphones", "Voice & Video"),
+                };
+                if nav_row(ui, id, self.icon(icon), label, self.settings.section() == section) {
+                    self.select_settings(section);
+                }
+                ui.dummy([0.0, 2.0]);
+            }
+            settings_divider(ui, ui.content_region_avail()[0]);
+            if nav_row(ui, "settings-logout", self.icon("log-out"), "Log Out", false) {
+                self.logout();
+            }
+        });
+        ui.unindent_by(list_x);
+    }
+
+    fn settings_close_button(&self, ui: &Ui, size: f32) -> bool {
+        let origin = ui.cursor_screen_pos();
+        let clicked = ui.invisible_button("close-settings", [size, size + 22.0]);
+        let hovered = ui.is_item_hovered();
+        let draw = ui.get_window_draw_list();
+        let center = [origin[0] + size * 0.5, origin[1] + size * 0.5];
+        let ring = if hovered { TEXT } else { MUTED };
+        if hovered {
+            draw.add_circle(center, size * 0.5, ROW_HOVER).filled(true).build();
         }
-        ui.text_colored(MUTED, format!("@{username}"));
-        ui.input_text("Display name", &mut self.display_name).build();
-        if ui.button("Save") {
-            let name = self.display_name.clone();
-            if let Some(account) = self.note(self.client.set_display_name(&name)) {
-                self.display_name = account.display_name.clone();
-                self.account = Some(account);
+        draw.add_circle(center, size * 0.5 - 1.0, ring).thickness(2.0).build();
+        if let Some(texture) = self.icon("x") {
+            draw.add_image(texture, [center[0] - 9.0, center[1] - 9.0], [center[0] + 9.0, center[1] + 9.0], [0.0, 0.0], [1.0, 1.0], ring);
+        }
+        let _font = ui.push_font_with_size(self.bold_font, 13.0);
+        let label_w = ui.calc_text_size("ESC")[0];
+        draw.add_text([center[0] - label_w * 0.5, origin[1] + size + 6.0], MUTED, "ESC");
+        clicked
+    }
+
+    fn draw_account_settings(&mut self, ui: &Ui, width: f32) {
+        settings_page_title(ui, self.bold_font, "My Account");
+        let Some(account) = self.account.clone() else { return };
+        let avatar = self.avatars.get(&account.id).map(|shot| shot.texture);
+
+        // Profile card: banner, avatar, and name, then the editable fields on an inner panel.
+        let card = ui.cursor_screen_pos();
+        let banner_h = 100.0;
+        let header_h = 72.0;
+        let fields_h = 190.0;
+        let card_h = banner_h + header_h + fields_h + 16.0;
+        let avatar_center = [card[0] + 16.0 + 46.0, card[1] + banner_h + 8.0];
+        let panel = [card[0] + 16.0, card[1] + banner_h + header_h];
+        let panel_w = width - 32.0;
+        {
+            let draw = ui.get_window_draw_list();
+            draw.add_rect(card, [card[0] + width, card[1] + card_h], RAIL_BG).rounding(8.0).filled(true).build();
+            draw.add_rect(card, [card[0] + width, card[1] + banner_h], BLURPLE)
+                .rounding(8.0)
+                .flags(DrawFlags::ROUND_TOP)
+                .filled(true)
+                .build();
+            draw.add_circle(avatar_center, 46.0, RAIL_BG).filled(true).build();
+            draw.add_rect(panel, [panel[0] + panel_w, panel[1] + fields_h], SIDEBAR_BG).rounding(8.0).filled(true).build();
+            let _font = ui.push_font_with_size(self.bold_font, 20.0);
+            draw.add_text([card[0] + 124.0, card[1] + banner_h + 14.0], TEXT, &account.display_name);
+        }
+        paint_avatar(ui, avatar, avatar_center, 40.0, &initials(&account.display_name), None);
+        let button_label = "Change Avatar";
+        let button_w = ui.calc_text_size(button_label)[0] + 24.0;
+        ui.set_cursor_screen_pos([card[0] + width - 16.0 - button_w, card[1] + banner_h + 14.0]);
+        if ui.button(button_label) {
+            self.status.clear();
+            self.pick_avatar();
+            if !self.status.is_empty() {
+                self.settings_error = std::mem::take(&mut self.status);
             }
         }
         ui.same_line();
-        if ui.button("Change avatar") {
-            self.pick_avatar();
-        }
-        ui.same_line();
-        if ui.button("Remove avatar") {
+        if ui.button("Remove Avatar") {
             self.remove_avatar();
+            if !self.status.is_empty() {
+                self.settings_error = std::mem::take(&mut self.status);
+            }
         }
-        ui.text_colored(MUTED, "PNG, JPG, GIF, or WebP. Drag and zoom, then save a circle.");
+
+        let inner_x = panel[0] + 16.0;
+        let inner_w = panel_w - 32.0;
+        ui.set_cursor_screen_pos([inner_x, panel[1] + 16.0]);
+        settings_form_label(ui, self.bold_font, "DISPLAY NAME");
+        let save_label = "Save";
+        let save_w = ui.calc_text_size(save_label)[0] + 24.0;
+        let reset_label = "Reset";
+        let reset_w = ui.calc_text_size(reset_label)[0] + 24.0;
+        let field_w = (inner_w - save_w - reset_w - 16.0).max(80.0);
+        ui.set_cursor_screen_pos([inner_x, ui.cursor_screen_pos()[1]]);
+        ui.set_next_item_width(field_w);
+        let entered = ui
+            .input_text("##display-name", &mut self.display_name)
+            .enter_returns_true(true)
+            .build();
+        let dirty = display_name_dirty(&self.display_name, &account.display_name);
+        let problem = display_name_error(&self.display_name);
+        ui.same_line();
+        let save_clicked = {
+            let _disabled = ui.begin_disabled_with_cond(!dirty || problem.is_some());
+            ui.button(save_label)
+        };
+        ui.same_line();
+        let reset_clicked = {
+            let _disabled = ui.begin_disabled_with_cond(!dirty);
+            ui.button(reset_label)
+        };
+        if reset_clicked {
+            self.display_name = account.display_name.clone();
+            self.settings_error.clear();
+        }
+        if (save_clicked || entered) && dirty && problem.is_none() {
+            let name = self.display_name.trim().to_string();
+            match self.client.set_display_name(&name) {
+                Ok(saved) => {
+                    self.display_name = saved.display_name.clone();
+                    self.account = Some(saved);
+                    self.settings_error.clear();
+                }
+                Err(err) => self.settings_error = err.to_string(),
+            }
+        }
+        ui.set_cursor_screen_pos([inner_x, ui.cursor_screen_pos()[1] + 4.0]);
+        if let Some(problem) = problem.filter(|_| dirty) {
+            ui.text_colored(RED, problem);
+        } else if dirty {
+            ui.text_colored(MUTED, "Press Save or Enter to keep this name.");
+        } else {
+            ui.dummy([0.0, ui.text_line_height()]);
+        }
+        ui.set_cursor_screen_pos([inner_x, ui.cursor_screen_pos()[1] + 12.0]);
+        settings_form_label(ui, self.bold_font, "USERNAME");
+        ui.set_cursor_screen_pos([inner_x, ui.cursor_screen_pos()[1]]);
+        ui.text(format!("@{}", account.username));
+
+        ui.set_cursor_screen_pos([card[0], card[1] + card_h + 16.0]);
+        if !self.settings_error.is_empty() {
+            ui.text_colored(RED, &self.settings_error);
+        }
     }
 
-    fn draw_voice_settings(&mut self, ui: &Ui) {
-        ui.text("Voice & Video");
+    fn draw_voice_settings(&mut self, ui: &Ui, width: f32) {
+        settings_page_title(ui, self.bold_font, "Voice & Video");
         self.ensure_audio_devices();
-        section_label(ui, "DEVICES", self.bold_font, None);
-        self.draw_named_combo(ui, "Input Device", &self.audio_inputs.clone(), true);
-        if ui.slider_f32("Input Volume", &mut self.voice.input_volume, 0.0, 2.0) {
+        let gap = 16.0;
+        let two_columns = width >= 460.0;
+        let column_w = if two_columns { (width - gap) * 0.5 } else { width };
+        let row = ui.cursor_pos();
+
+        settings_form_label(ui, self.bold_font, "INPUT DEVICE");
+        self.draw_named_combo(ui, "input-device", "microphone", column_w, &self.audio_inputs.clone(), true);
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "INPUT VOLUME");
+        if settings_volume_slider(ui, "input-volume", &mut self.voice.input_volume, column_w) {
             self.save_voice();
         }
-        self.draw_named_combo(ui, "Output Device", &self.audio_outputs.clone(), false);
-        if ui.slider_f32("Output Volume", &mut self.voice.output_volume, 0.0, 2.0) {
-            self.save_voice();
+        if two_columns {
+            let left_end = ui.cursor_pos()[1];
+            ui.set_cursor_pos([row[0] + column_w + gap, row[1]]);
+            ui.group(|| {
+                settings_form_label(ui, self.bold_font, "OUTPUT DEVICE");
+                self.draw_named_combo(ui, "output-device", "speaker", column_w, &self.audio_outputs.clone(), false);
+                settings_spacer(ui);
+                settings_form_label(ui, self.bold_font, "OUTPUT VOLUME");
+                if settings_volume_slider(ui, "output-volume", &mut self.voice.output_volume, column_w) {
+                    self.save_voice();
+                }
+            });
+            ui.set_cursor_pos([row[0], left_end.max(ui.cursor_pos()[1])]);
+        } else {
+            settings_spacer(ui);
+            settings_form_label(ui, self.bold_font, "OUTPUT DEVICE");
+            self.draw_named_combo(ui, "output-device", "speaker", column_w, &self.audio_outputs.clone(), false);
+            settings_spacer(ui);
+            settings_form_label(ui, self.bold_font, "OUTPUT VOLUME");
+            if settings_volume_slider(ui, "output-volume", &mut self.voice.output_volume, column_w) {
+                self.save_voice();
+            }
         }
-        section_label(ui, "INPUT MODE", self.bold_font, None);
-        if chip(ui, "mode-activity", "Voice Activity", !self.push_to_talk) {
+        settings_spacer(ui);
+        let device_errors = self.media.as_ref().map(|media| media.errors()).unwrap_or_default();
+        for error in &device_errors {
+            ui.text_colored(RED, device_error_text(error));
+        }
+        if !device_errors.is_empty() {
+            settings_spacer(ui);
+        }
+
+        settings_form_label(ui, self.bold_font, "MIC TEST");
+        ui.text_colored(MUTED, "Having mic issues? Start a test and say something. Banter plays your voice back to you.");
+        settings_spacer(ui);
+        let testing = self.settings.mic_test();
+        let test_label = if testing { "Stop Testing" } else { "Let's Check" };
+        let test_w = ui.calc_text_size("Stop Testing")[0] + 24.0;
+        let test_color = ui.push_style_color(StyleColor::Button, if testing { RED } else { BLURPLE });
+        let pressed = ui.button_with_size(test_label, [test_w, 0.0]);
+        drop(test_color);
+        if pressed {
+            self.settings.toggle_mic_test();
+        }
+        ui.same_line_with_spacing(0.0, 12.0);
+        let meter_w = (width - test_w - 12.0).max(40.0);
+        let threshold = if self.voice.auto_sensitivity || self.push_to_talk { None } else { Some(self.voice.sensitivity) };
+        self.draw_input_meter(ui, meter_w, 36.0, threshold);
+        settings_spacer(ui);
+        settings_divider(ui, width);
+
+        settings_form_label(ui, self.bold_font, "INPUT MODE");
+        if settings_radio_row(ui, "mode-activity", "Voice Activity", !self.push_to_talk, width) && self.push_to_talk {
             self.push_to_talk = false;
             self.voice.push_to_talk = false;
+            self.ptt_until = None;
+            self.settings.finish_recording();
             self.save_voice();
         }
-        ui.same_line();
-        if chip(ui, "mode-ptt", "Push to Talk", self.push_to_talk) {
+        if settings_radio_row(ui, "mode-ptt", "Push to Talk", self.push_to_talk, width) && !self.push_to_talk {
             self.push_to_talk = true;
             self.voice.push_to_talk = true;
             self.save_voice();
         }
-        self.draw_input_meter(ui);
+        settings_spacer(ui);
         if self.push_to_talk {
-            let label = if self.capture_ptt {
-                "Press a key".to_string()
-            } else {
-                format!("Push to Talk key: {}", self.voice.ptt_key)
-            };
-            if ui.button(label) {
-                self.capture_ptt = true;
-            }
-            self.capture_ptt_key(ui);
-            let mut release = self.voice.release_ms as f32;
-            if ui.slider_f32("Release delay (ms)", &mut release, 0.0, 2000.0) {
-                self.voice.release_ms = release.round() as u32;
-                self.save_voice();
-            }
+            self.draw_push_to_talk_settings(ui, two_columns, column_w, gap);
+        } else {
+            self.draw_sensitivity_settings(ui, width);
         }
-        if chip(ui, "sensitivity-auto", "Automatic sensitivity", self.voice.auto_sensitivity) {
-            self.voice.auto_sensitivity = !self.voice.auto_sensitivity;
+        settings_divider(ui, width);
+
+        settings_form_label(ui, self.bold_font, "VOICE PROCESSING");
+        if settings_toggle_row(ui, "echo-cancellation", "Echo Cancellation", &mut self.voice.echo_cancellation, width) {
             self.save_voice();
         }
-        if !self.voice.auto_sensitivity && !self.push_to_talk {
-            if ui.slider_f32("Sensitivity", &mut self.voice.sensitivity, 0.0, 4000.0) {
-                self.save_voice();
-            }
-        }
-        if ui.button(if self.mic_test { "Stop Let's Check" } else { "Let's Check" }) {
-            self.mic_test = !self.mic_test;
-        }
-        if ui.checkbox("Noise suppression", &mut self.voice.noise_suppression) {
+        settings_divider(ui, width);
+        if settings_toggle_row(ui, "noise-suppression", "Noise Suppression", &mut self.voice.noise_suppression, width) {
             self.save_voice();
         }
-        if ui.checkbox("Echo cancellation", &mut self.voice.echo_cancellation) {
+        settings_divider(ui, width);
+        if settings_toggle_row(ui, "auto-gain", "Automatic Gain Control", &mut self.voice.auto_gain, width) {
             self.save_voice();
         }
-        if ui.checkbox("Automatic gain control", &mut self.voice.auto_gain) {
-            self.save_voice();
-        }
-        section_label(ui, "VIDEO", self.bold_font, None);
-        self.draw_camera_picker(ui);
-        section_label(ui, "SCREEN SHARE", self.bold_font, None);
-        self.draw_stream_quality(ui);
-        self.draw_audio_sources(ui);
-        ui.text_wrapped("Open Share Your Screen from a voice channel or a call. Pick a screen or an application, then press Go Live. Nothing is shared before that.");
+        settings_divider(ui, width);
+        settings_spacer(ui);
+
+        settings_page_title(ui, self.bold_font, "Video Settings");
+        self.draw_camera_picker(ui, width);
+        settings_spacer(ui);
+        settings_divider(ui, width);
+
+        settings_page_title(ui, self.bold_font, "Screen Share");
+        self.draw_stream_quality(ui, width);
+        settings_spacer(ui);
+        self.draw_audio_sources(ui, width);
+        settings_spacer(ui);
+        ui.text_colored(
+            MUTED,
+            "Open Share Your Screen from a voice channel or a call. Pick a screen or an application, then press Go Live. Nothing is shared before that.",
+        );
     }
 
-    fn draw_camera_picker(&mut self, ui: &Ui) {
+    fn draw_sensitivity_settings(&mut self, ui: &Ui, width: f32) {
+        settings_form_label(ui, self.bold_font, "INPUT SENSITIVITY");
+        if settings_toggle_row(
+            ui,
+            "sensitivity-auto",
+            "Automatically determine input sensitivity",
+            &mut self.voice.auto_sensitivity,
+            width,
+        ) {
+            self.save_voice();
+        }
+        if self.voice.auto_sensitivity {
+            self.draw_input_meter(ui, width, 12.0, None);
+        } else {
+            let mut db = rms_to_db(self.voice.sensitivity).round() as i32;
+            if settings_slider_i32(ui, "##sensitivity", &mut db, -100, 0, width, " dB") {
+                self.voice.sensitivity = db_to_rms(db as f32);
+            }
+            if ui.is_item_deactivated_after_edit() {
+                self.save_voice();
+            }
+            self.draw_input_meter(ui, slider_track_width(width), 12.0, Some(self.voice.sensitivity));
+            ui.text_colored(MUTED, "Your voice is sent when the bar passes the white mark.");
+        }
+        settings_spacer(ui);
+    }
+
+    fn draw_push_to_talk_settings(&mut self, ui: &Ui, two_columns: bool, column_w: f32, gap: f32) {
+        let row = ui.cursor_pos();
+        settings_form_label(ui, self.bold_font, "SHORTCUT");
+        self.draw_keybind(ui, column_w);
+        if two_columns {
+            let left_end = ui.cursor_pos()[1];
+            ui.set_cursor_pos([row[0] + column_w + gap, row[1]]);
+            ui.group(|| self.draw_release_delay(ui, column_w));
+            ui.set_cursor_pos([row[0], left_end.max(ui.cursor_pos()[1])]);
+        } else {
+            settings_spacer(ui);
+            self.draw_release_delay(ui, column_w);
+        }
+        settings_spacer(ui);
+    }
+
+    fn draw_release_delay(&mut self, ui: &Ui, width: f32) {
+        settings_form_label(ui, self.bold_font, "PUSH TO TALK RELEASE DELAY");
+        let mut release = self.voice.release_ms.min(2000) as i32;
+        if settings_slider_i32(ui, "##release-delay", &mut release, 0, 2000, width, " ms") {
+            self.voice.release_ms = release.max(0) as u32;
+        }
+        if ui.is_item_deactivated_after_edit() {
+            self.save_voice();
+        }
+    }
+
+    fn draw_keybind(&mut self, ui: &Ui, width: f32) {
+        let recording = self.settings.recording();
+        let origin = ui.cursor_screen_pos();
+        let height = 40.0;
+        let button_label = if recording { "Stop Recording" } else { "Edit Keybind" };
+        let button_w = ui.calc_text_size("Stop Recording")[0] + 24.0;
+        let clicked = ui.invisible_button("ptt-keybind", [width, height]);
+        let hovered = ui.is_item_hovered();
+        let draw = ui.get_window_draw_list();
+        let outline = if recording { RED } else if hovered { MUTED } else { [0.0, 0.0, 0.0, 0.0] };
+        draw.add_rect(origin, [origin[0] + width, origin[1] + height], RAIL_BG).rounding(4.0).filled(true).build();
+        draw.add_rect(origin, [origin[0] + width, origin[1] + height], outline).rounding(4.0).thickness(1.0).build();
+        let key_text = if recording { "Press a keyΓÇª".to_string() } else { self.voice.ptt_key.clone() };
+        let text_h = ui.calc_text_size(&key_text)[1];
+        draw.add_text([origin[0] + 12.0, origin[1] + (height - text_h) * 0.5], if recording { RED } else { TEXT }, &key_text);
+        let button_min = [origin[0] + width - button_w - 4.0, origin[1] + 4.0];
+        let button_max = [origin[0] + width - 4.0, origin[1] + height - 4.0];
+        draw.add_rect(button_min, button_max, if recording { RED } else { ROW_SELECTED }).rounding(4.0).filled(true).build();
+        let label_size = ui.calc_text_size(button_label);
+        draw.add_text(
+            [button_min[0] + (button_w - label_size[0]) * 0.5, origin[1] + (height - label_size[1]) * 0.5],
+            WHITE,
+            button_label,
+        );
+        if clicked {
+            if recording {
+                self.settings.finish_recording();
+            } else {
+                self.settings.start_recording();
+            }
+        } else if recording {
+            self.capture_ptt_key(ui);
+        }
+        if recording {
+            ui.text_colored(MUTED, "Press Escape to cancel.");
+        }
+    }
+
+    fn draw_camera_picker(&mut self, ui: &Ui, width: f32) {
         if !self.cameras_loaded {
             self.refresh_cameras();
         }
+        settings_form_label(ui, self.bold_font, "CAMERA");
         if self.cameras.is_empty() {
             ui.text_colored(MUTED, "No camera is available.");
         } else {
@@ -3400,59 +3697,88 @@ impl App {
                 .iter()
                 .position(|(id, _)| *id == self.camera_choice.device_index())
                 .unwrap_or(0);
-            if ui.combo_simple_string("Camera", &mut index, &labels) {
-                self.camera_choice.select(self.cameras[index].0);
+            if settings_combo(ui, "##camera", width.min(360.0), &labels, &mut index) {
+                let (device, name) = self.cameras[index].clone();
+                self.camera_choice.select(device);
+                self.voice.camera = name;
+                self.save_voice();
             }
         }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "PREVIEW");
+        let box_w = width.min(400.0);
+        let box_h = box_w * 9.0 / 16.0;
+        let origin = ui.cursor_screen_pos();
+        ui.dummy([box_w, box_h]);
+        let draw = ui.get_window_draw_list();
+        draw.add_rect(origin, [origin[0] + box_w, origin[1] + box_h], RAIL_BG).rounding(8.0).filled(true).build();
         if let Some(shot) = &self.local_camera {
-            ui.image(shot.texture, fit_inside(shot.size, 320.0, 180.0));
+            let fitted = fit_inside(shot.size, box_w, box_h);
+            let min = [origin[0] + (box_w - fitted[0]) * 0.5, origin[1] + (box_h - fitted[1]) * 0.5];
+            draw.add_image(shot.texture, min, [min[0] + fitted[0], min[1] + fitted[1]], [0.0, 0.0], [1.0, 1.0], WHITE);
         } else {
-            ui.text_colored(MUTED, "Camera preview");
+            let text = if self.cameras.is_empty() { "No camera" } else { "Starting cameraΓÇª" };
+            let size = ui.calc_text_size(text);
+            draw.add_text([origin[0] + (box_w - size[0]) * 0.5, origin[1] + (box_h - size[1]) * 0.5], MUTED, text);
         }
     }
 
-    fn draw_stream_quality(&mut self, ui: &Ui) {
+    fn draw_stream_quality(&mut self, ui: &Ui, width: f32) {
         let (height, hz) = self.selected_capture_limits();
-        section_label(ui, "RESOLUTION", self.bold_font, None);
-        for resolution in stream_resolutions() {
-            let blocked = resolution_block(resolution, height);
-            let label = match &blocked {
-                Some(reason) => format!("{} — {reason}", stream_resolution_label(resolution)),
-                None => stream_resolution_label(resolution).to_string(),
-            };
-            let selected = self.stream_resolution == resolution;
-            if blocked.is_some() {
-                ui.text_colored(MUTED, label);
-                continue;
-            }
-            if chip(ui, &format!("res-{}", resolution_key(resolution)), &label, selected) && !selected {
-                self.stream_resolution = resolution;
+        settings_form_label(ui, self.bold_font, "RESOLUTION");
+        let resolutions = stream_resolutions();
+        let mut reasons = Vec::new();
+        let choices: Vec<(String, String, bool, bool)> = resolutions
+            .iter()
+            .map(|resolution| {
+                let blocked = resolution_block(*resolution, height);
+                if let Some(reason) = &blocked {
+                    reasons.push(reason.clone());
+                }
+                (
+                    format!("res-{}", resolution_key(*resolution)),
+                    stream_resolution_label(*resolution).to_string(),
+                    self.stream_resolution == *resolution,
+                    blocked.is_none(),
+                )
+            })
+            .collect();
+        if let Some(index) = settings_chip_row(ui, &choices, width) {
+            if self.stream_resolution != resolutions[index] {
+                self.stream_resolution = resolutions[index];
                 self.save_stream();
             }
-            ui.same_line();
         }
-        ui.new_line();
-        section_label(ui, "FRAME RATE", self.bold_font, None);
-        for fps in stream_frame_rates() {
-            let blocked = fps_block(fps, hz);
-            let label = match &blocked {
-                Some(reason) => format!("{} — {reason}", stream_fps_label(fps)),
-                None => stream_fps_label(fps).to_string(),
-            };
-            let selected = self.stream_fps == fps;
-            if blocked.is_some() {
-                ui.text_colored(MUTED, label);
-                continue;
-            }
-            if chip(ui, &format!("fps-{}", fps_key(fps)), &label, selected) && !selected {
-                self.stream_fps = fps;
+        for reason in &reasons {
+            ui.text_colored(MUTED, reason);
+        }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "FRAME RATE");
+        let rates = stream_frame_rates();
+        let mut reasons = Vec::new();
+        let choices: Vec<(String, String, bool, bool)> = rates
+            .iter()
+            .map(|fps| {
+                let blocked = fps_block(*fps, hz);
+                if let Some(reason) = &blocked {
+                    reasons.push(reason.clone());
+                }
+                (format!("fps-{}", fps_key(*fps)), stream_fps_label(*fps).to_string(), self.stream_fps == *fps, blocked.is_none())
+            })
+            .collect();
+        if let Some(index) = settings_chip_row(ui, &choices, width) {
+            if self.stream_fps != rates[index] {
+                self.stream_fps = rates[index];
                 self.save_stream();
             }
-            ui.same_line();
         }
-        ui.new_line();
+        for reason in &reasons {
+            ui.text_colored(MUTED, reason);
+        }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "ENCODER");
         if let Some(reason) = hardware_encoder_block(false) {
-            ui.text_colored(MUTED, format!("Encoder: Software JPEG. {reason}"));
+            ui.text_colored(MUTED, format!("Software JPEG. {reason}"));
         }
         self.stream.hardware = false;
     }
@@ -3534,8 +3860,9 @@ impl App {
                                 });
                         }
                     });
-                    self.draw_stream_quality(ui);
-                    self.draw_audio_sources(ui);
+                    let share_w = ui.content_region_avail()[0];
+                    self.draw_stream_quality(ui, share_w);
+                    self.draw_audio_sources(ui, share_w);
                     if ui.button("Go Live") {
                         if self.share.go_live() {
                             self.share_open = false;
@@ -3867,16 +4194,16 @@ impl App {
         self.stream.sources.push(MixSource { id, name, enabled: false, volume: 1.0 });
     }
 
-    fn draw_named_combo(&mut self, ui: &Ui, label: &str, devices: &[String], input: bool) {
+    fn draw_named_combo(&mut self, ui: &Ui, id: &str, kind: &str, width: f32, devices: &[String], input: bool) {
         if devices.is_empty() {
-            ui.text_colored(MUTED, format!("No {label} is available."));
+            ui.text_colored(MUTED, format!("No {kind} is available."));
             return;
         }
         let mut labels = vec!["Default".to_string()];
         labels.extend(devices.iter().cloned());
         let current = if input { &self.voice.input_device } else { &self.voice.output_device };
         let mut index = devices.iter().position(|name| name == current).map(|index| index + 1).unwrap_or(0);
-        if ui.combo_simple_string(label, &mut index, &labels) {
+        if settings_combo(ui, &format!("##{id}"), width, &labels, &mut index) {
             let chosen = if index == 0 { String::new() } else { devices[index - 1].clone() };
             if input {
                 self.voice.input_device = chosen;
@@ -3887,39 +4214,56 @@ impl App {
         }
     }
 
-    fn draw_input_meter(&self, ui: &Ui) {
+    fn draw_input_meter(&self, ui: &Ui, width: f32, height: f32, threshold: Option<f32>) {
         let rms = self.media.as_ref().map(|media| media.input_rms()).unwrap_or(0.0);
-        let level = (rms / 8000.0).clamp(0.0, 1.0);
-        let threshold = if self.voice.auto_sensitivity { OPEN_MIC_RMS } else { self.voice.sensitivity };
-        let mark = (threshold / 8000.0).clamp(0.0, 1.0);
+        let level = meter_fraction(rms);
         let origin = ui.cursor_screen_pos();
-        let width = ui.content_region_avail()[0].max(40.0);
-        ui.dummy([width, 14.0]);
+        ui.dummy([width, height]);
+        let bar_h = 8.0;
+        let top = origin[1] + (height - bar_h) * 0.5;
         let draw = ui.get_window_draw_list();
-        draw.add_rect(origin, [origin[0] + width, origin[1] + 8.0], PANEL_BG).filled(true).build();
-        draw.add_rect(origin, [origin[0] + width * level, origin[1] + 8.0], GREEN).filled(true).build();
-        let mark_x = origin[0] + width * mark;
-        draw.add_rect([mark_x, origin[1] - 2.0], [mark_x + 2.0, origin[1] + 10.0], TEXT).filled(true).build();
+        draw.add_rect([origin[0], top], [origin[0] + width, top + bar_h], RAIL_BG).rounding(4.0).filled(true).build();
+        if level > 0.0 {
+            let color = match threshold {
+                Some(gate) if rms < gate => LOW_LEVEL,
+                _ => GREEN,
+            };
+            draw.add_rect([origin[0], top], [origin[0] + width * level, top + bar_h], color).rounding(4.0).filled(true).build();
+        }
+        if let Some(gate) = threshold {
+            // Same 5 px inset as the settings slider knob, so the mark sits under the knob.
+            let mark_x = origin[0] + 5.0 + (width - 10.0).max(0.0) * meter_fraction(gate);
+            draw.add_rect([mark_x - 1.0, top - 4.0], [mark_x + 1.0, top + bar_h + 4.0], WHITE).filled(true).build();
+        }
     }
 
-    fn draw_audio_sources(&mut self, ui: &Ui) {
+    fn draw_audio_sources(&mut self, ui: &Ui, width: f32) {
         self.ensure_audio_devices();
-        section_label(ui, "STREAM AUDIO", self.bold_font, None);
-        ui.text_colored(MUTED, "Check every app or device to mix into the stream. Each one has its own volume.");
+        settings_form_label(ui, self.bold_font, "STREAM AUDIO");
+        ui.text_colored(MUTED, "Turn on every app or device to mix into the stream. Each one has its own volume.");
+        settings_spacer(ui);
         let count = self.stream.sources.len();
+        if count == 0 {
+            ui.text_colored(MUTED, "No audio sources were found.");
+        }
         for index in 0..count {
             let mut enabled = self.stream.sources[index].enabled;
             let name = self.stream.sources[index].name.clone();
             let id = self.stream.sources[index].id.clone();
-            if ui.checkbox(format!("{name}##src-{id}"), &mut enabled) {
+            if settings_toggle_row(ui, &format!("src-{id}"), &name, &mut enabled, width) {
                 self.stream.sources[index].enabled = enabled;
                 self.save_stream();
             }
-            let mut volume = self.stream.sources[index].volume;
-            if ui.slider_f32(format!("Volume##vol-{id}"), &mut volume, 0.0, 2.0) {
+            if enabled {
+                let mut volume = self.stream.sources[index].volume;
+                let release = settings_volume_slider(ui, &format!("vol-{id}"), &mut volume, width);
                 self.stream.sources[index].volume = volume;
-                self.save_stream();
+                if release {
+                    self.save_stream();
+                }
+                settings_spacer(ui);
             }
+            settings_divider(ui, width);
         }
     }
 
@@ -4126,6 +4470,192 @@ fn fit_inside(size: [f32; 2], max_width: f32, max_height: f32) -> [f32; 2] {
     [size[0] * scale, size[1] * scale]
 }
 
+const SETTINGS_DIVIDER: [f32; 4] = [78.0 / 255.0, 80.0 / 255.0, 88.0 / 255.0, 0.48];
+const SWITCH_OFF: [f32; 4] = [128.0 / 255.0, 132.0 / 255.0, 142.0 / 255.0, 1.0];
+const LOW_LEVEL: [f32; 4] = [250.0 / 255.0, 166.0 / 255.0, 26.0 / 255.0, 1.0];
+
+fn settings_page_title(ui: &Ui, bold: Option<FontId>, text: &str) {
+    {
+        let _font = ui.push_font_with_size(bold, 20.0);
+        ui.text(text);
+    }
+    ui.dummy([0.0, 12.0]);
+}
+
+fn settings_form_label(ui: &Ui, bold: Option<FontId>, text: &str) {
+    {
+        let _font = ui.push_font_with_size(bold, 12.0);
+        ui.text_colored(MUTED, text);
+    }
+    ui.dummy([0.0, 4.0]);
+}
+
+fn settings_spacer(ui: &Ui) {
+    ui.dummy([0.0, 12.0]);
+}
+
+fn settings_divider(ui: &Ui, width: f32) {
+    let origin = ui.cursor_screen_pos();
+    ui.dummy([width, 17.0]);
+    ui.get_window_draw_list()
+        .add_rect([origin[0], origin[1] + 8.0], [origin[0] + width, origin[1] + 9.0], SETTINGS_DIVIDER)
+        .filled(true)
+        .build();
+}
+
+fn settings_toggle_row(ui: &Ui, id: &str, label: &str, value: &mut bool, width: f32) -> bool {
+    let origin = ui.cursor_screen_pos();
+    let height = 40.0;
+    let clicked = ui.invisible_button(id, [width, height]);
+    if clicked {
+        *value = !*value;
+    }
+    let draw = ui.get_window_draw_list();
+    let switch_w = 40.0;
+    let switch_h = 24.0;
+    let label_w = width - switch_w - 16.0;
+    let shown = clip_label(ui, label, label_w);
+    let text_h = ui.calc_text_size(&shown)[1];
+    draw.add_text([origin[0], origin[1] + (height - text_h) * 0.5], TEXT, &shown);
+    let x = origin[0] + width - switch_w;
+    let y = origin[1] + (height - switch_h) * 0.5;
+    draw.add_rect([x, y], [x + switch_w, y + switch_h], if *value { GREEN } else { SWITCH_OFF })
+        .rounding(switch_h * 0.5)
+        .filled(true)
+        .build();
+    let knob_x = if *value { x + switch_w - switch_h * 0.5 } else { x + switch_h * 0.5 };
+    draw.add_circle([knob_x, y + switch_h * 0.5], switch_h * 0.5 - 3.0, WHITE).filled(true).build();
+    clicked
+}
+
+fn settings_radio_row(ui: &Ui, id: &str, label: &str, selected: bool, width: f32) -> bool {
+    let origin = ui.cursor_screen_pos();
+    let height = 44.0;
+    let clicked = ui.invisible_button(id, [width, height]);
+    let hovered = ui.is_item_hovered();
+    let draw = ui.get_window_draw_list();
+    let fill = if selected { ROW_SELECTED } else if hovered { ROW_HOVER } else { SIDEBAR_BG };
+    draw.add_rect(origin, [origin[0] + width, origin[1] + height], fill).rounding(4.0).filled(true).build();
+    let center = [origin[0] + 22.0, origin[1] + height * 0.5];
+    draw.add_circle(center, 10.0, if selected { WHITE } else { MUTED }).thickness(2.0).build();
+    if selected {
+        draw.add_circle(center, 5.0, WHITE).filled(true).build();
+    }
+    let text_h = ui.calc_text_size(label)[1];
+    draw.add_text([origin[0] + 44.0, origin[1] + (height - text_h) * 0.5], if selected { WHITE } else { TEXT }, label);
+    ui.dummy([0.0, 4.0]);
+    clicked
+}
+
+fn settings_combo(ui: &Ui, id: &str, width: f32, labels: &[String], index: &mut usize) -> bool {
+    ui.set_next_item_width(width);
+    let preview = labels.get(*index).map(String::as_str).unwrap_or("");
+    let mut changed = false;
+    if let Some(token) = ui.begin_combo(id, preview) {
+        for (position, label) in labels.iter().enumerate() {
+            let selected = position == *index;
+            if ui.selectable_config(format!("{label}##{position}")).selected(selected).build() {
+                *index = position;
+                changed = true;
+            }
+            if selected {
+                ui.set_item_default_focus();
+            }
+        }
+        if ui.is_key_pressed(Key::Escape) {
+            ui.close_current_popup();
+        }
+        token.end();
+    }
+    changed
+}
+
+fn settings_slider_i32(ui: &Ui, id: &str, value: &mut i32, min: i32, max: i32, width: f32, unit: &str) -> bool {
+    let track_w = slider_track_width(width);
+    let changed = {
+        // Separate bindings, because locals drop in reverse order and Dear ImGui pops its color stack last-in first-out.
+        let clear = [0.0, 0.0, 0.0, 0.0];
+        let _frame = ui.push_style_color(StyleColor::FrameBg, clear);
+        let _frame_hovered = ui.push_style_color(StyleColor::FrameBgHovered, clear);
+        let _frame_active = ui.push_style_color(StyleColor::FrameBgActive, clear);
+        let _grab = ui.push_style_color(StyleColor::SliderGrab, clear);
+        let _grab_active = ui.push_style_color(StyleColor::SliderGrabActive, clear);
+        let _text = ui.push_style_color(StyleColor::Text, clear);
+        ui.set_next_item_width(track_w);
+        ui.slider(id, min, max, value)
+    };
+    let active = ui.is_item_active();
+    let hovered = ui.is_item_hovered();
+    let item_min = ui.item_rect_min();
+    let item_max = ui.item_rect_max();
+    let center_y = (item_min[1] + item_max[1]) * 0.5;
+    let knob_x = item_min[0] + 5.0 + (track_w - 10.0).max(0.0) * slider_fraction(*value, min, max);
+    let draw = ui.get_window_draw_list();
+    draw.add_rect([item_min[0], center_y - 4.0], [item_min[0] + track_w, center_y + 4.0], SWITCH_OFF)
+        .rounding(4.0)
+        .filled(true)
+        .build();
+    draw.add_rect([item_min[0], center_y - 4.0], [knob_x, center_y + 4.0], BLURPLE).rounding(4.0).filled(true).build();
+    draw.add_rect([knob_x - 5.0, center_y - 12.0], [knob_x + 5.0, center_y + 12.0], if active || hovered { WHITE } else { TEXT })
+        .rounding(3.0)
+        .filled(true)
+        .build();
+    let label = format!("{value}{unit}");
+    let label_size = ui.calc_text_size(&label);
+    draw.add_text(
+        [item_min[0] + width - label_size[0], center_y - label_size[1] * 0.5],
+        if active { WHITE } else { TEXT },
+        &label,
+    );
+    changed
+}
+
+fn settings_volume_slider(ui: &Ui, id: &str, volume: &mut f32, width: f32) -> bool {
+    let mut percent = volume_to_percent(*volume);
+    if settings_slider_i32(ui, &format!("##{id}"), &mut percent, 0, 200, width, "%") {
+        *volume = percent_to_volume(percent);
+    }
+    ui.is_item_deactivated_after_edit()
+}
+
+fn settings_chip_row(ui: &Ui, choices: &[(String, String, bool, bool)], width: f32) -> Option<usize> {
+    let spacing = 8.0;
+    let widths: Vec<f32> = choices.iter().map(|(_, label, _, _)| ui.calc_text_size(label)[0] + 28.0).collect();
+    let rows = wrap_rows(&widths, width, spacing);
+    let mut clicked = None;
+    for (index, (id, label, selected, enabled)) in choices.iter().enumerate() {
+        if index > 0 && rows[index] == rows[index - 1] {
+            ui.same_line_with_spacing(0.0, spacing);
+        }
+        if *enabled {
+            if chip(ui, id, label, *selected) {
+                clicked = Some(index);
+            }
+        } else {
+            let origin = ui.cursor_screen_pos();
+            ui.dummy([widths[index], 32.0]);
+            let dim = [MUTED[0], MUTED[1], MUTED[2], 0.45];
+            ui.get_window_draw_list().add_text([origin[0] + 14.0, origin[1] + 7.0], dim, label);
+        }
+    }
+    clicked
+}
+
+fn clip_label(ui: &Ui, label: &str, width: f32) -> String {
+    if ui.calc_text_size(label)[0] <= width {
+        return label.to_string();
+    }
+    let mut shown = String::new();
+    for character in label.chars() {
+        shown.push(character);
+        if ui.calc_text_size(format!("{shown}ΓÇª"))[0] > width {
+            shown.pop();
+            break;
+        }
+    }
+    format!("{shown}ΓÇª")
+}
+
 fn apply_discord_style(style: &mut Style) {
     style.set_color(StyleColor::Text, TEXT);
     style.set_color(StyleColor::TextDisabled, MUTED);
@@ -4203,26 +4733,6 @@ fn chip(ui: &Ui, id: &str, label: &str, selected: bool) -> bool {
     clicked
 }
 
-fn section_label(ui: &Ui, text: &str, bold: Option<FontId>, chevron: Option<ManagedTextureId>) {
-    let width = ui.content_region_avail()[0].max(32.0);
-    let origin = ui.cursor_screen_pos();
-    ui.dummy([width, 28.0]);
-    let _font = ui.push_font_with_size(bold, 12.0);
-    let mut x = origin[0] + 8.0;
-    if let Some(texture) = chevron {
-        ui.get_window_draw_list().add_image(
-            texture,
-            [x, origin[1] + 8.0],
-            [x + 12.0, origin[1] + 20.0],
-            [0.0, 0.0],
-            [1.0, 1.0],
-            MUTED,
-        );
-        x += 16.0;
-    }
-    let text_h = ui.calc_text_size(text)[1];
-    ui.get_window_draw_list().add_text([x, origin[1] + (28.0 - text_h) * 0.5], MUTED, text);
-}
 
 fn header_rule(ui: &Ui) {
     let pos = ui.window_pos();

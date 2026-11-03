@@ -762,7 +762,9 @@ pub fn fade_gain(current: f32, target: f32, step: f32) -> f32 {
     }
 }
 
+/// Missing fields fall back to the defaults, so an older `stream.json` keeps the rest of its choices.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StreamDefaults {
     pub resolution: String,
     pub fps: String,
@@ -831,7 +833,9 @@ pub fn fps_from_key(key: &str) -> StreamFps {
     }
 }
 
+/// Missing fields fall back to the defaults, so an older `voice.json` keeps the rest of its choices.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VoicePrefs {
     pub input_device: String,
     pub output_device: String,
@@ -844,6 +848,8 @@ pub struct VoicePrefs {
     pub noise_suppression: bool,
     pub echo_cancellation: bool,
     pub auto_gain: bool,
+    /// Camera name, not index. Indexes change when cameras are plugged in or removed.
+    pub camera: String,
     /// GLFW-style letter or "V". Missing older files keep V.
     #[serde(default = "default_ptt_key")]
     pub ptt_key: String,
@@ -867,6 +873,7 @@ impl Default for VoicePrefs {
             noise_suppression: true,
             echo_cancellation: true,
             auto_gain: false,
+            camera: String::new(),
             ptt_key: default_ptt_key(),
         }
     }
