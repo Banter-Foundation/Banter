@@ -15,7 +15,7 @@ pub enum BanterError {
     InvalidCredentials,
     #[error("name must be 1-100 characters")]
     InvalidName,
-    #[error("avatar must be a png, jpeg, or gif image")]
+    #[error("avatar must be a png, jpeg, gif, or webp image")]
     InvalidAvatar,
     #[error("not found")]
     NotFound,

@@ -213,6 +213,19 @@ pub fn voice_tile_grid(count: usize, area_w: f32, area_h: f32, gap: f32) -> Tile
     best
 }
 
+/// Empty space above the message list so a short history sits on the composer, as in Discord.
+pub fn chat_top_pad(content_h: f32, view_h: f32) -> f32 {
+    (view_h - content_h).max(0.0)
+}
+
+/// How far from the bottom (px) still counts as "at the bottom" for following new messages.
+pub const CHAT_STICK_SLACK: f32 = 24.0;
+
+/// Whether the message list should jump to the newest message this frame.
+pub fn chat_should_stick(scroll_y: f32, scroll_max_y: f32, just_sent: bool) -> bool {
+    just_sent || scroll_max_y <= 0.0 || scroll_y >= scroll_max_y - CHAT_STICK_SLACK
+}
+
 /// Left x offsets for a row of items centered in `total`.
 pub fn centered_row(total: f32, widths: &[f32], gap: f32) -> Vec<f32> {
     if widths.is_empty() {

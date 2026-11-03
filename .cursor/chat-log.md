@@ -302,6 +302,9 @@ Change of plan: drop the settings audit. A separate agent now owns it, in a git 
 
 The settings audit was not started here and stays on the settings-fixes worktree. No settings code was edited in D:\Projects\Banter. The Podman image is already on GHCR. The Docker commit and the pre-release are next, then chat rows and avatar upload.
 
+## Summary
+
+The settings audit stayed on `D:\Projects\Banter-settings` / `settings-fixes` and was not edited. The pre-release was already published before this follow-up: https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-1, tag `Version-1-test-1`, image `ghcr.io/snowedinowl/banter:version-1-test-1`, container commit https://github.com/SnowedInOwl/Banter/commit/e134bc0, files `Banter-windows-version-1-test-1.zip` and `banter-server.exe`. Chat rows and My Account avatar upload, crop, zoom, and remove are in the debug build opened at 11:04:05 AM America/Chicago (pid 34512). That My Account avatar block is the only settings overlap. Client tests 26 passed and server foundation tests 12 passed. The release tag was not moved.
 ## User
 
 (Partial record. The full message was lost to context compaction before it was logged; only these exact phrases were kept.)
@@ -315,3 +318,39 @@ The settings audit was not started here and stays on the settings-fixes worktree
 ## Summary
 
 The Discord skin pass is on branch ui-polish in D:\Projects\Banter-ui. Shared metrics live in crates/banter/src/theme.rs and drawing helpers in crates/banter/src/skin.rs. Sign-in, register, rail, channel list, server menu, header, composer, members, voice stage, friends, and all modals were redrawn and screenshotted. Chat rows, avatar upload, and User Settings were not touched. Screenshots were taken only while the other agents' Banter windows were idle, with a guard that refuses to click or capture when another window is on top.
+
+## User
+
+Owl: "text still need more work as it still doesn't look like discord."
+
+Prioritize the text channel / message list / composer so they match Discord 1:1. Chat rows already got a pass on main (40px avatar, 7-minute grouping, gutter timestamps, hover actions) in fa4b1e7, but Owl says the text still doesn't look right — keep going on spacing, typography, colors, separators, composer, channel header, and anything else that diverges from Discord's desktop text chat. Use Discord screenshots already in the project/store if present; don't invent a new layout. Stay on the ui-polish worktree at D:\Projects\Banter-ui. Never touch E:. When done, show before/after and leave the branch ready to merge with settings-fixes later.
+
+## User
+
+Owl just sent a Discord screenshot of the target message row (empty chat message, image only). Match Banter's text message rows to this reference exactly: circular letter avatar on the left, bold white username, muted "Today at …" timestamp beside the name, body text on the next line, dark charcoal chat background, Discord spacing/alignment.
+
+Reference image (Project store):
+- Cloud path: /cursor/stores/self/media/discord-message-row-reference.png
+- On Black-Birb that store maps under: C:\Users\Winter\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5\files\media\discord-message-row-reference.png
+
+Prioritize this over other polish until the row matches. Stay on D:\Projects\Banter-ui (ui-polish). Never touch E:.
+
+## User
+
+Owl sent a second Discord screenshot: same message row on hover, with the floating action bar on the right — Reply (curved arrow), Edit (pencil), Add Reaction (smile+), More (⋯). Match Banter's hover toolbar icons, placement, and styling to this.
+
+Reference (Project store):
+- Cloud: /cursor/stores/self/media/discord-message-row-hover.png
+- On Black-Birb: C:\Users\Winter\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5\files\media\discord-message-row-hover.png
+
+Use this together with discord-message-row-reference.png (resting state). Stay on D:\Projects\Banter-ui. Never touch E:.
+
+## User
+
+Owl: "mind you new messages should show at the bottom of the screen like in discord"
+
+Chat must scroll so the newest messages sit at the bottom of the message pane (Discord layout: empty space above when few messages; auto-scroll to bottom on send/receive when already at bottom). Don't put the first message at the top with empty space below. Stay on D:\Projects\Banter-ui. Never touch E:.
+
+## Summary
+
+main was merged into ui-polish. The two reference images match Banter's own main-branch colors exactly (header rule 1B1C1F, hover 35373C, toolbar 232428, blurple letter avatar), and the hover bar in the image shows Reply, Edit, Delete, More rather than Add Reaction; reactions stay deferred. Banter's rows now match both images within 1 px. The history is bottom-anchored and follows new messages from the bottom or after sending.

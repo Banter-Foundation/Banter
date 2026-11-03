@@ -2,9 +2,28 @@
 
 use banter::{discord_shell_columns, rasterize_lucide};
 use banter::theme::{
-    self, TooltipSide, centered_row, hex, rail_corner_radius, rail_pill_height, server_acronym, status_dot,
-    tooltip_rect, voice_tile_grid,
+    self, TooltipSide, centered_row, chat_should_stick, chat_top_pad, hex, rail_corner_radius, rail_pill_height,
+    server_acronym, status_dot, tooltip_rect, voice_tile_grid,
 };
+
+#[test]
+fn a_short_history_is_pushed_to_the_bottom_of_the_pane() {
+    assert!(close(chat_top_pad(120.0, 600.0), 480.0));
+    assert!(close(chat_top_pad(600.0, 600.0), 0.0));
+    assert!(close(chat_top_pad(900.0, 600.0), 0.0));
+    assert!(close(chat_top_pad(0.0, 0.0), 0.0));
+}
+
+#[test]
+fn chat_follows_new_messages_only_from_the_bottom_or_after_sending() {
+    // At the bottom (within one line), new messages keep the view pinned.
+    assert!(chat_should_stick(980.0, 1000.0, false));
+    assert!(chat_should_stick(0.0, 0.0, false));
+    // Scrolled up reading history: a received message does not yank the view.
+    assert!(!chat_should_stick(200.0, 1000.0, false));
+    // Sending always jumps to the newest message, like Discord.
+    assert!(chat_should_stick(200.0, 1000.0, true));
+}
 
 fn close(a: f32, b: f32) -> bool {
     (a - b).abs() < 0.01

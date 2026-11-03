@@ -114,7 +114,7 @@ fn router(state: HttpState) -> Router {
         .route("/v1/login", post(login))
         .route("/v1/logout", post(logout))
         .route("/v1/me", get(me).patch(patch_me))
-        .route("/v1/me/avatar", post(upload_avatar))
+        .route("/v1/me/avatar", post(upload_avatar).delete(delete_avatar))
         .route("/v1/users/{id}/avatar", get(avatar))
         .route("/v1/friends/requests", get(list_requests).post(create_request))
         .route("/v1/friends/requests/{id}/accept", post(accept_request))
@@ -205,6 +205,11 @@ async fn upload_avatar(
     body: Bytes,
 ) -> Result<StatusCode, BanterError> {
     state.store.set_avatar(account.id, &body)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_avatar(State(state): State<HttpState>, Auth(account): Auth) -> Result<StatusCode, BanterError> {
+    state.store.clear_avatar(account.id)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -343,6 +348,8 @@ async fn members(
                 "display_name": member.display_name,
                 "nickname": member.nickname,
                 "is_owner": member.is_owner,
+                "has_avatar": member.has_avatar,
+                "avatar_rev": member.avatar_rev,
                 "presence": state.live.presence(member.user_id),
             })
         })

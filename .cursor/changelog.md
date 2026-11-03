@@ -56,6 +56,15 @@ The debug app is open so it can be looked at: pid 15564, title Banter, respondin
 
 The server image `ghcr.io/snowedinowl/banter:version-1-test-1` was built with Podman and pushed to GHCR. Compose starts it with `BANTER_BIND=0.0.0.0`. The desktop app still defaults to `127.0.0.1:3970`. A register and a text message succeeded against the container. The Dockerfile gives the workspace a stub desktop crate so Cargo can load the manifest without compiling the app.
 
+## 2026-11-03 11:04:39 -06:00 [Winter] — Chat rows and profile pictures
+
+Text rows show a 40px round avatar, a bold display name, and a muted local time such as "Today at 10:17 AM". The full date is on hover. Messages from the same person within 7 minutes on the same local day are grouped, with the time in the gutter on hover. A date change draws a separator. The row highlights on hover, and the toolbar (reply, edit, delete, More) only shows then. More copies the message text.
+
+My Account can upload a PNG, JPG, GIF, or WebP, crop and zoom it into a circle, and save or remove it. The server stores a PNG no larger than 512px on a side and rejects files over 2 MB. Removing it returns the letter avatar. Chat rows, the member list, voice tiles, the user bar, and direct messages use the saved picture. A revision on the account is polled every 2 seconds so another client updates without a restart.
+
+The settings audit was not started in this tree. The only settings overlap is the avatar controls on My Account. `D:\Projects\Banter-settings` and the `settings-fixes` branch were not edited.
+
+Client tests: 26 passed. Server foundation tests: 12 passed. Debug window opened at 11:04:05 AM America/Chicago, pid 34512, title Banter. The `Version-1-test-1` tag was not moved. Pre-release: https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-1. Image: `ghcr.io/snowedinowl/banter:version-1-test-1`. Container commit: https://github.com/SnowedInOwl/Banter/commit/e134bc0. Attachments: `Banter-windows-version-1-test-1.zip` and `banter-server.exe`.
 ## 2026-11-03 11:36:08 -06:00 [Winter] — Discord skin pass on ui-polish
 
 Worktree `D:\Projects\Banter-ui`, branch `ui-polish`. The signed-in window and sign-in screens are redrawn to Discord's desktop metrics from one set of constants in `crates/banter/src/theme.rs`, with shared drawing helpers in `crates/banter/src/skin.rs`. Chat message rows, avatar upload, and User Settings were left to the agents that own them.
@@ -71,3 +80,12 @@ Worktree `D:\Projects\Banter-ui`, branch `ui-polish`. The signed-in window and s
 - Voice lists and tiles show your display name instead of "You"
 - Removed unused `add_channel`, `rail_icon`/`rail_gap`/`server_fill` free functions, and the old inline create-channel form and `draw_call`; the modals replace them
 - Tests: `crates/banter/tests/theme.rs` written first, 14 passed. Client 24 passed, server 11 passed
+
+## 2026-11-03 11:46:07 -06:00 [Winter] — Chat rows merged into ui-polish, history sits on the composer
+
+`main` (`fa4b1e7`: 40 px chat rows, grouping, hover toolbar, profile pictures) is merged into `ui-polish`. Conflicts kept the ui-polish layout and added main's behavior: Escape also closes the avatar crop and the More menu, the user-panel avatar opens My Account, and the `ellipsis` icon is in the table. Main's second `dm_row` was dropped because the ui-polish one already draws the avatar and status.
+
+- The message history is padded from the top so a short channel sits on the composer, as in Discord. It follows new messages only when already at the bottom, and always jumps after you send
+- Every message row now ends at its own bottom edge. A hovered row's toolbar no longer shifts the rows below it, and a history that fits no longer shows a scrollbar
+- Rows were compared pixel by pixel with `media/discord-message-row-reference.png` and `media/discord-message-row-hover.png`: name, timestamp, body, toolbar, and colors line up within 1 px
+- Tests: `a_short_history_is_pushed_to_the_bottom_of_the_pane` and `chat_follows_new_messages_only_from_the_bottom_or_after_sending` written first. Theme 16, client 26, server 12 passed

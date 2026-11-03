@@ -14,7 +14,8 @@ use banter_server::{
     Message, Presence, ServerSummary, VoiceFlags, VoiceMember,
 };
 use dear_imgui_rs::{
-    Condition, Context, DrawFlags, Key, ManagedTextureId, OwnedTextureData, Style, StyleColor, StyleVar, TextureFormat,
+    Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData, Style, StyleColor, StyleVar,
+    TextureFormat,
     Ui, WindowFlags, fonts::FontId,
 };
 
@@ -27,7 +28,9 @@ use crate::logic::{
     jpeg_quality_for_bitrate, lerp_size, load_json, mirror_rgba, password_blocks_copy, password_is_masked,
     push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key, save_json,
     settings_sections, speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms,
-    stream_max_edge, stream_resolution_label, stream_resolutions, unpack_picture, upsert_message, OPEN_MIC_RMS,
+    stream_max_edge, stream_resolution_label, stream_resolutions, unpack_picture, upsert_message,
+    chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_is_followup,
+    message_starts_new_day, OPEN_MIC_RMS,
 };
 use crate::media::{self, EngineUpdate, Media, VideoFrame};
 use crate::realtime::Realtime;
@@ -184,7 +187,22 @@ pub(crate) struct App {
     editing: Option<i64>,
     pending_file: Option<(String, Vec<u8>)>,
     avatars: HashMap<i64, Shot>,
-    avatar_miss: HashSet<i64>,
+    avatar_rev: HashMap<i64, i64>,
+    avatar_miss: HashMap<i64, i64>,
+    crop_open: bool,
+    crop_rgba: Vec<u8>,
+    crop_size: [u32; 2],
+    crop_zoom: f32,
+    crop_pan: [f32; 2],
+    crop_drag: Option<[f32; 2]>,
+    crop_preview: Option<Shot>,
+    crop_preview_key: [i32; 3],
+    more_for: Option<i64>,
+    /// Height of the drawn message history last frame; pads short histories down to the composer.
+    history_h: f32,
+    /// Set after sending so the list jumps to the newest message even when scrolled up.
+    chat_jump: bool,
+    copy_message: Option<String>,
     local_camera: Option<Shot>,
     local_screen: Option<Shot>,
     remote_video: HashMap<(i64, u8), Shot>,
@@ -303,7 +321,20 @@ impl App {
             editing: None,
             pending_file: None,
             avatars: HashMap::new(),
-            avatar_miss: HashSet::new(),
+            avatar_rev: HashMap::new(),
+            avatar_miss: HashMap::new(),
+            crop_open: false,
+            crop_rgba: Vec::new(),
+            crop_size: [0, 0],
+            crop_zoom: 1.0,
+            crop_pan: [0.0, 0.0],
+            crop_drag: None,
+            crop_preview: None,
+            crop_preview_key: [0, 0, 0],
+            more_for: None,
+            history_h: 0.0,
+            chat_jump: false,
+            copy_message: None,
             local_camera: None,
             local_screen: None,
             remote_video: HashMap::new(),
@@ -339,6 +370,9 @@ impl App {
     }
 
     pub(crate) fn prepare(&mut self, imgui: &mut Context) {
+        if let Some(text) = self.copy_message.take() {
+            imgui.set_clipboard_text(text);
+        }
         if !self.styled {
             apply_discord_style(imgui.style_mut());
             self.styled = true;
@@ -359,6 +393,7 @@ impl App {
             self.install_video(imgui, frame);
         }
         self.install_avatars(imgui);
+        self.refresh_crop_preview(imgui);
     }
 
     pub(crate) fn draw(&mut self, ui: &Ui) {
@@ -391,10 +426,14 @@ impl App {
             self.draw_stream_menu(ui);
         }
         if ui.is_key_pressed(Key::Escape) {
-            if self.modal.is_some() {
+            if self.crop_open {
+                self.crop_open = false;
+            } else if self.modal.is_some() {
                 self.modal = None;
             } else if self.server_menu {
                 self.server_menu = false;
+            } else if self.more_for.is_some() {
+                self.more_for = None;
             } else if self.stream_menu {
                 self.stream_menu = false;
             } else if self.share_open {
@@ -402,6 +441,9 @@ impl App {
             } else if self.settings_open {
                 self.settings_open = false;
             }
+        }
+        if self.crop_open {
+            self.draw_avatar_crop(ui);
         }
         self.finish_voice_flags(ui);
     }
@@ -916,6 +958,11 @@ impl App {
         let origin = ui.window_pos();
         let width = ui.window_size()[0];
         let center = [origin[0] + 8.0 + 16.0, origin[1] + USER_PANEL_H * 0.5];
+        ui.set_cursor_screen_pos([center[0] - 16.0, center[1] - 16.0]);
+        if ui.invisible_button("profile-avatar", [32.0, 32.0]) {
+            self.settings_open = true;
+            self.settings_index = 0;
+        }
         let avatar = account_id.and_then(|id| self.avatars.get(&id).map(|shot| shot.texture));
         paint_avatar(ui, avatar, center, 16.0, &initials(&self.display_name), None);
         paint_status_dot(ui, center, 16.0, presence, PANEL_BG);
@@ -1664,6 +1711,160 @@ impl App {
         }
     }
 
+    fn draw_message_rows(
+        &mut self,
+        ui: &Ui,
+        mine: Option<i64>,
+        reply: &mut Option<i64>,
+        edit: &mut Option<i64>,
+        delete: &mut Option<i64>,
+        save: &mut Option<(i64, String)>,
+    ) {
+        let offset = zone_offset_secs();
+        let now = chrono::Local::now().timestamp_millis();
+        let width = ui.content_region_avail()[0].max(160.0);
+        let text_x = 72.0;
+        let text_w = (width - text_x - 24.0).max(40.0);
+        let messages = self.messages.clone();
+        let mut previous: Option<(i64, i64)> = None;
+        for message in &messages {
+            if previous.is_some_and(|(_, at)| message_starts_new_day(at, message.created_at, offset)) {
+                let label = chat_date_separator(message.created_at, offset);
+                let origin = ui.cursor_screen_pos();
+                ui.dummy([width, 28.0]);
+                let _small = ui.push_font_with_size(None, 12.0);
+                let label_w = ui.calc_text_size(&label)[0];
+                let mid_y = origin[1] + 14.0;
+                let draw = ui.get_window_draw_list();
+                draw.add_line([origin[0] + 16.0, mid_y], [origin[0] + (width - label_w) * 0.5 - 8.0, mid_y], MUTED).build();
+                draw.add_text([origin[0] + (width - label_w) * 0.5, origin[1] + 6.0], MUTED, &label);
+                draw.add_line([origin[0] + (width + label_w) * 0.5 + 8.0, mid_y], [origin[0] + width - 16.0, mid_y], MUTED).build();
+            }
+            let follow = previous
+                .is_some_and(|(author, at)| message_is_followup(author, at, message.author_id, message.created_at, offset));
+            let name = message.author_nickname.clone().unwrap_or_else(|| message.author_display_name.clone());
+            let edited = if message.edited_at.is_some() { " (edited)" } else { "" };
+            let body = format!("{}{edited}", message.body);
+            let body_h = if message.body.is_empty() {
+                0.0
+            } else {
+                let _body_font = ui.push_font_with_size(None, 16.0);
+                ui.calc_text_size_with_opts(&body, false, text_w)[1]
+            };
+            let row_h = if follow { body_h.max(22.0) } else { 22.0 + body_h.max(20.0) }.max(if follow { 22.0 } else { 48.0 });
+            let origin = ui.cursor_screen_pos();
+            ui.dummy([width, row_h + 2.0]);
+            let row_max = [origin[0] + width, origin[1] + row_h];
+            let hot = pointer_in(ui, [origin[0], origin[1] - 16.0], row_max) || self.more_for == Some(message.id);
+            if hot {
+                ui.get_window_draw_list()
+                    .add_rect([origin[0] + 4.0, origin[1]], [origin[0] + width - 4.0, origin[1] + row_h], ROW_HOVER)
+                    .filled(true)
+                    .build();
+            }
+            if follow {
+                if hot {
+                    let gutter = clock_short(message.created_at, offset);
+                    let _small = ui.push_font_with_size(None, 12.0);
+                    let gutter_w = ui.calc_text_size(&gutter)[0];
+                    ui.get_window_draw_list().add_text([origin[0] + text_x - gutter_w - 8.0, origin[1] + 2.0], MUTED, &gutter);
+                    if pointer_in(ui, [origin[0], origin[1]], [origin[0] + text_x, origin[1] + row_h]) {
+                        ui.tooltip_text(chat_time_hover(message.created_at, offset));
+                    }
+                }
+            } else {
+                let center = [origin[0] + 36.0, origin[1] + 22.0];
+                let avatar = self.avatars.get(&message.author_id).map(|shot| shot.texture);
+                paint_avatar(ui, avatar, center, 20.0, &initials(&name), None);
+                let name_w = {
+                    let _bold = ui.push_font_with_size(self.bold_font, 16.0);
+                    ui.calc_text_size(&name)[0]
+                };
+                {
+                    let _bold = ui.push_font_with_size(self.bold_font, 16.0);
+                    ui.get_window_draw_list().add_text([origin[0] + text_x, origin[1] + 2.0], TEXT, &name);
+                }
+                let stamp = chat_time_label(message.created_at, now, offset);
+                let stamp_pos = [origin[0] + text_x + name_w + 8.0, origin[1] + 5.0];
+                let stamp_w = {
+                    let _small = ui.push_font_with_size(None, 12.0);
+                    let width = ui.calc_text_size(&stamp)[0];
+                    ui.get_window_draw_list().add_text(stamp_pos, MUTED, &stamp);
+                    width
+                };
+                if pointer_in(ui, stamp_pos, [stamp_pos[0] + stamp_w, stamp_pos[1] + 16.0]) {
+                    ui.tooltip_text(chat_time_hover(message.created_at, offset));
+                }
+            }
+            if !message.body.is_empty() {
+                ui.set_cursor_screen_pos([origin[0] + text_x, origin[1] + if follow { 0.0 } else { 22.0 }]);
+                let _body_font = ui.push_font_with_size(None, 16.0);
+                let _wrap = ui.push_text_wrap_pos(origin[0] + text_x + text_w);
+                ui.text_wrapped(&body);
+            }
+            if let Some(reply_to) = message.reply_to {
+                ui.set_cursor_screen_pos([origin[0] + text_x, origin[1] + row_h - 16.0]);
+                ui.text_colored(BLURPLE, format!("replying to {reply_to}"));
+            }
+            let mut attachment_y = origin[1] + row_h;
+            for attachment in &message.attachments {
+                ui.set_cursor_screen_pos([origin[0] + text_x, attachment_y]);
+                ui.text(format!("file: {} ({} bytes)", attachment.filename, attachment.byte_size));
+                ui.same_line();
+                if ui.button(format!("Save##att{}", attachment.id)) {
+                    *save = Some((attachment.id, attachment.filename.clone()));
+                }
+                attachment_y += 22.0;
+            }
+            let row_end = attachment_y.max(origin[1] + row_h + 2.0);
+            if hot {
+                let mut tools = vec!["reply"];
+                if mine == Some(message.author_id) {
+                    tools.push("pencil");
+                    tools.push("trash-2");
+                }
+                tools.push("ellipsis");
+                let bar_w = tools.len() as f32 * 32.0 + 8.0;
+                let bar_x = origin[0] + width - bar_w - 12.0;
+                let bar_y = origin[1] - 16.0;
+                ui.get_window_draw_list()
+                    .add_rect([bar_x, bar_y], [bar_x + bar_w, bar_y + 32.0], PANEL_BG)
+                    .rounding(6.0)
+                    .filled(true)
+                    .build();
+                for (index, name) in tools.iter().enumerate() {
+                    ui.set_cursor_screen_pos([bar_x + 4.0 + index as f32 * 32.0, bar_y]);
+                    let tip = match *name {
+                        "reply" => "Reply",
+                        "pencil" => "Edit",
+                        "trash-2" => "Delete",
+                        _ => "More",
+                    };
+                    if self.tool(ui, &format!("{name}-{}", message.id), name, false, Some(tip)) {
+                        match *name {
+                            "reply" => *reply = Some(message.id),
+                            "pencil" => *edit = Some(message.id),
+                            "trash-2" => *delete = Some(message.id),
+                            _ => self.more_for = if self.more_for == Some(message.id) { None } else { Some(message.id) },
+                        }
+                    }
+                }
+                if self.more_for == Some(message.id) {
+                    ui.set_cursor_screen_pos([bar_x, bar_y + 36.0]);
+                    if ui.button(format!("Copy text##{}", message.id)) {
+                        self.copy_message = Some(message.body.clone());
+                        self.more_for = None;
+                    }
+                }
+            }
+            // The toolbar and body text move the cursor; every row must end at its own bottom edge, or the
+            // next row shifts while one is hovered and the measured history height stops matching the scroll extent.
+            ui.set_cursor_screen_pos([origin[0], row_end]);
+            ui.dummy([0.0, 0.0]);
+            previous = Some((message.author_id, message.created_at));
+        }
+    }
+
     fn draw_chat(&mut self, ui: &Ui) {
         if self.voice_selected() {
             return;
@@ -1676,10 +1877,13 @@ impl App {
         let mut edit = None;
         let mut delete = None;
         let mut save = None;
-        let stick = self.messages.len();
         let footer = self.composer_footer_h();
         ui.child_window("history").size([0.0, -footer]).build(ui, || {
-            let near_bottom = ui.scroll_max_y() <= 0.0 || ui.scroll_y() >= ui.scroll_max_y() - 24.0;
+            let stick = crate::theme::chat_should_stick(ui.scroll_y(), ui.scroll_max_y(), self.chat_jump);
+            // Pad with last frame's history height so few messages sit on the composer, like Discord.
+            let view_h = ui.content_region_avail()[1];
+            ui.dummy([0.0, crate::theme::chat_top_pad(self.history_h, view_h)]);
+            let history_top = ui.cursor_pos()[1];
             let mine = self.account.as_ref().map(|account| account.id);
             if self.messages.is_empty() && self.search.trim().is_empty() {
                 if let Some(channel) = &self.selected {
@@ -1694,48 +1898,12 @@ impl App {
                     }
                 }
             }
-            ui.indent_by(16.0);
-            for message in &self.messages {
-                let name = message.author_nickname.clone().unwrap_or_else(|| message.author_display_name.clone());
-                let edited = if message.edited_at.is_some() { " (edited)" } else { "" };
-                if let Some(shot) = self.avatars.get(&message.author_id) {
-                    ui.image(shot.texture, [40.0, 40.0]);
-                    ui.same_line();
-                }
-                ui.text(&name);
-                ui.same_line();
-                ui.text_colored(MUTED, format!("{}{edited}", clock(message.created_at)));
-                if let Some(reply_to) = message.reply_to {
-                    ui.text_colored(BLURPLE, format!("replying to {reply_to}"));
-                }
-                if !message.body.is_empty() {
-                    ui.text_wrapped(&message.body);
-                }
-                for attachment in &message.attachments {
-                    ui.text(format!("file: {} ({} bytes)", attachment.filename, attachment.byte_size));
-                    ui.same_line();
-                    if ui.button(format!("Save##att{}", attachment.id)) {
-                        save = Some((attachment.id, attachment.filename.clone()));
-                    }
-                }
-                if mine == Some(message.author_id) {
-                    if self.tool(ui, &format!("edit-{}", message.id), "pencil", false, Some("Edit")) {
-                        edit = Some(message.id);
-                    }
-                    ui.same_line();
-                    if self.tool(ui, &format!("delete-{}", message.id), "trash-2", false, Some("Delete")) {
-                        delete = Some(message.id);
-                    }
-                } else if self.tool(ui, &format!("reply-{}", message.id), "reply", false, Some("Reply")) {
-                    reply = Some(message.id);
-                }
-                ui.separator();
-            }
-            if near_bottom {
+            self.draw_message_rows(ui, mine, &mut reply, &mut edit, &mut delete, &mut save);
+            self.history_h = ui.cursor_pos()[1] - history_top;
+            if stick {
                 ui.set_scroll_here_y(1.0);
             }
-            ui.unindent_by(16.0);
-            let _ = stick;
+            self.chat_jump = false;
         });
         if let Some(id) = reply {
             self.reply_to = Some(id);
@@ -2426,6 +2594,7 @@ impl App {
             if self.search.trim().is_empty() {
                 upsert_message(&mut self.messages, message);
             }
+            self.chat_jump = true;
             self.composer.clear();
             self.reply_to = None;
             self.pending_file = None;
@@ -2457,6 +2626,21 @@ impl App {
     }
 
     fn refresh_shell(&mut self) {
+        if let Ok(account) = self.client.me() {
+            let revision_changed = self.account.as_ref().is_none_or(|current| {
+                current.avatar_rev != account.avatar_rev || current.has_avatar != account.has_avatar
+            });
+            if revision_changed {
+                if let Some(id) = self.account.as_ref().map(|current| current.id) {
+                    if let Some(shot) = self.avatars.remove(&id) {
+                        self.retired_shots.push(shot);
+                    }
+                    self.avatar_rev.remove(&id);
+                    self.avatar_miss.remove(&id);
+                }
+            }
+            self.account = Some(account);
+        }
         if let Some(friends) = self.note(self.client.friends()) {
             self.friends = friends;
         }
@@ -2694,54 +2878,202 @@ impl App {
     fn install_avatars(&mut self, imgui: &mut Context) {
         let mut wanted = Vec::new();
         if let Some(account) = &self.account {
-            if account.has_avatar {
-                wanted.push(account.id);
-            }
+            wanted.push((account.id, account.has_avatar, account.avatar_rev));
         }
         for friend in &self.friends {
-            if friend.has_avatar {
-                wanted.push(friend.id);
-            }
+            wanted.push((friend.id, friend.has_avatar, friend.avatar_rev));
+        }
+        for member in &self.members {
+            wanted.push((member.user_id, member.has_avatar, member.avatar_rev));
+        }
+        for chat in &self.dms {
+            wanted.push((chat.peer_id, chat.peer_has_avatar, chat.peer_avatar_rev));
         }
         let mut fetched = 0;
-        for user_id in wanted {
-            if fetched >= 2 || self.avatars.contains_key(&user_id) || self.avatar_miss.contains(&user_id) {
+        for (user_id, has_avatar, rev) in wanted {
+            if !has_avatar {
+                if let Some(shot) = self.avatars.remove(&user_id) {
+                    self.retired_shots.push(shot);
+                }
+                self.avatar_rev.remove(&user_id);
+                self.avatar_miss.remove(&user_id);
+                continue;
+            }
+            if self.avatar_rev.get(&user_id) == Some(&rev) && self.avatars.contains_key(&user_id) {
+                continue;
+            }
+            if self.avatar_miss.get(&user_id) == Some(&rev) || fetched >= 4 {
                 continue;
             }
             fetched += 1;
+            if let Some(shot) = self.avatars.remove(&user_id) {
+                self.retired_shots.push(shot);
+            }
             match self.client.avatar(user_id) {
                 Ok(bytes) => {
                     if let Some(shot) = upload_jpeg(imgui, &bytes).or_else(|| upload_rgba_png(imgui, &bytes)) {
                         self.avatars.insert(user_id, shot);
+                        self.avatar_rev.insert(user_id, rev);
+                        self.avatar_miss.remove(&user_id);
                     } else {
-                        self.avatar_miss.insert(user_id);
+                        self.avatar_miss.insert(user_id, rev);
                     }
                 }
                 Err(_) => {
-                    self.avatar_miss.insert(user_id);
+                    self.avatar_miss.insert(user_id, rev);
                 }
             }
         }
     }
 
     fn pick_avatar(&mut self) {
-        let Some(path) = rfd::FileDialog::new().add_filter("Image", &["png", "jpg", "jpeg", "gif"]).pick_file() else { return };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Image", &["png", "jpg", "jpeg", "gif", "webp"])
+            .pick_file()
+        else {
+            return;
+        };
         let Ok(bytes) = std::fs::read(&path) else {
             self.status = "could not read that image".into();
             return;
         };
-        if bytes.len() > MAX_AVATAR_BYTES {
+        if bytes.is_empty() || bytes.len() > MAX_AVATAR_BYTES {
+            self.status = "avatar is empty or larger than 2 MB".into();
+            return;
+        }
+        let Ok(image) = image::load_from_memory(&bytes) else {
+            self.status = "that file is not a png, jpeg, gif, or webp image".into();
+            return;
+        };
+        let rgba = image.to_rgba8();
+        self.crop_size = [rgba.width(), rgba.height()];
+        self.crop_rgba = rgba.into_raw();
+        self.crop_zoom = 1.0;
+        self.crop_pan = [0.0, 0.0];
+        self.crop_drag = None;
+        self.crop_open = true;
+    }
+
+    fn save_avatar_crop(&mut self) {
+        let edge = 512u32;
+        let rgba = crop_avatar_rgba(self.crop_size[0], self.crop_size[1], &self.crop_rgba, self.crop_zoom, self.crop_pan[0], self.crop_pan[1], edge);
+        let Some(png) = encode_png(edge, edge, &rgba) else {
+            self.status = "could not save that picture".into();
+            return;
+        };
+        if png.len() > MAX_AVATAR_BYTES {
             self.status = "avatar is larger than 2 MB".into();
             return;
         }
-        if self.note(self.client.set_avatar(&bytes)).is_some() {
-            if let Some(id) = self.account.as_ref().map(|account| account.id) {
-                self.avatars.remove(&id);
-                self.avatar_miss.remove(&id);
+        if self.note(self.client.set_avatar(&png)).is_some() {
+            self.drop_own_avatar();
+            self.crop_open = false;
+        }
+    }
+
+    fn remove_avatar(&mut self) {
+        if self.note(self.client.clear_avatar()).is_some() {
+            self.drop_own_avatar();
+        }
+    }
+
+    fn drop_own_avatar(&mut self) {
+        if let Some(id) = self.account.as_ref().map(|account| account.id) {
+            if let Some(shot) = self.avatars.remove(&id) {
+                self.retired_shots.push(shot);
             }
-            if let Some(account) = self.note(self.client.me()) {
-                self.account = Some(account);
+            self.avatar_rev.remove(&id);
+            self.avatar_miss.remove(&id);
+        }
+        if let Some(account) = self.note(self.client.me()) {
+            self.account = Some(account);
+        }
+    }
+
+    fn draw_avatar_crop(&mut self, ui: &Ui) {
+        let size = ui.io().display_size();
+        let flags = WindowFlags::NO_DECORATION | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE | WindowFlags::NO_SAVED_SETTINGS | WindowFlags::NO_DOCKING;
+        ui.window("Avatar crop")
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size(size, Condition::Always)
+            .bg_alpha(0.72)
+            .build(|| {
+                let panel = [420.0, 460.0];
+                let origin = [(size[0] - panel[0]) * 0.5, (size[1] - panel[1]) * 0.5];
+                ui.get_window_draw_list()
+                    .add_rect(origin, [origin[0] + panel[0], origin[1] + panel[1]], STAGE_BG)
+                    .rounding(8.0)
+                    .filled(true)
+                    .build();
+                ui.set_cursor_screen_pos([origin[0] + 20.0, origin[1] + 16.0]);
+                ui.text("Profile picture");
+                let center = [origin[0] + panel[0] * 0.5, origin[1] + 180.0];
+                self.paint_crop_preview(ui, center, 96.0);
+                ui.set_cursor_screen_pos([origin[0] + 24.0, origin[1] + 300.0]);
+                ui.set_next_item_width(panel[0] - 48.0);
+                ui.slider_f32("Zoom", &mut self.crop_zoom, 1.0, 3.0);
+                ui.set_cursor_screen_pos([origin[0] + 24.0, origin[1] + 360.0]);
+                if ui.button("Save") {
+                    self.save_avatar_crop();
+                }
+                ui.same_line();
+                if ui.button("Cancel") {
+                    self.crop_open = false;
+                }
+                let drag = pointer_in(ui, [center[0] - 96.0, center[1] - 96.0], [center[0] + 96.0, center[1] + 96.0]);
+                if drag && ui.is_mouse_down(MouseButton::Left) {
+                    let mouse = ui.io().mouse_pos();
+                    if let Some(previous) = self.crop_drag {
+                        let window = crop_window(self.crop_size[0], self.crop_size[1], self.crop_zoom, 0.0, 0.0)
+                            .map(|(_, _, side)| side)
+                            .unwrap_or(1.0);
+                        let scale = window / 192.0;
+                        self.crop_pan[0] = (self.crop_pan[0] - (mouse[0] - previous[0]) * scale / (self.crop_size[0] as f32).max(1.0)).clamp(-1.0, 1.0);
+                        self.crop_pan[1] = (self.crop_pan[1] - (mouse[1] - previous[1]) * scale / (self.crop_size[1] as f32).max(1.0)).clamp(-1.0, 1.0);
+                    }
+                    self.crop_drag = Some(mouse);
+                } else {
+                    self.crop_drag = None;
+                }
+            });
+    }
+
+    fn paint_crop_preview(&self, ui: &Ui, center: [f32; 2], radius: f32) {
+        let avatar = self.crop_preview.as_ref().map(|shot| shot.texture);
+        paint_avatar(ui, avatar, center, radius, "?", None);
+    }
+
+    fn refresh_crop_preview(&mut self, imgui: &mut Context) {
+        if !self.crop_open {
+            if let Some(shot) = self.crop_preview.take() {
+                self.retired_shots.push(shot);
             }
+            return;
+        }
+        let key = [
+            (self.crop_zoom * 100.0) as i32,
+            (self.crop_pan[0] * 100.0) as i32,
+            (self.crop_pan[1] * 100.0) as i32,
+        ];
+        if self.crop_preview.is_some() && self.crop_preview_key == key {
+            return;
+        }
+        if let Some(shot) = self.crop_preview.take() {
+            self.retired_shots.push(shot);
+        }
+        let rgba = crop_avatar_rgba(
+            self.crop_size[0],
+            self.crop_size[1],
+            &self.crop_rgba,
+            self.crop_zoom,
+            self.crop_pan[0],
+            self.crop_pan[1],
+            160,
+        );
+        if let Some(shot) = upload_rgba(imgui, 160, 160, &rgba) {
+            self.crop_preview = Some(shot);
+            self.crop_preview_key = key;
         }
     }
 
@@ -2857,7 +3189,7 @@ impl App {
             "mic", "mic-off", "headphones", "headphone-off", "video", "video-off", "monitor", "monitor-off",
             "phone-off", "settings", "chevron-down", "chevron-up", "plus", "hash", "volume-2", "users", "search", "paperclip",
             "x", "user", "log-out", "pencil", "trash-2", "reply", "check", "chevron-right", "circle-plus", "folder-plus",
-            "message-circle", "phone", "user-plus", "signal",
+            "message-circle", "phone", "user-plus", "signal", "ellipsis",
         ] {
             if let Ok(rgba) = rasterize_lucide(name, 32, [255, 255, 255]) {
                 if let Some(shot) = upload_rgba(imgui, 32, 32, &rgba) {
@@ -2958,10 +3290,12 @@ impl App {
     fn draw_account_settings(&mut self, ui: &Ui) {
         ui.text("My Account");
         let username = self.account.as_ref().map(|account| account.username.clone()).unwrap_or_default();
+        let name = self.display_name.clone();
         if let Some(id) = self.account.as_ref().map(|account| account.id) {
-            if let Some(shot) = self.avatars.get(&id) {
-                ui.image(shot.texture, [80.0, 80.0]);
-            }
+            let avatar = self.avatars.get(&id).map(|shot| shot.texture);
+            let origin = ui.cursor_screen_pos();
+            ui.dummy([80.0, 80.0]);
+            paint_avatar(ui, avatar, [origin[0] + 40.0, origin[1] + 40.0], 40.0, &initials(&name), None);
         }
         ui.text_colored(MUTED, format!("@{username}"));
         ui.input_text("Display name", &mut self.display_name).build();
@@ -2973,9 +3307,14 @@ impl App {
             }
         }
         ui.same_line();
-        if ui.button("Change Avatar") {
+        if ui.button("Change avatar") {
             self.pick_avatar();
         }
+        ui.same_line();
+        if ui.button("Remove avatar") {
+            self.remove_avatar();
+        }
+        ui.text_colored(MUTED, "PNG, JPG, GIF, or WebP. Drag and zoom, then save a circle.");
     }
 
     fn draw_voice_settings(&mut self, ui: &Ui) {
@@ -3976,8 +4315,23 @@ fn presence_label(presence: Presence) -> &'static str {
     }
 }
 
-fn clock(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .map(|time| time.with_timezone(&chrono::Local).format("%H:%M").to_string())
-        .unwrap_or_default()
+fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+    let image = image::RgbaImage::from_raw(width, height, rgba.to_vec())?;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut cursor, image::ImageFormat::Png).ok()?;
+    Some(cursor.into_inner())
 }
+
+fn zone_offset_secs() -> i32 {
+    chrono::Local::now().offset().local_minus_utc()
+}
+
+fn clock_short(ms: i64, offset: i32) -> String {
+    chat_time_label(ms, ms, offset).trim_start_matches("Today at ").to_string()
+}
+
+fn pointer_in(ui: &Ui, min: [f32; 2], max: [f32; 2]) -> bool {
+    let mouse = ui.io().mouse_pos();
+    mouse[0] >= min[0] && mouse[0] <= max[0] && mouse[1] >= min[1] && mouse[1] <= max[1]
+}
+

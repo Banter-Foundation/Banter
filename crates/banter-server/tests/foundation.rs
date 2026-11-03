@@ -881,6 +881,64 @@ fn http_register_and_login_round_trip() {
     assert_eq!(me["display_name"], "Ada");
 }
 
+fn encode_image(width: u32, height: u32, format: image::ImageFormat) -> Vec<u8> {
+    let image = image::RgbImage::from_pixel(width, height, image::Rgb([20, 40, 60]));
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut cursor, format).unwrap();
+    cursor.into_inner()
+}
+
+#[test]
+fn avatar_formats_revision_and_remove() {
+    let store = Store::open(&scratch()).unwrap();
+    let ada = store.register("ada", "Ada", "password1").unwrap();
+    let bob = store.register("bob", "Bob", "password1").unwrap();
+    assert_eq!(ada.avatar_rev, 0);
+    assert!(!ada.has_avatar);
+
+    store.set_avatar(ada.id, &encode_image(2, 2, image::ImageFormat::Jpeg)).unwrap();
+    let jpeg = store.account(ada.id).unwrap();
+    assert!(jpeg.has_avatar);
+    assert!(jpeg.avatar_rev > 0);
+    let stored = store.avatar_bytes(ada.id).unwrap();
+    let decoded = image::load_from_memory(&stored).unwrap();
+    assert_eq!(decoded.width(), 2);
+    assert_eq!(decoded.height(), 2);
+
+    store.set_avatar(ada.id, &encode_image(2, 2, image::ImageFormat::Gif)).unwrap();
+    let gif = store.account(ada.id).unwrap();
+    assert!(gif.avatar_rev > jpeg.avatar_rev);
+
+    store.set_avatar(ada.id, &encode_image(2, 2, image::ImageFormat::WebP)).unwrap();
+    let webp = store.account(ada.id).unwrap();
+    assert!(webp.avatar_rev > gif.avatar_rev);
+
+    let home = store.create_server(ada.id, "Home").unwrap();
+    let member = store.members(ada.id, home.server.id).unwrap().into_iter().find(|member| member.user_id == ada.id).unwrap();
+    assert!(member.has_avatar);
+    assert_eq!(member.avatar_rev, webp.avatar_rev);
+
+    let req = store.send_friend_request(ada.id, "bob").unwrap();
+    store.accept_friend_request(bob.id, req.id).unwrap();
+    let friend = store.friends(bob.id).unwrap().into_iter().find(|friend| friend.id == ada.id).unwrap();
+    assert!(friend.has_avatar);
+    assert_eq!(friend.avatar_rev, webp.avatar_rev);
+    let chat = store.open_dm(bob.id, ada.id).unwrap();
+    assert!(chat.peer_has_avatar);
+    assert_eq!(chat.peer_avatar_rev, webp.avatar_rev);
+
+    store.clear_avatar(ada.id).unwrap();
+    let cleared = store.account(ada.id).unwrap();
+    assert!(!cleared.has_avatar);
+    assert_eq!(cleared.avatar_rev, 0);
+    assert_eq!(store.avatar_bytes(ada.id).unwrap_err(), BanterError::NotFound);
+    let member = store.members(ada.id, home.server.id).unwrap().into_iter().find(|member| member.user_id == ada.id).unwrap();
+    assert!(!member.has_avatar);
+    let chat = store.open_dm(bob.id, ada.id).unwrap();
+    assert!(!chat.peer_has_avatar);
+    assert_eq!(chat.peer_avatar_rev, 0);
+}
+
 #[test]
 fn listen_addr_prefers_the_argument_then_env_then_loopback() {
     assert_eq!(
