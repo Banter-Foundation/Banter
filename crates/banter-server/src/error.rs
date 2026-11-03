@@ -53,8 +53,6 @@ pub enum BanterError {
     InvalidInvite,
     #[error("there is no call to update")]
     NotInCall,
-    #[error("media frame is not valid")]
-    BadFrame,
     #[error("storage error: {0}")]
     Storage(String),
     #[error("could not bind the server: {0}")]
@@ -89,7 +87,6 @@ impl BanterError {
             Self::AlreadyMember => "already_member",
             Self::InvalidInvite => "invalid_invite",
             Self::NotInCall => "not_in_call",
-            Self::BadFrame => "bad_frame",
             Self::Storage(_) => "storage",
             Self::Bind(_) => "bind",
         }

@@ -8,21 +8,36 @@ use dear_imgui_glow::GlowRenderer;
 use dear_imgui_rs::{ClipboardBackend, ConfigFlags, Context, Key, MouseButton};
 use glow::HasContext;
 
-use crate::logic::either_key_held;
+use crate::logic::{VideoPrefs, clamp_window_size, either_key_held, load_json};
 use crate::ui::App;
 
 pub(crate) fn run() -> Result<(), String> {
     ensure_server()?;
-    let mut glfw = glfw::init(glfw::fail_on_errors).map_err(|err| format!("GLFW init failed: {err}"))?;
+    let data_dir = banter_server::default_data_dir();
+    let startup_video = load_video_prefs(&data_dir);
+    let (start_w, start_h) = clamp_window_size(startup_video.width, startup_video.height);
+
+    let mut glfw = glfw::init(glfw_error).map_err(|err| format!("GLFW init failed: {err}"))?;
     glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
     glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
     let (mut window, events) = glfw
-        .create_window(1280, 800, "Banter", glfw::WindowMode::Windowed)
+        .create_window(start_w as u32, start_h as u32, "Banter", glfw::WindowMode::Windowed)
         .ok_or_else(|| "GLFW could not open a window. Banter needs a display.".to_string())?;
     window.make_current();
     window.set_all_polling(true);
-    glfw.set_swap_interval(glfw::SwapInterval::Sync(1));
+
+    let mut windowed = WindowedPlace {
+        x: 100,
+        y: 100,
+        width: start_w,
+        height: start_h,
+    };
+    if let Some((pos_x, pos_y)) = window_origin(&glfw, &window) {
+        windowed.x = pos_x;
+        windowed.y = pos_y;
+    }
+    apply_video(&mut glfw, &mut window, &startup_video, &mut windowed);
 
     let gl = Rc::new(unsafe {
         glow::Context::from_loader_function(|name| {
@@ -36,20 +51,23 @@ pub(crate) fn run() -> Result<(), String> {
     let flags = imgui.io().config_flags() | ConfigFlags::DOCKING_ENABLE;
     imgui.io_mut().set_config_flags(flags);
     imgui.set_clipboard_backend(GlfwClipboard);
-    let ini = banter_server::default_data_dir().join("banter-dock.ini");
+    let ini = data_dir.join("banter-dock.ini");
     imgui.set_ini_filename(Some(ini)).map_err(|err| err.to_string())?;
     let bold_font = install_font(&mut imgui);
     let semibold_font = load_first_face(imgui.font_atlas(), &semibold_font_paths(), 16.0).or(bold_font);
     let mut renderer = GlowRenderer::with_shared_context(Rc::clone(&gl), &mut imgui).map_err(|err| err.to_string())?;
 
     let base = format!("http://{}", banter_server::DEFAULT_ADDR);
-    let mut app = App::open(base, banter_server::default_data_dir());
+    let mut app = App::open(base, data_dir);
     app.set_bold_font(bold_font);
     app.set_semibold_font(semibold_font);
     let mut last_time = glfw.get_time();
 
     while !window.should_close() {
         glfw.poll_events();
+        if let Some(video) = app.take_video_apply() {
+            apply_video(&mut glfw, &mut window, &video, &mut windowed);
+        }
         let (width, height) = window.get_size();
         let (framebuffer_width, framebuffer_height) = window.get_framebuffer_size();
         if width <= 0 || height <= 0 {
@@ -59,6 +77,7 @@ pub(crate) fn run() -> Result<(), String> {
         let now = glfw.get_time();
         let delta = (now - last_time).max(1.0 / 1000.0);
         last_time = now;
+        crate::profiler::frame(delta);
         {
             let io = imgui.io_mut();
             io.set_display_size([width as f32, height as f32]);
@@ -89,18 +108,121 @@ pub(crate) fn run() -> Result<(), String> {
             );
         }
         app.set_v_held(window.get_key(glfw::Key::V) == glfw::Action::Press);
-        app.prepare(&mut imgui);
+        {
+            let _prepare = crate::profiler::scope_section(crate::profiler::Section::Prepare);
+            app.prepare(&mut imgui);
+        }
         unsafe {
             gl.clear_color(0.08, 0.08, 0.10, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
         }
-        let ui = imgui.frame();
-        app.draw(&ui);
-        let pending = imgui.render(renderer.renderer_consumer().map_err(|err| err.to_string())?);
-        renderer.render(pending).map_err(|err| err.to_string())?;
+        {
+            let _draw = crate::profiler::scope_section(crate::profiler::Section::Draw);
+            let ui = imgui.frame();
+            app.draw(&ui);
+        }
+        {
+            let _gl = crate::profiler::scope_section(crate::profiler::Section::Gl);
+            let pending = imgui.render(renderer.renderer_consumer().map_err(|err| err.to_string())?);
+            renderer.render(pending).map_err(|err| err.to_string())?;
+        }
         window.swap_buffers();
     }
     Ok(())
+}
+
+struct WindowedPlace {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+fn load_video_prefs(data_dir: &std::path::Path) -> VideoPrefs {
+    let mut video = load_json::<VideoPrefs>(&data_dir.join("video.json")).unwrap_or_default();
+    let (width, height) = clamp_window_size(video.width, video.height);
+    video.width = width;
+    video.height = height;
+    video
+}
+
+fn apply_video(
+    glfw: &mut glfw::Glfw,
+    window: &mut glfw::Window,
+    video: &VideoPrefs,
+    windowed: &mut WindowedPlace,
+) {
+    let (width, height) = clamp_window_size(video.width, video.height);
+    let currently_fullscreen = window.with_window_mode(|mode| matches!(mode, glfw::WindowMode::FullScreen(_)));
+    if video.fullscreen {
+        if !currently_fullscreen {
+            if let Some((x, y)) = window_origin(glfw, window) {
+                windowed.x = x;
+                windowed.y = y;
+            }
+            let (w, h) = window.get_size();
+            windowed.width = w;
+            windowed.height = h;
+        }
+        glfw.with_primary_monitor(|_, monitor| {
+            if let Some(monitor) = monitor {
+                if let Some(mode) = monitor.get_video_mode() {
+                    window.set_monitor(
+                        glfw::WindowMode::FullScreen(monitor),
+                        0,
+                        0,
+                        mode.width,
+                        mode.height,
+                        Some(mode.refresh_rate),
+                    );
+                }
+            }
+        });
+    } else {
+        if currently_fullscreen {
+            window.set_monitor(
+                glfw::WindowMode::Windowed,
+                windowed.x,
+                windowed.y,
+                width as u32,
+                height as u32,
+                None,
+            );
+        } else {
+            let (current_w, current_h) = window.get_size();
+            if current_w != width || current_h != height {
+                window.set_size(width, height);
+            }
+        }
+        windowed.width = width;
+        windowed.height = height;
+    }
+    glfw.set_swap_interval(if video.vsync {
+        glfw::SwapInterval::Sync(1)
+    } else {
+        glfw::SwapInterval::None
+    });
+}
+
+/// Wayland compositors place windows themselves. `glfwGetWindowPos` reports that as an error,
+/// and the default GLFW callback turns the error into a panic.
+fn window_origin(glfw: &glfw::Glfw, window: &glfw::Window) -> Option<(i32, i32)> {
+    if glfw.get_platform() == glfw::Platform::Wayland {
+        None
+    } else {
+        Some(window.get_pos())
+    }
+}
+
+fn glfw_error(error: glfw::Error, description: String) {
+    if error == glfw::Error::FormatUnavailable || wayland_position_unavailable(&description) {
+        return;
+    }
+    panic!("GLFW Error: {description}");
+}
+
+fn wayland_position_unavailable(description: &str) -> bool {
+    description.contains("does not provide the window position")
 }
 
 fn ensure_server() -> Result<(), String> {
@@ -362,4 +484,17 @@ fn map_key(key: glfw::Key) -> Option<Key> {
         glfw::Key::F12 => Key::F12,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wayland_position_unavailable;
+
+    #[test]
+    fn wayland_window_position_is_not_fatal() {
+        assert!(wayland_position_unavailable(
+            "Wayland: The platform does not provide the window position"
+        ));
+        assert!(!wayland_position_unavailable("GLFW: an OpenGL context could not be created"));
+    }
 }

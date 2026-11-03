@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::BanterError;
@@ -213,30 +215,311 @@ pub fn should_send_screen(flags: &VoiceFlags) -> bool {
     flags.screen
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Desktop and app audio while Go Live. Mute and push-to-talk gate the mic, not this track.
+pub fn should_send_stream_audio(flags: &VoiceFlags) -> bool {
+    flags.screen
+}
+
+/// Four publishable tracks. User audio is the protected mic. Stream audio is the Go Live mix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaKind {
-    Audio,
+    UserAudio,
+    StreamAudio,
     Camera,
     Screen,
 }
 
 impl MediaKind {
-    pub(crate) fn code(self) -> u8 {
+    pub fn is_audio(self) -> bool {
+        matches!(self, Self::UserAudio | Self::StreamAudio)
+    }
+
+    pub fn is_video(self) -> bool {
+        matches!(self, Self::Camera | Self::Screen)
+    }
+
+    /// Stable texture and metrics code. Video codes match the tiles the UI already keys on.
+    pub fn code(self) -> u8 {
         match self {
-            Self::Audio => 1,
+            Self::UserAudio => 1,
+            Self::StreamAudio => 4,
             Self::Camera => 2,
             Self::Screen => 3,
         }
     }
 
-    pub(crate) fn from_code(code: u8) -> Option<Self> {
+    pub fn from_code(code: u8) -> Option<Self> {
         match code {
-            1 => Some(Self::Audio),
+            1 => Some(Self::UserAudio),
+            4 => Some(Self::StreamAudio),
             2 => Some(Self::Camera),
             3 => Some(Self::Screen),
             _ => None,
         }
+    }
+
+    pub fn publish_allowed(self, flags: &VoiceFlags) -> bool {
+        match self {
+            Self::UserAudio => should_send_audio(flags),
+            Self::StreamAudio => should_send_stream_audio(flags),
+            Self::Camera => should_send_camera(flags),
+            Self::Screen => should_send_screen(flags),
+        }
+    }
+}
+
+/// Simulcast spatial layer. `Off` stops video for that track only.
+///
+/// RIDs are `f`, `h`, and `q` on every offer, on Linux and Windows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LayerId {
+    Full,
+    Half,
+    Quarter,
+    Off,
+}
+
+impl LayerId {
+    pub const RIDS: [&'static str; 3] = ["f", "h", "q"];
+
+    pub fn rid(self) -> Option<&'static str> {
+        match self {
+            Self::Full => Some("f"),
+            Self::Half => Some("h"),
+            Self::Quarter => Some("q"),
+            Self::Off => None,
+        }
+    }
+
+    pub fn from_rid(rid: &str) -> Option<Self> {
+        match rid {
+            "f" => Some(Self::Full),
+            "h" => Some(Self::Half),
+            "q" => Some(Self::Quarter),
+            _ => None,
+        }
+    }
+
+    /// Higher is a larger picture. `Off` is the floor.
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Quarter => 1,
+            Self::Half => 2,
+            Self::Full => 3,
+        }
+    }
+
+    pub fn from_rank(rank: u8) -> Self {
+        match rank {
+            0 => Self::Off,
+            1 => Self::Quarter,
+            2 => Self::Half,
+            _ => Self::Full,
+        }
+    }
+
+    /// Linear resolution scale of the publisher cap. Off contributes no picture.
+    pub fn scale(self) -> f32 {
+        match self {
+            Self::Full => 1.0,
+            Self::Half => 0.5,
+            Self::Quarter => 0.25,
+            Self::Off => 0.0,
+        }
+    }
+}
+
+/// Highest layer that is published, at or below the viewer's cap, and at or below the sender ladder.
+pub fn deliverable_layer(wanted: LayerId, sender_max: LayerId, published: &[LayerId]) -> LayerId {
+    let cap = wanted.rank().min(sender_max.rank());
+    let mut best = LayerId::Off;
+    for layer in published {
+        if layer.rank() <= cap && layer.rank() > best.rank() {
+            best = *layer;
+        }
+    }
+    best
+}
+
+/// Continuous slider position snaps onto the layers a viewer can actually select.
+pub fn snap_quality_slider(position: f32) -> LayerId {
+    let position = position.clamp(0.0, 1.0);
+    if position < 0.125 {
+        LayerId::Off
+    } else if position < 0.375 {
+        LayerId::Quarter
+    } else if position < 0.75 {
+        LayerId::Half
+    } else {
+        LayerId::Full
+    }
+}
+
+pub fn slider_position(layer: LayerId) -> f32 {
+    match layer {
+        LayerId::Off => 0.0,
+        LayerId::Quarter => 0.25,
+        LayerId::Half => 0.5,
+        LayerId::Full => 1.0,
+    }
+}
+
+/// Sender congestion steps. User audio is not a step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LadderStep {
+    Nominal,
+    CameraHalf,
+    StreamAudioHalf,
+    ScreenHalf,
+    CameraCut,
+    StreamAudioCut,
+    ScreenStop,
+}
+
+impl LadderStep {
+    pub fn next_down(self) -> Self {
+        match self {
+            Self::Nominal => Self::CameraHalf,
+            Self::CameraHalf => Self::StreamAudioHalf,
+            Self::StreamAudioHalf => Self::ScreenHalf,
+            Self::ScreenHalf => Self::CameraCut,
+            Self::CameraCut => Self::StreamAudioCut,
+            Self::StreamAudioCut => Self::ScreenStop,
+            Self::ScreenStop => Self::ScreenStop,
+        }
+    }
+
+    pub fn next_up(self) -> Self {
+        match self {
+            Self::Nominal => Self::Nominal,
+            Self::CameraHalf => Self::Nominal,
+            Self::StreamAudioHalf => Self::CameraHalf,
+            Self::ScreenHalf => Self::StreamAudioHalf,
+            Self::CameraCut => Self::ScreenHalf,
+            Self::StreamAudioCut => Self::CameraCut,
+            Self::ScreenStop => Self::StreamAudioCut,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Nominal => "nominal",
+            Self::CameraHalf => "camera half",
+            Self::StreamAudioHalf => "stream audio half",
+            Self::ScreenHalf => "screen half",
+            Self::CameraCut => "camera cut",
+            Self::StreamAudioCut => "stream audio cut",
+            Self::ScreenStop => "screen stop",
+        }
+    }
+}
+
+/// Target fraction of the configured cap for each track at a ladder step.
+/// User audio stays at 1. Camera and screen use the spatial layer; 0 means the track is unpublished.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LadderTargets {
+    pub user_audio: f32,
+    pub stream_audio: f32,
+    pub camera: LayerId,
+    pub screen: LayerId,
+    pub screen_published: bool,
+}
+
+pub fn ladder_targets(step: LadderStep) -> LadderTargets {
+    let (camera, stream_audio, screen, screen_published) = match step {
+        LadderStep::Nominal => (LayerId::Full, 1.0, LayerId::Full, true),
+        LadderStep::CameraHalf => (LayerId::Half, 1.0, LayerId::Full, true),
+        LadderStep::StreamAudioHalf => (LayerId::Half, 0.5, LayerId::Full, true),
+        LadderStep::ScreenHalf => (LayerId::Half, 0.5, LayerId::Half, true),
+        LadderStep::CameraCut => (LayerId::Off, 0.5, LayerId::Half, true),
+        LadderStep::StreamAudioCut => (LayerId::Off, 0.0, LayerId::Half, true),
+        LadderStep::ScreenStop => (LayerId::Off, 0.0, LayerId::Off, false),
+    };
+    LadderTargets {
+        user_audio: 1.0,
+        stream_audio,
+        camera,
+        screen,
+        screen_published,
+    }
+}
+
+/// Steps down after this many consecutive congested samples, and up after this many clear samples.
+pub const LADDER_DOWN_TICKS: u32 = 3;
+pub const LADDER_UP_TICKS: u32 = 8;
+
+/// Sender ladder. `note` is one stats sample. Congestion steps down; a clear path steps up with hysteresis.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CongestionLadder {
+    step: LadderStep,
+    down: u32,
+    up: u32,
+}
+
+impl CongestionLadder {
+    pub fn new() -> Self {
+        Self {
+            step: LadderStep::Nominal,
+            down: 0,
+            up: 0,
+        }
+    }
+
+    pub fn step(&self) -> LadderStep {
+        self.step
+    }
+
+    pub fn targets(&self) -> LadderTargets {
+        ladder_targets(self.step)
+    }
+
+    pub fn note(&mut self, congested: bool) -> LadderStep {
+        if congested {
+            self.up = 0;
+            self.down = self.down.saturating_add(1);
+            if self.down >= LADDER_DOWN_TICKS && self.step != LadderStep::ScreenStop {
+                self.step = self.step.next_down();
+                self.down = 0;
+            }
+        } else {
+            self.down = 0;
+            self.up = self.up.saturating_add(1);
+            if self.up >= LADDER_UP_TICKS && self.step != LadderStep::Nominal {
+                self.step = self.step.next_up();
+                self.up = 0;
+            }
+        }
+        self.step
+    }
+}
+
+impl Default for CongestionLadder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Sticky per publisher and track for one session.
+#[derive(Clone, Debug, Default)]
+pub struct LayerPreferences {
+    chosen: HashMap<(i64, MediaKind), LayerId>,
+}
+
+impl LayerPreferences {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, publisher: i64, track: MediaKind) -> LayerId {
+        self.chosen.get(&(publisher, track)).copied().unwrap_or(LayerId::Full)
+    }
+
+    pub fn set(&mut self, publisher: i64, track: MediaKind, layer: LayerId) {
+        self.chosen.insert((publisher, track), layer);
     }
 }
 
@@ -248,14 +531,14 @@ pub enum MediaPlace {
 }
 
 impl MediaPlace {
-    pub(crate) fn code(self) -> (u8, i64) {
+    pub fn code(self) -> (u8, i64) {
         match self {
             Self::VoiceChannel(id) => (1, id),
             Self::DirectCall(id) => (2, id),
         }
     }
 
-    pub(crate) fn from_parts(code: u8, id: i64) -> Option<Self> {
+    pub fn from_parts(code: u8, id: i64) -> Option<Self> {
         match code {
             1 => Some(Self::VoiceChannel(id)),
             2 => Some(Self::DirectCall(id)),
@@ -264,19 +547,31 @@ impl MediaPlace {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutedMedia {
-    pub user_id: i64,
-    pub kind: MediaKind,
-    pub bytes: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MediaFrame {
-    pub kind: MediaKind,
-    pub place: MediaPlace,
-    pub sender_id: i64,
-    pub payload: Vec<u8>,
+/// Client messages on the authenticated websocket. Media itself is UDP, not these frames.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ClientSignal {
+    Activity,
+    RtcOffer {
+        place: MediaPlace,
+        sdp: String,
+    },
+    RtcAnswer {
+        place: MediaPlace,
+        sdp: String,
+    },
+    RtcIce {
+        place: MediaPlace,
+        candidate: String,
+        sdp_mid: Option<String>,
+        sdp_mline_index: Option<u16>,
+    },
+    SubscribeLayer {
+        place: MediaPlace,
+        publisher: i64,
+        track: MediaKind,
+        max_layer: LayerId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,7 +595,7 @@ pub struct VoiceMember {
     pub flags: VoiceFlags,
 }
 
-/// Realtime events pushed over the websocket. Binary media uses a separate frame.
+/// Realtime events pushed over the websocket. Media is UDP, not a binary frame.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ServerEvent {
@@ -333,5 +628,38 @@ pub enum ServerEvent {
     },
     CallEnded {
         dm_id: i64,
+    },
+    /// Voice: the SFU's answer or a renegotiation offer. DM: relayed from the other peer (`from`).
+    RtcOffer {
+        place: MediaPlace,
+        from: i64,
+        sdp: String,
+    },
+    RtcAnswer {
+        place: MediaPlace,
+        from: i64,
+        sdp: String,
+    },
+    RtcIce {
+        place: MediaPlace,
+        from: i64,
+        candidate: String,
+        sdp_mid: Option<String>,
+        sdp_mline_index: Option<u16>,
+    },
+    /// DM only. The SFU applies `SubscribeLayer` itself and does not echo it.
+    SubscribeLayer {
+        place: MediaPlace,
+        subscriber: i64,
+        publisher: i64,
+        track: MediaKind,
+        max_layer: LayerId,
+    },
+    /// Dynacast. Layers with at least one subscriber. The publisher pauses the rest.
+    WantedLayers {
+        place: MediaPlace,
+        track: MediaKind,
+        layers: Vec<LayerId>,
+        subscribers: u32,
     },
 }

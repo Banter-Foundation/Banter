@@ -322,6 +322,8 @@ pub struct ScreenShare {
     selected: Option<(CaptureKind, u32)>,
     live_target: Option<(CaptureKind, u32)>,
     live: bool,
+    /// Wayland ScreenCast. The compositor picks the source; there is no Banter target id.
+    portal: bool,
 }
 
 impl ScreenShare {
@@ -330,6 +332,7 @@ impl ScreenShare {
             selected: None,
             live_target: None,
             live: false,
+            portal: false,
         }
     }
 
@@ -353,18 +356,32 @@ impl ScreenShare {
         let Some(target) = self.selected else {
             return false;
         };
+        self.portal = false;
         self.live_target = Some(target);
         self.live = true;
         true
     }
 
+    /// Share through the system ScreenCast dialog. The compositor chooses the source.
+    pub fn go_live_portal(&mut self) {
+        self.portal = true;
+        self.live = true;
+        self.live_target = None;
+    }
+
+    pub fn is_portal(&self) -> bool {
+        self.live && self.portal
+    }
+
     pub fn stop(&mut self) {
         self.live = false;
         self.live_target = None;
+        self.portal = false;
     }
 
     /// Change the live source without ending the stream. Viewers stay in the same session.
     pub fn apply_while_live(&mut self, kind: CaptureKind, id: u32) {
+        self.portal = false;
         self.selected = Some((kind, id));
         if self.live {
             self.live_target = Some((kind, id));
@@ -522,6 +539,34 @@ pub fn encode_jpeg_rgba_quality(width: u32, height: u32, rgba: &[u8], max_edge: 
         .encode(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
         .map_err(|err| err.to_string())?;
     Ok(bytes)
+}
+
+/// Local preview only. Samples down to at most 960px before JPEG so a 4K capture
+/// is not encoded in full just to paint the tile.
+pub fn encode_jpeg_preview(width: u32, height: u32, rgba: &[u8], max_edge: u32, quality: u8) -> Result<Vec<u8>, String> {
+    let edge = if max_edge == 0 { 960 } else { max_edge.min(960).max(2) };
+    let (dw, dh) = if width <= edge && height <= edge {
+        (width.max(1), height.max(1))
+    } else {
+        let ratio = (edge as f64 / width as f64).min(edge as f64 / height as f64);
+        (((width as f64 * ratio).round() as u32).max(1), ((height as f64 * ratio).round() as u32).max(1))
+    };
+    if dw == width && dh == height {
+        return encode_jpeg_rgba_quality(width, height, rgba, 0, quality);
+    }
+    let mut small = vec![0u8; (dw as usize) * (dh as usize) * 4];
+    for row in 0..dh {
+        let src_row = (row as u64 * height as u64 / dh as u64) as usize;
+        for col in 0..dw {
+            let src_col = (col as u64 * width as u64 / dw as u64) as usize;
+            let from = (src_row * width as usize + src_col) * 4;
+            let to = (row as usize * dw as usize + col as usize) * 4;
+            if from + 4 <= rgba.len() && to + 4 <= small.len() {
+                small[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
+            }
+        }
+    }
+    encode_jpeg_rgba_quality(dw, dh, &small, 0, quality)
 }
 
 /// Picture packet. A raw JPEG (FF D8) is still accepted so older frames keep decoding.
@@ -831,6 +876,46 @@ pub fn fps_from_key(key: &str) -> StreamFps {
         "144" => StreamFps::Fps144,
         _ => StreamFps::Fps30,
     }
+}
+
+/// Window and display choices. Missing fields fall back to the defaults.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoPrefs {
+    pub vsync: bool,
+    pub fullscreen: bool,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl Default for VideoPrefs {
+    fn default() -> Self {
+        Self {
+            vsync: true,
+            fullscreen: false,
+            width: 1280,
+            height: 800,
+        }
+    }
+}
+
+/// Common windowed sizes for the Display settings combo.
+pub fn window_size_presets() -> &'static [(i32, i32)] {
+    &[
+        (1280, 720),
+        (1280, 800),
+        (1600, 900),
+        (1920, 1080),
+        (2560, 1440),
+    ]
+}
+
+pub fn window_size_label(width: i32, height: i32) -> String {
+    format!("{width} × {height}")
+}
+
+pub fn clamp_window_size(width: i32, height: i32) -> (i32, i32) {
+    (width.clamp(640, 7680), height.clamp(480, 4320))
 }
 
 /// Missing fields fall back to the defaults, so an older `voice.json` keeps the rest of its choices.

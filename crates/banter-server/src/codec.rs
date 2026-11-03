@@ -1,50 +1,67 @@
-use crate::error::BanterError;
-use crate::model::{MediaFrame, MediaKind, MediaPlace};
+//! Shared codec and SDP contract.
+//!
+//! Live media is Opus and H.264 Constrained Baseline over WebRTC. The profile,
+//! packetization mode, and simulcast RIDs are the same on Linux and Windows.
 
-/// Client to server: version, kind, payload. The server decides the room.
-pub fn encode_client_media(kind: MediaKind, payload: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(2 + payload.len());
-    out.push(1);
-    out.push(kind.code());
-    out.extend_from_slice(payload);
-    out
+use crate::model::LayerId;
+
+/// H.264 Constrained Baseline, level 3.1. `42` is Baseline, `e0` sets constraint_set1.
+pub const H264_PROFILE_LEVEL_ID: &str = "42e01f";
+pub const H264_FMTP: &str = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f";
+pub const OPUS_CLOCK_HZ: u32 = 48_000;
+pub const VIDEO_CLOCK_HZ: u32 = 90_000;
+
+/// Lines every Banter offer and answer must carry for the video simulcast section.
+pub fn locked_sdp_tokens() -> &'static [&'static str] {
+    &[
+        "H264/90000",
+        "profile-level-id=42e01f",
+        "packetization-mode=1",
+        "level-asymmetry-allowed=1",
+        "a=rid:f",
+        "a=rid:h",
+        "a=rid:q",
+        "a=simulcast:send q;h;f",
+        "opus/48000",
+        "useinbandfec=1",
+        "usedtx=1",
+    ]
 }
 
-pub fn decode_client_media(frame: &[u8]) -> Result<(MediaKind, Vec<u8>), BanterError> {
-    if frame.len() < 2 || frame[0] != 1 {
-        return Err(BanterError::BadFrame);
+pub fn sdp_matches_contract(sdp: &str) -> bool {
+    locked_sdp_tokens().iter().all(|token| sdp.contains(token))
+}
+
+/// Canonical fragment locked by tests. A live PeerConnection offer must contain the same tokens.
+pub fn sdp_fixture() -> String {
+    let _ = LayerId::RIDS;
+    format!(
+        "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+         a=rtpmap:111 opus/{OPUS_CLOCK_HZ}/2\r\n\
+         a=fmtp:111 minptime=10;useinbandfec=1;usedtx=1\r\n\
+         m=video 9 UDP/TLS/RTP/SAVPF 102\r\n\
+         a=rtpmap:102 H264/{VIDEO_CLOCK_HZ}\r\n\
+         a=fmtp:102 {H264_FMTP}\r\n\
+         a=rid:q send\r\n\
+         a=rid:h send\r\n\
+         a=rid:f send\r\n\
+         a=simulcast:send q;h;f\r\n"
+    )
+}
+
+/// Default STUN server. `BANTER_STUN` overrides it. Empty disables STUN and leaves host candidates.
+pub fn stun_url() -> String {
+    match std::env::var("BANTER_STUN") {
+        Ok(value) if value.is_empty() => String::new(),
+        Ok(value) => value,
+        Err(_) => "stun:stun.l.google.com:19302".to_string(),
     }
-    let kind = MediaKind::from_code(frame[1]).ok_or(BanterError::BadFrame)?;
-    Ok((kind, frame[2..].to_vec()))
 }
 
-/// Server to client: version, kind, place, sender, payload.
-pub fn encode_media_frame(kind: MediaKind, place: MediaPlace, sender_id: i64, payload: &[u8]) -> Vec<u8> {
-    let (place_code, place_id) = place.code();
-    let mut out = Vec::with_capacity(19 + payload.len());
-    out.push(1);
-    out.push(kind.code());
-    out.push(place_code);
-    out.extend_from_slice(&place_id.to_le_bytes());
-    out.extend_from_slice(&sender_id.to_le_bytes());
-    out.extend_from_slice(payload);
-    out
-}
-
-pub fn decode_media_frame(frame: &[u8]) -> Result<MediaFrame, BanterError> {
-    if frame.len() < 19 || frame[0] != 1 {
-        return Err(BanterError::BadFrame);
-    }
-    let kind = MediaKind::from_code(frame[1]).ok_or(BanterError::BadFrame)?;
-    let mut place_id = [0_u8; 8];
-    place_id.copy_from_slice(&frame[3..11]);
-    let mut sender = [0_u8; 8];
-    sender.copy_from_slice(&frame[11..19]);
-    let place = MediaPlace::from_parts(frame[2], i64::from_le_bytes(place_id)).ok_or(BanterError::BadFrame)?;
-    Ok(MediaFrame {
-        kind,
-        place,
-        sender_id: i64::from_le_bytes(sender),
-        payload: frame[19..].to_vec(),
-    })
+/// `BANTER_TURN` plus `BANTER_TURN_USER` and `BANTER_TURN_PASSWORD` when a relay is configured.
+pub fn turn_server() -> Option<(String, String, String)> {
+    let url = std::env::var("BANTER_TURN").ok().filter(|value| !value.is_empty())?;
+    let user = std::env::var("BANTER_TURN_USER").unwrap_or_default();
+    let password = std::env::var("BANTER_TURN_PASSWORD").unwrap_or_default();
+    Some((url, user, password))
 }

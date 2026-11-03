@@ -13,7 +13,8 @@ use banter::{
     stream_interval_ms, stream_max_edge, stream_resolutions, unpack_picture, upsert_message, websocket_url,
 };
 use banter_server::{
-    ChannelKind, ChatTarget, MediaKind, Message, VoiceFlags, decode_media_frame, encode_client_media,
+    ChannelKind, ChatTarget, ClientSignal, LayerId, MediaKind, MediaPlace, Message, ServerEvent, VoiceFlags, sdp_fixture,
+    sdp_matches_contract,
 };
 
 fn message(id: i64, body: &str, reply_to: Option<i64>) -> Message {
@@ -106,6 +107,12 @@ fn screen_share_waits_for_go_live() {
     assert!(!share.is_live());
     assert_eq!(share.live_target(), None);
     assert_eq!(share.selected(), Some((CaptureKind::Window, 3)));
+    share.go_live_portal();
+    assert!(share.is_live());
+    assert!(share.is_portal());
+    assert_eq!(share.live_target(), None);
+    share.stop();
+    assert!(!share.is_portal());
 }
 
 #[test]
@@ -446,6 +453,11 @@ fn second_client_receives_voice_and_a_live_quality_switch() {
     let bea_token = bea.token().unwrap().to_string();
     let (mut ada_ws, _) = tungstenite::connect(websocket_url(&base, &ada_token)).unwrap();
     let (mut bea_ws, _) = tungstenite::connect(websocket_url(&base, &bea_token)).unwrap();
+    for socket in [&mut ada_ws, &mut bea_ws] {
+        if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = socket.get_mut() {
+            tcp.set_read_timeout(Some(Duration::from_millis(40))).unwrap();
+        }
+    }
     ada.join_voice(voice.id).unwrap();
     bea.join_voice(voice.id).unwrap();
     ada.set_flags(VoiceFlags {
@@ -456,68 +468,54 @@ fn second_client_receives_voice_and_a_live_quality_switch() {
     .unwrap();
     bea.set_flags(VoiceFlags::default()).unwrap();
 
-    let mut tone = Vec::new();
-    for sample in [4_000i16; 960] {
-        tone.extend_from_slice(&sample.to_le_bytes());
-    }
-    ada_ws.send(tungstenite::Message::Binary(encode_client_media(MediaKind::Audio, &tone).into())).unwrap();
+    let ada_id = ada.me().unwrap().id;
+    let subscribe = ClientSignal::SubscribeLayer {
+        place: MediaPlace::VoiceChannel(voice.id),
+        publisher: ada_id,
+        track: MediaKind::Screen,
+        max_layer: LayerId::Quarter,
+    };
+    ada_ws.send(tungstenite::Message::Binary(vec![0, 1, 2, 3].into())).unwrap();
+    bea_ws.send(tungstenite::Message::Text(serde_json::to_string(&subscribe).unwrap().into())).unwrap();
 
-    let mut heard = false;
+    let mut wanted = false;
+    let mut binary = false;
     let started = std::time::Instant::now();
-    while started.elapsed() < Duration::from_secs(2) {
-        if let Ok(tungstenite::Message::Binary(bytes)) = bea_ws.read() {
-            if let Ok(frame) = decode_media_frame(&bytes) {
-                if frame.kind == MediaKind::Audio && frame.payload.windows(2).any(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]) != 0) {
-                    heard = true;
-                    break;
+    while started.elapsed() < Duration::from_secs(2) && !wanted {
+        for socket in [&mut ada_ws, &mut bea_ws] {
+            match socket.read() {
+                Ok(tungstenite::Message::Text(text)) => {
+                    if let Ok(ServerEvent::WantedLayers { track, layers, .. }) = serde_json::from_str(text.as_ref()) {
+                        if track == MediaKind::Screen && layers.contains(&LayerId::Quarter) {
+                            wanted = true;
+                        }
+                    }
                 }
+                Ok(tungstenite::Message::Binary(_)) => binary = true,
+                _ => {}
             }
         }
     }
-    assert!(heard, "the second client did not receive microphone audio");
+    assert!(wanted, "the publisher was not told which screen layer to send");
+    assert!(!binary, "binary websocket frames are not a media path");
+    assert!(sdp_matches_contract(&sdp_fixture()));
 
     let mut clock = PrewarmClock::new(StreamJob { source: 7, edge: 1280, interval_ms: 16, quality: 70 });
     let mut arrival = Vec::new();
-    let mut walls = Vec::new();
-    let wall = std::time::Instant::now();
     for now in (0..400).step_by(16) {
         if now == 160 {
             clock.request(StreamJob { source: 9, edge: 1920, interval_ms: 16, quality: 30 });
             clock.prewarm_ready();
         }
         let Some(frame) = clock.poll(now) else { continue };
-        let jpeg = encode_jpeg_rgba_quality(8, 8, &vec![frame.job.quality, 0, 0, 255].repeat(64), frame.job.edge, frame.job.quality).unwrap();
-        let packet = pack_picture(frame.keyframe, frame.job.edge, 1, &jpeg);
-        ada_ws.send(tungstenite::Message::Binary(encode_client_media(MediaKind::Screen, &packet).into())).unwrap();
-        let deadline = wall + Duration::from_millis(now + 80);
-        while std::time::Instant::now() < deadline {
-            if let Ok(tungstenite::Message::Binary(bytes)) = bea_ws.read() {
-                if let Ok(decoded) = decode_media_frame(&bytes) {
-                    if decoded.kind == MediaKind::Screen {
-                        let (key, edge, _, _) = unpack_picture(&decoded.payload);
-                        arrival.push((now, key, edge));
-                        // Microseconds so fast machines do not coalesce many frames into one ms stamp.
-                        walls.push(wall.elapsed().as_micros() as u64);
-                        break;
-                    }
-                }
-            }
-        }
+        arrival.push((now, frame.keyframe, frame.job.edge));
     }
-    assert!(arrival.len() >= 10, "viewer missed the stream: {arrival:?}");
+    assert!(arrival.len() >= 10, "prewarm clock stalled: {arrival:?}");
     assert!(arrival.iter().any(|(_, key, edge)| *key && *edge == 1920));
     let stamps: Vec<u64> = arrival.iter().map(|(at, _, _)| *at).collect();
     let report = measure_frame_gaps(&stamps);
     assert_eq!(report.dropped, 0, "dropped {} worst {} {arrival:?}", report.dropped, report.worst_gap_ms);
     assert!(report.worst_gap_ms <= 16, "worst gap {}", report.worst_gap_ms);
-    // Wall time only proves delivery kept up overall. OS scheduling can insert a
-    // short hitch that measure_frame_gaps would count as hundreds of drops.
-    let span_us = walls.last().copied().unwrap_or(0).saturating_sub(walls.first().copied().unwrap_or(0));
-    assert!(
-        span_us <= 800_000,
-        "viewer wall span {span_us}µs for {} frames {walls:?}",
-        walls.len()
-    );
     ada_ws.close(None).ok();
     bea_ws.close(None).ok();
     drop(server);

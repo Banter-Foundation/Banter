@@ -11,6 +11,8 @@
 - [*] 1:1 direct messages that can start a call
 - [*] Presence and mentions
 - [*] GLFW + OpenGL window with Dear ImGui docking
+- [*] F3 profiler: FPS, RSS, HTTP/WebSocket bytes, frame sections, expensive ops
+- [*] Display settings: VSync, fullscreen, window resolution (saved in video.json)
 
 ## Deferred
 

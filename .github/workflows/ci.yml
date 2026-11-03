@@ -1,0 +1,28 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: libraries
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev libasound2-dev libx11-dev libxcb1-dev pkg-config
+      - name: server
+        run: cargo test -p banter-server
+      - name: client
+        run: cargo test -p banter
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: server
+        run: cargo test -p banter-server
+      - name: client
+        run: cargo test -p banter

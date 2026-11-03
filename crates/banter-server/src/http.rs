@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tower_http::limit::RequestBodyLimitLayer;
 
-use crate::codec::{decode_client_media, encode_media_frame};
+use crate::model::ClientSignal;
 use crate::error::BanterError;
 use crate::live::Live;
 use crate::model::*;
@@ -670,10 +670,8 @@ async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
     let (mut sink, mut stream) = socket.split();
     let writer = tokio::spawn(async move {
         while let Some(outbound) = rx.recv().await {
-            let message = match outbound {
-                crate::live::Outbound::Text(text) => WsMessage::Text(text.into()),
-                crate::live::Outbound::Binary(bytes) => WsMessage::Binary(bytes.into()),
-            };
+            let crate::live::Outbound::Text(text) = outbound;
+            let message = WsMessage::Text(text.into());
             if sink.send(message).await.is_err() {
                 break;
             }
@@ -683,30 +681,20 @@ async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
         let Ok(message) = incoming else { break };
         match message {
             WsMessage::Text(text) => {
-                if text.contains("activity") {
-                    state.live.note_activity(user_id, now_ms());
-                    if let Ok(audience) = state.store.related_user_ids(user_id) {
-                        state.live.send_event(
-                            &audience,
-                            &ServerEvent::Presence {
-                                user_id,
-                                state: state.live.presence(user_id),
-                            },
-                        );
+                if let Ok(signal) = serde_json::from_str::<ClientSignal>(&text) {
+                    if matches!(signal, ClientSignal::Activity) {
+                        note_ws_activity(&state, user_id);
                     }
+                    let signal_for_room = signal.clone();
+                    if state.live.handle_signal(user_id, signal).is_ok() {
+                        apply_voice_signal(&state, user_id, signal_for_room);
+                    }
+                } else if text.contains("activity") {
+                    note_ws_activity(&state, user_id);
                 }
             }
-            WsMessage::Binary(bytes) => {
-                if let Ok((kind, payload)) = decode_client_media(&bytes) {
-                    if let Some(place) = state.live.current_place(user_id) {
-                        if let Ok(routed) = state.live.route_media(user_id, place, kind, &payload) {
-                            for item in routed {
-                                let frame = encode_media_frame(item.kind, place, user_id, &item.bytes);
-                                state.live.send_binary(item.user_id, frame);
-                            }
-                        }
-                    }
-                }
+            WsMessage::Binary(_) => {
+                // Media is UDP. Binary websocket frames are not a media path.
             }
             WsMessage::Close(_) => break,
             _ => {}
@@ -721,6 +709,44 @@ async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
             &ServerEvent::Presence {
                 user_id,
                 state: Presence::Offline,
+            },
+        );
+    }
+}
+
+fn apply_voice_signal(state: &HttpState, user_id: i64, signal: ClientSignal) {
+    match signal {
+        ClientSignal::RtcOffer {
+            place: MediaPlace::VoiceChannel(channel_id),
+            sdp,
+        } => crate::room::accept_offer(Arc::clone(&state.live), user_id, channel_id, sdp),
+        ClientSignal::RtcAnswer {
+            place: MediaPlace::VoiceChannel(_),
+            sdp,
+        } => crate::room::accept_answer(user_id, sdp),
+        ClientSignal::RtcIce {
+            place: MediaPlace::VoiceChannel(_),
+            candidate,
+            sdp_mid,
+            sdp_mline_index,
+        } => crate::room::accept_ice(user_id, candidate, sdp_mid, sdp_mline_index),
+        ClientSignal::SubscribeLayer { .. } => {
+            for request in state.live.take_keyframes() {
+                crate::room::request_pli(request.publisher, request.layer);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn note_ws_activity(state: &HttpState, user_id: i64) {
+    state.live.note_activity(user_id, now_ms());
+    if let Ok(audience) = state.store.related_user_ids(user_id) {
+        state.live.send_event(
+            &audience,
+            &ServerEvent::Presence {
+                user_id,
+                state: state.live.presence(user_id),
             },
         );
     }

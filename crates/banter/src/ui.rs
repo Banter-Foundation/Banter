@@ -6,32 +6,34 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use banter_server::{
     Account, CallPhase, CallSnapshot, CategoryLayout, Channel, ChannelKind, ChatTarget, DirectChat,
-    Friend, FriendRequest, MAX_ATTACHMENT_BYTES, MAX_AVATAR_BYTES, MediaKind, MediaPlace, Mention,
+    ClientSignal, Friend, FriendRequest, LayerId, LayerPreferences, MAX_ATTACHMENT_BYTES, MAX_AVATAR_BYTES, MediaKind, MediaPlace, Mention,
     Message, Presence, ServerSummary, VoiceFlags, VoiceMember,
 };
 use dear_imgui_rs::{
     Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData, PopupQueryFlags, Style,
-    StyleColor, StyleVar, TextureFormat, Ui, WindowFlags, fonts::FontId,
+    StyleColor, StyleVar, TextureFormat, TreeNodeFlags, Ui, WindowFlags, fonts::FontId,
 };
 
 use crate::api::{ApiError, Client, MemberView};
 use crate::icons::rasterize_lucide;
 use crate::logic::{
     CameraChoice, CaptureKind, MixSource, MuteMemory, ScreenShare, SettingsSection, StreamDefaults, StreamFps,
-    StreamResolution, VoicePrefs, camera_preview_mirrored, default_stream_fps, default_stream_resolution,
-    discord_shell_columns, encode_jpeg_rgba, fps_block, fps_from_key, fps_key, hardware_encoder_block,
-    jpeg_quality_for_bitrate, lerp_size, load_json, mirror_rgba, password_blocks_copy, password_is_masked,
-    push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key, save_json,
-    settings_sections, speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms,
+    StreamResolution, VideoPrefs, VoicePrefs, camera_preview_mirrored, clamp_window_size, default_stream_fps,
+    default_stream_resolution, discord_shell_columns, encode_jpeg_rgba, fps_block, fps_from_key, fps_key,
+    hardware_encoder_block, jpeg_quality_for_bitrate, lerp_size, load_json, mirror_rgba, password_blocks_copy,
+    password_is_masked, push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key,
+    save_json, settings_sections, speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms,
     stream_max_edge, stream_resolution_label, stream_resolutions, unpack_picture, upsert_message,
     chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_is_followup,
-    message_starts_new_day, OPEN_MIC_RMS,
+    message_starts_new_day, window_size_label, window_size_presets, OPEN_MIC_RMS,
 };
-use crate::media::{self, EngineUpdate, Media, VideoFrame};
+use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
+use crate::profiler;
 use crate::realtime::Realtime;
 use crate::session::{load_token, save_token, session_path};
 use crate::settings::{
@@ -156,6 +158,9 @@ pub(crate) struct App {
     share_thumbs: HashMap<(u8, u32), Shot>,
     share_miss: HashSet<(u8, u32)>,
     thumb_queue: Vec<(u8, u32, Vec<u8>)>,
+    thumb_tx: Sender<(u8, u32, Option<Vec<u8>>)>,
+    thumb_rx: Receiver<(u8, u32, Option<Vec<u8>>)>,
+    thumb_busy: bool,
     retired_shots: Vec<Shot>,
     camera_choice: CameraChoice,
     cameras: Vec<(u32, String)>,
@@ -163,6 +168,8 @@ pub(crate) struct App {
     stream_resolution: StreamResolution,
     stream_fps: StreamFps,
     voice: VoicePrefs,
+    video: VideoPrefs,
+    pending_video: Option<VideoPrefs>,
     stream: StreamDefaults,
     stream_menu: bool,
     stream_anchor: [f32; 2],
@@ -216,10 +223,17 @@ pub(crate) struct App {
     last_poll: Instant,
     last_activity: Instant,
     styled: bool,
+    profiler_metrics: bool,
+    profiler_demo: bool,
+    layers: LayerPreferences,
+    delivered: HashMap<(i64, MediaKind), LayerId>,
+    quality_for: Option<(i64, MediaKind)>,
+    quality_draft: f32,
 }
 
 impl App {
     pub(crate) fn open(base: String, data_dir: PathBuf) -> Self {
+        let (thumb_tx, thumb_rx) = mpsc::channel();
         let mut client = Client::new(&base);
         let mut account = None;
         if let Some(token) = load_token(&data_dir) {
@@ -290,6 +304,9 @@ impl App {
             share_thumbs: HashMap::new(),
             share_miss: HashSet::new(),
             thumb_queue: Vec::new(),
+            thumb_tx,
+            thumb_rx,
+            thumb_busy: false,
             retired_shots: Vec::new(),
             camera_choice: CameraChoice::new(),
             cameras: Vec::new(),
@@ -297,6 +314,8 @@ impl App {
             stream_resolution: default_stream_resolution(),
             stream_fps: default_stream_fps(),
             voice: VoicePrefs::default(),
+            video: VideoPrefs::default(),
+            pending_video: None,
             stream: StreamDefaults::default(),
             stream_menu: false,
             stream_anchor: [0.0, 0.0],
@@ -348,6 +367,12 @@ impl App {
             last_poll: Instant::now(),
             last_activity: Instant::now(),
             styled: false,
+            profiler_metrics: false,
+            profiler_demo: false,
+            layers: LayerPreferences::new(),
+            delivered: HashMap::new(),
+            quality_for: None,
+            quality_draft: 1.0,
         };
         app.load_saved();
         if app.account.is_some() {
@@ -368,6 +393,10 @@ impl App {
 
     pub(crate) fn set_v_held(&mut self, held: bool) {
         self.v_held = held;
+    }
+
+    pub(crate) fn take_video_apply(&mut self) -> Option<VideoPrefs> {
+        self.pending_video.take()
     }
 
     pub(crate) fn note_input(&mut self) {
@@ -402,8 +431,12 @@ impl App {
     }
 
     pub(crate) fn draw(&mut self, ui: &Ui) {
+        if !ui.io().want_capture_keyboard() && ui.is_key_pressed(Key::F3) {
+            profiler::global().toggle();
+        }
         if self.account.is_none() {
             self.draw_login(ui);
+            self.draw_profiler(ui);
             return;
         }
         if self.last_poll.elapsed() >= Duration::from_secs(2) {
@@ -430,6 +463,7 @@ impl App {
         if self.stream_menu {
             self.draw_stream_menu(ui);
         }
+        self.draw_profiler(ui);
         if ui.is_key_pressed(Key::Escape) {
             if self.crop_open {
                 self.crop_open = false;
@@ -443,6 +477,8 @@ impl App {
                 self.stream_menu = false;
             } else if self.share_open {
                 self.share_open = false;
+            } else if profiler::global().is_open() {
+                profiler::global().set_open(false);
             } else if self.settings.is_open() {
                 self.settings.escape(self.settings_popup_open);
             }
@@ -1042,11 +1078,17 @@ impl App {
         skin::text(ui, semi, FONT_SM, [origin[0] + 8.0 + 16.0 + 6.0, origin[1] + 10.0], title_color, title);
         let sub_w = width - 8.0 - 8.0 - 40.0;
         let (sub_text, sub_color) = match &error {
-            Some(error) => (error.clone(), RED),
+            Some(_) => ("Screen share failed".to_string(), RED),
             None => (subtitle, TEXT_SECONDARY),
         };
         let sub_text = skin::ellipsize(ui, None, FONT_XS, &sub_text, sub_w);
         skin::text(ui, None, FONT_XS, [origin[0] + 8.0, origin[1] + 30.0], sub_color, &sub_text);
+        if let Some(error) = &error {
+            ui.set_cursor_screen_pos([origin[0] + 8.0, origin[1] + 28.0]);
+            ui.invisible_button("connection-error", [sub_w, 16.0]);
+            let detail = skin::wrap_lines(ui, None, FONT_SM, device_error_text(error), 360.0).join("\n");
+            skin::item_tooltip(ui, None, &detail);
+        }
         let end_tip = match &call {
             Some(call) if call.phase == CallPhase::Ringing && Some(call.callee) != me => "Cancel Call",
             Some(call) if call.phase == CallPhase::Ringing => "Decline",
@@ -1101,15 +1143,12 @@ impl App {
         skin::item_tooltip(ui, semi, if camera { "Turn Off Camera" } else { "Turn On Camera" });
         x += slot_w + 8.0;
         let live = self.share.is_live();
-        if self.panel_button(ui, "screen-toggle", "monitor", [x, row_y], slot_w, live) {
-            if live {
-                self.share.stop();
-                self.save_stream();
-            } else {
-                self.open_share();
-            }
+        let share_clicked = self.panel_button(ui, "screen-toggle", "monitor", [x, row_y], slot_w, live);
+        let share_custom = ui.is_item_clicked_with_button(dear_imgui_rs::MouseButton::Right) && ui.io().key_shift();
+        if share_clicked || share_custom {
+            self.on_share_click(share_clicked, share_custom);
         }
-        skin::item_tooltip(ui, semi, if live { "Stop Streaming" } else { "Share Your Screen" });
+        skin::item_tooltip(ui, semi, share_tip(live));
         x += slot_w + 8.0;
         if self.push_to_talk {
             ui.set_cursor_screen_pos([x, row_y]);
@@ -1123,12 +1162,6 @@ impl App {
             self.talk_held = false;
         }
         self.video_popout = false;
-        if let Some(media) = &self.media {
-            for error in media.errors() {
-                let y = origin[1] + VOICE_PANEL_H - 18.0;
-                skin::text(ui, None, FONT_XS, [origin[0] + 8.0, y], RED, &device_error_text(&error));
-            }
-        }
     }
 
     fn panel_button(&self, ui: &Ui, id: &str, icon: &str, min: [f32; 2], width: f32, active: bool) -> bool {
@@ -2110,14 +2143,9 @@ impl App {
         let live = self.share.is_live();
         let screen_min = [origin[0] + xs[1], y];
         let screen_icon = if live { "monitor" } else { "monitor-off" };
-        let (share_clicked, options_clicked) = self.split_control(ui, "stage-screen", screen_icon, screen_min);
-        if share_clicked {
-            if live {
-                self.share.stop();
-                self.save_stream();
-            } else {
-                self.open_share();
-            }
+        let (share_clicked, options_clicked, share_custom) = self.split_control(ui, "stage-screen", screen_icon, screen_min);
+        if share_clicked || share_custom {
+            self.on_share_click(share_clicked, share_custom);
         }
         if options_clicked {
             self.stream_anchor = screen_min;
@@ -2153,18 +2181,41 @@ impl App {
     }
 
     /// Screen share button joined to its stream-options chevron, as in Discord's call bar.
-    fn split_control(&self, ui: &Ui, id: &str, icon: &str, origin: [f32; 2]) -> (bool, bool) {
+    fn on_share_click(&mut self, left: bool, custom: bool) {
+        if custom {
+            self.open_share();
+            return;
+        }
+        if !left {
+            return;
+        }
+        if self.share.is_live() {
+            self.share.stop();
+            self.save_stream();
+            return;
+        }
+        if media::native_screen_picker() {
+            self.share_open = false;
+            self.share.go_live_portal();
+            self.save_stream();
+        } else {
+            self.open_share();
+        }
+    }
+
+    fn split_control(&self, ui: &Ui, id: &str, icon: &str, origin: [f32; 2]) -> (bool, bool, bool) {
         let semi = self.semibold_font;
         let total_w = CALL_BUTTON + CALL_CHEVRON_W;
         let max = [origin[0] + total_w, origin[1] + CALL_BUTTON];
         skin::rect(ui, origin, max, CONTROL_BG, CALL_BUTTON * 0.5);
         ui.set_cursor_screen_pos(origin);
         let main = ui.invisible_button(id, [CALL_BUTTON, CALL_BUTTON]);
+        let custom = ui.is_item_clicked_with_button(dear_imgui_rs::MouseButton::Right) && ui.io().key_shift();
         if ui.is_item_hovered() {
             skin::rect_corners(ui, origin, [origin[0] + CALL_BUTTON, max[1]], CONTROL_HOVER, CALL_BUTTON * 0.5, DrawFlags::ROUND_LEFT);
         }
         let live = self.share.is_live();
-        skin::item_tooltip(ui, semi, if live { "Stop Streaming" } else { "Share Your Screen" });
+        skin::item_tooltip(ui, semi, share_tip(live));
         let chevron_min = [origin[0] + CALL_BUTTON, origin[1]];
         ui.set_cursor_screen_pos(chevron_min);
         let options = ui.invisible_button(format!("{id}-options"), [CALL_CHEVRON_W, CALL_BUTTON]);
@@ -2176,7 +2227,7 @@ impl App {
         let inset = (CALL_BUTTON - 24.0) * 0.5;
         skin::image(ui, self.icon(icon), [origin[0] + inset, origin[1] + inset], 24.0, WHITE);
         skin::image(ui, self.icon("chevron-up"), [chevron_min[0] + 2.0, origin[1] + (CALL_BUTTON - 16.0) * 0.5], 16.0, TEXT_NORMAL);
-        (main, options)
+        (main, options, custom)
     }
 
     /// Draws the open dialog over a dark overlay. A click outside the card or Escape closes it.
@@ -2565,6 +2616,10 @@ impl App {
         let transmitting = speaking_from_level(self.push_to_talk, ptt_hot, rms, threshold);
         let in_place = self.voice_channel.is_some()
             || self.call.as_ref().is_some_and(|call| call.phase == CallPhase::Active);
+        if self.media.as_ref().is_some_and(|media| media.take_capture_failure()) {
+            self.share.stop();
+            self.save_stream();
+        }
         self.screen = self.share.is_live() && in_place;
         self.flags = self.mute.voice_flags(self.push_to_talk, transmitting, self.camera && in_place, self.screen);
         if let Some(id) = self.account.as_ref().map(|account| account.id) {
@@ -2575,10 +2630,25 @@ impl App {
         let preview = self.camera || self.video_popout || self.voice_settings_visible();
         if let Some(media) = &self.media {
             media.set_camera_choice(self.camera_choice.device_index(), preview);
-            media.set_stream_choice(self.share.live_target(), stream_max_edge(self.stream_resolution), stream_interval_ms(self.stream_fps));
+            let pick = if self.share.is_portal() {
+                Some(StreamPick::Portal)
+            } else {
+                self.share.live_target().map(|(kind, id)| StreamPick::Source(kind, id))
+            };
+            media.set_stream_choice(pick, stream_max_edge(self.stream_resolution), stream_interval_ms(self.stream_fps));
             media.apply_engine(&self.engine_update());
             media.set_mic_test(self.settings.mic_test());
             media.set_state(self.flags, in_place);
+            let place = if let Some(channel_id) = self.voice_channel {
+                Some(MediaPlace::VoiceChannel(channel_id))
+            } else if self.call.as_ref().is_some_and(|call| call.phase == CallPhase::Active) {
+                self.call.as_ref().map(|call| MediaPlace::DirectCall(call.dm_id))
+            } else {
+                None
+            };
+            let me = self.account.as_ref().map(|account| account.id).unwrap_or(0);
+            let offerer = self.voice_channel.is_some() || self.call.as_ref().is_some_and(|call| call.caller == me);
+            media.set_session(place.filter(|_| in_place), me, offerer);
         }
         if in_place && self.flags != self.sent_flags {
             if self.note(self.client.set_flags(self.flags)).is_some() {
@@ -2612,7 +2682,7 @@ impl App {
     fn connect_live(&mut self) {
         let Some(token) = self.client.token().map(str::to_string) else { return };
         let realtime = Realtime::connect(websocket_url(&self.base, &token));
-        let media = Media::start(realtime.binary_sender());
+        let media = Media::start(realtime.signal_sender());
         self.media = Some(media);
         self.realtime = Some(realtime);
     }
@@ -2781,29 +2851,14 @@ impl App {
     fn pump_events(&mut self) {
         let Some(realtime) = &self.realtime else { return };
         let events = realtime.take_events();
-        let frames = realtime.take_frames();
         if let Some(error) = realtime.take_error() {
             self.status = error;
         }
         for event in events {
+            if let Some(media) = &self.media {
+                media.ingest(event.clone());
+            }
             self.on_event(event);
-        }
-        for frame in frames {
-            if !self.frame_place_matches(frame.place) {
-                continue;
-            }
-            match frame.kind {
-                MediaKind::Audio => {
-                    if let Some(media) = &self.media {
-                        media.push_remote_audio(&frame.payload);
-                    }
-                }
-                MediaKind::Camera | MediaKind::Screen => {
-                    if let Some(media) = &self.media {
-                        media.push_remote_video(frame.sender_id, frame.kind, &frame.payload);
-                    }
-                }
-            }
         }
     }
 
@@ -2846,19 +2901,26 @@ impl App {
                     self.call = None;
                 }
             }
-        }
-    }
-
-    fn frame_place_matches(&self, place: MediaPlace) -> bool {
-        match place {
-            MediaPlace::VoiceChannel(id) => self.voice_channel == Some(id),
-            MediaPlace::DirectCall(id) => self.call.as_ref().is_some_and(|call| call.dm_id == id && call.phase == CallPhase::Active),
+            ServerEvent::RtcOffer { .. }
+            | ServerEvent::RtcAnswer { .. }
+            | ServerEvent::RtcIce { .. }
+            | ServerEvent::SubscribeLayer { .. }
+            | ServerEvent::WantedLayers { .. } => {}
         }
     }
 
     fn install_video(&mut self, imgui: &mut Context, frame: VideoFrame) {
-        let (jpeg, picture) = picture_bytes(&frame.jpeg);
-        let shot = if frame.sender.is_none() && frame.kind == MediaKind::Camera && camera_preview_mirrored() {
+        if let Some(sender) = frame.sender {
+            self.delivered.insert((sender, frame.kind), frame.layer);
+        }
+        let (jpeg, picture) = if frame.jpeg.is_empty() {
+            (Vec::new(), [0.0, 0.0])
+        } else {
+            picture_bytes(&frame.jpeg)
+        };
+        let shot = if let Some((width, height, rgba)) = frame.rgba.as_ref() {
+            upload_rgba(imgui, *width, *height, rgba)
+        } else if frame.sender.is_none() && frame.kind == MediaKind::Camera && camera_preview_mirrored() {
             mirrored_camera_shot(imgui, &jpeg)
         } else {
             upload_jpeg(imgui, &jpeg)
@@ -3251,6 +3313,15 @@ impl App {
     }
 
     fn flush_shots(&mut self, imgui: &mut Context) {
+        while let Ok((code, id, jpeg)) = self.thumb_rx.try_recv() {
+            self.thumb_busy = false;
+            match jpeg {
+                Some(bytes) => self.thumb_queue.push((code, id, bytes)),
+                None => {
+                    self.share_miss.insert((code, id));
+                }
+            }
+        }
         for shot in self.retired_shots.drain(..) {
             let _ = imgui.remove_texture(shot.texture);
         }
@@ -3559,36 +3630,41 @@ impl App {
             self.draw_sensitivity_settings(ui, width);
         }
         settings_divider(ui, width);
-
-        settings_form_label(ui, self.bold_font, "VOICE PROCESSING");
-        if settings_toggle_row(ui, "echo-cancellation", "Echo Cancellation", &mut self.voice.echo_cancellation, width) {
-            self.save_voice();
-        }
-        settings_divider(ui, width);
-        if settings_toggle_row(ui, "noise-suppression", "Noise Suppression", &mut self.voice.noise_suppression, width) {
-            self.save_voice();
-        }
-        settings_divider(ui, width);
-        if settings_toggle_row(ui, "auto-gain", "Automatic Gain Control", &mut self.voice.auto_gain, width) {
-            self.save_voice();
-        }
-        settings_divider(ui, width);
         settings_spacer(ui);
 
-        settings_page_title(ui, self.bold_font, "Video Settings");
-        self.draw_camera_picker(ui, width);
-        settings_spacer(ui);
-        settings_divider(ui, width);
-
-        settings_page_title(ui, self.bold_font, "Screen Share");
-        self.draw_stream_quality(ui, width);
-        settings_spacer(ui);
-        self.draw_audio_sources(ui, width);
-        settings_spacer(ui);
-        ui.text_colored(
-            MUTED,
-            "Open Share Your Screen from a voice channel or a call. Pick a screen or an application, then press Go Live. Nothing is shared before that.",
-        );
+        if settings_panel(ui, "Voice processing") {
+            if settings_toggle_row(ui, "echo-cancellation", "Echo Cancellation", &mut self.voice.echo_cancellation, width) {
+                self.save_voice();
+            }
+            settings_divider(ui, width);
+            if settings_toggle_row(ui, "noise-suppression", "Noise Suppression", &mut self.voice.noise_suppression, width) {
+                self.save_voice();
+            }
+            settings_divider(ui, width);
+            if settings_toggle_row(ui, "auto-gain", "Automatic Gain Control", &mut self.voice.auto_gain, width) {
+                self.save_voice();
+            }
+            settings_spacer(ui);
+        }
+        if settings_panel(ui, "Video") {
+            self.draw_display_settings(ui, width);
+            settings_spacer(ui);
+        }
+        if settings_panel(ui, "Camera") {
+            self.draw_camera_picker(ui, width);
+            settings_spacer(ui);
+        }
+        if settings_panel(ui, "Screen share") {
+            self.draw_stream_quality(ui, width);
+            settings_spacer(ui);
+            self.draw_audio_sources(ui, width);
+            settings_spacer(ui);
+            ui.text_colored(
+                MUTED,
+                "Open Share Your Screen from a voice channel or a call. Pick a screen or an application, then press Go Live.",
+            );
+            settings_spacer(ui);
+        }
     }
 
     fn draw_sensitivity_settings(&mut self, ui: &Ui, width: f32) {
@@ -3777,10 +3853,11 @@ impl App {
         }
         settings_spacer(ui);
         settings_form_label(ui, self.bold_font, "ENCODER");
-        if let Some(reason) = hardware_encoder_block(false) {
-            ui.text_colored(MUTED, format!("Software JPEG. {reason}"));
+        if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
+            ui.text_colored(MUTED, reason);
+        } else {
+            ui.text_colored(MUTED, "Hardware H.264 when this PC can encode Constrained Baseline. Otherwise OpenH264.");
         }
-        self.stream.hardware = false;
     }
 
     fn draw_share(&mut self, ui: &Ui) {
@@ -3823,47 +3900,55 @@ impl App {
                         .iter()
                         .map(|source| (source.kind, source.id, source.name.clone()))
                         .collect::<Vec<_>>();
-                    ui.child_window("share-grid").size([0.0, -128.0]).build(ui, || {
-                        if sources.is_empty() {
-                            ui.text_colored(
-                                MUTED,
-                                if self.share_tab == 0 { "No screens were found." } else { "No application windows were found." },
-                            );
-                        }
-                        for (index, (kind, id, name)) in sources.iter().enumerate() {
-                            if index % 3 != 0 {
-                                ui.same_line();
+                    // Leave a fixed footer so Go Live stays on screen while the list scrolls.
+                    ui.child_window("share-body").size([0.0, -52.0]).build(ui, || {
+                        ui.child_window("share-grid").size([0.0, 220.0]).build(ui, || {
+                            if sources.is_empty() {
+                                ui.text_colored(
+                                    MUTED,
+                                    if self.share_tab == 0 { "No screens were found." } else { "No application windows were found." },
+                                );
                             }
-                            let key = source_key(*kind, *id);
-                            let selected = self.share.selected() == Some((*kind, *id));
-                            let _fill = ui.push_style_color(StyleColor::ChildBg, if selected { ROW_SELECTED } else { PANEL_BG });
-                            ui.child_window(format!("share-{}-{}", key.0, key.1))
-                                .size([210.0, 156.0])
-                                .border(selected)
-                                .build(ui, || {
-                                    let origin = ui.cursor_pos();
-                                    if let Some(shot) = self.share_thumbs.get(&key) {
-                                        ui.image(shot.texture, fit_inside(shot.size, 190.0, 96.0));
-                                    } else {
-                                        ui.dummy([190.0, 96.0]);
-                                    }
-                                    ui.text_wrapped(name);
-                                    ui.set_cursor_pos(origin);
-                                    if ui.invisible_button(format!("pick-{}-{}", key.0, key.1), [190.0, 140.0]) {
-                                        if self.share.is_live() {
-                                            self.share.apply_while_live(*kind, *id);
+                            for (index, (kind, id, name)) in sources.iter().enumerate() {
+                                if index % 3 != 0 {
+                                    ui.same_line();
+                                }
+                                let key = source_key(*kind, *id);
+                                let selected = self.share.selected() == Some((*kind, *id));
+                                let _fill = ui.push_style_color(StyleColor::ChildBg, if selected { ROW_SELECTED } else { PANEL_BG });
+                                ui.child_window(format!("share-{}-{}", key.0, key.1))
+                                    .size([210.0, 156.0])
+                                    .border(selected)
+                                    .build(ui, || {
+                                        let origin = ui.cursor_pos();
+                                        if let Some(shot) = self.share_thumbs.get(&key) {
+                                            ui.image(shot.texture, fit_inside(shot.size, 190.0, 96.0));
                                         } else {
-                                            self.share.select(*kind, *id);
+                                            ui.dummy([190.0, 96.0]);
                                         }
-                                        self.save_stream();
-                                    }
-                                });
+                                        ui.text_wrapped(name);
+                                        ui.set_cursor_pos(origin);
+                                        if ui.invisible_button(format!("pick-{}-{}", key.0, key.1), [190.0, 140.0]) {
+                                            if self.share.is_live() {
+                                                self.share.apply_while_live(*kind, *id);
+                                            } else {
+                                                self.share.select(*kind, *id);
+                                            }
+                                            self.save_stream();
+                                        }
+                                    });
+                            }
+                        });
+                        let share_w = ui.content_region_avail()[0];
+                        if settings_panel(ui, "Quality") {
+                            self.draw_stream_quality(ui, share_w);
+                            settings_spacer(ui);
+                        }
+                        if settings_panel(ui, "Stream audio") {
+                            self.draw_audio_sources(ui, share_w);
                         }
                     });
-                    let share_w = ui.content_region_avail()[0];
-                    self.draw_stream_quality(ui, share_w);
-                    self.draw_audio_sources(ui, share_w);
-                    if ui.button("Go Live") {
+                    if ui.button_with_size("Go Live", [120.0, 36.0]) {
                         if self.share.go_live() {
                             self.share_open = false;
                         } else {
@@ -3873,10 +3958,14 @@ impl App {
                     if self.share.is_live() {
                         ui.same_line();
                         let _red = ui.push_style_color(StyleColor::Button, RED);
-                        if ui.button("Stop Streaming") {
+                        if ui.button_with_size("Stop Streaming", [160.0, 36.0]) {
                             self.share.stop();
                             self.share_open = false;
                         }
+                    }
+                    if !self.status.is_empty() {
+                        ui.same_line();
+                        ui.text_colored(RED, &self.status);
                     }
                 });
                 self.queue_next_thumb();
@@ -3892,7 +3981,7 @@ impl App {
     }
 
     fn queue_next_thumb(&mut self) {
-        if !self.thumb_queue.is_empty() {
+        if self.thumb_busy || !self.thumb_queue.is_empty() {
             return;
         }
         while self.share_thumb_next < self.share_sources.len() {
@@ -3904,12 +3993,12 @@ impl App {
             if self.share_thumbs.contains_key(&key) || self.share_miss.contains(&key) {
                 continue;
             }
-            if let Some(jpeg) = capture_source_jpeg(kind, id) {
-                self.thumb_queue.push((key.0, key.1, jpeg));
-            } else {
-                self.share_miss.insert(key);
-            }
-            break;
+            self.thumb_busy = true;
+            let tx = self.thumb_tx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send((key.0, key.1, capture_source_jpeg(kind, id)));
+            });
+            return;
         }
     }
 
@@ -3961,7 +4050,7 @@ impl App {
         skin::text_in_row(ui, None, FONT_SM, text_x, origin[1], VOICE_MEMBER_H, color, &shown);
     }
 
-    fn draw_featured_screen_at(&self, ui: &Ui, origin: [f32; 2], width: f32, height: f32) {
+    fn draw_featured_screen_at(&mut self, ui: &Ui, origin: [f32; 2], width: f32, height: f32) {
         let featured = if self.screen {
             self.local_screen.as_ref().map(|shot| (self.name_of(self.account.as_ref().map(|account| account.id).unwrap_or(0)), shot.texture, shot.size))
         } else {
@@ -3990,6 +4079,12 @@ impl App {
             DrawFlags::ROUND_ALL,
         );
         self.name_tag(ui, [origin[0] + 8.0, max[1] - 8.0 - 24.0], &name, None, true);
+        if let Some(member) = self.voice_members.iter().find(|member| member.flags.screen).cloned() {
+            let me = self.account.as_ref().map(|account| account.id);
+            if Some(member.user_id) != me {
+                self.quality_control(ui, member.user_id, MediaKind::Screen, [origin[0] + 8.0, origin[1] + 8.0]);
+            }
+        }
     }
 
     /// Bottom-left tile label: name, then a mute or deafen icon, and a red LIVE badge for a stream.
@@ -4012,7 +4107,7 @@ impl App {
         }
     }
 
-    fn draw_voice_tile_at(&self, ui: &Ui, member: &VoiceMember, origin: [f32; 2], tile_w: f32, tile_h: f32) {
+    fn draw_voice_tile_at(&mut self, ui: &Ui, member: &VoiceMember, origin: [f32; 2], tile_w: f32, tile_h: f32) {
         let name = self.name_of(member.user_id);
         let me = self.account.as_ref().map(|account| account.id);
         let talking = self.member_talking(member);
@@ -4053,6 +4148,79 @@ impl App {
             None
         };
         self.name_tag(ui, [origin[0] + 8.0, max[1] - 8.0 - 24.0], &name, state_icon, false);
+        let me = self.account.as_ref().map(|account| account.id);
+        if member.flags.camera && Some(member.user_id) != me {
+            self.quality_control(ui, member.user_id, MediaKind::Camera, [origin[0] + 8.0, origin[1] + 8.0]);
+        }
+    }
+
+    fn quality_control(&mut self, ui: &Ui, publisher: i64, track: MediaKind, origin: [f32; 2]) {
+        let key = (publisher, track);
+        let open = self.quality_for == Some(key);
+        let chosen = self.layers.get(publisher, track);
+        ui.set_cursor_screen_pos(origin);
+        let label = format!("{}##quality-open-{}-{}", layer_word(chosen), publisher, track.code());
+        if ui.small_button(&label) {
+            if open {
+                self.quality_for = None;
+            } else {
+                self.quality_for = Some(key);
+                self.quality_draft = banter_server::slider_position(chosen);
+            }
+        }
+        if !open {
+            return;
+        }
+        let delivered = self.delivered.get(&key).copied().unwrap_or(chosen);
+        let panel = [origin[0], origin[1] + 26.0];
+        ui.window(format!("Quality {} {}", publisher, track.code()))
+            .flags(
+                WindowFlags::NO_DECORATION
+                    | WindowFlags::NO_MOVE
+                    | WindowFlags::NO_RESIZE
+                    | WindowFlags::NO_SAVED_SETTINGS
+                    | WindowFlags::NO_DOCKING,
+            )
+            .position(panel, Condition::Always)
+            .size([240.0, 96.0], Condition::Always)
+            .build(|| {
+                ui.text("Quality");
+                let changed = ui.slider_f32("##quality-draft", &mut self.quality_draft, 0.0, 1.0);
+                let snapped = banter_server::snap_quality_slider(self.quality_draft);
+                if changed {
+                    self.quality_draft = banter_server::slider_position(snapped);
+                }
+                let note = if delivered != snapped {
+                    format!("{} (showing {})", layer_word(snapped), layer_word(delivered))
+                } else {
+                    layer_word(snapped).to_string()
+                };
+                if ui.button("Apply") {
+                    self.layers.set(publisher, track, snapped);
+                    self.send_subscribe(publisher, track, snapped);
+                    self.quality_for = None;
+                }
+                ui.same_line();
+                ui.text_colored(MUTED, note);
+            });
+    }
+
+    fn send_subscribe(&self, publisher: i64, track: MediaKind, layer: LayerId) {
+        let place = if let Some(channel_id) = self.voice_channel {
+            Some(MediaPlace::VoiceChannel(channel_id))
+        } else if self.call.as_ref().is_some_and(|call| call.phase == CallPhase::Active) {
+            self.call.as_ref().map(|call| MediaPlace::DirectCall(call.dm_id))
+        } else {
+            None
+        };
+        let Some(place) = place else { return };
+        let Some(realtime) = &self.realtime else { return };
+        realtime.send(ClientSignal::SubscribeLayer {
+            place,
+            publisher,
+            track,
+            max_layer: layer,
+        });
     }
 
     fn tile_camera(&self, member: &VoiceMember, me: Option<i64>) -> Option<(ManagedTextureId, [f32; 2])> {
@@ -4073,6 +4241,12 @@ impl App {
             self.push_to_talk = voice.push_to_talk;
             self.voice = voice;
         }
+        if let Some(mut video) = load_json::<VideoPrefs>(&self.data_dir.join("video.json")) {
+            let (width, height) = clamp_window_size(video.width, video.height);
+            video.width = width;
+            video.height = height;
+            self.video = video;
+        }
         if let Some(stream) = load_json::<StreamDefaults>(&self.data_dir.join("stream.json")) {
             self.stream_resolution = resolution_from_key(&stream.resolution);
             self.stream_fps = fps_from_key(&stream.fps);
@@ -4087,11 +4261,62 @@ impl App {
         let _ = save_json(&self.data_dir.join("voice.json"), &voice);
     }
 
+    fn save_video(&mut self) {
+        let (width, height) = clamp_window_size(self.video.width, self.video.height);
+        self.video.width = width;
+        self.video.height = height;
+        let _ = save_json(&self.data_dir.join("video.json"), &self.video);
+        self.pending_video = Some(self.video.clone());
+    }
+
     fn save_stream(&mut self) {
         self.stream.resolution = resolution_key(self.stream_resolution).to_string();
         self.stream.fps = fps_key(self.stream_fps).to_string();
         self.stream.hardware = false;
         let _ = save_json(&self.data_dir.join("stream.json"), &self.stream);
+    }
+
+    fn draw_display_settings(&mut self, ui: &Ui, width: f32) {
+        settings_form_label(ui, self.bold_font, "DISPLAY");
+        ui.text_colored(
+            MUTED,
+            "Window size and sync. Turning VSync off can raise FPS; tearing may show up.",
+        );
+        settings_spacer(ui);
+        if settings_toggle_row(ui, "video-vsync", "VSync", &mut self.video.vsync, width) {
+            self.save_video();
+        }
+        settings_divider(ui, width);
+        if settings_toggle_row(ui, "video-fullscreen", "Fullscreen", &mut self.video.fullscreen, width) {
+            self.save_video();
+        }
+        settings_divider(ui, width);
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "WINDOW RESOLUTION");
+        if self.video.fullscreen {
+            ui.text_colored(MUTED, "Resolution applies when you leave fullscreen.");
+            settings_spacer(ui);
+        }
+        let presets = window_size_presets();
+        let mut labels: Vec<String> = presets
+            .iter()
+            .map(|&(w, h)| window_size_label(w, h))
+            .collect();
+        let mut index = presets
+            .iter()
+            .position(|&(w, h)| w == self.video.width && h == self.video.height)
+            .unwrap_or(usize::MAX);
+        if index == usize::MAX {
+            labels.push(format!("{} (current)", window_size_label(self.video.width, self.video.height)));
+            index = labels.len() - 1;
+        }
+        if settings_combo(ui, "##window-resolution", width, &labels, &mut index) {
+            if let Some(&(w, h)) = presets.get(index) {
+                self.video.width = w;
+                self.video.height = h;
+                self.save_video();
+            }
+        }
     }
 
     fn engine_update(&self) -> EngineUpdate {
@@ -4268,8 +4493,8 @@ impl App {
     }
 
     fn draw_stream_menu(&mut self, ui: &Ui) {
-        let width = 300.0;
-        let height = 250.0;
+        let width = 280.0;
+        let height = 220.0;
         let x = self.stream_anchor[0];
         let y = (self.stream_anchor[1] - height - 8.0).max(8.0);
         ui.window("Stream options")
@@ -4278,25 +4503,31 @@ impl App {
             .size([width, height], Condition::Always)
             .build(|| {
                 ui.text("Stream options");
-                if let Some(reason) = hardware_encoder_block(false) {
-                    ui.text_wrapped(format!("Software JPEG. {reason}"));
-                }
-                if ui.checkbox("Automatic bitrate", &mut self.stream.bitrate_auto) {
-                    self.save_stream();
-                }
-                if !self.stream.bitrate_auto {
-                    let mut kbps = self.stream.bitrate_kbps as f32;
-                    if ui.slider_f32("Bitrate kbps", &mut kbps, 200.0, 8000.0) {
-                        self.stream.bitrate_kbps = kbps.round() as u32;
-                        self.save_stream();
+                ui.child_window("stream-options-body").size([0.0, -36.0]).build(ui, || {
+                    if settings_panel(ui, "Bitrate") {
+                        if ui.checkbox("Automatic bitrate", &mut self.stream.bitrate_auto) {
+                            self.save_stream();
+                        }
+                        if !self.stream.bitrate_auto {
+                            let mut kbps = self.stream.bitrate_kbps as f32;
+                            if ui.slider_f32("Bitrate kbps", &mut kbps, 200.0, 8000.0) {
+                                self.stream.bitrate_kbps = kbps.round() as u32;
+                                self.save_stream();
+                            }
+                        }
+                        if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
+                            ui.text_wrapped(reason);
+                        }
                     }
-                }
-                if ui.checkbox("Show cursor", &mut self.stream.show_cursor) {
-                    self.save_stream();
-                }
-                if ui.checkbox("Show my preview", &mut self.stream.show_preview) {
-                    self.save_stream();
-                }
+                    if settings_panel(ui, "Preview") {
+                        if ui.checkbox("Show cursor", &mut self.stream.show_cursor) {
+                            self.save_stream();
+                        }
+                        if ui.checkbox("Show my preview", &mut self.stream.show_preview) {
+                            self.save_stream();
+                        }
+                    }
+                });
                 if ui.button("Change source") {
                     self.open_share();
                 }
@@ -4308,6 +4539,124 @@ impl App {
                         self.save_stream();
                     }
                 }
+            });
+    }
+
+    fn draw_profiler(&mut self, ui: &Ui) {
+        if self.profiler_metrics {
+            ui.show_metrics_window(&mut self.profiler_metrics);
+        }
+        if self.profiler_demo {
+            ui.show_demo_window(&mut self.profiler_demo);
+        }
+        if !profiler::global().is_open() {
+            return;
+        }
+        let size = ui.io().display_size();
+        let x = (size[0] - PROFILER_W - PROFILER_MARGIN).max(PROFILER_MARGIN);
+        let y = PROFILER_MARGIN;
+        let snap = profiler::global().snapshot();
+        let ops = profiler::global().recent_ops();
+        let _bg = ui.push_style_color(StyleColor::WindowBg, FLOATING_BG);
+        let _border = ui.push_style_color(StyleColor::Border, DIVIDER);
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([PROFILER_PAD, PROFILER_PAD]));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(MENU_RADIUS));
+        ui.window("Profiler")
+            .flags(
+                WindowFlags::NO_COLLAPSE
+                    | WindowFlags::NO_SAVED_SETTINGS
+                    | WindowFlags::NO_DOCKING
+                    | WindowFlags::NO_FOCUS_ON_APPEARING,
+            )
+            .position([x, y], Condition::FirstUseEver)
+            .size([PROFILER_W, PROFILER_H], Condition::FirstUseEver)
+            .build(|| {
+                ui.text_colored(TEXT, "Profiler");
+                ui.same_line();
+                ui.text_colored(MUTED, "F3");
+                ui.separator();
+                ui.text_colored(TEXT_SECONDARY, "Frame");
+                ui.text(format!(
+                    "FPS  {:.0}  (smooth {:.0})",
+                    snap.fps, snap.fps_smooth
+                ));
+                ui.text_colored(MUTED, "VSync (User Settings → Voice & Video) can cap FPS.");
+                ui.text(format!(
+                    "prepare {:.2} ms   draw {:.2} ms   gl {:.2} ms",
+                    snap.prepare_ms, snap.draw_ms, snap.gl_ms
+                ));
+                ui.separator();
+                ui.text_colored(TEXT_SECONDARY, "Memory");
+                ui.text(format!(
+                    "RSS {}   Virtual {}",
+                    profiler::format_bytes(snap.rss_bytes),
+                    profiler::format_bytes(snap.vmsize_bytes)
+                ));
+                ui.separator();
+                ui.text_colored(TEXT_SECONDARY, "Network");
+                ui.text(format!(
+                    "HTTP  {}/s up  {}/s down  {} req/s",
+                    profiler::format_bytes(snap.http_tx_per_s),
+                    profiler::format_bytes(snap.http_rx_per_s),
+                    snap.http_count_per_s
+                ));
+                ui.text(format!(
+                    "total  {} up  {} down  {} requests",
+                    profiler::format_bytes(snap.http_tx),
+                    profiler::format_bytes(snap.http_rx),
+                    snap.http_count
+                ));
+                ui.text(format!(
+                    "WS  {}/s up  {}/s down  {} msg/s",
+                    profiler::format_bytes(snap.ws_tx_per_s),
+                    profiler::format_bytes(snap.ws_rx_per_s),
+                    snap.ws_msgs_per_s
+                ));
+                ui.text(format!(
+                    "total  {} up  {} down  {} messages",
+                    profiler::format_bytes(snap.ws_tx),
+                    profiler::format_bytes(snap.ws_rx),
+                    snap.ws_msgs
+                ));
+                let qos = profiler::qos();
+                ui.separator();
+                ui.text_colored(TEXT_SECONDARY, "Stream");
+                ui.text(format!("{}   ladder {}", qos.topology, qos.ladder));
+                ui.text(format!(
+                    "subscribers {}   layers {}   {}",
+                    qos.subscribers, qos.layers, qos.backend
+                ));
+                ui.text(format!(
+                    "{}   loss {:.1}%   rtt {} ms   jitter {} ms",
+                    qos.step, qos.loss * 100.0, qos.rtt_ms, qos.jitter_ms
+                ));
+                ui.text(format!(
+                    "user {} kbps   stream {} kbps",
+                    qos.user_kbps, qos.stream_kbps
+                ));
+                ui.text(format!(
+                    "camera {} kbps   screen {} kbps   encode {:.1} ms   decode {:.1} ms",
+                    qos.camera_kbps, qos.screen_kbps, qos.encode_ms, qos.decode_ms
+                ));
+                ui.text(format!("keyframes {}", qos.keyframes));
+                ui.separator();
+                ui.checkbox("ImGui Metrics", &mut self.profiler_metrics);
+                ui.same_line();
+                ui.checkbox("ImGui Demo", &mut self.profiler_demo);
+                ui.separator();
+                ui.text_colored(TEXT_SECONDARY, "Recent expensive ops");
+                ui.child_window("profiler_ops").size([0.0, 0.0]).build(ui, || {
+                    if ops.is_empty() {
+                        ui.text_colored(MUTED, "Nothing slow yet.");
+                        return;
+                    }
+                    for op in &ops {
+                        ui.text(format!("{:.1} ms  {}", op.duration_ms, op.label));
+                        if !op.detail.is_empty() {
+                            ui.text_colored(MUTED, format!("    {}", op.detail));
+                        }
+                    }
+                });
             });
     }
 
@@ -4455,10 +4804,15 @@ fn upload_rgba(imgui: &mut Context, width: u32, height: u32, rgba: &[u8]) -> Opt
 }
 
 fn video_code(kind: MediaKind) -> u8 {
-    match kind {
-        MediaKind::Camera => 2,
-        MediaKind::Screen => 3,
-        MediaKind::Audio => 1,
+    kind.code()
+}
+
+fn layer_word(layer: LayerId) -> &'static str {
+    match layer {
+        LayerId::Full => "full",
+        LayerId::Half => "half",
+        LayerId::Quarter => "quarter",
+        LayerId::Off => "off",
     }
 }
 
@@ -4501,6 +4855,10 @@ fn settings_divider(ui: &Ui, width: f32) {
         .add_rect([origin[0], origin[1] + 8.0], [origin[0] + width, origin[1] + 9.0], SETTINGS_DIVIDER)
         .filled(true)
         .build();
+}
+
+fn settings_panel(ui: &Ui, title: &str) -> bool {
+    ui.collapsing_header(title, TreeNodeFlags::NONE)
 }
 
 fn settings_toggle_row(ui: &Ui, id: &str, label: &str, value: &mut bool, width: f32) -> bool {
@@ -4796,6 +5154,16 @@ fn paint_status_dot(ui: &Ui, center: [f32; 2], radius: f32, presence: Presence, 
         Presence::Offline => {
             draw.add_circle(dot.center, dot.radius * 0.45, backdrop).filled(true).build();
         }
+    }
+}
+
+fn share_tip(live: bool) -> &'static str {
+    if live {
+        "Stop Streaming"
+    } else if media::native_screen_picker() {
+        "Share Your Screen\nShift+Right Click to pick a source"
+    } else {
+        "Share Your Screen"
     }
 }
 

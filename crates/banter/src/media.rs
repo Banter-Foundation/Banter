@@ -3,8 +3,17 @@
 //! Device failures stay visible. Nothing here invents a frame when a device is missing.
 //! A stream change is captured on a side thread and cut in only after that frame is encoded.
 
+mod encode;
+#[cfg(target_os = "linux")]
+mod loopback_linux;
+#[cfg(target_os = "linux")]
+mod screencast;
 #[cfg(windows)]
 mod loopback;
+#[cfg(windows)]
+mod mf;
+mod qos;
+mod rtc;
 
 use std::collections::{HashMap, VecDeque};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -14,12 +23,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use banter_server::{MediaKind, VoiceFlags, encode_client_media, should_send_audio, should_send_camera, should_send_screen};
+use banter_server::{ClientSignal, LayerId, MediaKind, MediaPlace, ServerEvent, VoiceFlags, should_send_audio, should_send_camera, should_send_screen, should_send_stream_audio};
 
 use crate::logic::{
-    AUDIO_FRAME_SAMPLES, CameraChoice, CaptureKind, MixSource, PrewarmClock, StreamJob, automatic_gain, cancel_echo,
-    encode_jpeg_rgba, encode_jpeg_rgba_quality, fade_gain, frame_rms, mix_equal_power,
-    pack_picture, resample_mono_i16, scale_i16, stamp_cursor, suppress_noise,
+    AUDIO_FRAME_SAMPLES, CameraChoice, CaptureKind, MixSource, automatic_gain, cancel_echo, encode_jpeg_rgba, fade_gain,
+    frame_rms, mix_equal_power, resample_mono_i16, scale_i16, stamp_cursor, suppress_noise,
 };
 
 const FLAG_MUTED: u32 = 1;
@@ -137,17 +145,19 @@ pub struct Media {
     stop: Arc<AtomicBool>,
     errors: Arc<Mutex<Vec<String>>>,
     playback: Arc<Mutex<VecDeque<f32>>>,
-    output_rate: Arc<AtomicU32>,
     /// The latest local camera JPEG, tagged with the device index it came from.
     local_camera: Arc<Mutex<Option<(u32, Vec<u8>)>>>,
-    local_screen: Arc<Mutex<Option<Vec<u8>>>>,
+    local_screen: Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>,
     remote_video: Arc<Mutex<HashMap<(i64, u8), Vec<u8>>>>,
     camera_index: Arc<AtomicU32>,
     camera_preview: Arc<AtomicBool>,
     stream_edge: Arc<AtomicU32>,
     stream_interval: Arc<AtomicU64>,
-    stream_target: Arc<Mutex<Option<(CaptureKind, u32)>>>,
+    stream_target: Arc<Mutex<Option<StreamPick>>>,
+    capture_failed: Arc<AtomicBool>,
     engine: Arc<Engine>,
+    remote_pictures: Arc<Mutex<Vec<rtc::RemotePicture>>>,
+    session: rtc::Rtc,
     threads: Vec<JoinHandle<()>>,
 }
 
@@ -155,16 +165,23 @@ pub struct VideoFrame {
     pub sender: Option<i64>,
     pub kind: MediaKind,
     pub jpeg: Vec<u8>,
+    pub rgba: Option<(u32, u32, Vec<u8>)>,
+    pub layer: LayerId,
 }
 
 impl Media {
-    pub fn start(outgoing: Sender<Vec<u8>>) -> Self {
+    pub fn start(signals: Sender<ClientSignal>) -> Self {
         let flags = Arc::new(AtomicU32::new(0));
         let in_place = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
         let errors = Arc::new(Mutex::new(Vec::new()));
         let playback = Arc::new(Mutex::new(VecDeque::new()));
         let captured = Arc::new(Mutex::new(VecDeque::new()));
+        let user_pcm = Arc::new(Mutex::new(VecDeque::new()));
+        let stream_pcm = Arc::new(Mutex::new(VecDeque::new()));
+        let camera_picture = Arc::new(rtc::PictureSlot::new());
+        let screen_picture = Arc::new(rtc::PictureSlot::new());
+        let remote_pictures = Arc::new(Mutex::new(Vec::new()));
         let input_rate = Arc::new(AtomicU32::new(48_000));
         let local_camera = Arc::new(Mutex::new(None));
         let local_screen = Arc::new(Mutex::new(None));
@@ -174,6 +191,7 @@ impl Media {
         let stream_edge = Arc::new(AtomicU32::new(1280));
         let stream_interval = Arc::new(AtomicU64::new(33));
         let stream_target = Arc::new(Mutex::new(None));
+        let capture_failed = Arc::new(AtomicBool::new(false));
         let output_rate = Arc::new(AtomicU32::new(48_000));
         let engine = Arc::new(Engine::new());
         let devices = thread::spawn({
@@ -196,8 +214,9 @@ impl Media {
             let input_rate = Arc::clone(&input_rate);
             let playback = Arc::clone(&playback);
             let engine = Arc::clone(&engine);
-            let outgoing = outgoing.clone();
-            move || audio_loop(flags, in_place, stop, captured, input_rate, playback, engine, outgoing)
+            let user_pcm = Arc::clone(&user_pcm);
+            let stream_pcm = Arc::clone(&stream_pcm);
+            move || audio_loop(flags, in_place, stop, captured, input_rate, playback, engine, user_pcm, stream_pcm)
         });
         let camera = thread::spawn({
             let flags = Arc::clone(&flags);
@@ -207,8 +226,8 @@ impl Media {
             let errors = Arc::clone(&errors);
             let camera_index = Arc::clone(&camera_index);
             let camera_preview = Arc::clone(&camera_preview);
-            let outgoing = outgoing.clone();
-            move || camera_loop(flags, in_place, stop, local_camera, errors, camera_index, camera_preview, outgoing)
+            let camera_picture = Arc::clone(&camera_picture);
+            move || camera_loop(flags, in_place, stop, local_camera, errors, camera_index, camera_preview, camera_picture)
         });
         let screen = thread::spawn({
             let flags = Arc::clone(&flags);
@@ -219,17 +238,43 @@ impl Media {
             let stream_edge = Arc::clone(&stream_edge);
             let stream_interval = Arc::clone(&stream_interval);
             let stream_target = Arc::clone(&stream_target);
+            let capture_failed = Arc::clone(&capture_failed);
             let engine = Arc::clone(&engine);
-            move || screen_loop(flags, in_place, stop, local_screen, errors, stream_edge, stream_interval, stream_target, engine, outgoing)
+            let screen_picture = Arc::clone(&screen_picture);
+            move || {
+                screen_loop(
+                    flags,
+                    in_place,
+                    stop,
+                    local_screen,
+                    errors,
+                    stream_edge,
+                    stream_interval,
+                    stream_target,
+                    capture_failed,
+                    engine,
+                    screen_picture,
+                )
+            }
         });
 
+        let session = rtc::Rtc::start(
+            signals,
+            user_pcm,
+            stream_pcm,
+            camera_picture,
+            screen_picture,
+            Arc::clone(&playback),
+            Arc::clone(&remote_pictures),
+            Arc::clone(&output_rate),
+            Arc::clone(&flags),
+        );
         Self {
             flags,
             in_place,
             stop,
             errors,
             playback,
-            output_rate,
             local_camera,
             local_screen,
             remote_video,
@@ -238,9 +283,20 @@ impl Media {
             stream_edge,
             stream_interval,
             stream_target,
+            capture_failed,
             engine,
+            remote_pictures,
+            session,
             threads: vec![devices, audio, camera, screen],
         }
+    }
+
+    pub fn set_session(&self, place: Option<MediaPlace>, me: i64, offerer: bool) {
+        self.session.set_session(place, me, offerer);
+    }
+
+    pub fn ingest(&self, event: ServerEvent) {
+        self.session.ingest(event);
     }
 
     pub fn set_camera_choice(&self, index: u32, preview: bool) {
@@ -248,10 +304,16 @@ impl Media {
         self.camera_preview.store(preview, Ordering::Relaxed);
     }
 
-    pub fn set_stream_choice(&self, target: Option<(CaptureKind, u32)>, max_edge: u32, interval_ms: u64) {
+    pub fn set_stream_choice(&self, target: Option<StreamPick>, max_edge: u32, interval_ms: u64) {
         *self.stream_target.lock().expect("stream target") = target;
         self.stream_edge.store(max_edge, Ordering::Relaxed);
         self.stream_interval.store(interval_ms.max(1), Ordering::Relaxed);
+    }
+
+    /// The recorder could not start (the share dialog was dismissed, or the source is gone).
+    /// Cleared on read so the UI stops the share once.
+    pub fn take_capture_failure(&self) -> bool {
+        self.capture_failed.swap(false, Ordering::Relaxed)
     }
 
     pub fn apply_engine(&self, update: &EngineUpdate) {
@@ -299,48 +361,33 @@ impl Media {
         self.errors.lock().expect("media errors").clone()
     }
 
-    pub fn push_remote_audio(&self, pcm: &[u8]) {
-        if unpack(self.flags.load(Ordering::Relaxed)).deafened {
-            return;
-        }
-        if pcm.len() < 2 || pcm.len() % 2 != 0 {
-            return;
-        }
-        let mut samples = Vec::with_capacity(pcm.len() / 2);
-        for chunk in pcm.chunks_exact(2) {
-            samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
-        }
-        let rate = self.output_rate.load(Ordering::Relaxed).max(1);
-        let samples = resample_mono_i16(&samples, 48_000, rate);
-        let mut queue = self.playback.lock().expect("playback");
-        for sample in samples {
-            queue.push_back(sample as f32 / i16::MAX as f32);
-        }
-        let cap = (rate as usize).saturating_mul(1);
-        while queue.len() > cap {
-            queue.pop_front();
-        }
-    }
-
-    pub fn push_remote_video(&self, sender: i64, kind: MediaKind, jpeg: &[u8]) {
-        self.remote_video
-            .lock()
-            .expect("remote video")
-            .insert((sender, kind_code(kind)), jpeg.to_vec());
-    }
-
     pub fn take_video(&self) -> Vec<VideoFrame> {
         let mut frames = Vec::new();
         let chosen = self.camera_index.load(Ordering::Relaxed);
         if let Some(jpeg) = current_camera_frame(self.local_camera.lock().expect("camera").take(), chosen) {
-            frames.push(VideoFrame { sender: None, kind: MediaKind::Camera, jpeg });
+            frames.push(VideoFrame { sender: None, kind: MediaKind::Camera, jpeg, rgba: None, layer: LayerId::Full });
         }
-        if let Some(jpeg) = self.local_screen.lock().expect("screen").take() {
-            frames.push(VideoFrame { sender: None, kind: MediaKind::Screen, jpeg });
+        if let Some((width, height, rgba)) = self.local_screen.lock().expect("screen").take() {
+            frames.push(VideoFrame {
+                sender: None,
+                kind: MediaKind::Screen,
+                jpeg: Vec::new(),
+                rgba: Some((width, height, rgba)),
+                layer: LayerId::Full,
+            });
         }
         for ((sender, kind), jpeg) in self.remote_video.lock().expect("remote video").drain() {
             let Some(kind) = kind_from(kind) else { continue };
-            frames.push(VideoFrame { sender: Some(sender), kind, jpeg });
+            frames.push(VideoFrame { sender: Some(sender), kind, jpeg, rgba: None, layer: LayerId::Full });
+        }
+        for picture in self.remote_pictures.lock().expect("remote pictures").drain(..) {
+            frames.push(VideoFrame {
+                sender: Some(picture.sender),
+                kind: picture.kind,
+                jpeg: Vec::new(),
+                rgba: Some((picture.width, picture.height, picture.rgba)),
+                layer: picture.layer,
+            });
         }
         frames
     }
@@ -355,20 +402,8 @@ impl Drop for Media {
     }
 }
 
-fn kind_code(kind: MediaKind) -> u8 {
-    match kind {
-        MediaKind::Audio => 1,
-        MediaKind::Camera => 2,
-        MediaKind::Screen => 3,
-    }
-}
-
 fn kind_from(code: u8) -> Option<MediaKind> {
-    match code {
-        2 => Some(MediaKind::Camera),
-        3 => Some(MediaKind::Screen),
-        _ => None,
-    }
+    MediaKind::from_code(code).filter(|kind| kind.is_video())
 }
 
 fn push_mono(data: &[i16], channels: u16, store: &Mutex<VecDeque<i16>>) {
@@ -471,11 +506,13 @@ fn device_loop(
     let mut streams: Vec<cpal::Stream> = Vec::new();
     #[cfg(windows)]
     let mut loops: Vec<loopback::Loop> = Vec::new();
+    #[cfg(target_os = "linux")]
+    let mut loops: Vec<loopback_linux::Loop> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         let current = engine.epoch.load(Ordering::Relaxed);
         if current != applied {
             streams.clear();
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             loops.clear();
             let input_name = engine.input_name.lock().expect("input device").clone();
             let output_name = engine.output_name.lock().expect("output device").clone();
@@ -506,10 +543,15 @@ fn device_loop(
                         Ok(handle) => loops.push(handle),
                         Err(err) => remember_error(&errors, format!("{}: {err}", source.name)),
                     }
-                    #[cfg(not(windows))]
+                    #[cfg(target_os = "linux")]
+                    match loopback_linux::start_render(source.id.clone(), name.to_string(), Arc::clone(&engine.source_pcm)) {
+                        Ok(handle) => loops.push(handle),
+                        Err(err) => remember_error(&errors, format!("{}: {err}", source.name)),
+                    }
+                    #[cfg(not(any(windows, target_os = "linux")))]
                     {
                         let _ = name;
-                        remember_error(&errors, format!("{}: speaker loopback is only available on Windows", source.name));
+                        remember_error(&errors, format!("{}: speaker loopback is not available on this system", source.name));
                     }
                 } else if let Some(pid) = source.id.strip_prefix("app:").and_then(|pid| pid.parse::<u32>().ok()) {
                     #[cfg(windows)]
@@ -517,10 +559,15 @@ fn device_loop(
                         Ok(handle) => loops.push(handle),
                         Err(err) => remember_error(&errors, format!("{}: {err}", source.name)),
                     }
-                    #[cfg(not(windows))]
+                    #[cfg(target_os = "linux")]
+                    match loopback_linux::start_process(source.id.clone(), pid, Arc::clone(&engine.source_pcm)) {
+                        Ok(handle) => loops.push(handle),
+                        Err(err) => remember_error(&errors, format!("{}: {err}", source.name)),
+                    }
+                    #[cfg(not(any(windows, target_os = "linux")))]
                     {
                         let _ = pid;
-                        remember_error(&errors, format!("{}: app audio is only available on Windows", source.name));
+                        remember_error(&errors, format!("{}: app audio is not available on this system", source.name));
                     }
                 }
             }
@@ -702,7 +749,8 @@ fn audio_loop(
     input_rate: Arc<AtomicU32>,
     playback: Arc<Mutex<VecDeque<f32>>>,
     engine: Arc<Engine>,
-    outgoing: Sender<Vec<u8>>,
+    user_pcm: Arc<Mutex<VecDeque<i16>>>,
+    stream_pcm: Arc<Mutex<VecDeque<i16>>>,
 ) {
     let mut fades: HashMap<String, f32> = HashMap::new();
     while !stop.load(Ordering::Relaxed) {
@@ -743,8 +791,9 @@ fn audio_loop(
             }
         }
         let state = unpack(flags.load(Ordering::Relaxed));
-        if state.screen {
-            samples = mix_stream_sources(&samples, &engine, &mut fades);
+        let stream = mix_stream_sources(&engine, &mut fades);
+        if in_place.load(Ordering::Relaxed) && should_send_stream_audio(&state) {
+            push_pcm(&stream_pcm, &stream);
         }
         if !in_place.load(Ordering::Relaxed) || !should_send_audio(&state) {
             continue;
@@ -752,20 +801,21 @@ fn audio_loop(
         if !state.push_to_talk && rms < sensitivity {
             continue;
         }
-        let mut pcm = Vec::with_capacity(samples.len() * 2);
-        for sample in samples {
-            pcm.extend_from_slice(&sample.to_le_bytes());
-        }
-        let frame = encode_client_media(MediaKind::Audio, &pcm);
-        if outgoing.send(frame).is_err() {
-            break;
-        }
+        push_pcm(&user_pcm, &samples);
     }
 }
 
-fn mix_stream_sources(mic: &[i16], engine: &Engine, fades: &mut HashMap<String, f32>) -> Vec<i16> {
+fn push_pcm(slot: &Mutex<VecDeque<i16>>, samples: &[i16]) {
+    let mut queue = slot.lock().expect("opus pcm");
+    queue.extend(samples);
+    while queue.len() > 48_000 {
+        queue.pop_front();
+    }
+}
+
+fn mix_stream_sources(engine: &Engine, fades: &mut HashMap<String, f32>) -> Vec<i16> {
     let sources = engine.sources.lock().expect("stream sources").clone();
-    let mut mixed = mic.to_vec();
+    let mut mixed = vec![0i16; AUDIO_FRAME_SAMPLES];
     for source in sources {
         let target = if source.enabled { 1.0 } else { 0.0 };
         let current = fades.entry(source.id.clone()).or_insert(0.0);
@@ -815,6 +865,7 @@ fn device_recovered(errors: &Mutex<Vec<String>>, device: &str) {
 fn remember_error(errors: &Mutex<Vec<String>>, message: String) {
     let mut list = errors.lock().expect("media errors");
     if !list.iter().any(|existing| existing == &message) {
+        eprintln!("banter: {message}");
         list.push(message);
     }
 }
@@ -827,7 +878,7 @@ fn camera_loop(
     errors: Arc<Mutex<Vec<String>>>,
     camera_index: Arc<AtomicU32>,
     camera_preview: Arc<AtomicBool>,
-    outgoing: Sender<Vec<u8>>,
+    pictures: Arc<rtc::PictureSlot>,
 ) {
     let mut camera: Option<nokhwa::Camera> = None;
     let mut opened: Option<u32> = None;
@@ -870,16 +921,13 @@ fn camera_loop(
         }
         let Some(device) = camera.as_mut() else { continue };
         match capture_camera(device) {
-            Ok(jpeg) => {
+            Ok((jpeg, width, height, i420)) => {
                 if reported {
                     device_recovered(&errors, "camera");
                     reported = false;
                 }
-                if send {
-                    let frame = encode_client_media(MediaKind::Camera, &jpeg);
-                    if outgoing.send(frame).is_err() {
-                        break;
-                    }
+                if send && width >= 2 && height >= 2 && !i420.is_empty() {
+                    pictures.store(rtc::RawPicture { width, height, i420, key: false });
                 }
                 *local.lock().expect("camera") = Some((choice.device_index(), jpeg));
             }
@@ -954,14 +1002,39 @@ pub fn current_camera_frame(slot: Option<(u32, Vec<u8>)>, chosen_device: u32) ->
     }
 }
 
-fn capture_camera(camera: &mut nokhwa::Camera) -> Result<Vec<u8>, String> {
+fn capture_camera(camera: &mut nokhwa::Camera) -> Result<(Vec<u8>, u32, u32, Vec<u8>), String> {
     let frame = camera.frame().map_err(|err| err.to_string())?;
     let (width, height, rgb) = decode_camera_frame(&frame)?;
     let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
     for pixel in rgb.chunks_exact(3) {
         rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
     }
-    encode_jpeg_rgba(width, height, &rgba, 640)
+    let (i420, out_w, out_h) = if width >= 2 && height >= 2 {
+        encode::fit_i420_rgba(&rgba, width, height, 1280)
+    } else {
+        (Vec::new(), 0, 0)
+    };
+    let started = Instant::now();
+    let jpeg = encode_jpeg_rgba(width, height, &rgba, 640)?;
+    crate::profiler::record_media("camera_capture", started.elapsed(), jpeg.len());
+    Ok((jpeg, out_w, out_h, i420))
+}
+
+/// What the capture thread should record. `Portal` opens the system ScreenCast dialog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamPick {
+    Portal,
+    Source(CaptureKind, u32),
+}
+
+/// Linux Wayland has a native ScreenCast dialog. Everywhere else the Banter picker chooses a source.
+pub fn native_screen_picker() -> bool {
+    if !cfg!(target_os = "linux") {
+        return false;
+    }
+    let session = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
+    let display = std::env::var("WAYLAND_DISPLAY").unwrap_or_default();
+    session.eq_ignore_ascii_case("wayland") || display.to_lowercase().contains("wayland")
 }
 
 enum Grabber {
@@ -969,158 +1042,263 @@ enum Grabber {
     Window { window: xcap::Window },
 }
 
-struct WarmFrame {
-    job: StreamJob,
-    jpeg: Vec<u8>,
-    width: u32,
-    height: u32,
+enum Feed {
+    Record {
+        recorder: xcap::VideoRecorder,
+        frames: mpsc::Receiver<xcap::Frame>,
+    },
+    Still {
+        grabber: Grabber,
+    },
+    #[cfg(target_os = "linux")]
+    Cast(screencast::CastStream),
+}
+
+impl Drop for Feed {
+    fn drop(&mut self) {
+        if let Feed::Record { recorder, .. } = self {
+            let _ = recorder.stop();
+        }
+    }
 }
 
 fn screen_loop(
     flags: Arc<AtomicU32>,
     in_place: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
-    local: Arc<Mutex<Option<Vec<u8>>>>,
+    local: Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>,
     errors: Arc<Mutex<Vec<String>>>,
     stream_edge: Arc<AtomicU32>,
     stream_interval: Arc<AtomicU64>,
-    stream_target: Arc<Mutex<Option<(CaptureKind, u32)>>>,
+    stream_target: Arc<Mutex<Option<StreamPick>>>,
+    capture_failed: Arc<AtomicBool>,
     engine: Arc<Engine>,
-    outgoing: Sender<Vec<u8>>,
+    pictures: Arc<rtc::PictureSlot>,
 ) {
-    let mut grabber: Option<Grabber> = None;
-    let mut clock: Option<PrewarmClock> = None;
-    let mut next_deadline = 0u64;
-    let mut started_at = Instant::now();
-    let (warm_tx, warm_rx) = mpsc::channel::<WarmFrame>();
-    let mut warming: Option<StreamJob> = None;
-    let mut ready_warm: Option<WarmFrame> = None;
+    let mut feed: Option<(StreamPick, Feed)> = None;
+    let mut latest: Option<(u32, u32, Vec<u8>)> = None;
+    let mut fresh = false;
+    let mut next_encode = Instant::now();
+    let mut failed: Option<StreamPick> = None;
+    let mut keyed: Option<(u32, u32)> = None;
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables, unused_assignments))]
+    let mut cast_since: Option<Instant> = None;
     while !stop.load(Ordering::Relaxed) {
         let state = unpack(flags.load(Ordering::Relaxed));
         let enabled = in_place.load(Ordering::Relaxed) && should_send_screen(&state);
-        let target = stream_target.lock().expect("stream target").clone();
-        if !enabled || target.is_none() {
-            grabber = None;
-            clock = None;
-            warming = None;
-            ready_warm = None;
+        let pick = if enabled { stream_target.lock().expect("stream target").clone() } else { None };
+        let Some(pick) = pick else {
+            feed = None;
+            latest = None;
+            fresh = false;
+            failed = None;
+            cast_since = None;
             thread::sleep(Duration::from_millis(40));
             continue;
-        }
-        let Some((kind, id)) = target else { continue };
+        };
         let edge = stream_edge.load(Ordering::Relaxed);
         let interval = stream_interval.load(Ordering::Relaxed).max(1);
-        let quality = engine.quality.load(Ordering::Relaxed).clamp(1, 100) as u8;
-        let show_cursor = engine.show_cursor.load(Ordering::Relaxed);
-        let desired = StreamJob { source: source_key(kind, id), edge, interval_ms: interval, quality };
-        if clock.is_none() {
-            match open_grabber(kind, id) {
-                Ok(found) => {
-                    grabber = Some(found);
-                    clock = Some(PrewarmClock::new(desired));
-                    started_at = Instant::now();
-                    next_deadline = 0;
+            if feed.as_ref().is_none_or(|(current, _)| *current != pick) {
+            feed = None;
+            latest = None;
+            fresh = false;
+            cast_since = None;
+            if failed == Some(pick) {
+                thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+            match open_feed(pick, &stream_target, &stop, edge, interval) {
+                Ok(Some(opened)) => {
+                    failed = None;
+                    cast_since = Some(Instant::now());
+                    feed = Some((pick, opened));
+                    next_encode = Instant::now();
+                    keyed = None;
+                }
+                Ok(None) => {
+                    thread::sleep(Duration::from_millis(20));
+                    continue;
                 }
                 Err(err) => {
                     remember_error(&errors, format!("screen: {err}"));
-                    thread::sleep(Duration::from_millis(400));
+                    failed = Some(pick);
+                    capture_failed.store(true, Ordering::Relaxed);
+                    thread::sleep(Duration::from_millis(200));
                     continue;
                 }
             }
         }
-        let Some(clock) = clock.as_mut() else { continue };
-        if desired != clock.active() && warming != Some(desired) {
-            clock.request(desired);
-            warming = Some(desired);
-            let tx = warm_tx.clone();
-            let errors = Arc::clone(&errors);
-            thread::spawn(move || {
-                let (warm_kind, warm_id) = source_parts(desired.source);
-                match capture_encoded(warm_kind, warm_id, desired.edge, desired.quality, show_cursor) {
-                    Ok((jpeg, width, height)) => {
-                        let _ = tx.send(WarmFrame { job: desired, jpeg, width, height });
+        match feed.as_mut() {
+            Some((_, Feed::Record { frames, .. })) => {
+                while let Ok(frame) = frames.try_recv() {
+                    let need = (frame.width as usize).saturating_mul(frame.height as usize).saturating_mul(4);
+                    if frame.width >= 2 && frame.height >= 2 && frame.raw.len() >= need {
+                        latest = Some((frame.width, frame.height, frame.raw));
+                        fresh = true;
                     }
+                }
+            }
+            #[cfg(target_os = "linux")]
+            Some((_, Feed::Cast(cast))) => {
+                if let Some(err) = cast.take_fault() {
+                    remember_error(&errors, format!("screen: {err}"));
+                    capture_failed.store(true, Ordering::Relaxed);
+                    failed = Some(pick);
+                    feed = None;
+                    cast_since = None;
+                    continue;
+                }
+                if let Some(frame) = cast.take() {
+                    latest = Some(frame);
+                    fresh = true;
+                    cast_since = None;
+                } else if latest.is_none() && cast_since.is_some_and(|started| started.elapsed() > Duration::from_secs(3)) {
+                    remember_error(&errors, "screen: the desktop sent no picture".into());
+                    capture_failed.store(true, Ordering::Relaxed);
+                    failed = Some(pick);
+                    feed = None;
+                    cast_since = None;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        if Instant::now() < next_encode {
+            thread::sleep(Duration::from_millis(2));
+            continue;
+        }
+        let show_cursor = engine.show_cursor.load(Ordering::Relaxed);
+        let Some((_, current)) = feed.as_ref() else { continue };
+        match current {
+            Feed::Still { grabber } => {
+                next_encode = Instant::now() + Duration::from_millis(interval);
+                match capture_rgba(grabber, show_cursor) {
+                    Ok((width, height, rgba)) => publish_screen(&pictures, &local, &engine, &mut keyed, &rgba, width, height, edge),
                     Err(err) => remember_error(&errors, format!("screen: {err}")),
                 }
-            });
-        }
-        while let Ok(warm) = warm_rx.try_recv() {
-            if warming == Some(warm.job) {
-                clock.prewarm_ready();
-                ready_warm = Some(warm);
             }
-        }
-        let now_ms = started_at.elapsed().as_millis() as u64;
-        if now_ms + 1 < next_deadline {
-            let wait = next_deadline - now_ms;
-            if wait > 3 {
-                thread::sleep(Duration::from_millis(1));
-            } else {
-                std::hint::spin_loop();
-            }
-            continue;
-        }
-        let Some(frame) = clock.poll(now_ms) else {
-            thread::sleep(Duration::from_millis(1));
-            continue;
-        };
-        next_deadline = frame.at_ms.saturating_add(frame.job.interval_ms.max(1));
-        if frame.keyframe {
-            if let Some(warm) = ready_warm.take() {
-                if warm.job == frame.job {
-                    warming = None;
-                    let (warm_kind, warm_id) = source_parts(frame.job.source);
-                    if let Ok(found) = open_grabber(warm_kind, warm_id) {
-                        grabber = Some(found);
-                    }
-                    if send_picture(&outgoing, &local, &engine, true, warm.width, warm.height, &warm.jpeg).is_err() {
-                        break;
-                    }
+            #[cfg(target_os = "linux")]
+            Feed::Cast(_) => {
+                if !fresh {
+                    thread::sleep(Duration::from_millis(2));
                     continue;
                 }
+                fresh = false;
+                next_encode = Instant::now() + Duration::from_millis(interval);
+                let Some((width, height, rgba)) = latest.as_ref() else { continue };
+                publish_screen(&pictures, &local, &engine, &mut keyed, rgba, *width, *height, edge);
             }
-        }
-        let Some(found) = grabber.as_ref() else { continue };
-        match capture_grabber(found, frame.job.edge, frame.job.quality, show_cursor) {
-            Ok((jpeg, width, height)) => {
-                if send_picture(&outgoing, &local, &engine, frame.keyframe, width, height, &jpeg).is_err() {
-                    break;
+            Feed::Record { .. } => {
+                if !fresh {
+                    thread::sleep(Duration::from_millis(2));
+                    continue;
                 }
+                fresh = false;
+                next_encode = Instant::now() + Duration::from_millis(interval);
+                let Some((width, height, rgba)) = latest.as_ref() else { continue };
+                publish_screen(&pictures, &local, &engine, &mut keyed, rgba, *width, *height, edge);
             }
-            Err(err) => remember_error(&errors, format!("screen: {err}")),
         }
     }
 }
 
-fn source_key(kind: CaptureKind, id: u32) -> u64 {
-    let tag = match kind {
-        CaptureKind::Screen => 1u64,
-        CaptureKind::Window => 2u64,
-    };
-    (tag << 32) | id as u64
+fn open_feed(
+    pick: StreamPick,
+    stream_target: &Mutex<Option<StreamPick>>,
+    stop: &AtomicBool,
+    edge: u32,
+    interval_ms: u64,
+) -> Result<Option<Feed>, String> {
+    #[cfg(target_os = "linux")]
+    if native_screen_picker() {
+        let fps = (1000 / interval_ms.max(1)).clamp(1, 60) as u32;
+        let cast = screencast::CastStream::open(edge, fps)?;
+        let current = stream_target.lock().expect("stream target").clone();
+        if stop.load(Ordering::Relaxed) || current != Some(pick) {
+            return Ok(None);
+        }
+        return Ok(Some(Feed::Cast(cast)));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (edge, interval_ms);
+    }
+    match pick {
+        StreamPick::Portal => {
+            let monitors = xcap::Monitor::all().map_err(|err| err.to_string())?;
+            let monitor = monitors.into_iter().next().ok_or_else(|| "no screen".to_string())?;
+            start_recorder(pick, monitor, stream_target, stop)
+        }
+        StreamPick::Source(CaptureKind::Screen, id) => {
+            let monitors = xcap::Monitor::all().map_err(|err| err.to_string())?;
+            let monitor = monitors
+                .into_iter()
+                .find(|monitor| monitor.id().ok() == Some(id))
+                .ok_or_else(|| "that screen is gone".to_string())?;
+            // X11 has no ScreenCast session. A paced grab is the capture; Wayland and Windows use a recorder.
+            if cfg!(target_os = "linux") && !native_screen_picker() {
+                Ok(Some(Feed::Still { grabber: Grabber::Monitor { monitor } }))
+            } else {
+                start_recorder(pick, monitor, stream_target, stop)
+            }
+        }
+        StreamPick::Source(CaptureKind::Window, id) => Ok(Some(Feed::Still { grabber: open_grabber(CaptureKind::Window, id)? })),
+    }
 }
 
-fn source_parts(key: u64) -> (CaptureKind, u32) {
-    let kind = if key >> 32 == 2 { CaptureKind::Window } else { CaptureKind::Screen };
-    (kind, key as u32)
+fn start_recorder(
+    pick: StreamPick,
+    monitor: xcap::Monitor,
+    stream_target: &Mutex<Option<StreamPick>>,
+    stop: &AtomicBool,
+) -> Result<Option<Feed>, String> {
+    // On Wayland this blocks in the system ScreenCast dialog, then delivers a PipeWire stream.
+    let (recorder, frames) = monitor.video_recorder().map_err(|err| err.to_string())?;
+    let current = stream_target.lock().expect("stream target").clone();
+    if stop.load(Ordering::Relaxed) || current != Some(pick) {
+        let _ = recorder.stop();
+        return Ok(None);
+    }
+    recorder.start().map_err(|err| err.to_string())?;
+    Ok(Some(Feed::Record { recorder, frames }))
 }
 
-fn send_picture(outgoing: &Sender<Vec<u8>>, local: &Mutex<Option<Vec<u8>>>, engine: &Engine, keyframe: bool, width: u32, height: u32, jpeg: &[u8]) -> Result<(), ()> {
+/// Scale once to the stream cap, hand that frame to the encoder, and keep a small RGBA preview.
+/// The first frame at a given size is a keyframe. Later frames stay deltas so the encoder is not rebuilt.
+fn publish_screen(
+    pictures: &rtc::PictureSlot,
+    local: &Mutex<Option<(u32, u32, Vec<u8>)>>,
+    engine: &Engine,
+    keyed: &mut Option<(u32, u32)>,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    edge: u32,
+) {
+    let started = Instant::now();
+    let (scaled, out_w, out_h) = encode::fit_rgba(rgba, width, height, edge);
+    if out_w < 2 || out_h < 2 {
+        return;
+    }
+    let i420 = encode::rgba_to_i420(&scaled, out_w, out_h);
+    let key = *keyed != Some((out_w, out_h));
+    *keyed = Some((out_w, out_h));
     if engine.show_preview.load(Ordering::Relaxed) {
-        *local.lock().expect("screen") = Some(jpeg.to_vec());
+        let preview = if out_w <= 1280 && out_h <= 1280 {
+            (out_w, out_h, scaled)
+        } else {
+            let (small, preview_w, preview_h) = encode::fit_rgba(&scaled, out_w, out_h, 1280);
+            (preview_w, preview_h, small)
+        };
+        *local.lock().expect("screen") = Some(preview);
     } else {
         *local.lock().expect("screen") = None;
     }
-    let packet = pack_picture(keyframe, width, height, jpeg);
-    outgoing.send(encode_client_media(MediaKind::Screen, &packet)).map_err(|_| ())
+    pictures.store(rtc::RawPicture { width: out_w, height: out_h, i420, key });
+    crate::profiler::record_media("screen_capture", started.elapsed(), (out_w * out_h) as usize);
 }
 
-fn capture_encoded(kind: CaptureKind, id: u32, edge: u32, quality: u8, show_cursor: bool) -> Result<(Vec<u8>, u32, u32), String> {
-    let grabber = open_grabber(kind, id)?;
-    capture_grabber(&grabber, edge, quality, show_cursor)
-}
-
-fn capture_grabber(grabber: &Grabber, edge: u32, quality: u8, show_cursor: bool) -> Result<(Vec<u8>, u32, u32), String> {
+fn capture_rgba(grabber: &Grabber, show_cursor: bool) -> Result<(u32, u32, Vec<u8>), String> {
     let image = match grabber {
         Grabber::Monitor { monitor, .. } => monitor.capture_image().map_err(|err| err.to_string())?,
         Grabber::Window { window, .. } => window.capture_image().map_err(|err| err.to_string())?,
@@ -1138,19 +1316,7 @@ fn capture_grabber(grabber: &Grabber, edge: u32, quality: u8, show_cursor: bool)
             }
         }
     }
-    let jpeg = encode_jpeg_rgba_quality(width, height, &rgba, edge, quality)?;
-    Ok((jpeg, fit_edge(edge, width, height).0, fit_edge(edge, width, height).1))
-}
-
-fn fit_edge(edge: u32, width: u32, height: u32) -> (u32, u32) {
-    if width == 0 || height == 0 {
-        return (0, 0);
-    }
-    if edge == 0 || (width <= edge && height <= edge) {
-        return (width, height);
-    }
-    let ratio = (edge as f64 / width as f64).min(edge as f64 / height as f64);
-    (((width as f64) * ratio).round().max(1.0) as u32, ((height as f64) * ratio).round().max(1.0) as u32)
+    Ok((width, height, rgba))
 }
 
 fn grabber_bounds(grabber: &Grabber) -> (i32, i32, u32, u32) {
@@ -1200,14 +1366,15 @@ fn cursor_point() -> Option<(i32, i32)> {
 }
 
 /// Global cursor for screen-share overlay. Works on X11 and XWayland; pure Wayland returns None.
+///
+/// One display for the process. Opening it on every frame prints
+/// "Authorization required, but no authorization protocol specified" and leaks a connection.
 #[cfg(target_os = "linux")]
 fn cursor_point_x11() -> Option<(i32, i32)> {
-    use std::os::raw::{c_char, c_int, c_uint, c_ulong, c_void};
+    use std::os::raw::{c_int, c_uint, c_ulong, c_void};
 
     #[link(name = "X11")]
     unsafe extern "C" {
-        fn XOpenDisplay(name: *const c_char) -> *mut c_void;
-        fn XCloseDisplay(display: *mut c_void) -> c_int;
         fn XDefaultRootWindow(display: *mut c_void) -> c_ulong;
         fn XQueryPointer(
             display: *mut c_void,
@@ -1223,7 +1390,7 @@ fn cursor_point_x11() -> Option<(i32, i32)> {
     }
 
     unsafe {
-        let display = XOpenDisplay(std::ptr::null());
+        let display = x11_display();
         if display.is_null() {
             return None;
         }
@@ -1246,13 +1413,27 @@ fn cursor_point_x11() -> Option<(i32, i32)> {
             &mut win_y,
             &mut mask,
         );
-        let _ = XCloseDisplay(display);
         if ok == 0 {
             None
         } else {
             Some((root_x, root_y))
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn x11_display() -> *mut std::os::raw::c_void {
+    use std::os::raw::{c_char, c_void};
+    use std::sync::OnceLock;
+    #[link(name = "X11")]
+    unsafe extern "C" {
+        fn XOpenDisplay(name: *const c_char) -> *mut c_void;
+    }
+    struct Display(*mut c_void);
+    unsafe impl Send for Display {}
+    unsafe impl Sync for Display {}
+    static DISPLAY: OnceLock<Display> = OnceLock::new();
+    DISPLAY.get_or_init(|| unsafe { Display(XOpenDisplay(std::ptr::null())) }).0
 }
 
 fn open_grabber(kind: CaptureKind, id: u32) -> Result<Grabber, String> {

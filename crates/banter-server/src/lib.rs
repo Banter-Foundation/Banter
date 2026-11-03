@@ -13,12 +13,19 @@ mod error;
 mod http;
 mod live;
 mod model;
+mod room;
+mod sfu;
 mod store;
 
-pub use codec::{decode_client_media, decode_media_frame, encode_client_media, encode_media_frame};
+pub use codec::{sdp_fixture, sdp_matches_contract, stun_url, turn_server, H264_FMTP, H264_PROFILE_LEVEL_ID};
 pub use error::BanterError;
 pub use live::Live;
 pub use model::*;
+pub use room::{
+    attach_publish_tracks, publish_offer_sdp, sample_bytes, PublishTracks, CAMERA_SSRC_Q, H264_PT, OPUS_PT, SCREEN_SSRC_Q,
+    STREAM_AUDIO_SSRC, USER_AUDIO_SSRC,
+};
+pub use sfu::{bench_eight_publishers, BenchReport, ForwardTable};
 pub use store::Store;
 
 pub const DEFAULT_ADDR: &str = "127.0.0.1:3970";

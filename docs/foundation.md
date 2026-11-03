@@ -10,6 +10,7 @@ Chosen 2026-11-02. This is the slice the desktop app and local server implement.
 - Text and voice channels in categories
 - Send, reply, edit, delete, attach a file, and search
 - Drop-in voice with mute, deafen, push-to-talk, camera, and screen share
+- Voice media is Opus and simulcast H.264 over WebRTC. See [streaming.md](streaming.md)
 - 1:1 direct messages that can start a call
 - Presence and mentions
 
