@@ -384,3 +384,9 @@ New Owl project rule: keep good documentation for other people working on the co
 ## Summary
 
 Synced main to aa61044, branched `cursor/device-polish-2f7a`. Camera capture prefers ~720p with MJPEG tie-break; voice bar shows one plain subtitle error instead of layered bottom draws. Docs and changelog updated; tests for both contracts written first and passing.
+
+## 2026-11-03 12:32:48 -06:00 — Banter build docs agent
+
+User/assignment: Document the current Banter build for collaborators; keep solid docs; clear commits; work on Black-Birb; prefer D:\Projects\Banter after sync; never touch E:; do not fight Camera/voice-bar or Voice stream hand-checks; deliver repo docs under docs/ and README; mirror to Project store docs/; commit and push.
+
+Agent: Created worktree D:\Projects\Banter-docs from origin/main (aa61044) as branch cursor/banter-build-docs-1fda because D:\Projects\Banter was dirty on cursor/device-polish-2f7a. Wrote docs/overview.md, build-and-run.md, architecture.md, feature-status.md, contributing.md, current-build.md; updated README.md and foundation.md cross-links; appended this changelog. Observed running banter pid 34512 and /v1/health ok; PrintWindow screenshot to Project store media. Rebased onto main after camera/voice-bar landed as fda9221.

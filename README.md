@@ -1,8 +1,18 @@
 # Banter
 
-Local desktop chat. The window is GLFW and OpenGL. The interface is Dear ImGui from the docking branch (`dear-imgui-rs` 0.22, Dear ImGui v1.93.1 WIP docking). Accounts, servers, channels, messages, and files stay in SQLite after the app closes.
+Local desktop chat. The window is GLFW and OpenGL 3.3. The interface is Dear ImGui from the docking branch (`dear-imgui-rs` 0.22). Accounts, servers, channels, messages, and files stay in SQLite after the app closes. Voice membership, calls, and presence are in memory and reset when the server process stops.
 
-Voice membership, calls, and presence are in memory and reset when the server process stops.
+**Docs for collaborators**
+
+| Doc | Contents |
+| --- | --- |
+| [docs/overview.md](docs/overview.md) | What Banter is, stack, data paths, `127.0.0.1:3970` / `BANTER_BIND` / `BANTER_PORT` |
+| [docs/build-and-run.md](docs/build-and-run.md) | Windows/Linux build & run, tests, Podman/Docker image |
+| [docs/architecture.md](docs/architecture.md) | Crates, modules, voice/camera/stream notes |
+| [docs/feature-status.md](docs/feature-status.md) | What works vs deferred (honest) |
+| [docs/foundation.md](docs/foundation.md) | Chosen foundation slice + deferred list |
+| [docs/contributing.md](docs/contributing.md) | Branches, worktrees, commits, changelog |
+| [docs/current-build.md](docs/current-build.md) | Live observation notes from a recent docs pass |
 
 ## Run
 
@@ -15,7 +25,7 @@ cd D:\Projects\Banter
 cargo run -p banter
 ```
 
-Data goes to `%LOCALAPPDATA%\Banter` unless `BANTER_DATA` is set.
+Data goes to `%LOCALAPPDATA%\Banter` unless `BANTER_DATA` is set. Prefer keeping the repo and `target/` on `D:\`; do not use `E:` for Banter builds.
 
 ### Linux
 
@@ -56,15 +66,17 @@ docker compose up
 
 Inside the container the server binds `0.0.0.0` on port `3970` (`BANTER_BIND` and `BANTER_PORT`). Account data stays on the named volume `banter-data`. Set `BANTER_PORT` to publish a different port. A secret comes from an environment variable or from `BANTER_SECRET_FILE` pointing at a mounted file. It is not copied into the image. The desktop app still looks for `127.0.0.1:3970`.
 
+Image: `ghcr.io/snowedinowl/banter:version-1-test-1`.
+
 Open the client twice to try voice between two accounts. They share one server. The file `client-session.json` stores one login, so the last account to sign in is the one restored the next time a client starts. Both clients can stay signed in during the same run because each keeps its token in memory.
 
 ## Window
 
-Before the first frame the client sets Dear ImGui `ConfigFlags::DOCKING_ENABLE`. After login the main viewport is a dockspace:
+Before the first frame the client sets Dear ImGui `ConfigFlags::DOCKING_ENABLE`. After login the main viewport is a Discord-like fixed column shell (temporary skin):
 
 - left: server list, then the sidebar (friends or channels)
 - right: members
-- center: chat, with voice docked along the bottom
+- center: chat, with voice on the stage when you join a voice channel
 
 You can drag those panels. The layout is kept in `banter-dock.ini` in the data folder.
 
@@ -81,4 +93,4 @@ cargo test -p banter
 
 ## Not in this build
 
-About Me, custom status, reactions, bold and italic, text chat inside a voice channel, group chats, roles, kick, and ban. See `docs/foundation.md`.
+About Me, custom status, reactions, bold and italic, text chat inside a voice channel, group chats, roles, kick, and ban. See [docs/foundation.md](docs/foundation.md) and [docs/feature-status.md](docs/feature-status.md).

@@ -1,0 +1,79 @@
+# Architecture
+
+Two crates in one Cargo workspace (`Cargo.toml` at the repo root).
+
+```text
+Banter/
+  crates/banter/           # desktop client
+  crates/banter-server/    # local API + SQLite + live state
+  docs/
+  Dockerfile               # server image only
+  docker-compose.yml
+```
+
+## Client (`banter`)
+
+| Module | Responsibility |
+| --- | --- |
+| `main.rs` | Entry → `banter::run()` |
+| `platform.rs` | GLFW window, OpenGL 3.3 context, Dear ImGui docking + glow renderer, clipboard, input, embedded-server bootstrap |
+| `ui.rs` | Signed-in Discord-like shell, sign-in/register, modals, chat, voice stage, friends/DMs |
+| `theme.rs` | Skin metrics and colors (temporary Discord dark theme) |
+| `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |
+| `settings.rs` | User Settings rules and `SettingsState` (layout, mic test, keybinds) — kept drawable-free for unit tests |
+| `api.rs` | HTTP client (`ureq`) for `/v1/*` |
+| `realtime.rs` | WebSocket client for presence, chat events, and binary media frames |
+| `session.rs` | Load/save `client-session.json` |
+| `media.rs` (+ `media/loopback.rs`) | Mic/speakers (cpal), camera (nokhwa), screen share (xcap), stream encode (software JPEG), live quality cutover |
+| `logic.rs` | Pure helpers (key held, etc.) |
+| `icons.rs` | Lucide SVG → texture |
+| `session` / prefs | Voice and stream JSON live under the data dir, not in git |
+
+Flow: `platform::run` ensures a server on `DEFAULT_ADDR`, opens the window, builds `ui::App` against `http://127.0.0.1:3970`, then frames ImGui each tick.
+
+The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, members). Panels are not treated as free-floating docks for day-to-day use even though docking is enabled and `banter-dock.ini` is written.
+
+## Server (`banter-server`)
+
+| Module | Responsibility |
+| --- | --- |
+| `main.rs` | Resolve `listen_addr`, print data dir, `serve` |
+| `lib.rs` | `DEFAULT_ADDR`, `listen_addr`, `default_data_dir` / `resolve_data_dir`, re-exports |
+| `http.rs` | Axum router: auth, friends, servers, channels, messages, DMs/calls, voice join/leave/flags, `/v1/ws` |
+| `store.rs` | SQLite persistence (`schema.sql`) |
+| `live.rs` | In-memory presence, voice membership, calls, WebSocket fan-out |
+| `model.rs` | Shared types (accounts, channels, messages, voice flags, …) |
+| `codec.rs` | Binary media frame encode/decode |
+| `error.rs` | `BanterError` → HTTP responses |
+
+### Persistence vs memory
+
+- **Survives restart:** accounts, friend graph, servers, invites, nicknames, categories, channels, messages, attachments, avatars (`banter.db` + files).
+- **Resets when the server process stops:** voice channel membership, 1:1 call state, presence, open WebSockets.
+
+### HTTP surface (high level)
+
+Auth and profile: `/v1/register`, `/v1/login`, `/v1/logout`, `/v1/me`, avatar upload/delete.  
+Social: friends requests/list, presence, mentions.  
+Servers: create/list, invites, members, nickname, categories, channels, layout.  
+Chat: channel/DM messages, send/edit/delete, attachments.  
+Calls: DM call start/accept/decline/end.  
+Voice: join, leave, flags.  
+Realtime: `/v1/ws`.  
+Health: `/v1/health`.
+
+Contract tests live in `crates/banter-server/tests/foundation.rs`.
+
+## Voice, camera, and stream (high level)
+
+- Joining a voice channel (or starting a DM call) registers membership on the server and opens media paths on the client.
+- **Mute / deafen / push-to-talk** are client flags also pushed to the server; PTT defaults to **V** (ignored while a text field is focused) plus a Talk button. F1–F12 are available as keybinds.
+- **Camera:** local preview is mirrored; outbound frames are not. Open prefers ~`1280x720` (or nearest available), FPS near 30, MJPEG on ties — not the device’s absolute highest mode. MJPEG cameras are decoded for preview/send.
+- **Screen share:** choose Screens or Applications, set resolution and FPS independently (default **720p / 30**), then **Go Live**. Nothing is sent until then. Encoder today is **software JPEG**; hardware H.264 is not implemented and the UI says so when unavailable.
+- Mid-stream changes (source, size, FPS, bitrate) **pre-warm** on a side path and cut over on a frame boundary after an encoded keyframe; viewers resize without tearing the stream identity. Stream audio can mix mic, speaker loopback, and (on Windows) per-app sources with volumes.
+- Voice & stream prefs restore from `voice.json` / `stream.json`.
+- Text chat **inside** a voice channel is deferred; the server rejects that path until Owl says otherwise.
+
+## Auth note (not finished)
+
+Password + unique username work locally. Email, 2FA, Steam/Discord/Google OAuth, and `auth.json` secrets are designed but not the day-to-day path yet. OAuth redirects must not use raw IPs; Steam still needs a public http(s) hostname when that work resumes.
