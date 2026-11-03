@@ -153,3 +153,8 @@ Expanded .gitignore so build output, local Banter data/secrets, IDE/OS junk, lin
 - Keep ignoring auth/session/voice/stream secrets, .env, *.pem, secrets/, smoke logs
 
 
+
+## 2026-11-03 15:34:56 -06:00 [Winter] — Clean up Banter git branches
+
+Merged path/docs hygiene PRs #3 (Project Banter folder) and #4 (.gitignore) into main. Left UI theme/layout PR #2 open. Deleted local and remote branches already contained in main (settings-fixes, ui-polish, device-polish, banter-build-docs, dev-server-settings, webrtc-screen-share, plus the merged #3/#4 heads). Removed obsolete worktrees Banter-docs, Banter-settings, Banter-ui, and Banter-handcheck; kept Banter-ui-theme. Never touched E:.
+

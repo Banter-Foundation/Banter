@@ -437,3 +437,14 @@ Store note optional under C:\Users\Winter\AppData\Local\Cursor\AgentStores\curso
 Branched `cursor/gitignore-cleanup-da54` from `origin/main`. Tightened root `.gitignore` (alternate Cargo targets, PDBs, `dev-server.json`, DB, IDE/OS/agent/worktree junk). No `git rm --cached` needed; `Cargo.lock` and `.cursor/` project docs stay tracked.
 
 
+
+## 2026-11-03 15:34:56 -06:00 — Banter branch cleanup
+
+Owl: Clean up Banter git branches. Root: `D:\Projects\Project Banter`. Never touch E:. Fetch --prune; classify; merge clearly safe docs/path/gitignore PRs (#3/#4 prefer, #1 if open, do not merge ui-theme #2); delete branches fully in main; report table; update changelog. Store: internal/branch-cleanup.md.
+
+Agent: Fetched. PR #1 already merged. Merged #3 then #4 (resolved changelog/chat-log/gitignore overlap). Left #2 open (layout scaffold). Deleted eight merged remotes + matching locals. Removed four obsolete worktrees; kept Banter-ui-theme. main @ 7c64117. Report: store internal/branch-cleanup.md. CI on main still red from WebRTC (unrelated).
+
+## Summary
+
+Branch hygiene pass: merged #3/#4, kept #2, deleted contained branches and stale worktrees. Never touched E:.
+
