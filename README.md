@@ -16,6 +16,7 @@ Local desktop chat. The window is GLFW and OpenGL 3.3. The interface is Dear ImG
 | [docs/foundation.md](docs/foundation.md) | Chosen foundation slice + deferred list |
 | [docs/contributing.md](docs/contributing.md) | Branches, worktrees, commits, changelog |
 | [docs/current-build.md](docs/current-build.md) | Live observation notes from a recent docs pass |
+| [docs/ui-theme-layout.md](docs/ui-theme-layout.md) | Theme/layout module boundaries and shell regions |
 | [docs/modding/modding.md](docs/modding/modding.md) | Mods, plugins, and bots (specification; not loaded yet) |
 
 ## Run

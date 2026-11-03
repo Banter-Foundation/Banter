@@ -302,45 +302,6 @@ pub fn either_key_held(left: bool, right: bool) -> bool {
     left || right
 }
 
-/// Column widths for the Discord-style shell. Left to right: server rail, channel sidebar, stage, members.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ShellColumns {
-    pub rail_x: f32,
-    pub rail_w: f32,
-    pub sidebar_x: f32,
-    pub sidebar_w: f32,
-    pub stage_x: f32,
-    pub stage_w: f32,
-    pub members_x: f32,
-    pub members_w: f32,
-}
-
-pub fn discord_shell_columns(width: f32, show_members: bool) -> ShellColumns {
-    let width = width.max(0.0);
-    let rail_w = 72.0_f32.min(width);
-    let sidebar_w = 240.0_f32.min((width - rail_w).max(0.0));
-    let mut members_w = if show_members { 240.0 } else { 0.0 };
-    let mut stage_w = width - rail_w - sidebar_w - members_w;
-    if stage_w < 0.0 {
-        members_w = (members_w + stage_w).max(0.0);
-        stage_w = 0.0;
-    }
-    let rail_x = 0.0;
-    let sidebar_x = rail_x + rail_w;
-    let stage_x = sidebar_x + sidebar_w;
-    let members_x = stage_x + stage_w;
-    ShellColumns {
-        rail_x,
-        rail_w,
-        sidebar_x,
-        sidebar_w,
-        stage_x,
-        stage_w,
-        members_x,
-        members_w,
-    }
-}
-
 /// V is ignored while Dear ImGui is using the keyboard. The on-screen Talk button still counts.
 pub fn push_to_talk_held(key_held: bool, button_held: bool, text_input_active: bool) -> bool {
     button_held || (key_held && !text_input_active)

@@ -415,6 +415,28 @@ Commit, push, report SHA/URL and how to use it.
 
 Synced main to 6d2471d, branched `cursor/dev-server-settings-0674`. Added User Settings → Developer with Local/Remote, `dev-server.json` persistence, reconnect on apply, and docs/changelog updates. Tests written first in `dev_server.rs`.
 
+## 2026-11-03 14:45:00 -06:00 — UI theme layout agent
+
+## User
+
+Create a dedicated Banter branch for UI theme and layout work. Do not fight Dev server settings agent (bc-27efca44-b2d9-56e2-bbbb-45f0327a0674) on D:\Projects\Banter if it's dirty — use a new worktree.
+
+Rules: Never touch E:. Clear commits/docs. Prefer D:\Projects\Banter-ui-theme (or similar) worktree from origin/main.
+
+Tasks:
+1) git fetch; create branch e.g. `ui-theme-layout` from origin/main in a fresh worktree under D:\Projects.
+2) Scaffold theme/layout foundation only as needed so the branch is ready for ongoing work: keep Discord-temp skin workable; add clear module boundaries / docs for theme tokens and layout regions so later agents can iterate. Don't redesign the whole app in this pass unless scaffolding requires tiny stubs.
+3) Document the branch purpose in README or docs/ and .cursor/changelog with a clear commit message.
+4) Push the branch to origin. Do not merge to main unless Owl asks.
+
+Report: branch name, worktree path, commit SHA, push URL.
+
+Project store: C:\Users\Winter\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5\files\ ↔ /cursor/stores/self/
+
+## Summary
+
+Primary Banter checkout was dirty on cursor/dev-server-settings-0674. Created worktree D:\Projects\Banter-ui-theme on branch cursor/ui-theme-layout-cf5e from origin/main. Added layout.rs module boundaries, docs/ui-theme-layout.md, changelog, and layout tests. Discord-temp skin left workable. Rebased onto main after Developer settings (`5d5915c`). Did not merge to main.
+
 ## 2026-11-03 15:18:54 -06:00 — Folder consolidate to Project Banter
 
 Owl: all Banter project files must live under `D:\Projects\Project Banter` (exact path, space in name). Move/consolidate from existing Banter trees into that folder without losing git history. Prefer create primary checkout there, migrate worktrees under `worktrees\`, update agent notes. Never touch E:. Don't kill Owl's running Banter if possible — relocate carefully; restart from new path if needed. Push nothing destructive. Write Project store preference note at internal/project-banter-folder.md.
