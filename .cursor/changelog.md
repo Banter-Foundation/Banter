@@ -163,3 +163,8 @@ Merged path/docs hygiene PRs #3 (Project Banter folder) and #4 (.gitignore) into
 
 Refreshed the root Dockerfile (adds ca-certificates in the runtime image), docker-compose.yml, and .dockerignore for the current banter-server (including WebRTC SFU). Added docs/docker-setup.md as the Podman/Docker walkthrough. Linked it from README, build-and-run, and contributing. Verified with Podman build and health check on host port 3972. Never touched E:.
 
+
+## 2026-11-03 15:47:40 -06:00 [Winter] — Fix MF Send bounds; Version-1-test-2 client pre-release
+
+Fixed Windows Media Foundation encoder/decoder compile errors after the WebRTC merge (Send for COM-owned MFTs, ProcessOutput sample borrow). Release-built the desktop client and server. Published GitHub pre-release Version-1-test-2 with Banter-windows-version-1-test-2.zip and banter-server.exe. Did not move Version-1-test-1. Never touched E:.
+

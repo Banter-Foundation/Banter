@@ -19,7 +19,6 @@ use windows::Win32::Media::MediaFoundation::{
     eAVEncH264VProfile_ConstrainedBase,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
-use windows::core::Interface;
 
 use super::encode::{Backend, EncodedAu, VideoEncoder, access_unit_is_key};
 
@@ -31,6 +30,9 @@ pub struct MfEncoder {
     stamp: i64,
     provides: bool,
 }
+
+// Each encoder is owned by one media worker; COM pointers are not moved across threads while in use.
+unsafe impl Send for MfEncoder {}
 
 pub fn hardware_present() -> bool {
     unsafe { enumerate().map(|count| count > 0).unwrap_or(false) }
@@ -155,7 +157,7 @@ impl MfEncoder {
         let mut buffers = [output_buffer(self.provides, nv12.len())?];
         let produced = self.transform.ProcessOutput(0, &mut buffers, &mut status);
         let au = match produced {
-            Ok(()) => read_sample(buffers[0].pSample.as_ref().as_ref())?,
+            Ok(()) => read_sample(buffers[0].pSample.as_ref())?,
             Err(err) if err.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => {
                 return Err("media foundation encoder buffered the frame".into());
             }
@@ -247,6 +249,9 @@ pub struct MfDecoder {
     provides: bool,
 }
 
+// Each decoder is owned by one media worker; COM pointers are not moved across threads while in use.
+unsafe impl Send for MfDecoder {}
+
 pub fn open_decoder() -> Result<MfDecoder, String> {
     unsafe { open_decoder_inner() }
 }
@@ -306,7 +311,7 @@ impl MfDecoder {
         let mut buffers = [output_buffer(self.provides, 8 * 1024 * 1024)?];
         let produced = self.transform.ProcessOutput(0, &mut buffers, &mut status);
         let nv12 = match produced {
-            Ok(()) => read_sample(buffers[0].pSample.as_ref().as_ref())?,
+            Ok(()) => read_sample(buffers[0].pSample.as_ref())?,
             Err(err) if err.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
             Err(err) => return Err(err.to_string()),
         };

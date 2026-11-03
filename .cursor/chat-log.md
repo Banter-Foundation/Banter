@@ -459,3 +459,14 @@ Agent: Refreshed Dockerfile / docker-compose.yml / .dockerignore; added docs/doc
 
 New Docker setup path on main: refreshed container files plus docs/docker-setup.md; smoke health passed under Podman.
 
+
+## 2026-11-03 15:47:40 -06:00 — Pre-release client Version-1-test-2
+
+Owl: also after please push a pre-release verison of the build ceilnt to releases
+
+Agent: Release build failed on mf.rs/rtc Send + ProcessOutput types; fixed with unsafe Send on MfEncoder/MfDecoder and corrected sample as_ref. Built banter.exe + banter-server.exe release. Packaging Version-1-test-2 pre-release (does not move Version-1-test-1). Docker/setup docs already on main (f88cbcf).
+
+## Summary
+
+Client release build unblocked; Version-1-test-2 pre-release assets prepared for GitHub Releases.
+
