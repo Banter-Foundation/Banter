@@ -5,8 +5,8 @@ Banter is a private repo ([SnowedInOwl/Banter](https://github.com/SnowedInOwl/Ba
 ## Before you change code
 
 1. Read `.cursor/memory.md`, recent `.cursor/changelog.md` entries, and `.cursor/features.md`.
-2. Prefer `D:\Projects\Banter` (or a `D:\Projects\Banter-*` worktree). **Never** build or write Banter artifacts on `E:`.
-3. If another agent already holds the primary checkout with uncommitted work, **do not fight them**. Use `git worktree add` (for example `D:\Projects\Banter-docs`) or a read-only pass.
+2. Prefer `D:\Projects\Project Banter` (or a worktree under `D:\Projects\Project Banter\worktrees\`, for example `…\worktrees\Banter-docs`). **Never** build or write Banter artifacts on `E:`.
+3. If another agent already holds the primary checkout with uncommitted work, **do not fight them**. Use `git worktree add` under `worktrees/` or a read-only pass.
 4. Ask Owl before inventing new features, dependencies, or requirements that are not already decided.
 
 ## Branches and worktrees

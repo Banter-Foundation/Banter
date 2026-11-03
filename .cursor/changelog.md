@@ -137,3 +137,8 @@ User Settings gains a Developer section so the desktop client can switch between
 - Choice persists in `dev-server.json` under the data directory (`BANTER_DATA` / `%LOCALAPPDATA%\Banter`)
 - Switching reconnects HTTP and WebSocket; a token that fails on the new host clears the local session so you can sign in again
 - Docs: overview, build-and-run, architecture, feature-status, README; tests in `crates/banter/tests/dev_server.rs` written first (8 passed) alongside client 26 and settings 18
+
+## 2026-11-03 15:18:54 -06:00 [Winter] — Consolidate under Project Banter
+
+Moved the primary Banter checkout from `D:\Projects\Banter` to `D:\Projects\Project Banter` (exact path; space in the name) without rewriting git history. Linked worktrees were remapped under `D:\Projects\Project Banter\worktrees\` and repaired with `git worktree repair`. `/worktrees/` is gitignored in the primary tree. Docs and agent notes now point at the new root. Never touched `E:`. Owl's previous `banter-server` was stopped for the move and restarted from the new `target\debug` path.
+

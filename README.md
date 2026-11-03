@@ -21,11 +21,11 @@ Local desktop chat. The window is GLFW and OpenGL 3.3. The interface is Dear ImG
 Use a Visual Studio developer shell so `cl.exe` is available (SQLite and Dear ImGui compile C/C++):
 
 ```
-cd D:\Projects\Banter
+cd "D:\Projects\Project Banter"
 cargo run -p banter
 ```
 
-Data goes to `%LOCALAPPDATA%\Banter` unless `BANTER_DATA` is set. Prefer keeping the repo and `target/` on `D:\`; do not use `E:` for Banter builds.
+Data goes to `%LOCALAPPDATA%\Banter` unless `BANTER_DATA` is set. Keep the repo and `target/` under `D:\Projects\Project Banter`. Do not use `E:` for Banter builds.
 
 ### Linux
 

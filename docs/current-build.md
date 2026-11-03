@@ -2,6 +2,8 @@
 
 Observed on **Black-Birb** while documenting, **2026-11-03** (America/Chicago). Docs work used worktree `D:\Projects\Banter-docs` on branch `cursor/banter-build-docs-1fda` so the dirty primary checkout (`D:\Projects\Banter` on Camera/voice-bar work) was left alone.
 
+**Path remap (2026-11-03 later):** primary checkout is now `D:\Projects\Project Banter`; that docs worktree is `D:\Projects\Project Banter\worktrees\Banter-docs`. Paths below in the observation table are historical from the docs pass.
+
 Base revision documented: **`aa61044`** (`origin/main` — “Run Banter natively on Linux with XDG paths and PipeWire-ready capture.”).
 
 ## Process already running
@@ -47,7 +49,7 @@ Those paths are covered by prior changelog entries and the other agents’ tasks
 ## How to reproduce a similar look
 
 ```powershell
-cd D:\Projects\Banter   # or a clean worktree on main
+cd "D:\Projects\Project Banter"   # or a clean worktree under worktrees\
 # Developer shell so cl.exe is available
 cargo run -p banter
 # optional: Invoke-RestMethod http://127.0.0.1:3970/v1/health
