@@ -41,6 +41,7 @@ fn lucide_svg(name: &str) -> Option<&'static str> {
     Some(match name {
         "chevron-down" => include_str!("../assets/lucide/chevron-down.svg"),
         "chevron-up" => include_str!("../assets/lucide/chevron-up.svg"),
+        "ellipsis" => include_str!("../assets/lucide/ellipsis.svg"),
         "crown" => include_str!("../assets/lucide/crown.svg"),
         "hash" => include_str!("../assets/lucide/hash.svg"),
         "headphone-off" => include_str!("../assets/lucide/headphone-off.svg"),

@@ -2,11 +2,11 @@
 
 ## Foundation
 
-- [*] Unique username, display name, avatar, and password
+- [*] Unique username, display name, avatar, and password. An avatar can be a PNG, JPG, GIF, or WebP, cropped and zoomed to a circle, and removed back to the letter.
 - [*] Friend requests and a friends list
 - [*] Create a server, join by invite, member list, and server nickname
 - [*] Text and voice channels in categories
-- [*] Send, reply, edit, delete, attach a file, and search
+- [*] Send, reply, edit, delete, attach a file, and search. Rows show a round avatar, a local time, grouped follow-ups, and a hover toolbar.
 - [*] Drop-in voice with mute, deafen, push-to-talk, camera, and screen share. Voice & Video settings and stream quality drive the engine and are saved on this PC.
 - [*] 1:1 direct messages that can start a call
 - [*] Presence and mentions

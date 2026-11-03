@@ -13,6 +13,7 @@ pub struct Account {
     pub username: String,
     pub display_name: String,
     pub has_avatar: bool,
+    pub avatar_rev: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +28,7 @@ pub struct Friend {
     pub username: String,
     pub display_name: String,
     pub has_avatar: bool,
+    pub avatar_rev: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +108,8 @@ pub struct Member {
     pub display_name: String,
     pub nickname: Option<String>,
     pub is_owner: bool,
+    pub has_avatar: bool,
+    pub avatar_rev: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,6 +156,8 @@ pub struct DirectChat {
     pub peer_id: i64,
     pub peer_username: String,
     pub peer_display_name: String,
+    pub peer_has_avatar: bool,
+    pub peer_avatar_rev: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

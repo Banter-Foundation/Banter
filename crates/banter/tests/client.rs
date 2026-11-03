@@ -517,3 +517,62 @@ fn second_client_receives_voice_and_a_live_quality_switch() {
     drop(server);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn chat_ms(text: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(text).unwrap().timestamp_millis()
+}
+
+#[test]
+fn chat_rows_group_same_author_and_label_the_local_time() {
+    let offset = -6 * 3600;
+    let today = chat_ms("2026-11-03T10:17:00-06:00");
+    let now = chat_ms("2026-11-03T12:00:00-06:00");
+    assert_eq!(banter::chat_time_label(today, now, offset), "Today at 10:17 AM");
+    assert_eq!(
+        banter::chat_time_label(chat_ms("2026-11-03T09:05:00-06:00"), now, offset),
+        "Today at 9:05 AM"
+    );
+    assert_eq!(
+        banter::chat_time_label(chat_ms("2026-11-02T10:17:00-06:00"), now, offset),
+        "Yesterday at 10:17 AM"
+    );
+    assert_eq!(
+        banter::chat_time_hover(today, offset),
+        "Tuesday, November 3, 2026 at 10:17 AM"
+    );
+    assert_eq!(banter::chat_date_separator(today, offset), "November 3, 2026");
+
+    let later = today + 7 * 60 * 1000;
+    assert!(banter::message_is_followup(4, today, 4, later, offset));
+    assert!(!banter::message_is_followup(4, today, 4, later + 1, offset));
+    assert!(!banter::message_is_followup(4, today, 9, today + 60_000, offset));
+    let before_midnight = chat_ms("2026-11-03T23:59:30-06:00");
+    let after_midnight = chat_ms("2026-11-04T00:00:30-06:00");
+    assert!(!banter::message_is_followup(4, before_midnight, 4, after_midnight, offset));
+    assert!(banter::message_starts_new_day(before_midnight, after_midnight, offset));
+    assert!(!banter::message_starts_new_day(today, later, offset));
+}
+
+#[test]
+fn avatar_crop_covers_the_center_and_zooms_in() {
+    let mut rgba = vec![0u8; 4 * 2 * 4];
+    let colors = [10u8, 20, 30, 40, 50, 60, 70, 80];
+    for (index, color) in colors.iter().enumerate() {
+        rgba[index * 4] = *color;
+        rgba[index * 4 + 3] = 255;
+    }
+    let fitted = banter::crop_avatar_rgba(4, 2, &rgba, 1.0, 0.0, 0.0, 2);
+    assert_eq!(fitted.len(), 2 * 2 * 4);
+    assert_eq!(fitted[0], 20);
+    assert_eq!(fitted[4], 30);
+    assert_eq!(fitted[8], 60);
+    assert_eq!(fitted[12], 70);
+
+    let zoomed = banter::crop_avatar_rgba(4, 2, &rgba, 2.0, 0.0, 0.0, 2);
+    assert_eq!(zoomed[0], 20);
+    assert_eq!(zoomed[4], 30);
+
+    let panned = banter::crop_avatar_rgba(4, 2, &rgba, 2.0, 1.0, 0.0, 2);
+    assert_eq!(panned[0], 40);
+}
+

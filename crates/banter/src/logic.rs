@@ -884,3 +884,96 @@ pub fn load_json<T: for<'de> Deserialize<'de>>(path: &std::path::Path) -> Option
     let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
 }
+
+pub const MESSAGE_GROUP_MS: i64 = 7 * 60 * 1000;
+
+fn zoned(ms: i64, offset_secs: i32) -> chrono::DateTime<chrono::FixedOffset> {
+    let offset = chrono::FixedOffset::east_opt(offset_secs).unwrap_or_else(|| chrono::FixedOffset::east_opt(0).expect("utc"));
+    let utc = chrono::DateTime::from_timestamp_millis(ms).unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    utc.with_timezone(&offset)
+}
+
+fn clock_face(ms: i64, offset_secs: i32) -> String {
+    let time = zoned(ms, offset_secs);
+    let hour = time.format("%I").to_string();
+    let hour = hour.trim_start_matches('0');
+    let hour = if hour.is_empty() { "12" } else { hour };
+    format!("{hour}:{} {}", time.format("%M"), time.format("%p"))
+}
+
+fn long_date(ms: i64, offset_secs: i32) -> String {
+    let time = zoned(ms, offset_secs);
+    let day = time.format("%d").to_string();
+    let day = day.trim_start_matches('0');
+    format!("{} {day}, {}", time.format("%B"), time.format("%Y"))
+}
+
+pub fn chat_time_label(at_ms: i64, now_ms: i64, offset_secs: i32) -> String {
+    let at = zoned(at_ms, offset_secs).date_naive();
+    let now = zoned(now_ms, offset_secs).date_naive();
+    let clock = clock_face(at_ms, offset_secs);
+    if at == now {
+        format!("Today at {clock}")
+    } else if now.pred_opt() == Some(at) {
+        format!("Yesterday at {clock}")
+    } else {
+        format!("{} at {clock}", long_date(at_ms, offset_secs))
+    }
+}
+
+pub fn chat_time_hover(at_ms: i64, offset_secs: i32) -> String {
+    let time = zoned(at_ms, offset_secs);
+    format!("{}, {} at {}", time.format("%A"), long_date(at_ms, offset_secs), clock_face(at_ms, offset_secs))
+}
+
+pub fn chat_date_separator(at_ms: i64, offset_secs: i32) -> String {
+    long_date(at_ms, offset_secs)
+}
+
+pub fn message_starts_new_day(previous_ms: i64, at_ms: i64, offset_secs: i32) -> bool {
+    zoned(previous_ms, offset_secs).date_naive() != zoned(at_ms, offset_secs).date_naive()
+}
+
+pub fn message_is_followup(previous_author: i64, previous_ms: i64, author: i64, at_ms: i64, offset_secs: i32) -> bool {
+    author == previous_author
+        && at_ms >= previous_ms
+        && at_ms - previous_ms <= MESSAGE_GROUP_MS
+        && !message_starts_new_day(previous_ms, at_ms, offset_secs)
+}
+
+pub fn crop_avatar_rgba(width: u32, height: u32, rgba: &[u8], zoom: f32, pan_x: f32, pan_y: f32, edge: u32) -> Vec<u8> {
+    let pixels = (edge as usize).saturating_mul(edge as usize).saturating_mul(4);
+    let Some((origin_x, origin_y, window)) = crop_window(width, height, zoom, pan_x, pan_y) else {
+        return vec![0; pixels];
+    };
+    if edge == 0 || rgba.len() < (width as usize) * (height as usize) * 4 {
+        return vec![0; pixels];
+    }
+    let mut out = vec![0u8; pixels];
+    for y in 0..edge {
+        for x in 0..edge {
+            let sx = origin_x + (x as f32 + 0.5) * window / edge as f32;
+            let sy = origin_y + (y as f32 + 0.5) * window / edge as f32;
+            let ix = (sx as u32).min(width - 1);
+            let iy = (sy as u32).min(height - 1);
+            let src = ((iy * width + ix) * 4) as usize;
+            let dst = ((y * edge + x) * 4) as usize;
+            out[dst..dst + 4].copy_from_slice(&rgba[src..src + 4]);
+        }
+    }
+    out
+}
+
+pub fn crop_window(width: u32, height: u32, zoom: f32, pan_x: f32, pan_y: f32) -> Option<(f32, f32, f32)> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let zoom = zoom.max(1.0);
+    let base = width.min(height) as f32;
+    let window = (base / zoom).clamp(1.0, base);
+    let pan_x = pan_x.clamp(-1.0, 1.0);
+    let pan_y = pan_y.clamp(-1.0, 1.0);
+    let slack_x = (width as f32 - window).max(0.0);
+    let slack_y = (height as f32 - window).max(0.0);
+    Some((slack_x * 0.5 + pan_x * slack_x * 0.5, slack_y * 0.5 + pan_y * slack_y * 0.5, window))
+}

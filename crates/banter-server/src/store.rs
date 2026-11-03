@@ -28,6 +28,12 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON").map_err(db_err)?;
         conn.pragma_update(None, "journal_mode", "WAL").map_err(db_err)?;
         conn.execute_batch(include_str!("schema.sql")).map_err(db_err)?;
+        if let Err(err) = conn.execute("ALTER TABLE users ADD COLUMN avatar_rev INTEGER NOT NULL DEFAULT 0", []) {
+            let text = err.to_string().to_lowercase();
+            if !text.contains("duplicate column") {
+                return Err(db_err(err));
+            }
+        }
         Ok(Self {
             conn: Mutex::new(conn),
             root: root.to_path_buf(),
@@ -144,8 +150,24 @@ impl Store {
         fs::write(&path, &png).map_err(|err| BanterError::Storage(err.to_string()))?;
         self.with_mut(|conn| {
             conn.execute(
-                "UPDATE users SET avatar_file = ?1 WHERE id = ?2",
+                "UPDATE users SET avatar_file = ?1, avatar_rev = avatar_rev + 1 WHERE id = ?2",
                 params![format!("{user_id}.png"), user_id],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    pub fn clear_avatar(&self, user_id: i64) -> Result<(), BanterError> {
+        self.account(user_id)?;
+        let path = self.root.join("avatars").join(format!("{user_id}.png"));
+        if path.exists() {
+            fs::remove_file(&path).map_err(|err| BanterError::Storage(err.to_string()))?;
+        }
+        self.with_mut(|conn| {
+            conn.execute(
+                "UPDATE users SET avatar_file = NULL, avatar_rev = 0 WHERE id = ?1",
+                [user_id],
             )
             .map_err(db_err)?;
             Ok(())
@@ -247,7 +269,7 @@ impl Store {
         self.with(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT u.id, u.username, u.display_name, u.avatar_file
+                    "SELECT u.id, u.username, u.display_name, u.avatar_file, u.avatar_rev
                      FROM friendships f
                      JOIN users u ON u.id = CASE WHEN f.user_a = ?1 THEN f.user_b ELSE f.user_a END
                      WHERE f.user_a = ?1 OR f.user_b = ?1
@@ -261,6 +283,7 @@ impl Store {
                         username: row.get(1)?,
                         display_name: row.get(2)?,
                         has_avatar: row.get::<_, Option<String>>(3)?.is_some(),
+                        avatar_rev: row.get(4)?,
                     })
                 })
                 .map_err(db_err)?
@@ -855,7 +878,7 @@ impl Store {
 
 fn account_by_id(conn: &Connection, id: i64) -> Result<Account, BanterError> {
     conn.query_row(
-        "SELECT id, username, display_name, avatar_file FROM users WHERE id = ?1",
+        "SELECT id, username, display_name, avatar_file, avatar_rev FROM users WHERE id = ?1",
         [id],
         map_account,
     )
@@ -866,7 +889,7 @@ fn account_by_id(conn: &Connection, id: i64) -> Result<Account, BanterError> {
 
 fn account_by_username(conn: &Connection, username: &str) -> Result<Account, BanterError> {
     conn.query_row(
-        "SELECT id, username, display_name, avatar_file FROM users WHERE username = ?1",
+        "SELECT id, username, display_name, avatar_file, avatar_rev FROM users WHERE username = ?1",
         [username],
         map_account,
     )
@@ -881,6 +904,7 @@ fn map_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         username: row.get(1)?,
         display_name: row.get(2)?,
         has_avatar: row.get::<_, Option<String>>(3)?.is_some(),
+        avatar_rev: row.get(4)?,
     })
 }
 
@@ -981,7 +1005,7 @@ fn members_of(conn: &Connection, server_id: i64) -> Result<Vec<Member>, BanterEr
         .map_err(db_err)?;
     let mut stmt = conn
         .prepare(
-            "SELECT u.id, u.username, u.display_name, m.nickname
+            "SELECT u.id, u.username, u.display_name, m.nickname, u.avatar_file, u.avatar_rev
              FROM memberships m
              JOIN users u ON u.id = m.user_id
              WHERE m.server_id = ?1
@@ -997,6 +1021,8 @@ fn members_of(conn: &Connection, server_id: i64) -> Result<Vec<Member>, BanterEr
                 display_name: row.get(2)?,
                 nickname: row.get(3)?,
                 is_owner: user_id == owner,
+                has_avatar: row.get::<_, Option<String>>(4)?.is_some(),
+                avatar_rev: row.get(5)?,
             })
         })
         .map_err(db_err)?
@@ -1286,6 +1312,8 @@ fn direct_chat(conn: &Connection, viewer: i64, dm_id: i64) -> Result<DirectChat,
         peer_id,
         peer_username: peer.username,
         peer_display_name: peer.display_name,
+        peer_has_avatar: peer.has_avatar,
+        peer_avatar_rev: peer.avatar_rev,
     })
 }
 

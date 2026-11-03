@@ -301,3 +301,7 @@ Change of plan: drop the settings audit. A separate agent now owns it, in a git 
 ## Summary
 
 The settings audit was not started here and stays on the settings-fixes worktree. No settings code was edited in D:\Projects\Banter. The Podman image is already on GHCR. The Docker commit and the pre-release are next, then chat rows and avatar upload.
+
+## Summary
+
+The settings audit stayed on `D:\Projects\Banter-settings` / `settings-fixes` and was not edited. The pre-release was already published before this follow-up: https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-1, tag `Version-1-test-1`, image `ghcr.io/snowedinowl/banter:version-1-test-1`, container commit https://github.com/SnowedInOwl/Banter/commit/e134bc0, files `Banter-windows-version-1-test-1.zip` and `banter-server.exe`. Chat rows and My Account avatar upload, crop, zoom, and remove are in the debug build opened at 11:04:05 AM America/Chicago (pid 34512). That My Account avatar block is the only settings overlap. Client tests 26 passed and server foundation tests 12 passed. The release tag was not moved.

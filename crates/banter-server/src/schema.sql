@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     avatar_file TEXT,
+    avatar_rev INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
 

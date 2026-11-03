@@ -37,6 +37,10 @@ pub struct MemberView {
     pub display_name: String,
     pub nickname: Option<String>,
     pub is_owner: bool,
+    #[serde(default)]
+    pub has_avatar: bool,
+    #[serde(default)]
+    pub avatar_rev: i64,
     pub presence: Presence,
 }
 
@@ -123,6 +127,10 @@ impl Client {
                 .set("Content-Type", "application/octet-stream")
                 .send_bytes(bytes),
         )
+    }
+
+    pub fn clear_avatar(&self) -> Result<(), ApiError> {
+        self.finish(self.auth(ureq::delete(&self.url("/v1/me/avatar"))).call())
     }
 
     pub fn avatar(&self, user_id: i64) -> Result<Vec<u8>, ApiError> {
