@@ -14,12 +14,15 @@ mod media;
 mod platform;
 mod realtime;
 mod session;
+mod settings;
 mod ui;
 
 pub use api::{Client, websocket_url};
 pub use icons::rasterize_lucide;
 pub use logic::*;
+pub use media::{current_camera_frame, decode_camera_frame};
 pub use session::{load_token, save_token};
+pub use settings::*;
 
 pub fn run() -> Result<(), String> {
     platform::run()
