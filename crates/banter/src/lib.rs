@@ -14,6 +14,8 @@ mod media;
 mod platform;
 mod realtime;
 mod session;
+mod skin;
+pub mod theme;
 mod ui;
 
 pub use api::{Client, websocket_url};

@@ -301,3 +301,17 @@ Change of plan: drop the settings audit. A separate agent now owns it, in a git 
 ## Summary
 
 The settings audit was not started here and stays on the settings-fixes worktree. No settings code was edited in D:\Projects\Banter. The Podman image is already on GHCR. The Docker commit and the pre-release are next, then chat rows and avatar upload.
+
+## User
+
+(Partial record. The full message was lost to context compaction before it was logged; only these exact phrases were kept.)
+
+"Make Banter's desktop UI match Discord's desktop app one for one, across the whole app. Owl says parts still don't look like Discord. This skin is temporary, but it needs to be accurate."
+
+"Do not edit either folder. Create a git worktree at D:\Projects\Banter-ui on a new branch named ui-polish, and work only there, with its own Cargo target. Never touch E:. Never commit secrets."
+
+"Commit on ui-polish and push that branch. Do not merge into main."
+
+## Summary
+
+The Discord skin pass is on branch ui-polish in D:\Projects\Banter-ui. Shared metrics live in crates/banter/src/theme.rs and drawing helpers in crates/banter/src/skin.rs. Sign-in, register, rail, channel list, server menu, header, composer, members, voice stage, friends, and all modals were redrawn and screenshotted. Chat rows, avatar upload, and User Settings were not touched. Screenshots were taken only while the other agents' Banter windows were idle, with a guard that refuses to click or capture when another window is on top.

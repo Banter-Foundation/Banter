@@ -55,3 +55,19 @@ The debug app is open so it can be looked at: pid 15564, title Banter, respondin
 ## 2026-11-03 10:44:32 -06:00 [Winter] — Podman server image
 
 The server image `ghcr.io/snowedinowl/banter:version-1-test-1` was built with Podman and pushed to GHCR. Compose starts it with `BANTER_BIND=0.0.0.0`. The desktop app still defaults to `127.0.0.1:3970`. A register and a text message succeeded against the container. The Dockerfile gives the workspace a stub desktop crate so Cargo can load the manifest without compiling the app.
+
+## 2026-11-03 11:36:08 -06:00 [Winter] — Discord skin pass on ui-polish
+
+Worktree `D:\Projects\Banter-ui`, branch `ui-polish`. The signed-in window and sign-in screens are redrawn to Discord's desktop metrics from one set of constants in `crates/banter/src/theme.rs`, with shared drawing helpers in `crates/banter/src/skin.rs`. Chat message rows, avatar upload, and User Settings were left to the agents that own them.
+
+- Sign-in and register: blurple gradient, 480 px card with a soft shadow, uppercase field labels with the error in the label, `*` mask and Show password kept, 44 px Log In / Continue, Register and login links
+- Server rail: white pill (8 px hover, 40 px selected), circle-to-squircle on hover and select, 32x2 separator, green add-server button, right-side tooltip with an arrow, red mention badge
+- Channel list: server header with chevron or X and a floating dropdown (Invite People, Create Channel, Create Category for the owner, Change Nickname), collapsible categories with chevrons and an owner-only plus, 32 px channel rows, voice participants under the channel, Voice Connected panel with signal icon, user panel
+- Chat header: channel icon and name, members toggle, search box, phone icon to start a DM call. Composer: 44 px rounded bar with upload button and "Message #channel" placeholder
+- Members: uppercase role headers with counts, 42 px rows, Discord status dots (cut-out ring, idle crescent, offline ring), dimmed offline rows, owner crown with a "Server Owner" tooltip
+- Voice and video: black stage, 16:9 tile grid with 8 px gaps, green speaking border, name tags, 56 px round call controls with a split screen-share button and red disconnect, Join Voice empty state
+- Friends and DMs: tabs with pending badge, Add Friend box, 62 px people rows with round actions, DIRECT MESSAGES label
+- Modals: Add a Server, Create Server, Join Server, Invite (Copy turns green), Change Nickname, Create Channel (type cards), Create Category, all with Discord's overlay, radius, padding and footer
+- Voice lists and tiles show your display name instead of "You"
+- Removed unused `add_channel`, `rail_icon`/`rail_gap`/`server_fill` free functions, and the old inline create-channel form and `draw_call`; the modals replace them
+- Tests: `crates/banter/tests/theme.rs` written first, 14 passed. Client 24 passed, server 11 passed

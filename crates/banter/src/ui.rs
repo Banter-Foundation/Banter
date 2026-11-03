@@ -32,20 +32,9 @@ use crate::logic::{
 use crate::media::{self, EngineUpdate, Media, VideoFrame};
 use crate::realtime::Realtime;
 use crate::session::{load_token, save_token, session_path};
+use crate::skin::{self, MenuTone, Tone};
+use crate::theme::*;
 use crate::websocket_url;
-
-const RAIL_BG: [f32; 4] = [30.0 / 255.0, 31.0 / 255.0, 34.0 / 255.0, 1.0];
-const SIDEBAR_BG: [f32; 4] = [43.0 / 255.0, 45.0 / 255.0, 49.0 / 255.0, 1.0];
-const STAGE_BG: [f32; 4] = [49.0 / 255.0, 51.0 / 255.0, 56.0 / 255.0, 1.0];
-const PANEL_BG: [f32; 4] = [35.0 / 255.0, 36.0 / 255.0, 40.0 / 255.0, 1.0];
-const ROW_SELECTED: [f32; 4] = [64.0 / 255.0, 66.0 / 255.0, 73.0 / 255.0, 1.0];
-const ROW_HOVER: [f32; 4] = [53.0 / 255.0, 55.0 / 255.0, 60.0 / 255.0, 1.0];
-const TEXT: [f32; 4] = [242.0 / 255.0, 243.0 / 255.0, 245.0 / 255.0, 1.0];
-const MUTED: [f32; 4] = [148.0 / 255.0, 155.0 / 255.0, 164.0 / 255.0, 1.0];
-const BLURPLE: [f32; 4] = [88.0 / 255.0, 101.0 / 255.0, 242.0 / 255.0, 1.0];
-const GREEN: [f32; 4] = [35.0 / 255.0, 165.0 / 255.0, 89.0 / 255.0, 1.0];
-const RED: [f32; 4] = [242.0 / 255.0, 63.0 / 255.0, 66.0 / 255.0, 1.0];
-const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 /// Draws the active field as `*` without Dear ImGui's password flag, so copy and paste still work.
 struct StarMask;
@@ -81,6 +70,24 @@ enum Place {
     Home,
     Server(i64),
     Direct(i64),
+}
+
+/// Discord's centered dialogs. Each one maps to an existing API call.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Modal {
+    AddServer,
+    CreateServer,
+    JoinServer,
+    Invite,
+    Nickname,
+    CreateChannel,
+    CreateCategory,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RailTone {
+    Server,
+    Add,
 }
 
 pub(crate) struct App {
@@ -164,6 +171,13 @@ pub(crate) struct App {
     video_popout: bool,
     members_open: bool,
     bold_font: Option<FontId>,
+    semibold_font: Option<FontId>,
+    modal: Option<Modal>,
+    modal_frames: u32,
+    server_menu: bool,
+    collapsed: HashSet<i64>,
+    channel_category: Option<i64>,
+    invite_copied: bool,
     icons: HashMap<String, Shot>,
     icons_ready: bool,
     reply_to: Option<i64>,
@@ -276,6 +290,13 @@ impl App {
             video_popout: false,
             members_open: true,
             bold_font: None,
+            semibold_font: None,
+            modal: None,
+            modal_frames: 0,
+            server_menu: false,
+            collapsed: HashSet::new(),
+            channel_category: None,
+            invite_copied: false,
             icons: HashMap::new(),
             icons_ready: false,
             reply_to: None,
@@ -303,6 +324,10 @@ impl App {
 
     pub(crate) fn set_bold_font(&mut self, font: Option<FontId>) {
         self.bold_font = font;
+    }
+
+    pub(crate) fn set_semibold_font(&mut self, font: Option<FontId>) {
+        self.semibold_font = font;
     }
 
     pub(crate) fn set_v_held(&mut self, held: bool) {
@@ -354,6 +379,8 @@ impl App {
             self.last_activity = Instant::now();
         }
         self.draw_shell(ui);
+        self.draw_server_dropdown(ui);
+        self.draw_modal(ui);
         if self.settings_open {
             self.draw_settings(ui);
         }
@@ -364,7 +391,11 @@ impl App {
             self.draw_stream_menu(ui);
         }
         if ui.is_key_pressed(Key::Escape) {
-            if self.stream_menu {
+            if self.modal.is_some() {
+                self.modal = None;
+            } else if self.server_menu {
+                self.server_menu = false;
+            } else if self.stream_menu {
                 self.stream_menu = false;
             } else if self.share_open {
                 self.share_open = false;
@@ -377,7 +408,7 @@ impl App {
 
     fn draw_shell(&mut self, ui: &Ui) {
         let size = ui.io().display_size();
-        let show_members = self.place != Place::Home && self.members_open;
+        let show_members = self.place != Place::Home && self.members_open && !self.voice_selected();
         let columns = discord_shell_columns(size[0], show_members);
         let flags = WindowFlags::NO_DECORATION
             | WindowFlags::NO_MOVE
@@ -398,68 +429,128 @@ impl App {
             .position([0.0, 0.0], Condition::Always)
             .size(size, Condition::Always)
             .build(|| {
-                self.paint_column(ui, "rail", columns.rail_w, RAIL_BG, true);
-                ui.same_line_with_spacing(0.0, 0.0);
-                self.paint_column(ui, "sidebar", columns.sidebar_w, SIDEBAR_BG, false);
-                ui.same_line_with_spacing(0.0, 0.0);
-                self.paint_column(ui, "stage", columns.stage_w, STAGE_BG, false);
+                // The chat header spans the stage and the member list, as in Discord.
+                let body_h = (size[1] - HEADER_H).max(0.0);
+                let header_bg = if self.voice_selected() { CALL_BG } else { STAGE_BG };
+                self.paint_column(ui, "rail", [columns.rail_x, 0.0], [columns.rail_w, size[1]], RAIL_BG);
+                self.paint_column(ui, "sidebar", [columns.sidebar_x, 0.0], [columns.sidebar_w, size[1]], SIDEBAR_BG);
+                let header_w = columns.stage_w + columns.members_w;
+                self.paint_column(ui, "stage-header", [columns.stage_x, 0.0], [header_w, HEADER_H], header_bg);
+                self.paint_column(ui, "stage", [columns.stage_x, HEADER_H], [columns.stage_w, body_h], STAGE_BG);
                 if columns.members_w > 0.0 {
-                    ui.same_line_with_spacing(0.0, 0.0);
-                    self.paint_column(ui, "members", columns.members_w, SIDEBAR_BG, false);
+                    self.paint_column(ui, "members", [columns.members_x, HEADER_H], [columns.members_w, body_h], SIDEBAR_BG);
                 }
             });
     }
 
-    fn paint_column(&mut self, ui: &Ui, name: &str, width: f32, color: [f32; 4], rail: bool) {
+    fn paint_column(&mut self, ui: &Ui, name: &str, pos: [f32; 2], size: [f32; 2], color: [f32; 4]) {
         let _color = ui.push_style_color(StyleColor::ChildBg, color);
-        ui.child_window(name).size([width, 0.0]).build(ui, || {
-            if rail {
-                self.draw_rail(ui);
-            } else if name == "sidebar" {
-                self.draw_sidebar_column(ui);
-            } else if name == "members" {
-                self.draw_members(ui);
-            } else {
-                self.draw_stage(ui);
-            }
+        let flags = match name {
+            "rail" => WindowFlags::NO_SCROLLBAR,
+            "stage-header" | "sidebar" => WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE,
+            _ => WindowFlags::empty(),
+        };
+        ui.set_cursor_screen_pos(pos);
+        ui.child_window(name).size(size).flags(flags).build(ui, || match name {
+            "rail" => self.draw_rail(ui),
+            "sidebar" => self.draw_sidebar_column(ui),
+            "stage-header" => self.draw_stage_header(ui),
+            "members" => self.draw_members(ui),
+            _ => self.draw_stage(ui),
         });
     }
 
     fn draw_login(&mut self, ui: &Ui) {
         let size = ui.io().display_size();
-        ui.window("Banter")
-            .flags(WindowFlags::NO_DOCKING)
-            .size([440.0, 340.0], Condition::Always)
-            .position([(size[0] - 440.0) * 0.5, (size[1] - 340.0) * 0.5], Condition::Appearing)
-            .build(|| {
-                ui.text("Welcome back!");
-                ui.text_colored(MUTED, "Sign in with your username.");
-                ui.input_text("Username", &mut self.username).build();
-                {
-                    // The password flag hides characters, but it also disables copy.
-                    let masked = password_is_masked(self.show_password);
-                    let block_copy = password_blocks_copy(self.show_password);
-                    let _mask = masked.then(StarMask::push);
-                    ui.input_text("##password", &mut self.password).password(block_copy).build();
-                }
-                ui.same_line();
-                ui.text("Password");
-                ui.checkbox("Show password", &mut self.show_password);
-                if self.register_mode {
-                    ui.input_text("Display name", &mut self.register_display).build();
-                }
-                let label = if self.register_mode { "Create account" } else { "Log in" };
-                if ui.button(label) {
-                    self.submit_auth();
-                }
-                ui.same_line();
-                if ui.button(if self.register_mode { "Have an account?" } else { "Create one" }) {
-                    self.register_mode = !self.register_mode;
-                }
-                if !self.status.is_empty() {
-                    ui.text_wrapped(&self.status);
-                }
-            });
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR
+            | WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _gap = ui.push_style_var(StyleVar::ItemSpacing([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        ui.window("Banter sign in")
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size(size, Condition::Always)
+            .build(|| self.draw_login_card(ui, size));
+    }
+
+    fn draw_login_card(&mut self, ui: &Ui, size: [f32; 2]) {
+        let semi = self.semibold_font;
+        let bold = self.bold_font;
+        ui.get_window_draw_list().add_rect_filled_multicolor([0.0, 0.0], size, LOGIN_TOP, LOGIN_TOP, LOGIN_BOTTOM, LOGIN_BOTTOM);
+        let register = self.register_mode;
+        let card_w = 480.0_f32.min(size[0] - 32.0).max(320.0);
+        let pad = 32.0;
+        let field_h = 20.0 + INPUT_H + 20.0;
+        let fields = if register { 3.0 } else { 2.0 };
+        let subtitle_h = if register { 0.0 } else { 28.0 };
+        let card_h = pad + 30.0 + subtitle_h + 20.0 + fields * field_h + 28.0 + 44.0 + 12.0 + 20.0 + pad;
+        let min = [((size[0] - card_w) * 0.5).floor(), ((size[1] - card_h) * 0.5).max(16.0).floor()];
+        let max = [min[0] + card_w, min[1] + card_h];
+        skin::shadow(ui, min, max, 5.0);
+        skin::rect(ui, min, max, STAGE_BG, 5.0);
+        let center_x = min[0] + card_w * 0.5;
+        let inner_x = min[0] + pad;
+        let inner_w = card_w - pad * 2.0;
+        let mut y = min[1] + pad;
+        let title = if register { "Create an account" } else { "Welcome back!" };
+        skin::text_centered(ui, semi, FONT_XL, center_x, y, TEXT, title);
+        y += 30.0;
+        if !register {
+            skin::text_centered(ui, None, FONT_MD, center_x, y + 8.0, TEXT_SECONDARY, "We're so excited to see you again!");
+            y += subtitle_h;
+        }
+        y += 20.0;
+        let error = (!self.status.is_empty()).then(|| self.status.clone());
+        let mut submit = false;
+        if register {
+            skin::field_label(ui, bold, [inner_x, y], "Display name", false, None);
+            submit |= skin::input(ui, "##display", &mut self.register_display, "", [inner_x, y + 20.0], inner_w, INPUT_H, FONT_MD, false);
+            y += field_h;
+        }
+        skin::field_label(ui, bold, [inner_x, y], "Username", true, error.as_deref());
+        submit |= skin::input(ui, "##username", &mut self.username, "", [inner_x, y + 20.0], inner_w, INPUT_H, FONT_MD, false);
+        y += field_h;
+        skin::field_label(ui, bold, [inner_x, y], "Password", true, if register { None } else { error.as_deref() });
+        {
+            // The password flag hides characters, but it also disables copy.
+            let masked = password_is_masked(self.show_password);
+            let _block_copy = password_blocks_copy(self.show_password);
+            let _mask = masked.then(StarMask::push);
+            submit |= skin::input(ui, "##password", &mut self.password, "", [inner_x, y + 20.0], inner_w, INPUT_H, FONT_MD, false);
+        }
+        y += 20.0 + INPUT_H + 8.0;
+        let check = self.icon("check");
+        skin::checkbox(ui, "show-password", "Show password", &mut self.show_password, [inner_x, y], check, None);
+        y += 28.0 + 12.0;
+        let label = if register { "Continue" } else { "Log In" };
+        if skin::button(ui, "auth-submit", label, Tone::Brand, [inner_x, y], [inner_w, 44.0], true, semi) {
+            submit = true;
+        }
+        y += 44.0 + 12.0;
+        if register {
+            if skin::link(ui, "to-login", "Already have an account?", [inner_x, y], None, FONT_SM, LINK) {
+                self.register_mode = false;
+                self.status.clear();
+            }
+        } else {
+            let lead = "Need an account? ";
+            skin::text(ui, None, FONT_SM, [inner_x, y], MUTED, lead);
+            let lead_w = skin::text_size(ui, None, FONT_SM, lead)[0];
+            if skin::link(ui, "to-register", "Register", [inner_x + lead_w, y], None, FONT_SM, LINK) {
+                self.register_mode = true;
+                self.status.clear();
+            }
+        }
+        if submit {
+            self.submit_auth();
+        }
     }
 
     fn submit_auth(&mut self) {
@@ -485,74 +576,127 @@ impl App {
     }
 
     fn draw_rail(&mut self, ui: &Ui) {
-        let home_mark = if self.mentions.is_empty() { "B".to_string() } else { self.mentions.len().to_string() };
-        if rail_icon(ui, "home", &home_mark, None, BLURPLE, self.place == Place::Home) {
+        ui.dummy([RAIL_W, RAIL_TOP]);
+        let home = matches!(self.place, Place::Home | Place::Direct(_));
+        let mentions = self.mentions.len();
+        if self.rail_icon(ui, "home", "B", None, home, "Direct Messages", RailTone::Server, mentions) {
             self.place = Place::Home;
             self.selected = None;
             self.messages.clear();
+            self.server_menu = false;
         }
-        if ui.is_item_hovered() {
-            ui.tooltip_text("Home");
-        }
-        rail_gap(ui);
+        self.rail_separator(ui);
         let servers = self.servers.clone();
         for server in servers {
             let selected = self.place == Place::Server(server.id);
-            let mark = initials(&server.name);
-            if rail_icon(ui, &format!("sv{}", server.id), &mark, None, server_fill(server.id), selected) {
+            let mark = server_acronym(&server.name);
+            if self.rail_icon(ui, &format!("sv{}", server.id), &mark, None, selected, &server.name, RailTone::Server, 0) {
+                self.server_menu = false;
                 self.open_server(server.id);
             }
-            if ui.is_item_hovered() {
-                ui.tooltip_text(&server.name);
-            }
         }
-        rail_gap(ui);
-        if rail_icon(ui, "add-server-icon", "", self.icon("plus"), GREEN, false) {
-            ui.open_popup("add-server");
+        if self.rail_icon(ui, "add-server", "", Some("plus"), false, "Add a Server", RailTone::Add, 0) {
+            self.server_name.clear();
+            self.invite_code.clear();
+            self.open_modal(Modal::AddServer);
         }
-        if let Some(_popup) = ui.begin_popup("add-server") {
-            ui.input_text("Server", &mut self.server_name).build();
-            if ui.button("Create server") {
-                let name = self.server_name.clone();
-                if let Some(home) = self.note(self.client.create_server(&name)) {
-                    self.server_name.clear();
-                    self.refresh_shell();
-                    self.open_server(home.server.id);
-                }
-            }
-            ui.input_text("Invite", &mut self.invite_code).build();
-            if ui.button("Join invite") {
-                let code = self.invite_code.clone();
-                if let Some(home) = self.note(self.client.join_invite(&code)) {
-                    self.invite_code.clear();
-                    self.refresh_shell();
-                    self.open_server(home.server.id);
-                }
-            }
+    }
+
+    /// One 48 px rail button with its pill, squircle morph, tooltip, and optional mention badge.
+    fn rail_icon(
+        &self,
+        ui: &Ui,
+        id: &str,
+        letters: &str,
+        icon: Option<&str>,
+        selected: bool,
+        tip: &str,
+        tone: RailTone,
+        badge: usize,
+    ) -> bool {
+        let origin = ui.cursor_screen_pos();
+        let clicked = ui.invisible_button(id, [RAIL_W, RAIL_ICON]);
+        let hovered = ui.is_item_hovered();
+        let active = selected || hovered;
+        let center = [origin[0] + RAIL_W * 0.5, origin[1] + RAIL_ICON * 0.5];
+        let half = RAIL_ICON * 0.5;
+        let min = [center[0] - half, center[1] - half];
+        let max = [center[0] + half, center[1] + half];
+        let (fill, ink) = match tone {
+            RailTone::Server if active => (BLURPLE, WHITE),
+            RailTone::Server => (STAGE_BG, TEXT_NORMAL),
+            RailTone::Add if active => (GREEN, WHITE),
+            RailTone::Add => (STAGE_BG, GREEN),
+        };
+        skin::rect(ui, min, max, fill, rail_corner_radius(active));
+        let pill = rail_pill_height(selected, hovered);
+        if pill > 0.0 {
+            skin::rect_corners(
+                ui,
+                [origin[0], center[1] - pill * 0.5],
+                [origin[0] + RAIL_PILL_W, center[1] + pill * 0.5],
+                WHITE,
+                RAIL_PILL_W,
+                DrawFlags::ROUND_RIGHT,
+            );
         }
+        if let Some(name) = icon {
+            skin::image(ui, self.icon(name), [center[0] - 12.0, center[1] - 12.0], 24.0, ink);
+        } else if !letters.is_empty() {
+            let size = match letters.chars().count() {
+                0..=3 => FONT_MD,
+                4 => FONT_SM,
+                _ => FONT_XS,
+            };
+            let measured = skin::text_size(ui, self.semibold_font, size, letters);
+            skin::text(
+                ui,
+                self.semibold_font,
+                size,
+                [center[0] - measured[0] * 0.5, center[1] - measured[1] * 0.5],
+                ink,
+                letters,
+            );
+        }
+        if badge > 0 {
+            let label = if badge > 99 { "99+".to_string() } else { badge.to_string() };
+            let label_w = skin::text_size(ui, self.bold_font, FONT_XS, &label)[0];
+            let badge_w = (label_w + 8.0).max(16.0);
+            let badge_min = [max[0] + 4.0 - badge_w, max[1] - 12.0];
+            let badge_max = [max[0] + 4.0, max[1] + 4.0];
+            skin::rect(ui, [badge_min[0] - 3.0, badge_min[1] - 3.0], [badge_max[0] + 3.0, badge_max[1] + 3.0], RAIL_BG, 11.0);
+            skin::rect(ui, badge_min, badge_max, RED, 8.0);
+            skin::text_in_row(ui, self.bold_font, FONT_XS, badge_min[0] + (badge_w - label_w) * 0.5, badge_min[1], 16.0, WHITE, &label);
+        }
+        if hovered {
+            skin::tooltip(ui, self.semibold_font, FONT_MD, tip, min, max, TooltipSide::Right);
+        }
+        ui.dummy([RAIL_W, RAIL_ICON_GAP]);
+        clicked
+    }
+
+    fn rail_separator(&self, ui: &Ui) {
+        let origin = ui.cursor_screen_pos();
+        ui.dummy([RAIL_W, RAIL_SEPARATOR_H + RAIL_ICON_GAP]);
+        let x = origin[0] + (RAIL_W - RAIL_SEPARATOR_W) * 0.5;
+        skin::rect(ui, [x, origin[1]], [x + RAIL_SEPARATOR_W, origin[1] + RAIL_SEPARATOR_H], RAIL_SEPARATOR, 1.0);
     }
 
     fn draw_sidebar_column(&mut self, ui: &Ui) {
         let connected = self.voice_channel.is_some() || self.call.is_some();
-        let connection_h = if connected {
-            if self.call.is_some() { 210.0 } else { 112.0 }
-        } else {
-            0.0
-        };
-        let user_h = 52.0;
-        let header_h = 48.0;
-        let list_h = (ui.content_region_avail()[1] - header_h - connection_h - user_h).max(40.0);
-        ui.child_window("sidebar-header").size([0.0, header_h]).build(ui, || self.draw_sidebar_header(ui));
+        let connection_h = if connected { VOICE_PANEL_H } else { 0.0 };
+        let list_h = (ui.content_region_avail()[1] - HEADER_H - connection_h - USER_PANEL_H).max(40.0);
+        let fixed = WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE;
+        ui.child_window("sidebar-header").size([0.0, HEADER_H]).flags(fixed).build(ui, || self.draw_sidebar_header(ui));
         ui.child_window("sidebar-list").size([0.0, list_h]).build(ui, || match self.place {
             Place::Home | Place::Direct(_) => self.draw_dm_list(ui),
             Place::Server(server_id) => self.draw_channels(ui, server_id),
         });
-        if connected {
-            let _panel = ui.push_style_color(StyleColor::ChildBg, PANEL_BG);
-            ui.child_window("sidebar-voice").size([0.0, connection_h]).build(ui, || self.draw_connection(ui));
-        }
         let _panel = ui.push_style_color(StyleColor::ChildBg, PANEL_BG);
-        ui.child_window("sidebar-user").size([0.0, user_h]).build(ui, || self.draw_user_bar(ui));
+        if connected {
+            ui.child_window("sidebar-voice").size([0.0, connection_h]).flags(fixed).build(ui, || self.draw_connection(ui));
+        }
+        ui.child_window("sidebar-user").size([0.0, USER_PANEL_H]).flags(fixed).build(ui, || self.draw_user_bar(ui));
     }
 
     fn draw_sidebar_header(&mut self, ui: &Ui) {
@@ -566,95 +710,201 @@ impl App {
                     .find(|server| server.id == server_id)
                     .map(|server| server.name.clone())
                     .unwrap_or_else(|| "Server".to_string());
-                let text_h = ui.calc_text_size(&name)[1];
-                ui.get_window_draw_list().add_text(
-                    [origin[0] + 16.0, origin[1] + (48.0 - text_h) * 0.5],
-                    TEXT,
-                    &name,
-                );
-                ui.set_cursor_screen_pos([origin[0] + width - 44.0, origin[1] + 8.0]);
-                if self.tool(ui, "server-menu-open", "chevron-down", false, Some("Server settings")) {
-                    ui.open_popup("server-menu");
+                ui.set_cursor_screen_pos(origin);
+                if ui.invisible_button("server-header", [width, HEADER_H - 1.0]) {
+                    self.server_menu = !self.server_menu;
                 }
-                if let Some(_popup) = ui.begin_popup("server-menu") {
-                    self.draw_server_menu(ui, server_id);
+                if ui.is_item_hovered() || self.server_menu {
+                    skin::rect(ui, origin, [origin[0] + width, origin[1] + HEADER_H - 1.0], ROW_HOVER, 0.0);
                 }
+                let shown = skin::ellipsize(ui, self.semibold_font, FONT_MD, &name, width - 16.0 - 18.0 - 16.0 - 8.0);
+                skin::text_in_row(ui, self.semibold_font, FONT_MD, origin[0] + 16.0, origin[1], HEADER_H, TEXT, &shown);
+                let chevron = if self.server_menu { "x" } else { "chevron-down" };
+                skin::image(ui, self.icon(chevron), [origin[0] + width - 16.0 - 18.0, origin[1] + 15.0], 18.0, TEXT_NORMAL);
             }
             Place::Home | Place::Direct(_) => {
-                let text_h = ui.calc_text_size("Direct Messages")[1];
-                ui.get_window_draw_list().add_text(
-                    [origin[0] + 16.0, origin[1] + (48.0 - text_h) * 0.5],
-                    TEXT,
-                    "Direct Messages",
-                );
+                ui.dummy([width, HEADER_H]);
+                skin::text_in_row(ui, self.semibold_font, FONT_MD, origin[0] + 16.0, origin[1], HEADER_H, TEXT, "Direct Messages");
             }
         }
         header_rule(ui);
     }
 
-    fn draw_server_menu(&mut self, ui: &Ui, server_id: i64) {
+    /// The server-name dropdown. It sits under the header, 10 px in from each side of the channel list.
+    fn draw_server_dropdown(&mut self, ui: &Ui) {
+        if !self.server_menu {
+            return;
+        }
+        let Place::Server(server_id) = self.place else {
+            self.server_menu = false;
+            return;
+        };
         let owner = self.servers.iter().find(|server| server.id == server_id).map(|server| server.owner_id);
         let mine = self.account.as_ref().map(|account| account.id);
-        if ui.button("Create invite") {
-            if let Some(code) = self.note(self.client.create_invite(server_id)) {
-                self.shown_invite = code;
-            }
-        }
-        if !self.shown_invite.is_empty() {
-            ui.text_wrapped(format!("Invite code: {}", self.shown_invite));
-        }
-        ui.input_text("Nickname", &mut self.nickname).build();
-        if ui.button("Save nickname") {
-            let nickname = {
-                let trimmed = self.nickname.trim();
-                if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
-            };
-            if self.note(self.client.set_nickname(server_id, nickname.as_deref())).is_some() {
-                self.reload_members();
-            }
-        }
-        if owner == mine {
-            ui.separator();
-            ui.input_text("Category", &mut self.category_name).build();
-            if ui.button("Add category") {
-                let name = self.category_name.clone();
-                if self.note(self.client.create_category(server_id, &name)).is_some() {
-                    self.category_name.clear();
-                    self.reload_layout();
+        let is_owner = owner.is_some() && owner == mine;
+        let items: usize = if is_owner { 4 } else { 2 };
+        let separators = 1.0;
+        let height = MENU_PAD * 2.0 + items as f32 * (MENU_ITEM_H + 2.0) + separators * 9.0;
+        let pos = [RAIL_W + 10.0, HEADER_H + 4.0];
+        let width = MENU_W;
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _gap = ui.push_style_var(StyleVar::ItemSpacing([0.0, 0.0]));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(MENU_RADIUS));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, FLOATING_BG);
+        let mut action: Option<Modal> = None;
+        ui.window("##server-menu")
+            .flags(flags)
+            .position(pos, Condition::Always)
+            .size([width, height], Condition::Always)
+            .build(|| {
+                let semi = self.semibold_font;
+                let x = pos[0] + MENU_PAD;
+                let item_w = width - MENU_PAD * 2.0;
+                let mut y = pos[1] + MENU_PAD;
+                if skin::menu_item(ui, "menu-invite", "Invite People", self.icon("user-plus"), MenuTone::Brand, [x, y], item_w, semi) {
+                    action = Some(Modal::Invite);
                 }
+                y += MENU_ITEM_H + 2.0;
+                if is_owner {
+                    if skin::menu_item(ui, "menu-channel", "Create Channel", self.icon("circle-plus"), MenuTone::Normal, [x, y], item_w, semi) {
+                        action = Some(Modal::CreateChannel);
+                    }
+                    y += MENU_ITEM_H + 2.0;
+                    if skin::menu_item(ui, "menu-category", "Create Category", self.icon("folder-plus"), MenuTone::Normal, [x, y], item_w, semi) {
+                        action = Some(Modal::CreateCategory);
+                    }
+                    y += MENU_ITEM_H + 2.0;
+                }
+                skin::menu_separator(ui, [x, y], item_w);
+                y += 9.0;
+                if skin::menu_item(ui, "menu-nickname", "Change Nickname", self.icon("pencil"), MenuTone::Normal, [x, y], item_w, semi) {
+                    action = Some(Modal::Nickname);
+                }
+            });
+        if let Some(modal) = action {
+            self.server_menu = false;
+            match modal {
+                Modal::Invite => self.open_invite(server_id),
+                Modal::CreateChannel => {
+                    self.channel_category = None;
+                    self.channel_name.clear();
+                    self.open_modal(Modal::CreateChannel);
+                }
+                Modal::CreateCategory => {
+                    self.category_name.clear();
+                    self.open_modal(Modal::CreateCategory);
+                }
+                Modal::Nickname => {
+                    let me = self.account.as_ref().map(|account| account.id);
+                    if let Some(member) = self.members.iter().find(|member| Some(member.user_id) == me) {
+                        self.nickname = member.nickname.clone().unwrap_or_default();
+                    }
+                    self.open_modal(Modal::Nickname);
+                }
+                _ => {}
             }
-            ui.input_text("Channel", &mut self.channel_name).build();
-            ui.checkbox("Voice channel", &mut self.channel_is_voice);
-            if ui.button("Add channel") {
-                self.add_channel(server_id);
+            return;
+        }
+        if ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
+            let mouse = ui.mouse_pos();
+            let in_menu = mouse[0] >= pos[0] && mouse[0] <= pos[0] + width && mouse[1] >= pos[1] && mouse[1] <= pos[1] + height;
+            let in_header = mouse[0] >= RAIL_W && mouse[0] <= RAIL_W + SIDEBAR_W && mouse[1] <= HEADER_H;
+            if !in_menu && !in_header {
+                self.server_menu = false;
             }
         }
     }
 
+    fn open_modal(&mut self, modal: Modal) {
+        self.modal = Some(modal);
+        self.modal_frames = 0;
+    }
+
+    fn open_invite(&mut self, server_id: i64) {
+        self.invite_copied = false;
+        self.shown_invite.clear();
+        if let Some(code) = self.note(self.client.create_invite(server_id)) {
+            self.shown_invite = code;
+        }
+        self.open_modal(Modal::Invite);
+    }
+
     fn draw_dm_list(&mut self, ui: &Ui) {
-        if nav_row(ui, "friends", self.icon("users"), "Friends", self.place == Place::Home) {
+        ui.dummy([0.0, 8.0]);
+        if self.dm_row(ui, "friends", None, "Friends", None, self.place == Place::Home) {
             self.place = Place::Home;
             self.selected = None;
             self.messages.clear();
         }
-        section_label(ui, "DIRECT MESSAGES", self.bold_font, None);
+        list_label(ui, "Direct Messages", self.semibold_font);
         let dms = self.dms.clone();
         for chat in dms {
             let selected = self.place == Place::Direct(chat.id);
-            if nav_row(ui, &format!("dm{}", chat.id), self.icon("user"), &chat.peer_display_name, selected) {
+            let presence = self.presence.get(&chat.peer_id).copied().unwrap_or(Presence::Offline);
+            if self.dm_row(ui, &format!("dm{}", chat.id), Some(chat.peer_id), &chat.peer_display_name, Some(presence), selected) {
                 self.open_dm(chat.id);
             }
         }
         if !self.mentions.is_empty() {
-            section_label(ui, "MENTIONS", self.bold_font, None);
+            list_label(ui, "Mentions", self.semibold_font);
             let mentions = self.mentions.clone();
             for mention in mentions {
                 let label = format!("{}: {}", mention.from_username, mention.body);
-                if nav_row(ui, &format!("men{}", mention.id), None, &label, false) {
+                if self.channel_row(ui, &format!("men{}", mention.id), None, &label, false) {
                     self.open_mention(&mention);
                 }
             }
         }
+    }
+
+    /// A 42 px direct-message row. `user` is None for the Friends row, which shows the people icon.
+    fn dm_row(&self, ui: &Ui, id: &str, user: Option<i64>, label: &str, presence: Option<Presence>, selected: bool) -> bool {
+        let width = ui.content_region_avail()[0].max(32.0);
+        let origin = ui.cursor_screen_pos();
+        let row_h = MEMBER_ROW_H;
+        let clicked = ui.invisible_button(id, [width, row_h + CHANNEL_ROW_GAP]);
+        let hovered = ui.is_item_hovered();
+        let min = [origin[0] + ROW_INSET, origin[1] + 1.0];
+        let max = [origin[0] + width - ROW_INSET, min[1] + row_h];
+        let fill = if selected {
+            Some(ROW_SELECTED)
+        } else if hovered {
+            Some(ROW_HOVER)
+        } else {
+            None
+        };
+        if let Some(fill) = fill {
+            skin::rect(ui, min, max, fill, ROW_RADIUS);
+        }
+        let color = if selected {
+            WHITE
+        } else if hovered {
+            TEXT_NORMAL
+        } else {
+            MUTED
+        };
+        let avatar_center = [min[0] + 8.0 + 16.0, min[1] + row_h * 0.5];
+        match user {
+            Some(user_id) => {
+                let avatar = self.avatars.get(&user_id).map(|shot| shot.texture);
+                paint_avatar(ui, avatar, avatar_center, 16.0, &initials(label), None);
+                if let Some(presence) = presence {
+                    paint_status_dot(ui, avatar_center, 16.0, presence, fill.unwrap_or(SIDEBAR_BG));
+                }
+            }
+            None => skin::image(ui, self.icon("users"), [avatar_center[0] - 12.0, avatar_center[1] - 12.0], 24.0, color),
+        }
+        let text_x = min[0] + 8.0 + 32.0 + 12.0;
+        let shown = skin::ellipsize(ui, None, FONT_MD, label, max[0] - 8.0 - text_x);
+        skin::text_in_row(ui, None, FONT_MD, text_x, min[1], row_h, color, &shown);
+        clicked
     }
 
     fn draw_user_bar(&mut self, ui: &Ui) {
@@ -665,97 +915,144 @@ impl App {
             .unwrap_or(Presence::Online);
         let origin = ui.window_pos();
         let width = ui.window_size()[0];
-        let center = [origin[0] + 28.0, origin[1] + 26.0];
+        let center = [origin[0] + 8.0 + 16.0, origin[1] + USER_PANEL_H * 0.5];
         let avatar = account_id.and_then(|id| self.avatars.get(&id).map(|shot| shot.texture));
         paint_avatar(ui, avatar, center, 16.0, &initials(&self.display_name), None);
         paint_status_dot(ui, center, 16.0, presence, PANEL_BG);
-        let name_x = origin[0] + 52.0;
-        let name_h = ui.calc_text_size(&self.display_name)[1];
-        ui.get_window_draw_list().add_text([name_x, origin[1] + 8.0], TEXT, &self.display_name);
-        {
-            let _small = ui.push_font_with_size(None, 12.0);
-            let handle = format!("@{username}");
-            ui.get_window_draw_list().add_text([name_x, origin[1] + 10.0 + name_h], MUTED, &handle);
+        let buttons_x = origin[0] + width - 8.0 - 32.0 * 3.0;
+        let name_x = origin[0] + 8.0 + 32.0 + 8.0;
+        let name_w = (buttons_x - 4.0 - name_x).max(16.0);
+        let name = skin::ellipsize(ui, self.semibold_font, FONT_SM, &self.display_name, name_w);
+        skin::text(ui, self.semibold_font, FONT_SM, [name_x, origin[1] + 8.0], TEXT, &name);
+        let handle = skin::ellipsize(ui, None, FONT_XS, &username, name_w);
+        skin::text(ui, None, FONT_XS, [name_x, origin[1] + 27.0], TEXT_SECONDARY, &handle);
+        let y = origin[1] + (USER_PANEL_H - 32.0) * 0.5;
+        let muted = self.mute.muted();
+        let (mic_tint, mic_icon) = if muted { (RED, "mic-off") } else { (TEXT_SECONDARY, "mic") };
+        let mic_hover = if muted { RED } else { TEXT_NORMAL };
+        if skin::icon_button(ui, "mute", self.icon(mic_icon), [buttons_x, y], 32.0, 20.0, mic_tint, mic_hover, Some(ICON_HOVER_BG)) {
+            self.mute.set_muted(!muted);
         }
-        let mut x = origin[0] + width - 40.0;
-        ui.set_cursor_screen_pos([x, origin[1] + 10.0]);
-        if self.tool(ui, "open-settings", "settings", self.settings_open, Some("User Settings")) {
+        skin::item_tooltip(ui, self.semibold_font, if muted { "Unmute" } else { "Mute" });
+        let deafened = self.mute.deafened();
+        let (deaf_tint, deaf_icon) = if deafened { (RED, "headphone-off") } else { (TEXT_SECONDARY, "headphones") };
+        let deaf_hover = if deafened { RED } else { TEXT_NORMAL };
+        if skin::icon_button(ui, "deafen", self.icon(deaf_icon), [buttons_x + 32.0, y], 32.0, 20.0, deaf_tint, deaf_hover, Some(ICON_HOVER_BG)) {
+            self.mute.set_deafened(!deafened);
+        }
+        skin::item_tooltip(ui, self.semibold_font, if deafened { "Undeafen" } else { "Deafen" });
+        if skin::icon_button(
+            ui,
+            "open-settings",
+            self.icon("settings"),
+            [buttons_x + 64.0, y],
+            32.0,
+            20.0,
+            TEXT_SECONDARY,
+            TEXT_NORMAL,
+            Some(ICON_HOVER_BG),
+        ) {
             self.settings_open = true;
             if !self.cameras_loaded {
                 self.refresh_cameras();
             }
         }
-        x -= 36.0;
-        ui.set_cursor_screen_pos([x, origin[1] + 10.0]);
-        let deaf = if self.mute.deafened() { "headphone-off-red" } else { "headphones" };
-        if self.tool(ui, "deafen", deaf, false, Some(if self.mute.deafened() { "Undeafen" } else { "Deafen" })) {
-            let deafened = !self.mute.deafened();
-            self.mute.set_deafened(deafened);
-        }
-        x -= 36.0;
-        ui.set_cursor_screen_pos([x, origin[1] + 10.0]);
-        let mic = if self.mute.muted() { "mic-off-red" } else { "mic" };
-        if self.tool(ui, "mute", mic, false, Some(if self.mute.muted() { "Unmute" } else { "Mute" })) {
-            let muted = !self.mute.muted();
-            self.mute.set_muted(muted);
-        }
+        skin::item_tooltip(ui, self.semibold_font, "User Settings");
     }
 
+    /// The Voice Connected panel above the user panel: status, place, disconnect, then Video and Screen.
     fn draw_connection(&mut self, ui: &Ui) {
         let origin = ui.window_pos();
         let width = ui.window_size()[0];
-        if self.voice_channel.is_some() {
-            let channel_id = self.voice_channel.expect("voice channel");
-            let name = self
-                .layout
-                .iter()
-                .flat_map(|category| category.channels.iter())
-                .find(|channel| channel.id == channel_id)
-                .map(|channel| channel.name.clone())
-                .unwrap_or_else(|| format!("channel {channel_id}"));
-            let server = self
-                .layout
-                .iter()
-                .flat_map(|category| category.channels.iter())
-                .find(|channel| channel.id == channel_id)
+        let semi = self.semibold_font;
+        skin::line_h(ui, origin[0] + 8.0, origin[0] + width - 8.0, origin[1] + VOICE_PANEL_H - 1.0, LIST_DIVIDER);
+        let me = self.account.as_ref().map(|account| account.id);
+        let call = self.call.clone();
+        let (title, title_color, subtitle) = if let Some(channel_id) = self.voice_channel {
+            let channel = self.find_channel(channel_id);
+            let name = channel.as_ref().map(|channel| channel.name.clone()).unwrap_or_else(|| format!("channel {channel_id}"));
+            let server = channel
+                .as_ref()
                 .and_then(|channel| self.servers.iter().find(|server| server.id == channel.server_id))
                 .map(|server| server.name.clone())
                 .unwrap_or_default();
-            if let Some(texture) = self.icon("signal-green") {
-                ui.get_window_draw_list().add_image(
-                    texture,
-                    [origin[0] + 8.0, origin[1] + 10.0],
-                    [origin[0] + 24.0, origin[1] + 26.0],
-                    [0.0, 0.0],
-                    [1.0, 1.0],
-                    WHITE,
-                );
+            let subtitle = if server.is_empty() { name } else { format!("{name} / {server}") };
+            ("Voice Connected", GREEN, subtitle)
+        } else if let Some(call) = &call {
+            let peer = if Some(call.caller) == me { call.callee } else { call.caller };
+            match call.phase {
+                CallPhase::Ringing if Some(call.callee) == me => ("Incoming Call", GREEN, self.name_of(peer)),
+                CallPhase::Ringing => ("Calling…", YELLOW, self.name_of(peer)),
+                CallPhase::Active => ("Voice Connected", GREEN, self.name_of(peer)),
             }
-            ui.get_window_draw_list().add_text([origin[0] + 28.0, origin[1] + 8.0], GREEN, "Voice Connected");
-            let subtitle = if server.is_empty() { name.clone() } else { format!("{name} / {server}") };
-            {
-                let _small = ui.push_font_with_size(None, 12.0);
-                ui.get_window_draw_list().add_text([origin[0] + 8.0, origin[1] + 30.0], MUTED, &subtitle);
-            }
-            ui.set_cursor_screen_pos([origin[0] + width - 40.0, origin[1] + 6.0]);
-            if self.tool(ui, "disconnect", "phone-off-red", false, Some("Disconnect")) {
-                self.leave_voice();
+        } else {
+            return;
+        };
+        let error = self.media.as_ref().and_then(|media| media.errors().into_iter().next());
+        skin::image(ui, self.icon("signal"), [origin[0] + 8.0, origin[1] + 12.0], 16.0, title_color);
+        skin::text(ui, semi, FONT_SM, [origin[0] + 8.0 + 16.0 + 6.0, origin[1] + 10.0], title_color, title);
+        let sub_w = width - 8.0 - 8.0 - 40.0;
+        let (sub_text, sub_color) = match &error {
+            Some(error) => (error.clone(), RED),
+            None => (subtitle, TEXT_SECONDARY),
+        };
+        let sub_text = skin::ellipsize(ui, None, FONT_XS, &sub_text, sub_w);
+        skin::text(ui, None, FONT_XS, [origin[0] + 8.0, origin[1] + 30.0], sub_color, &sub_text);
+        let end_tip = match &call {
+            Some(call) if call.phase == CallPhase::Ringing && Some(call.callee) != me => "Cancel Call",
+            Some(call) if call.phase == CallPhase::Ringing => "Decline",
+            _ => "Disconnect",
+        };
+        if skin::icon_button(
+            ui,
+            "disconnect",
+            self.icon("phone-off"),
+            [origin[0] + width - 8.0 - 32.0, origin[1] + 8.0],
+            32.0,
+            20.0,
+            TEXT_NORMAL,
+            WHITE,
+            Some(ICON_HOVER_BG),
+        ) {
+            self.end_voice_or_call();
+        }
+        skin::item_tooltip(ui, semi, end_tip);
+        let row_y = origin[1] + 52.0;
+        let row_w = width - 16.0;
+        if let Some(call) = &call {
+            if call.phase == CallPhase::Ringing {
+                if Some(call.callee) == me {
+                    let half = (row_w - 8.0) * 0.5;
+                    if skin::button(ui, "accept-call", "Accept", Tone::Green, [origin[0] + 8.0, row_y], [half, 32.0], true, semi) {
+                        if let Some(call) = self.note(self.client.accept_call(call.dm_id)) {
+                            self.call = Some(call);
+                            self.voice_channel = None;
+                        }
+                    }
+                    if skin::button(ui, "decline-call", "Decline", Tone::Danger, [origin[0] + 16.0 + half, row_y], [half, 32.0], true, semi) {
+                        if self.note(self.client.decline_call(call.dm_id)).is_some() {
+                            self.end_media_place();
+                        }
+                    }
+                } else {
+                    ui.set_cursor_screen_pos([origin[0], row_y]);
+                    ui.dummy([width, 32.0]);
+                }
+                self.talk_held = false;
+                return;
             }
         }
-        if self.call.is_some() || matches!(self.place, Place::Direct(_)) {
-            ui.set_cursor_screen_pos([origin[0] + 8.0, origin[1] + 52.0]);
-            self.draw_call(ui);
-        }
-        let button_y = if self.voice_channel.is_some() { origin[1] + 68.0 } else { origin[1] + 8.0 };
-        ui.set_cursor_screen_pos([origin[0] + 8.0, button_y]);
-        let camera_icon = if self.camera { "video" } else { "video-off" };
-        if self.tool(ui, "camera-toggle", camera_icon, self.camera, Some(if self.camera { "Turn Off Camera" } else { "Turn On Camera" })) {
+        let slots = if self.push_to_talk { 3.0 } else { 2.0 };
+        let slot_w = (row_w - 8.0 * (slots - 1.0)) / slots;
+        let mut x = origin[0] + 8.0;
+        let camera = self.camera;
+        if self.panel_button(ui, "camera-toggle", "video", [x, row_y], slot_w, camera) {
             self.camera = !self.camera;
         }
-        ui.set_cursor_screen_pos([origin[0] + 44.0, button_y]);
+        skin::item_tooltip(ui, semi, if camera { "Turn Off Camera" } else { "Turn On Camera" });
+        x += slot_w + 8.0;
         let live = self.share.is_live();
-        let screen_icon = if live { "monitor" } else { "monitor-off" };
-        if self.tool(ui, "screen-toggle", screen_icon, live, Some(if live { "Stop Streaming" } else { "Share Your Screen" })) {
+        if self.panel_button(ui, "screen-toggle", "monitor", [x, row_y], slot_w, live) {
             if live {
                 self.share.stop();
                 self.save_stream();
@@ -763,78 +1060,186 @@ impl App {
                 self.open_share();
             }
         }
-        ui.set_cursor_screen_pos([origin[0] + 76.0, button_y]);
-        if self.tool(ui, "stream-options", "chevron-up", self.stream_menu, Some("Stream options")) {
-            self.stream_anchor = [origin[0] + 8.0, button_y];
-            self.stream_menu = !self.stream_menu;
-        }
+        skin::item_tooltip(ui, semi, if live { "Stop Streaming" } else { "Share Your Screen" });
+        x += slot_w + 8.0;
         if self.push_to_talk {
-            ui.set_cursor_screen_pos([origin[0] + 112.0, button_y + 4.0]);
-            let _pad = ui.push_style_var(StyleVar::FramePadding([8.0, 4.0]));
-            ui.button("Talk");
+            ui.set_cursor_screen_pos([x, row_y]);
+            ui.invisible_button("talk", [slot_w, 32.0]);
             self.talk_held = ui.is_item_active();
+            let fill = if self.talk_held { GREEN_BUTTON } else if ui.is_item_hovered() { CONTROL_HOVER } else { CONTROL_BG };
+            skin::rect(ui, [x, row_y], [x + slot_w, row_y + 32.0], fill, 4.0);
+            let label_w = skin::text_size(ui, semi, FONT_SM, "Talk")[0];
+            skin::text_in_row(ui, semi, FONT_SM, x + (slot_w - label_w) * 0.5, row_y, 32.0, TEXT_NORMAL, "Talk");
         } else {
             self.talk_held = false;
         }
         self.video_popout = false;
-        if let Some(media) = &self.media {
-            for error in media.errors() {
-                ui.set_cursor_screen_pos([origin[0] + 8.0, button_y + 36.0]);
-                ui.text_colored(RED, error);
+    }
+
+    fn panel_button(&self, ui: &Ui, id: &str, icon: &str, min: [f32; 2], width: f32, active: bool) -> bool {
+        ui.set_cursor_screen_pos(min);
+        let clicked = ui.invisible_button(id, [width, 32.0]);
+        let fill = if active {
+            ROW_SELECTED
+        } else if ui.is_item_hovered() {
+            CONTROL_HOVER
+        } else {
+            CONTROL_BG
+        };
+        skin::rect(ui, min, [min[0] + width, min[1] + 32.0], fill, 4.0);
+        let tint = if active { WHITE } else { TEXT_NORMAL };
+        skin::image(ui, self.icon(icon), [min[0] + (width - 20.0) * 0.5, min[1] + 6.0], 20.0, tint);
+        clicked
+    }
+
+    fn end_voice_or_call(&mut self) {
+        if self.voice_channel.is_some() {
+            self.leave_voice();
+            return;
+        }
+        let me = self.account.as_ref().map(|account| account.id);
+        let Some(call) = self.call.clone() else { return };
+        let ended = if call.phase == CallPhase::Ringing && Some(call.callee) == me {
+            self.note(self.client.decline_call(call.dm_id)).is_some()
+        } else {
+            self.note(self.client.end_call(call.dm_id)).is_some()
+        };
+        if ended {
+            self.end_media_place();
+        }
+    }
+
+    fn start_call(&mut self, dm_id: i64) {
+        if let Some(call) = self.note(self.client.start_call(dm_id)) {
+            self.call = Some(call);
+            self.voice_channel = None;
+            self.voice_members.clear();
+        }
+    }
+
+    /// The 48 px bar over the stage and the member list.
+    fn draw_stage_header(&mut self, ui: &Ui) {
+        let width = ui.window_size()[0];
+        let origin = ui.window_pos();
+        let semi = self.semibold_font;
+        let mid = origin[1] + HEADER_H * 0.5;
+        ui.dummy([width, HEADER_H]);
+        let mut x = origin[0] + 16.0;
+        match self.place {
+            Place::Home => {
+                skin::image(ui, self.icon("users"), [x, mid - 12.0], 24.0, CHANNEL_ICON);
+                x += 24.0 + 8.0;
+                skin::text_in_row(ui, semi, FONT_MD, x, origin[1], HEADER_H, TEXT, "Friends");
+                x += skin::text_size(ui, semi, FONT_MD, "Friends")[0] + 16.0;
+                skin::rect(ui, [x, mid - 12.0], [x + 1.0, mid + 12.0], DIVIDER, 0.0);
+                self.draw_friend_tabs(ui, x + 1.0 + 16.0, mid);
             }
+            Place::Direct(dm_id) => {
+                if let Some(chat) = self.dms.iter().find(|chat| chat.id == dm_id).cloned() {
+                    let center = [x + 12.0, mid];
+                    let avatar = self.avatars.get(&chat.peer_id).map(|shot| shot.texture);
+                    paint_avatar(ui, avatar, center, 12.0, &initials(&chat.peer_display_name), None);
+                    let presence = self.presence.get(&chat.peer_id).copied().unwrap_or(Presence::Offline);
+                    paint_status_dot(ui, center, 12.0, presence, STAGE_BG);
+                    x += 24.0 + 8.0;
+                    skin::text_in_row(ui, semi, FONT_MD, x, origin[1], HEADER_H, TEXT, &chat.peer_display_name);
+                }
+            }
+            Place::Server(_) => {
+                if let Some(name) = self.stage_icon() {
+                    skin::image(ui, self.icon(name), [x, mid - 12.0], 24.0, CHANNEL_ICON);
+                    x += 24.0 + 8.0;
+                }
+                let title = self.stage_title();
+                skin::text_in_row(ui, semi, FONT_MD, x, origin[1], HEADER_H, TEXT, &title);
+            }
+        }
+        let mut right = origin[0] + width - 16.0;
+        if self.chat_target().is_some() && !self.voice_selected() {
+            right -= SEARCH_W;
+            self.draw_header_search(ui, [right, mid - SEARCH_H * 0.5]);
+            right -= HEADER_ICON_GAP;
+        }
+        if self.place != Place::Home && !self.voice_selected() {
+            right -= HEADER_ICON;
+            let open = self.members_open;
+            let tint = if open { TEXT } else { TEXT_SECONDARY };
+            if skin::icon_button(ui, "members-toggle", self.icon("users"), [right, mid - 12.0], HEADER_ICON, HEADER_ICON, tint, TEXT_NORMAL, None) {
+                self.members_open = !self.members_open;
+            }
+            let tip = match (self.place, open) {
+                (Place::Direct(_), true) => "Hide User Profile",
+                (Place::Direct(_), false) => "Show User Profile",
+                (_, true) => "Hide Member List",
+                (_, false) => "Show Member List",
+            };
+            skin::item_tooltip(ui, semi, tip);
+            right -= HEADER_ICON_GAP;
+        }
+        if let Place::Direct(dm_id) = self.place {
+            if self.call.is_none() {
+                right -= HEADER_ICON;
+                if skin::icon_button(ui, "start-call", self.icon("phone"), [right, mid - 12.0], HEADER_ICON, HEADER_ICON, TEXT_SECONDARY, TEXT_NORMAL, None) {
+                    self.start_call(dm_id);
+                }
+                skin::item_tooltip(ui, semi, "Start Voice Call");
+            }
+        }
+        header_rule(ui);
+    }
+
+    fn draw_header_search(&mut self, ui: &Ui, min: [f32; 2]) {
+        let submit = skin::input(ui, "##search", &mut self.search, "Search", min, SEARCH_W, SEARCH_H, FONT_SM, false);
+        skin::image(ui, self.icon("search"), [min[0] + SEARCH_W - 20.0, min[1] + 4.0], 16.0, TEXT_SECONDARY);
+        if submit {
+            self.reload_messages();
+        }
+    }
+
+    fn draw_friend_tabs(&mut self, ui: &Ui, start_x: f32, mid: f32) {
+        let labels = ["Online", "All", "Pending", "Add Friend"];
+        let pending = self.incoming.len();
+        let mut x = start_x;
+        for (index, label) in labels.iter().enumerate() {
+            let selected = self.friend_tab == index as u8;
+            let label_w = skin::text_size(ui, None, FONT_MD, label)[0];
+            let badge = index == 2 && pending > 0;
+            let tab_w = label_w + 16.0 + if badge { 20.0 } else { 0.0 };
+            let min = [x, mid - 12.0];
+            let max = [x + tab_w, mid + 12.0];
+            ui.set_cursor_screen_pos(min);
+            if ui.invisible_button(format!("friend-tab-{index}"), [tab_w, 24.0]) {
+                self.friend_tab = index as u8;
+            }
+            let hovered = ui.is_item_hovered();
+            let (fill, color) = if index == 3 {
+                if selected { (None, GREEN_TEXT) } else { (Some(GREEN_BUTTON), WHITE) }
+            } else if selected {
+                (Some(ROW_SELECTED), WHITE)
+            } else if hovered {
+                (Some(ROW_HOVER), TEXT_NORMAL)
+            } else {
+                (None, TEXT_SECONDARY)
+            };
+            if let Some(fill) = fill {
+                skin::rect(ui, min, max, fill, 4.0);
+            }
+            skin::text_in_row(ui, None, FONT_MD, x + 8.0, min[1], 24.0, color, label);
+            if badge {
+                let count = pending.to_string();
+                let bx = x + 8.0 + label_w + 4.0;
+                skin::rect(ui, [bx, mid - 8.0], [bx + 16.0, mid + 8.0], RED, 8.0);
+                let count_w = skin::text_size(ui, self.bold_font, FONT_XS, &count)[0];
+                skin::text_in_row(ui, self.bold_font, FONT_XS, bx + (16.0 - count_w) * 0.5, mid - 8.0, 16.0, WHITE, &count);
+            }
+            x += tab_w + 16.0;
         }
     }
 
     fn draw_stage(&mut self, ui: &Ui) {
-        ui.child_window("stage-header")
-            .size([0.0, 48.0])
-            .flags(WindowFlags::NO_SCROLLBAR)
-            .build(ui, || {
-                let width = ui.window_size()[0];
-                let origin = ui.window_pos();
-                let mut text_x = origin[0] + 16.0;
-                if let Some(name) = self.stage_icon() {
-                    if let Some(texture) = self.icon(name) {
-                        let tint = if name == "hash" { MUTED } else { TEXT };
-                        ui.get_window_draw_list().add_image(
-                            texture,
-                            [text_x, origin[1] + 16.0],
-                            [text_x + 18.0, origin[1] + 34.0],
-                            [0.0, 0.0],
-                            [1.0, 1.0],
-                            tint,
-                        );
-                        text_x += 26.0;
-                    }
-                }
-                let title = self.stage_title();
-                let text_h = ui.calc_text_size(&title)[1];
-                ui.get_window_draw_list().add_text([text_x, origin[1] + (48.0 - text_h) * 0.5], TEXT, &title);
-                let mut right = origin[0] + width - 12.0;
-                if self.place != Place::Home {
-                    right -= 32.0;
-                    ui.set_cursor_screen_pos([right, origin[1] + 8.0]);
-                    if self.tool(ui, "members-toggle", "users", self.members_open, Some("Member List")) {
-                        self.members_open = !self.members_open;
-                    }
-                    right -= 8.0;
-                }
-                if self.chat_target().is_some() && !self.voice_selected() {
-                    right -= 196.0;
-                    ui.set_cursor_screen_pos([right, origin[1] + 8.0]);
-                    if self.tool(ui, "find", "search", false, Some("Search")) {
-                        self.reload_messages();
-                    }
-                    ui.set_cursor_screen_pos([right + 36.0, origin[1] + 10.0]);
-                    let _pad = ui.push_style_var(StyleVar::FramePadding([8.0, 4.0]));
-                    ui.set_next_item_width(148.0);
-                    let submit = ui.input_text("##search", &mut self.search).hint("Search").enter_returns_true(true).build();
-                    if submit {
-                        self.reload_messages();
-                    }
-                }
-                header_rule(ui);
-            });
+        if !self.status.is_empty() {
+            self.draw_notice(ui);
+        }
         if self.voice_selected() {
             self.draw_voice_stage(ui);
         } else if self.place == Place::Home {
@@ -842,10 +1247,22 @@ impl App {
         } else {
             self.draw_chat(ui);
         }
-        if !self.status.is_empty() {
-            ui.separator();
-            ui.text_wrapped(&self.status);
+    }
+
+    /// Discord's red notice strip for an error, with a close button.
+    fn draw_notice(&mut self, ui: &Ui) {
+        let origin = ui.cursor_screen_pos();
+        let width = ui.content_region_avail()[0];
+        let height = 36.0;
+        ui.dummy([width, height]);
+        skin::rect(ui, origin, [origin[0] + width, origin[1] + height], NOTICE_BG, 0.0);
+        let message = skin::ellipsize(ui, self.semibold_font, FONT_SM, &self.status, width - 80.0);
+        let message_w = skin::text_size(ui, self.semibold_font, FONT_SM, &message)[0];
+        skin::text_in_row(ui, self.semibold_font, FONT_SM, origin[0] + (width - message_w) * 0.5, origin[1], height, WHITE, &message);
+        if skin::icon_button(ui, "dismiss-notice", self.icon("x"), [origin[0] + width - 8.0 - 24.0, origin[1] + 6.0], 24.0, 16.0, WHITE, WHITE, None) {
+            self.status.clear();
         }
+        ui.set_cursor_screen_pos([origin[0], origin[1] + height]);
     }
 
     fn stage_title(&self) -> String {
@@ -887,97 +1304,207 @@ impl App {
         }
     }
 
+    /// Friends home: Online, All, Pending, and Add Friend, laid out like Discord's people list.
     fn draw_people(&mut self, ui: &Ui) {
-        let tabs = ["Online", "All", "Pending", "Add Friend"];
-        for (index, label) in tabs.iter().enumerate() {
-            if index > 0 {
-                ui.same_line();
-            }
-            let selected = self.friend_tab == index as u8;
-            if chip(ui, &format!("friend-tab-{index}"), label, selected) {
-                self.friend_tab = index as u8;
-            }
-        }
-        ui.separator();
+        let origin = ui.cursor_screen_pos();
+        let width = ui.content_region_avail()[0];
+        let height = ui.content_region_avail()[1];
+        let left = origin[0] + 30.0;
+        let right = origin[0] + width - 20.0;
+        let semi = self.semibold_font;
         if self.friend_tab == 3 {
-            ui.input_text("##friend", &mut self.friend_name).hint("Username").build();
-            if ui.button("Send Friend Request") {
-                let name = self.friend_name.clone();
+            ui.dummy([width, 20.0]);
+            skin::text(ui, semi, FONT_LG, [left, origin[1] + 20.0], TEXT, "Add Friend");
+            skin::text(ui, None, FONT_SM, [left, origin[1] + 52.0], TEXT_SECONDARY, "You can add friends with their Banter username.");
+            let box_min = [left, origin[1] + 80.0];
+            let box_max = [right, box_min[1] + 52.0];
+            skin::rect(ui, box_min, box_max, INPUT_BG, 8.0);
+            let button_w = 156.0;
+            let enabled = !self.friend_name.trim().is_empty();
+            let field_w = (box_max[0] - box_min[0] - button_w - 32.0).max(80.0);
+            let submit = skin::input(
+                ui,
+                "##friend",
+                &mut self.friend_name,
+                "You can add friends with their Banter username.",
+                [box_min[0] + 6.0, box_min[1] + 6.0],
+                field_w,
+                40.0,
+                FONT_MD,
+                false,
+            );
+            let send = skin::button(
+                ui,
+                "send-friend",
+                "Send Friend Request",
+                Tone::Brand,
+                [box_max[0] - 12.0 - button_w, box_min[1] + 10.0],
+                [button_w, 32.0],
+                enabled,
+                semi,
+            );
+            if (submit || send) && enabled {
+                let name = self.friend_name.trim().to_string();
                 if self.note(self.client.send_friend_request(&name)).is_some() {
                     self.friend_name.clear();
                     self.refresh_shell();
                 }
             }
+            skin::line_h(ui, origin[0], origin[0] + width, origin[1] + 156.0, LIST_DIVIDER);
+            ui.set_cursor_screen_pos([origin[0], origin[1] + 160.0]);
+            ui.dummy([width, 1.0]);
             return;
         }
+        let mut rows: Vec<(i64, String, String, Presence, String, bool)> = Vec::new();
+        let title;
+        let empty;
         if self.friend_tab == 2 {
-            section_label(ui, "INCOMING", self.bold_font, None);
-            let incoming = self.incoming.clone();
-            for request in incoming {
-                ui.text(&request.from_username);
-                ui.same_line();
-                if ui.button(format!("Accept##{}", request.id)) {
-                    if self.note(self.client.accept_friend_request(request.id)).is_some() {
-                        self.refresh_shell();
-                    }
-                }
-                ui.same_line();
-                if ui.button(format!("Decline##{}", request.id)) {
-                    if self.note(self.client.decline_friend_request(request.id)).is_some() {
-                        self.refresh_shell();
-                    }
-                }
+            for request in &self.incoming {
+                rows.push((request.id, request.from_username.clone(), request.from_username.clone(), Presence::Offline, "Incoming Friend Request".into(), true));
             }
-            if !self.outgoing.is_empty() {
-                section_label(ui, "OUTGOING", self.bold_font, None);
-                for request in &self.outgoing {
-                    ui.text(&request.to_username);
-                }
+            for request in &self.outgoing {
+                rows.push((request.id, request.to_username.clone(), request.to_username.clone(), Presence::Offline, "Outgoing Friend Request".into(), false));
             }
+            title = "Pending";
+            empty = "There are no pending friend requests.";
+        } else {
+            let online_only = self.friend_tab == 0;
+            for friend in &self.friends {
+                let presence = self.presence.get(&friend.id).copied().unwrap_or(Presence::Offline);
+                if online_only && presence == Presence::Offline {
+                    continue;
+                }
+                rows.push((friend.id, friend.display_name.clone(), friend.username.clone(), presence, presence_label(presence).into(), false));
+            }
+            title = if online_only { "Online" } else { "All Friends" };
+            empty = if online_only { "No one's around right now." } else { "You have not added anyone yet." };
+        }
+        if rows.is_empty() {
+            ui.dummy([width, height.max(1.0)]);
+            let mid_y = origin[1] + height * 0.42;
+            skin::text_centered(ui, None, FONT_MD, origin[0] + width * 0.5, mid_y, MUTED, empty);
             return;
         }
-        let online_only = self.friend_tab == 0;
-        section_label(ui, if online_only { "ONLINE" } else { "ALL FRIENDS" }, self.bold_font, None);
-        let friends = self.friends.clone();
-        let mut shown = 0;
-        for friend in friends {
-            let presence = self.presence.get(&friend.id).copied().unwrap_or(Presence::Offline);
-            if online_only && presence == Presence::Offline {
-                continue;
+        let label = format!("{} — {}", title.to_uppercase(), rows.len());
+        skin::text(ui, semi, FONT_XS, [left, origin[1] + 24.0], TEXT_SECONDARY, &label);
+        ui.dummy([width, 48.0]);
+        let pending_tab = self.friend_tab == 2;
+        let mut open_chat = None;
+        let mut accept = None;
+        let mut decline = None;
+        for (index, (id, name, username, presence, subtitle, incoming)) in rows.iter().enumerate() {
+            let row_min = [left - 10.0, ui.cursor_screen_pos()[1]];
+            let row_max = [right + 10.0, row_min[1] + 62.0];
+            let hovered = ui.is_window_hovered() && ui.is_mouse_hovering_rect(row_min, row_max);
+            if hovered {
+                skin::rect(ui, row_min, row_max, ROW_HOVER, 8.0);
+            } else if index > 0 {
+                skin::line_h(ui, left, right, row_min[1], LIST_DIVIDER);
             }
-            shown += 1;
-            ui.text_colored(presence_color(presence), presence_label(presence));
-            ui.same_line();
-            if let Some(shot) = self.avatars.get(&friend.id) {
-                ui.image(shot.texture, [22.0, 22.0]);
-                ui.same_line();
+            let center = [left + 16.0, row_min[1] + 31.0];
+            if pending_tab {
+                paint_avatar(ui, None, center, 16.0, &initials(name), None);
+            } else {
+                let avatar = self.avatars.get(id).map(|shot| shot.texture);
+                paint_avatar(ui, avatar, center, 16.0, &initials(name), None);
+                paint_status_dot(ui, center, 16.0, *presence, if hovered { ROW_HOVER } else { STAGE_BG });
             }
-            ui.text(format!("{} (@{})", friend.display_name, friend.username));
-            ui.same_line();
-            if ui.button(format!("Message##{}", friend.id)) {
-                if let Some(chat) = self.note(self.client.open_dm(friend.id)) {
-                    self.refresh_shell();
-                    self.open_dm(chat.id);
+            let text_x = left + 32.0 + 12.0;
+            skin::text(ui, semi, FONT_MD, [text_x, row_min[1] + 12.0], TEXT, name);
+            if hovered && !pending_tab {
+                let name_w = skin::text_size(ui, semi, FONT_MD, name)[0];
+                skin::text(ui, None, FONT_SM, [text_x + name_w + 6.0, row_min[1] + 14.0], TEXT_SECONDARY, username);
+            }
+            skin::text(ui, None, FONT_SM, [text_x, row_min[1] + 33.0], TEXT_SECONDARY, subtitle);
+            let button_y = row_min[1] + 13.0;
+            let mut bx = right - 36.0;
+            if pending_tab {
+                if *incoming {
+                    if self.round_action(ui, &format!("decline-{id}"), "x", [bx, button_y], hovered, RED) {
+                        decline = Some(*id);
+                    }
+                    skin::item_tooltip(ui, semi, "Ignore");
+                    bx -= 36.0 + 10.0;
+                    if self.round_action(ui, &format!("accept-{id}"), "check", [bx, button_y], hovered, GREEN) {
+                        accept = Some(*id);
+                    }
+                    skin::item_tooltip(ui, semi, "Accept");
                 }
+            } else {
+                if self.round_action(ui, &format!("message-{id}"), "message-circle", [bx, button_y], hovered, TEXT_NORMAL) {
+                    open_chat = Some(*id);
+                }
+                skin::item_tooltip(ui, semi, "Message");
+            }
+            ui.set_cursor_screen_pos(row_min);
+            if ui.invisible_button(format!("friend-row-{id}-{index}"), [row_max[0] - row_min[0], 62.0]) && !pending_tab {
+                open_chat = Some(*id);
             }
         }
-        if shown == 0 {
-            ui.text_colored(MUTED, if online_only { "No friends are online right now." } else { "You have not added anyone yet." });
+        if let Some(friend_id) = open_chat {
+            if let Some(chat) = self.note(self.client.open_dm(friend_id)) {
+                self.refresh_shell();
+                self.open_dm(chat.id);
+            }
+        }
+        if let Some(id) = accept {
+            if self.note(self.client.accept_friend_request(id)).is_some() {
+                self.refresh_shell();
+            }
+        }
+        if let Some(id) = decline {
+            if self.note(self.client.decline_friend_request(id)).is_some() {
+                self.refresh_shell();
+            }
         }
     }
 
-    fn draw_channels(&mut self, ui: &Ui, _server_id: i64) {
+    /// Round 36 px action button used in the friends list.
+    fn round_action(&self, ui: &Ui, id: &str, icon: &str, min: [f32; 2], row_hovered: bool, hover_tint: [f32; 4]) -> bool {
+        ui.set_cursor_screen_pos(min);
+        let clicked = ui.invisible_button(id, [36.0, 36.0]);
+        let hovered = ui.is_item_hovered();
+        let fill = if row_hovered { RAIL_BG } else { SIDEBAR_BG };
+        skin::rect(ui, min, [min[0] + 36.0, min[1] + 36.0], fill, 18.0);
+        skin::image(ui, self.icon(icon), [min[0] + 8.0, min[1] + 8.0], 20.0, if hovered { hover_tint } else { TEXT_SECONDARY });
+        clicked
+    }
+
+    fn draw_channels(&mut self, ui: &Ui, server_id: i64) {
         let layout = self.layout.clone();
         let voice_members = self.voice_members.clone();
+        let owner = self.servers.iter().find(|server| server.id == server_id).map(|server| server.owner_id);
+        let is_owner = owner.is_some() && owner == self.account.as_ref().map(|account| account.id);
+        let selected_id = self.selected.as_ref().map(|channel| channel.id);
+        ui.dummy([0.0, 4.0]);
         for category in layout {
-            section_label(ui, &category.category.name.to_uppercase(), self.bold_font, self.icon("chevron-down"));
+            let category_id = category.category.id;
+            let collapsed = self.collapsed.contains(&category_id);
+            let (toggle, create) = self.category_row(ui, category_id, &category.category.name, collapsed, is_owner);
+            if toggle {
+                if collapsed {
+                    self.collapsed.remove(&category_id);
+                } else {
+                    self.collapsed.insert(category_id);
+                }
+            }
+            if create {
+                self.channel_category = Some(category_id);
+                self.channel_name.clear();
+                self.channel_is_voice = false;
+                self.open_modal(Modal::CreateChannel);
+            }
             for channel in category.channels {
+                let joined = channel.kind == ChannelKind::Voice && self.voice_channel == Some(channel.id);
+                let selected = selected_id == Some(channel.id);
+                if collapsed && !selected && !joined {
+                    continue;
+                }
                 let icon_name = match channel.kind {
                     ChannelKind::Text => "hash",
                     ChannelKind::Voice => "volume-2",
                 };
-                let selected = self.selected.as_ref().map(|selected| selected.id) == Some(channel.id);
-                if nav_row(ui, &format!("ch{}", channel.id), self.icon(icon_name), &channel.name, selected) {
+                if self.channel_row(ui, &format!("ch{}", channel.id), Some(icon_name), &channel.name, selected) {
                     self.selected = Some(channel.clone());
                     self.search.clear();
                     self.reply_to = None;
@@ -989,19 +1516,69 @@ impl App {
                         self.join_voice_channel(channel.id);
                     }
                 }
-                if channel.kind == ChannelKind::Voice && self.voice_channel == Some(channel.id) {
+                if joined {
                     for member in &voice_members {
                         self.draw_voice_member(ui, member);
                     }
                 }
             }
         }
+        ui.dummy([0.0, 8.0]);
+    }
+
+    /// Category header: chevron, 12 px uppercase name, and a Create Channel plus for the owner.
+    fn category_row(&self, ui: &Ui, category_id: i64, name: &str, collapsed: bool, can_create: bool) -> (bool, bool) {
+        let width = ui.content_region_avail()[0].max(32.0);
+        let origin = ui.cursor_screen_pos();
+        let text_top = origin[1] + 16.0;
+        let text_h = CATEGORY_H - 16.0;
+        let mut create = false;
+        let plus_min = [origin[0] + width - 8.0 - 18.0, text_top + (text_h - 18.0) * 0.5];
+        if can_create {
+            create = skin::icon_button(ui, &format!("cat-add-{category_id}"), self.icon("plus"), plus_min, 18.0, 18.0, MUTED, TEXT_NORMAL, None);
+            skin::item_tooltip(ui, self.semibold_font, "Create Channel");
+        }
+        ui.set_cursor_screen_pos(origin);
+        let toggle_w = if can_create { width - 8.0 - 18.0 - 4.0 } else { width };
+        let toggle = ui.invisible_button(format!("cat-{category_id}"), [toggle_w, CATEGORY_H]);
+        let color = if ui.is_item_hovered() { TEXT_NORMAL } else { MUTED };
+        let chevron = if collapsed { "chevron-right" } else { "chevron-down" };
+        skin::image(ui, self.icon(chevron), [origin[0] + 4.0, text_top + (text_h - 12.0) * 0.5], 12.0, color);
+        let label = name.to_uppercase();
+        let shown = skin::ellipsize(ui, self.semibold_font, FONT_XS, &label, toggle_w - 22.0);
+        skin::text_in_row(ui, self.semibold_font, FONT_XS, origin[0] + 18.0, text_top, text_h, color, &shown);
+        (toggle, create)
+    }
+
+    /// A 32 px channel row with 8 px insets, rounded hover and selected fills, icon, then name.
+    fn channel_row(&self, ui: &Ui, id: &str, icon: Option<&str>, label: &str, selected: bool) -> bool {
+        let width = ui.content_region_avail()[0].max(32.0);
+        let origin = ui.cursor_screen_pos();
+        let clicked = ui.invisible_button(id, [width, CHANNEL_ROW_H + CHANNEL_ROW_GAP]);
+        let hovered = ui.is_item_hovered();
+        let min = [origin[0] + ROW_INSET, origin[1] + CHANNEL_ROW_GAP * 0.5];
+        let max = [origin[0] + width - ROW_INSET, min[1] + CHANNEL_ROW_H];
+        if selected || hovered {
+            skin::rect(ui, min, max, if selected { ROW_SELECTED } else { ROW_HOVER }, ROW_RADIUS);
+        }
+        let color = if selected {
+            WHITE
+        } else if hovered {
+            TEXT_NORMAL
+        } else {
+            MUTED
+        };
+        let mut text_x = min[0] + 8.0;
+        if let Some(icon) = icon {
+            skin::image(ui, self.icon(icon), [text_x, min[1] + 6.0], 20.0, if selected { TEXT_NORMAL } else { CHANNEL_ICON });
+            text_x += 20.0 + 6.0;
+        }
+        let shown = skin::ellipsize(ui, None, FONT_MD, label, max[0] - 8.0 - text_x);
+        skin::text_in_row(ui, None, FONT_MD, text_x, min[1], CHANNEL_ROW_H, color, &shown);
+        clicked
     }
 
     fn draw_members(&mut self, ui: &Ui) {
-        let width = ui.window_size()[0].max(1.0);
-        ui.dummy([width, 48.0]);
-        header_rule(ui);
         match self.place {
             Place::Server(_) => {
                 let members = self.members.clone();
@@ -1017,10 +1594,12 @@ impl App {
                 }
                 self.member_group(ui, "ONLINE", &online);
                 self.member_group(ui, "OFFLINE", &offline);
+                ui.dummy([0.0, 20.0]);
             }
             Place::Direct(dm_id) => {
                 if let Some(chat) = self.dms.iter().find(|chat| chat.id == dm_id).cloned() {
                     let presence = self.presence.get(&chat.peer_id).copied().unwrap_or(Presence::Offline);
+                    ui.dummy([0.0, 16.0]);
                     self.person_row(ui, chat.peer_id, &chat.peer_display_name, &chat.peer_username, presence, false);
                 }
             }
@@ -1032,44 +1611,55 @@ impl App {
         if members.is_empty() {
             return;
         }
-        section_label(ui, &format!("{title} — {}", members.len()), self.bold_font, None);
+        let origin = ui.cursor_screen_pos();
+        let width = ui.content_region_avail()[0];
+        ui.dummy([width, MEMBER_GROUP_H]);
+        let label = format!("{title} — {}", members.len());
+        skin::text_in_row(ui, self.semibold_font, FONT_XS, origin[0] + 16.0, origin[1] + 24.0, 16.0, MUTED, &label);
         for (member, presence) in members {
             let name = member.nickname.clone().unwrap_or(member.display_name.clone());
             self.person_row(ui, member.user_id, &name, &member.username, *presence, member.is_owner);
         }
     }
 
+    /// 42 px member row: 32 px avatar with status, name, and the owner crown. Offline rows are dimmed.
     fn person_row(&self, ui: &Ui, user_id: i64, name: &str, _username: &str, presence: Presence, owner: bool) {
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
-        let _clicked = ui.invisible_button(format!("member-{user_id}"), [width, 42.0]);
+        let _clicked = ui.invisible_button(format!("member-{user_id}"), [width, MEMBER_ROW_H]);
         let hovered = ui.is_item_hovered();
-        let row_bg = if hovered { ROW_HOVER } else { [0.0, 0.0, 0.0, 0.0] };
+        let min = [origin[0] + ROW_INSET, origin[1] + 1.0];
+        let max = [origin[0] + width - ROW_INSET, origin[1] + MEMBER_ROW_H - 1.0];
         if hovered {
-            ui.get_window_draw_list()
-                .add_rect([origin[0] + 8.0, origin[1] + 1.0], [origin[0] + width - 8.0, origin[1] + 41.0], ROW_HOVER)
-                .rounding(4.0)
-                .filled(true)
-                .build();
+            skin::rect(ui, min, max, ROW_HOVER, ROW_RADIUS);
         }
-        let center = [origin[0] + 28.0, origin[1] + 21.0];
+        let backdrop = if hovered { ROW_HOVER } else { SIDEBAR_BG };
+        let center = [min[0] + 8.0 + 16.0, origin[1] + MEMBER_ROW_H * 0.5];
         let avatar = self.avatars.get(&user_id).map(|shot| shot.texture);
         paint_avatar(ui, avatar, center, 16.0, &initials(name), None);
-        paint_status_dot(ui, center, 16.0, presence, if hovered { row_bg } else { SIDEBAR_BG });
-        let text_h = ui.calc_text_size(name)[1];
-        let text_x = origin[0] + 52.0;
-        ui.get_window_draw_list().add_text([text_x, origin[1] + (42.0 - text_h) * 0.5], if presence == Presence::Offline { MUTED } else { TEXT }, name);
+        let offline = presence == Presence::Offline;
+        if offline {
+            ui.get_window_draw_list().add_circle(center, 16.5, with_alpha(backdrop, 0.7)).filled(true).build();
+        } else {
+            paint_status_dot(ui, center, 16.0, presence, backdrop);
+        }
+        let text_x = min[0] + 8.0 + 32.0 + 12.0;
+        let color = if offline {
+            with_alpha(MUTED, 0.5)
+        } else if hovered {
+            TEXT_NORMAL
+        } else {
+            MUTED
+        };
+        let crown_w = if owner { 18.0 } else { 0.0 };
+        let shown = skin::ellipsize(ui, None, FONT_MD, name, max[0] - 8.0 - crown_w - text_x);
+        skin::text_in_row(ui, None, FONT_MD, text_x, origin[1], MEMBER_ROW_H, color, &shown);
         if owner {
-            if let Some(texture) = self.icon("crown") {
-                let name_w = ui.calc_text_size(name)[0];
-                ui.get_window_draw_list().add_image(
-                    texture,
-                    [text_x + name_w + 6.0, origin[1] + 13.0],
-                    [text_x + name_w + 20.0, origin[1] + 27.0],
-                    [0.0, 0.0],
-                    [1.0, 1.0],
-                    WHITE,
-                );
+            let name_w = skin::text_size(ui, None, FONT_MD, &shown)[0];
+            let crown_min = [text_x + name_w + 4.0, center[1] - 7.0];
+            skin::image(ui, self.icon("crown"), crown_min, 14.0, WHITE);
+            if ui.is_mouse_hovering_rect(crown_min, [crown_min[0] + 14.0, crown_min[1] + 14.0]) {
+                skin::tooltip(ui, self.semibold_font, FONT_SM, "Server Owner", crown_min, [crown_min[0] + 14.0, crown_min[1] + 14.0], TooltipSide::Top);
             }
         }
     }
@@ -1079,8 +1669,7 @@ impl App {
             return;
         }
         let Some(target) = self.chat_target() else {
-            ui.set_cursor_screen_pos([ui.cursor_screen_pos()[0] + 16.0, ui.cursor_screen_pos()[1] + 16.0]);
-            ui.text_colored(MUTED, "Select a channel or a direct message.");
+            self.draw_no_text_channels(ui);
             return;
         };
         let mut reply = None;
@@ -1088,7 +1677,7 @@ impl App {
         let mut delete = None;
         let mut save = None;
         let stick = self.messages.len();
-        let footer = if self.reply_to.is_some() || self.editing.is_some() || self.pending_file.is_some() { 108.0 } else { 72.0 };
+        let footer = self.composer_footer_h();
         ui.child_window("history").size([0.0, -footer]).build(ui, || {
             let near_bottom = ui.scroll_max_y() <= 0.0 || ui.scroll_y() >= ui.scroll_max_y() - 24.0;
             let mine = self.account.as_ref().map(|account| account.id);
@@ -1168,58 +1757,95 @@ impl App {
         if let Some((id, filename)) = save {
             self.save_attachment(id, &filename);
         }
-        if let Some(id) = self.reply_to {
-            ui.text(format!("Replying to {id}"));
-            ui.same_line();
-            if ui.button("Cancel reply") {
-                self.reply_to = None;
-            }
+        self.draw_composer(ui, target);
+    }
+
+    fn draw_no_text_channels(&self, ui: &Ui) {
+        let origin = ui.cursor_screen_pos();
+        let width = ui.content_region_avail()[0].max(1.0);
+        let height = ui.content_region_avail()[1].max(1.0);
+        ui.dummy([width, height]);
+        let center_x = origin[0] + width * 0.5;
+        let top = origin[1] + height * 0.4;
+        skin::text_centered(ui, self.bold_font, FONT_MD, center_x, top, TEXT_SECONDARY, "NO TEXT CHANNELS");
+        let body = "You find yourself in a strange place. You don't have access to any text channels, or there are none in this server.";
+        let mut y = top + 28.0;
+        for line in skin::wrap_lines(ui, None, FONT_SM, body, (width - 64.0).min(440.0)) {
+            skin::text_centered(ui, None, FONT_SM, center_x, y, MUTED, &line);
+            y += 20.0;
         }
-        if let Some(id) = self.editing {
-            ui.text(format!("Editing {id}"));
-            ui.same_line();
-            if ui.button("Cancel edit") {
-                self.editing = None;
-                self.composer.clear();
-            }
-        }
-        let pending = self.pending_file.as_ref().map(|(name, bytes)| (name.clone(), bytes.len()));
-        if let Some((name, len)) = pending {
-            ui.text_colored(MUTED, format!("{name} ({len} bytes)"));
-            ui.same_line();
-            if ui.button("Remove file") {
-                self.pending_file = None;
-            }
-        }
+    }
+
+    fn composer_footer_h(&self) -> f32 {
+        let strip = if self.reply_to.is_some() || self.editing.is_some() || self.pending_file.is_some() { 34.0 } else { 0.0 };
+        8.0 + strip + COMPOSER_H + COMPOSER_BOTTOM
+    }
+
+    /// Rounded message bar: upload button, `Message #channel` placeholder, and a strip above it
+    /// while replying, editing, or holding a file.
+    fn draw_composer(&mut self, ui: &Ui, target: ChatTarget) {
         let origin = ui.cursor_screen_pos();
         let width = ui.content_region_avail()[0];
-        let bar_h = 44.0;
-        let margin = 16.0;
-        let bar_x = origin[0] + margin;
-        let bar_w = (width - margin * 2.0).max(120.0);
-        ui.get_window_draw_list()
-            .add_rect([bar_x, origin[1]], [bar_x + bar_w, origin[1] + bar_h], [56.0 / 255.0, 58.0 / 255.0, 64.0 / 255.0, 1.0])
-            .rounding(8.0)
-            .filled(true)
-            .build();
+        let bar_x = origin[0] + COMPOSER_MARGIN;
+        let bar_w = (width - COMPOSER_MARGIN * 2.0).max(120.0);
+        let mut y = origin[1] + 8.0;
+        ui.dummy([width, self.composer_footer_h()]);
+        let strip = if let Some(id) = self.reply_to {
+            let author = self
+                .messages
+                .iter()
+                .find(|message| message.id == id)
+                .map(|message| message.author_nickname.clone().unwrap_or_else(|| message.author_display_name.clone()));
+            Some(match author {
+                Some(name) => format!("Replying to {name}"),
+                None => "Replying to a message".to_string(),
+            })
+        } else if self.editing.is_some() {
+            Some("Editing message".to_string())
+        } else {
+            self.pending_file.as_ref().map(|(name, bytes)| format!("{name} ({} KB)", bytes.len().div_ceil(1024)))
+        };
+        if let Some(label) = &strip {
+            skin::rect_corners(ui, [bar_x, y], [bar_x + bar_w, y + 34.0], SIDEBAR_BG, COMPOSER_RADIUS, DrawFlags::ROUND_TOP);
+            let shown = skin::ellipsize(ui, None, FONT_SM, label, bar_w - 64.0);
+            skin::text_in_row(ui, None, FONT_SM, bar_x + 16.0, y, 34.0, TEXT_SECONDARY, &shown);
+            if skin::icon_button(ui, "composer-cancel", self.icon("x"), [bar_x + bar_w - 8.0 - 24.0, y + 5.0], 24.0, 16.0, TEXT_SECONDARY, TEXT_NORMAL, None) {
+                if self.editing.take().is_some() {
+                    self.composer.clear();
+                }
+                if self.reply_to.take().is_none() {
+                    self.pending_file = None;
+                }
+            }
+            y += 34.0;
+        }
+        let corners = if strip.is_some() { DrawFlags::ROUND_BOTTOM } else { DrawFlags::ROUND_ALL };
+        skin::rect_corners(ui, [bar_x, y], [bar_x + bar_w, y + COMPOSER_H], COMPOSER_BG, COMPOSER_RADIUS, corners);
         let input_x = if self.editing.is_none() {
-            ui.set_cursor_screen_pos([bar_x + 6.0, origin[1] + 6.0]);
-            if self.tool(ui, "attach", "plus", self.pending_file.is_some(), Some("Attach file")) {
+            let tint = if self.pending_file.is_some() { TEXT_NORMAL } else { TEXT_SECONDARY };
+            if skin::icon_button(ui, "attach", self.icon("circle-plus"), [bar_x + 12.0, y + 8.0], 28.0, 24.0, tint, TEXT_NORMAL, None) {
                 self.pick_attachment();
             }
-            bar_x + 44.0
+            skin::item_tooltip(ui, self.semibold_font, "Upload a File");
+            bar_x + 12.0 + 28.0 + 12.0
         } else {
             bar_x + 8.0
         };
-        ui.set_cursor_screen_pos([input_x, origin[1] + 6.0]);
-        let _pad = ui.push_style_var(StyleVar::FramePadding([8.0, 6.0]));
-        let _round = ui.push_style_var(StyleVar::FrameRounding(8.0));
-        let _border = ui.push_style_var(StyleVar::FrameBorderSize(0.0));
-        let _bg = ui.push_style_color(StyleColor::FrameBg, [0.0, 0.0, 0.0, 0.0]);
-        ui.set_next_item_width((bar_x + bar_w - 8.0 - input_x).max(40.0));
-        let channel_mark = if self.stage_icon() == Some("hash") { "#" } else { "" };
+        let channel_mark = if self.stage_icon() == Some("hash") { "#" } else { "@" };
         let hint = format!("Message {channel_mark}{}", self.stage_title());
-        let submit = ui.input_text("##composer", &mut self.composer).hint(hint).enter_returns_true(true).build();
+        ui.set_cursor_screen_pos([input_x, y]);
+        let submit = {
+            let _font = ui.push_font_with_size(None, FONT_MD);
+            let _pad = ui.push_style_var(StyleVar::FramePadding([4.0, (COMPOSER_H - FONT_MD) * 0.5]));
+            let _border = ui.push_style_var(StyleVar::FrameBorderSize(0.0));
+            let _bg = ui.push_style_color(StyleColor::FrameBg, skin::CLEAR);
+            let _bg_hover = ui.push_style_color(StyleColor::FrameBgHovered, skin::CLEAR);
+            let _bg_active = ui.push_style_color(StyleColor::FrameBgActive, skin::CLEAR);
+            let _hint = ui.push_style_color(StyleColor::TextDisabled, PLACEHOLDER);
+            let _text = ui.push_style_color(StyleColor::Text, TEXT_NORMAL);
+            ui.set_next_item_width((bar_x + bar_w - 16.0 - input_x).max(40.0));
+            ui.input_text("##composer", &mut self.composer).hint(hint).enter_returns_true(true).build()
+        };
         if submit {
             self.submit_composer(target);
         }
@@ -1240,17 +1866,16 @@ impl App {
         let origin = ui.cursor_screen_pos();
         let width = ui.content_region_avail()[0].max(1.0);
         let height = ui.content_region_avail()[1].max(1.0);
-        ui.get_window_draw_list()
-            .add_rect(origin, [origin[0] + width, origin[1] + height], [17.0 / 255.0, 18.0 / 255.0, 20.0 / 255.0, 1.0])
-            .filled(true)
-            .build();
-        let bar_h = 72.0;
+        ui.dummy([width, height]);
+        skin::rect(ui, origin, [origin[0] + width, origin[1] + height], CALL_BG, 0.0);
+        let semi = self.semibold_font;
         if !joined {
             if let Some(channel) = channel {
-                let label = format!("Join {}", channel.name);
-                let text_w = ui.calc_text_size(&label)[0];
-                ui.set_cursor_screen_pos([origin[0] + (width - text_w - 28.0) * 0.5, origin[1] + height * 0.45]);
-                if ui.button(&label) {
+                let center_x = origin[0] + width * 0.5;
+                let title_y = origin[1] + height * 0.4;
+                skin::text_centered(ui, semi, FONT_XL, center_x, title_y, TEXT, &channel.name);
+                skin::text_centered(ui, None, FONT_MD, center_x, title_y + 36.0, TEXT_SECONDARY, "No one is currently in voice");
+                if skin::button(ui, "join-voice", "Join Voice", Tone::Green, [center_x - 60.0, title_y + 72.0], [120.0, BUTTON_H], true, semi) {
                     self.join_voice_channel(channel.id);
                 }
             }
@@ -1263,48 +1888,54 @@ impl App {
         } else {
             members
         };
-        let area_h = (height - bar_h).max(80.0);
+        let pad = 16.0;
+        let area_w = (width - pad * 2.0).max(80.0);
+        let area_h = (height - CALL_BAR_H - pad).max(80.0);
         let sharing = self.screen || people.iter().any(|member| member.flags.screen);
-        let tiles_top = if sharing { 220.0_f32.min(area_h * 0.45) } else { 0.0 };
+        let featured_h = if sharing { (area_h * 0.62).floor() } else { 0.0 };
         if sharing {
-            self.draw_featured_screen_at(ui, origin, width, tiles_top);
+            self.draw_featured_screen_at(ui, [origin[0] + pad, origin[1] + pad], area_w, featured_h);
         }
-        let tile_area_h = (area_h - tiles_top).max(80.0);
-        let tile_w = 320.0_f32.min(width - 48.0).max(160.0);
-        let tile_h = 190.0_f32.min(tile_area_h - 24.0).max(120.0);
-        let cols = ((width - 32.0) / (tile_w + 8.0)).floor().clamp(1.0, 4.0) as usize;
-        let rows = people.len().div_ceil(cols).max(1);
-        let grid_w = cols as f32 * tile_w + (cols.saturating_sub(1) as f32) * 8.0;
-        let grid_h = rows as f32 * tile_h + (rows.saturating_sub(1) as f32) * 8.0;
-        let start_x = origin[0] + (width - grid_w) * 0.5;
-        let start_y = origin[1] + tiles_top + ((tile_area_h - grid_h) * 0.5).max(8.0);
+        let tiles_top = origin[1] + pad + if sharing { featured_h + TILE_GAP } else { 0.0 };
+        let tiles_h = (area_h - if sharing { featured_h + TILE_GAP } else { 0.0 }).max(60.0);
+        let grid = voice_tile_grid(people.len(), area_w, tiles_h, TILE_GAP);
+        let grid_w = grid.cols as f32 * grid.tile_w + grid.cols.saturating_sub(1) as f32 * TILE_GAP;
+        let grid_h = grid.rows as f32 * grid.tile_h + grid.rows.saturating_sub(1) as f32 * TILE_GAP;
+        let start_x = origin[0] + pad + (area_w - grid_w) * 0.5;
+        let start_y = tiles_top + (tiles_h - grid_h) * 0.5;
         for (index, member) in people.iter().enumerate() {
-            let col = index % cols;
-            let row = index / cols;
-            let tile_origin = [start_x + col as f32 * (tile_w + 8.0), start_y + row as f32 * (tile_h + 8.0)];
-            self.draw_voice_tile_at(ui, member, tile_origin, tile_w, tile_h);
+            let col = index % grid.cols.max(1);
+            let row = index / grid.cols.max(1);
+            let tile_origin = [
+                (start_x + col as f32 * (grid.tile_w + TILE_GAP)).floor(),
+                (start_y + row as f32 * (grid.tile_h + TILE_GAP)).floor(),
+            ];
+            self.draw_voice_tile_at(ui, member, tile_origin, grid.tile_w.floor(), grid.tile_h.floor());
         }
-        self.draw_stage_controls(ui, [origin[0], origin[1] + height - bar_h], width);
+        self.draw_stage_controls(ui, [origin[0], origin[1] + height - CALL_BAR_H], width);
         if self.push_to_talk {
             let note = format!("Hold {} to talk.", self.voice.ptt_key);
-            let note_w = ui.calc_text_size(&note)[0];
-            ui.get_window_draw_list().add_text([origin[0] + (width - note_w) * 0.5, origin[1] + height - 18.0], MUTED, note);
+            skin::text_centered(ui, None, FONT_XS, origin[0] + width * 0.5, origin[1] + height - 18.0, MUTED, &note);
         }
     }
 
+    /// Centered call controls: camera, screen share with its options chevron, mic, and the red disconnect.
     fn draw_stage_controls(&mut self, ui: &Ui, origin: [f32; 2], width: f32) {
-        let count = 4.0;
-        let row_w = count * 40.0 + (count - 1.0) * 12.0;
-        let mut x = origin[0] + (width - row_w) * 0.5;
-        let y = origin[1] + 8.0;
-        let camera_icon = if self.camera { "video" } else { "video-off" };
-        if self.round_control(ui, "stage-camera", camera_icon, [x, y], false, self.camera) {
+        let semi = self.semibold_font;
+        let widths = [CALL_BUTTON, CALL_BUTTON + CALL_CHEVRON_W, CALL_BUTTON, CALL_BUTTON];
+        let xs = centered_row(width, &widths, CALL_BUTTON_GAP);
+        let y = origin[1] + (CALL_BAR_H - CALL_BUTTON) * 0.5;
+        let camera = self.camera;
+        let camera_icon = if camera { "video" } else { "video-off" };
+        if self.round_control(ui, "stage-camera", camera_icon, [origin[0] + xs[0], y], false, WHITE) {
             self.camera = !self.camera;
         }
-        x += 52.0;
+        skin::item_tooltip(ui, semi, if camera { "Turn Off Camera" } else { "Turn On Camera" });
         let live = self.share.is_live();
+        let screen_min = [origin[0] + xs[1], y];
         let screen_icon = if live { "monitor" } else { "monitor-off" };
-        if self.round_control(ui, "stage-screen", screen_icon, [x, y], false, live) {
+        let (share_clicked, options_clicked) = self.split_control(ui, "stage-screen", screen_icon, screen_min);
+        if share_clicked {
             if live {
                 self.share.stop();
                 self.save_stream();
@@ -1312,91 +1943,438 @@ impl App {
                 self.open_share();
             }
         }
-        ui.set_cursor_screen_pos([x + 28.0, y - 28.0]);
-        if self.tool(ui, "stage-stream-options", "chevron-up", self.stream_menu, Some("Stream options")) {
-            self.stream_anchor = [x, y];
+        if options_clicked {
+            self.stream_anchor = screen_min;
             self.stream_menu = !self.stream_menu;
         }
-        x += 52.0;
-        let mic_icon = if self.mute.muted() { "mic-off-red" } else { "mic" };
-        if self.round_control(ui, "stage-mic", mic_icon, [x, y], false, self.mute.muted()) {
-            let muted = !self.mute.muted();
-            self.mute.set_muted(muted);
+        let muted = self.mute.muted();
+        let (mic_icon, mic_tint) = if muted { ("mic-off", RED) } else { ("mic", WHITE) };
+        if self.round_control(ui, "stage-mic", mic_icon, [origin[0] + xs[2], y], false, mic_tint) {
+            self.mute.set_muted(!muted);
         }
-        x += 52.0;
-        if self.round_control(ui, "stage-disconnect", "phone-off", [x, y], true, false) {
+        skin::item_tooltip(ui, semi, if muted { "Unmute" } else { "Mute" });
+        if self.round_control(ui, "stage-disconnect", "phone-off", [origin[0] + xs[3], y], true, WHITE) {
             self.leave_voice();
         }
+        skin::item_tooltip(ui, semi, "Disconnect");
     }
 
-    fn round_control(&self, ui: &Ui, id: &str, icon: &str, origin: [f32; 2], danger: bool, active: bool) -> bool {
+    fn round_control(&self, ui: &Ui, id: &str, icon: &str, origin: [f32; 2], danger: bool, tint: [f32; 4]) -> bool {
         ui.set_cursor_screen_pos(origin);
-        let clicked = ui.invisible_button(id, [40.0, 40.0]);
-        let min = ui.item_rect_min();
-        let fill = if danger {
-            RED
-        } else if active {
-            ROW_SELECTED
-        } else if ui.is_item_hovered() {
-            ROW_HOVER
-        } else {
-            PANEL_BG
+        let clicked = ui.invisible_button(id, [CALL_BUTTON, CALL_BUTTON]);
+        let hovered = ui.is_item_hovered();
+        let fill = match (danger, hovered) {
+            (true, true) => DANGER_HOVER,
+            (true, false) => DANGER,
+            (false, true) => CONTROL_HOVER,
+            (false, false) => CONTROL_BG,
         };
-        let draw = ui.get_window_draw_list();
-        draw.add_rect(min, [min[0] + 40.0, min[1] + 40.0], fill).rounding(20.0).filled(true).build();
-        if let Some(texture) = self.icon(icon) {
-            draw.add_image(texture, [min[0] + 10.0, min[1] + 10.0], [min[0] + 30.0, min[1] + 30.0], [0.0, 0.0], [1.0, 1.0], WHITE);
-        }
+        let max = [origin[0] + CALL_BUTTON, origin[1] + CALL_BUTTON];
+        skin::rect(ui, origin, max, fill, CALL_BUTTON * 0.5);
+        let inset = (CALL_BUTTON - 24.0) * 0.5;
+        skin::image(ui, self.icon(icon), [origin[0] + inset, origin[1] + inset], 24.0, tint);
         clicked
     }
 
-    fn draw_call(&mut self, ui: &Ui) {
-        let me = self.account.as_ref().map(|account| account.id);
-        if let Some(call) = self.call.clone() {
-            match call.phase {
-                CallPhase::Ringing if Some(call.callee) == me => {
-                    ui.text(format!("Incoming call from {}", self.name_of(call.caller)));
-                    if ui.button("Accept call") {
-                        if let Some(call) = self.note(self.client.accept_call(call.dm_id)) {
-                            self.call = Some(call);
-                            self.voice_channel = None;
-                        }
-                    }
-                    ui.same_line();
-                    if ui.button("Decline call") {
-                        if self.note(self.client.decline_call(call.dm_id)).is_some() {
-                            self.end_media_place();
-                        }
-                    }
-                }
-                CallPhase::Ringing => {
-                    ui.text("Calling…");
-                    if ui.button("Cancel call") {
-                        if self.note(self.client.end_call(call.dm_id)).is_some() {
-                            self.end_media_place();
-                        }
-                    }
-                }
-                CallPhase::Active => {
-                    ui.text(format!("In a call with {}", self.name_of(if Some(call.caller) == me { call.callee } else { call.caller })));
-                    if ui.button("End call") {
-                        if self.note(self.client.end_call(call.dm_id)).is_some() {
-                            self.end_media_place();
-                        }
-                    }
-                }
-            }
-            ui.separator();
-        } else if let Place::Direct(dm_id) = self.place {
-            if ui.button("Start call") {
-                if let Some(call) = self.note(self.client.start_call(dm_id)) {
-                    self.call = Some(call);
-                    self.voice_channel = None;
-                    self.voice_members.clear();
-                }
-            }
-            ui.separator();
+    /// Screen share button joined to its stream-options chevron, as in Discord's call bar.
+    fn split_control(&self, ui: &Ui, id: &str, icon: &str, origin: [f32; 2]) -> (bool, bool) {
+        let semi = self.semibold_font;
+        let total_w = CALL_BUTTON + CALL_CHEVRON_W;
+        let max = [origin[0] + total_w, origin[1] + CALL_BUTTON];
+        skin::rect(ui, origin, max, CONTROL_BG, CALL_BUTTON * 0.5);
+        ui.set_cursor_screen_pos(origin);
+        let main = ui.invisible_button(id, [CALL_BUTTON, CALL_BUTTON]);
+        if ui.is_item_hovered() {
+            skin::rect_corners(ui, origin, [origin[0] + CALL_BUTTON, max[1]], CONTROL_HOVER, CALL_BUTTON * 0.5, DrawFlags::ROUND_LEFT);
         }
+        let live = self.share.is_live();
+        skin::item_tooltip(ui, semi, if live { "Stop Streaming" } else { "Share Your Screen" });
+        let chevron_min = [origin[0] + CALL_BUTTON, origin[1]];
+        ui.set_cursor_screen_pos(chevron_min);
+        let options = ui.invisible_button(format!("{id}-options"), [CALL_CHEVRON_W, CALL_BUTTON]);
+        if ui.is_item_hovered() || self.stream_menu {
+            skin::rect_corners(ui, chevron_min, max, CONTROL_HOVER, CALL_BUTTON * 0.5, DrawFlags::ROUND_RIGHT);
+        }
+        skin::item_tooltip(ui, semi, "Stream Options");
+        skin::rect(ui, [chevron_min[0], origin[1] + 14.0], [chevron_min[0] + 1.0, max[1] - 14.0], CALL_BG, 0.0);
+        let inset = (CALL_BUTTON - 24.0) * 0.5;
+        skin::image(ui, self.icon(icon), [origin[0] + inset, origin[1] + inset], 24.0, WHITE);
+        skin::image(ui, self.icon("chevron-up"), [chevron_min[0] + 2.0, origin[1] + (CALL_BUTTON - 16.0) * 0.5], 16.0, TEXT_NORMAL);
+        (main, options)
+    }
+
+    /// Draws the open dialog over a dark overlay. A click outside the card or Escape closes it.
+    fn draw_modal(&mut self, ui: &Ui) {
+        let Some(kind) = self.modal else { return };
+        let display = ui.io().display_size();
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR
+            | WindowFlags::NO_SCROLL_WITH_MOUSE;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _gap = ui.push_style_var(StyleVar::ItemSpacing([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, skin::CLEAR);
+        ui.window("##modal")
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size(display, Condition::Always)
+            .build(|| {
+                skin::rect(ui, [0.0, 0.0], display, OVERLAY, 0.0);
+                let card = match kind {
+                    Modal::AddServer => self.modal_add_server(ui, display),
+                    Modal::CreateServer => self.modal_create_server(ui, display),
+                    Modal::JoinServer => self.modal_join_server(ui, display),
+                    Modal::Invite => self.modal_invite(ui, display),
+                    Modal::Nickname => self.modal_nickname(ui, display),
+                    Modal::CreateChannel => self.modal_create_channel(ui, display),
+                    Modal::CreateCategory => self.modal_create_category(ui, display),
+                };
+                if self.modal_frames > 0 && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
+                    let mouse = ui.mouse_pos();
+                    let inside = mouse[0] >= card.0[0] && mouse[0] <= card.1[0] && mouse[1] >= card.0[1] && mouse[1] <= card.1[1];
+                    if !inside {
+                        self.modal = None;
+                    }
+                }
+            });
+        // A dialog opened during this frame starts counting next frame, so it gets focus once.
+        if self.modal == Some(kind) {
+            self.modal_frames = self.modal_frames.saturating_add(1);
+        }
+    }
+
+    /// Card, title, subtitle, close button, and footer band. Returns the body top-left corner.
+    fn modal_frame(
+        &mut self,
+        ui: &Ui,
+        display: [f32; 2],
+        title: &str,
+        subtitle: Option<&str>,
+        left_aligned: bool,
+        body_h: f32,
+        footer_h: f32,
+    ) -> ([f32; 2], [f32; 2], [f32; 2]) {
+        let semi = self.semibold_font;
+        let width = MODAL_W.min(display[0] - 32.0);
+        let inner_w = width - MODAL_PAD * 2.0;
+        let title_size = if left_aligned { FONT_LG } else { FONT_XL };
+        let lines = subtitle.map(|text| skin::wrap_lines(ui, None, if left_aligned { FONT_XS } else { FONT_MD }, text, inner_w - 24.0)).unwrap_or_default();
+        let line_h = if left_aligned { 16.0 } else { 20.0 };
+        let header_h = 24.0 + title_size + 8.0 + lines.len() as f32 * line_h + 16.0;
+        let height = header_h + body_h + footer_h;
+        let min = [((display[0] - width) * 0.5).floor(), ((display[1] - height) * 0.5).max(16.0).floor()];
+        let max = [min[0] + width, min[1] + height];
+        skin::rect(ui, min, max, STAGE_BG, MODAL_RADIUS);
+        if footer_h > 0.0 {
+            skin::rect_corners(ui, [min[0], max[1] - footer_h], max, MODAL_FOOTER_BG, MODAL_RADIUS, DrawFlags::ROUND_BOTTOM);
+        }
+        let center_x = min[0] + width * 0.5;
+        let mut y = min[1] + 24.0;
+        if left_aligned {
+            skin::text(ui, semi, title_size, [min[0] + MODAL_PAD, y], TEXT, title);
+        } else {
+            skin::text_centered(ui, semi, title_size, center_x, y, TEXT, title);
+        }
+        y += title_size + 8.0;
+        for line in &lines {
+            if left_aligned {
+                skin::text(ui, None, FONT_XS, [min[0] + MODAL_PAD, y], TEXT_SECONDARY, line);
+            } else {
+                skin::text_centered(ui, None, FONT_MD, center_x, y, TEXT_SECONDARY, line);
+            }
+            y += line_h;
+        }
+        if skin::icon_button(ui, "modal-close", self.icon("x"), [max[0] - 16.0 - 24.0, min[1] + 16.0], 24.0, 24.0, TEXT_SECONDARY, TEXT_NORMAL, None) {
+            self.modal = None;
+        }
+        ([min[0] + MODAL_PAD, min[1] + header_h], min, max)
+    }
+
+    /// Footer with a text link on the left and the primary button on the right.
+    fn modal_footer(&mut self, ui: &Ui, max: [f32; 2], min_x: f32, back: &str, primary: &str, tone: Tone, enabled: bool) -> (bool, bool) {
+        let semi = self.semibold_font;
+        let y = max[1] - MODAL_FOOTER_H + (MODAL_FOOTER_H - BUTTON_H) * 0.5;
+        let back_w = skin::text_size(ui, semi, FONT_SM, back)[0] + 32.0;
+        let back_clicked = skin::button(ui, "modal-back", back, Tone::Link, [min_x + MODAL_PAD - 16.0, y], [back_w, BUTTON_H], true, semi);
+        let primary_w = (skin::text_size(ui, semi, FONT_SM, primary)[0] + 32.0).max(96.0);
+        let primary_clicked = skin::button(ui, "modal-primary", primary, tone, [max[0] - MODAL_PAD - primary_w, y], [primary_w, BUTTON_H], enabled, semi);
+        (back_clicked, primary_clicked)
+    }
+
+    fn focus_modal_field(&self, ui: &Ui) {
+        if self.modal_frames == 0 {
+            ui.set_keyboard_focus_here();
+        }
+    }
+
+    fn modal_add_server(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let semi = self.semibold_font;
+        let footer_h = 16.0 + 24.0 + 8.0 + BUTTON_H + 16.0;
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Create Your Server",
+            Some("Your server is where you and your friends hang out. Make yours and start talking."),
+            false,
+            64.0 + 16.0,
+            footer_h,
+        );
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        let option_min = body;
+        let option_max = [body[0] + inner_w, body[1] + 64.0];
+        ui.set_cursor_screen_pos(option_min);
+        let create = ui.invisible_button("create-my-own", [inner_w, 64.0]);
+        let hovered = ui.is_item_hovered();
+        skin::rect(ui, option_min, option_max, if hovered { ROW_HOVER } else { STAGE_BG }, 8.0);
+        ui.get_window_draw_list()
+            .add_rect(option_min, option_max, LIST_DIVIDER)
+            .rounding(8.0)
+            .thickness(1.0)
+            .build();
+        skin::image(ui, self.icon("circle-plus"), [option_min[0] + 16.0, option_min[1] + 16.0], 32.0, GREEN);
+        skin::text_in_row(ui, semi, FONT_MD, option_min[0] + 64.0, option_min[1], 64.0, TEXT, "Create My Own");
+        skin::image(ui, self.icon("chevron-right"), [option_max[0] - 16.0 - 20.0, option_min[1] + 22.0], 20.0, TEXT_SECONDARY);
+        let footer_top = max[1] - footer_h;
+        skin::text_centered(ui, semi, FONT_LG, (min[0] + max[0]) * 0.5, footer_top + 16.0, TEXT, "Have an invite already?");
+        let join = skin::button(
+            ui,
+            "join-a-server",
+            "Join a Server",
+            Tone::Secondary,
+            [min[0] + MODAL_PAD, footer_top + 16.0 + 24.0 + 8.0],
+            [inner_w, BUTTON_H],
+            true,
+            semi,
+        );
+        if create {
+            if self.server_name.trim().is_empty() {
+                self.server_name = format!("{}'s server", self.display_name);
+            }
+            self.open_modal(Modal::CreateServer);
+        } else if join {
+            self.open_modal(Modal::JoinServer);
+        }
+        (min, max)
+    }
+
+    fn modal_create_server(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Customize Your Server",
+            Some("Give your new server a personality with a name. You can always change it later."),
+            false,
+            20.0 + INPUT_H + 24.0,
+            MODAL_FOOTER_H,
+        );
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        skin::field_label(ui, self.bold_font, body, "Server name", false, None);
+        self.focus_modal_field(ui);
+        let enter = skin::input(ui, "##server-name", &mut self.server_name, "", [body[0], body[1] + 20.0], inner_w, INPUT_H, FONT_MD, false);
+        let enabled = !self.server_name.trim().is_empty();
+        let (back, create) = self.modal_footer(ui, max, min[0], "Back", "Create", Tone::Brand, enabled);
+        if back {
+            self.open_modal(Modal::AddServer);
+        } else if (create || enter) && enabled {
+            let name = self.server_name.trim().to_string();
+            if let Some(home) = self.note(self.client.create_server(&name)) {
+                self.server_name.clear();
+                self.modal = None;
+                self.refresh_shell();
+                self.open_server(home.server.id);
+            }
+        }
+        (min, max)
+    }
+
+    fn modal_join_server(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Join a Server",
+            Some("Enter an invite below to join an existing server"),
+            false,
+            20.0 + INPUT_H + 24.0,
+            MODAL_FOOTER_H,
+        );
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        skin::field_label(ui, self.bold_font, body, "Invite link", true, None);
+        self.focus_modal_field(ui);
+        let enter = skin::input(ui, "##invite-code", &mut self.invite_code, "Invite code", [body[0], body[1] + 20.0], inner_w, INPUT_H, FONT_MD, false);
+        let enabled = !self.invite_code.trim().is_empty();
+        let (back, join) = self.modal_footer(ui, max, min[0], "Back", "Join Server", Tone::Brand, enabled);
+        if back {
+            self.open_modal(Modal::AddServer);
+        } else if (join || enter) && enabled {
+            let code = self.invite_code.trim().to_string();
+            if let Some(home) = self.note(self.client.join_invite(&code)) {
+                self.invite_code.clear();
+                self.modal = None;
+                self.refresh_shell();
+                self.open_server(home.server.id);
+            }
+        }
+        (min, max)
+    }
+
+    fn modal_invite(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let server = match self.place {
+            Place::Server(id) => self.servers.iter().find(|server| server.id == id).map(|server| server.name.clone()),
+            _ => None,
+        }
+        .unwrap_or_else(|| "your server".into());
+        let channel = self
+            .selected
+            .as_ref()
+            .filter(|channel| channel.kind == ChannelKind::Text)
+            .map(|channel| format!("# {}", channel.name));
+        let title = format!("Invite friends to {server}");
+        let (body, min, max) = self.modal_frame(ui, display, &title, channel.as_deref(), true, 20.0 + INPUT_H + 24.0, 0.0);
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        skin::field_label(ui, self.bold_font, body, "Or, send a server invite link to a friend", false, None);
+        let field_min = [body[0], body[1] + 20.0];
+        skin::rect(ui, field_min, [field_min[0] + inner_w, field_min[1] + INPUT_H], INPUT_BG, INPUT_RADIUS);
+        let mut code = self.shown_invite.clone();
+        skin::input(ui, "##invite-link", &mut code, "", field_min, inner_w - 84.0, INPUT_H, FONT_MD, true);
+        let copied = self.invite_copied;
+        let enabled = !self.shown_invite.is_empty();
+        let button_min = [field_min[0] + inner_w - 4.0 - 75.0, field_min[1] + 4.0];
+        let tone = if copied { Tone::Green } else { Tone::Brand };
+        if skin::button(ui, "copy-invite", if copied { "Copied" } else { "Copy" }, tone, button_min, [75.0, 32.0], enabled, self.semibold_font) {
+            crate::platform::copy_to_clipboard(&self.shown_invite);
+            self.invite_copied = true;
+        }
+        (min, max)
+    }
+
+    fn modal_nickname(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let (body, min, max) = self.modal_frame(ui, display, "Change Nickname", None, false, 20.0 + INPUT_H + 8.0 + 20.0 + 16.0, MODAL_FOOTER_H);
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        skin::field_label(ui, self.bold_font, body, "Nickname", false, None);
+        self.focus_modal_field(ui);
+        let hint = self.display_name.clone();
+        let enter = skin::input(ui, "##nickname", &mut self.nickname, &hint, [body[0], body[1] + 20.0], inner_w, INPUT_H, FONT_MD, false);
+        if skin::link(ui, "reset-nickname", "Reset Nickname", [body[0], body[1] + 20.0 + INPUT_H + 8.0], None, FONT_SM, LINK) {
+            self.nickname.clear();
+        }
+        let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", "Save", Tone::Brand, true);
+        if cancel {
+            self.modal = None;
+        } else if save || enter {
+            if let Place::Server(server_id) = self.place {
+                let nickname = {
+                    let trimmed = self.nickname.trim();
+                    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+                };
+                if self.note(self.client.set_nickname(server_id, nickname.as_deref())).is_some() {
+                    self.reload_members();
+                    self.modal = None;
+                }
+            }
+        }
+        (min, max)
+    }
+
+    fn modal_create_channel(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let category = self
+            .channel_category
+            .or_else(|| self.selected.as_ref().map(|channel| channel.category_id))
+            .or_else(|| self.layout.first().map(|category| category.category.id));
+        let category_name = category
+            .and_then(|id| self.layout.iter().find(|layout| layout.category.id == id))
+            .map(|layout| format!("in {}", layout.category.name));
+        let body_h = 20.0 + 2.0 * 68.0 + 16.0 + 20.0 + INPUT_H + 24.0;
+        let (body, min, max) = self.modal_frame(ui, display, "Create Channel", category_name.as_deref(), true, body_h, MODAL_FOOTER_H);
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        let semi = self.semibold_font;
+        skin::field_label(ui, self.bold_font, body, "Channel type", false, None);
+        let mut y = body[1] + 20.0;
+        let options = [
+            (false, "hash", "Text", "Send messages, images, GIFs, emoji, opinions, and puns"),
+            (true, "volume-2", "Voice", "Hang out together with voice, video, and screen share"),
+        ];
+        for (voice, icon, title, description) in options {
+            let option_min = [body[0], y];
+            let option_max = [body[0] + inner_w, y + 60.0];
+            ui.set_cursor_screen_pos(option_min);
+            if ui.invisible_button(format!("channel-type-{title}"), [inner_w, 60.0]) {
+                self.channel_is_voice = voice;
+            }
+            let hovered = ui.is_item_hovered();
+            let chosen = self.channel_is_voice == voice;
+            let fill = if chosen {
+                ROW_SELECTED
+            } else if hovered {
+                ROW_HOVER
+            } else {
+                SIDEBAR_BG
+            };
+            skin::rect(ui, option_min, option_max, fill, 4.0);
+            skin::image(ui, self.icon(icon), [option_min[0] + 12.0, option_min[1] + 18.0], 24.0, TEXT_SECONDARY);
+            skin::text(ui, semi, FONT_MD, [option_min[0] + 48.0, option_min[1] + 10.0], TEXT_NORMAL, title);
+            let line = skin::ellipsize(ui, None, FONT_SM, description, inner_w - 48.0 - 44.0);
+            skin::text(ui, None, FONT_SM, [option_min[0] + 48.0, option_min[1] + 32.0], TEXT_SECONDARY, &line);
+            let radio = [option_max[0] - 22.0, option_min[1] + 30.0];
+            ui.get_window_draw_list().add_circle(radio, 10.0, if chosen { WHITE } else { TEXT_SECONDARY }).thickness(2.0).build();
+            if chosen {
+                ui.get_window_draw_list().add_circle(radio, 5.0, WHITE).filled(true).build();
+            }
+            y += 68.0;
+        }
+        y += 8.0;
+        skin::field_label(ui, self.bold_font, [body[0], y], "Channel name", false, None);
+        let field_min = [body[0], y + 20.0];
+        skin::rect(ui, field_min, [field_min[0] + inner_w, field_min[1] + INPUT_H], INPUT_BG, INPUT_RADIUS);
+        let prefix = if self.channel_is_voice { "volume-2" } else { "hash" };
+        skin::image(ui, self.icon(prefix), [field_min[0] + 10.0, field_min[1] + 12.0], 16.0, TEXT_NORMAL);
+        self.focus_modal_field(ui);
+        let enter = skin::input(ui, "##channel-name", &mut self.channel_name, "new-channel", [field_min[0] + 28.0, field_min[1]], inner_w - 28.0, INPUT_H, FONT_MD, false);
+        let enabled = !self.channel_name.trim().is_empty();
+        let (cancel, create) = self.modal_footer(ui, max, min[0], "Cancel", "Create Channel", Tone::Brand, enabled);
+        if cancel {
+            self.modal = None;
+        } else if (create || enter) && enabled {
+            if let (Place::Server(server_id), Some(category_id)) = (self.place, category) {
+                let kind = if self.channel_is_voice { ChannelKind::Voice } else { ChannelKind::Text };
+                let name = self.channel_name.trim().to_string();
+                if self.note(self.client.create_channel(server_id, category_id, &name, kind)).is_some() {
+                    self.channel_name.clear();
+                    self.modal = None;
+                    self.reload_layout();
+                }
+            } else {
+                self.status = "create a category first".into();
+            }
+        }
+        (min, max)
+    }
+
+    fn modal_create_category(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let (body, min, max) = self.modal_frame(ui, display, "Create Category", None, true, 20.0 + INPUT_H + 24.0, MODAL_FOOTER_H);
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        skin::field_label(ui, self.bold_font, body, "Category name", false, None);
+        self.focus_modal_field(ui);
+        let enter = skin::input(ui, "##category-name", &mut self.category_name, "New Category", [body[0], body[1] + 20.0], inner_w, INPUT_H, FONT_MD, false);
+        let enabled = !self.category_name.trim().is_empty();
+        let (cancel, create) = self.modal_footer(ui, max, min[0], "Cancel", "Create Category", Tone::Brand, enabled);
+        if cancel {
+            self.modal = None;
+        } else if (create || enter) && enabled {
+            if let Place::Server(server_id) = self.place {
+                let name = self.category_name.trim().to_string();
+                if self.note(self.client.create_category(server_id, &name)).is_some() {
+                    self.category_name.clear();
+                    self.modal = None;
+                    self.reload_layout();
+                }
+            }
+        }
+        (min, max)
     }
 
     fn finish_voice_flags(&mut self, ui: &Ui) {
@@ -1451,24 +2429,6 @@ impl App {
             self.composer.clear();
             self.reply_to = None;
             self.pending_file = None;
-        }
-    }
-
-    fn add_channel(&mut self, server_id: i64) {
-        let category_id = self
-            .selected
-            .as_ref()
-            .map(|channel| channel.category_id)
-            .or_else(|| self.layout.first().map(|category| category.category.id));
-        let Some(category_id) = category_id else {
-            self.status = "create a category first".into();
-            return;
-        };
-        let kind = if self.channel_is_voice { ChannelKind::Voice } else { ChannelKind::Text };
-        let name = self.channel_name.clone();
-        if self.note(self.client.create_channel(server_id, category_id, &name, kind)).is_some() {
-            self.channel_name.clear();
-            self.reload_layout();
         }
     }
 
@@ -1808,11 +2768,11 @@ impl App {
     }
 
     fn name_of(&self, user_id: i64) -> String {
-        if self.account.as_ref().map(|account| account.id) == Some(user_id) {
-            return "You".into();
-        }
         if let Some(member) = self.members.iter().find(|member| member.user_id == user_id) {
             return member.nickname.clone().unwrap_or_else(|| member.display_name.clone());
+        }
+        if let Some(account) = self.account.as_ref().filter(|account| account.id == user_id) {
+            return account.display_name.clone();
         }
         if let Some(friend) = self.friends.iter().find(|friend| friend.id == user_id) {
             return friend.display_name.clone();
@@ -1849,7 +2809,7 @@ impl App {
         }
         if let Some(tip) = tip {
             if ui.is_item_hovered() {
-                ui.tooltip_text(tip);
+                skin::item_tooltip(ui, self.semibold_font, tip);
             }
         }
         clicked
@@ -1896,7 +2856,8 @@ impl App {
         for name in [
             "mic", "mic-off", "headphones", "headphone-off", "video", "video-off", "monitor", "monitor-off",
             "phone-off", "settings", "chevron-down", "chevron-up", "plus", "hash", "volume-2", "users", "search", "paperclip",
-            "x", "user", "log-out", "pencil", "trash-2", "reply",
+            "x", "user", "log-out", "pencil", "trash-2", "reply", "check", "chevron-right", "circle-plus", "folder-plus",
+            "message-circle", "phone", "user-plus", "signal",
         ] {
             if let Ok(rgba) = rasterize_lucide(name, 32, [255, 255, 255]) {
                 if let Some(shot) = upload_rgba(imgui, 32, 32, &rgba) {
@@ -2286,72 +3247,72 @@ impl App {
         }
     }
 
+    /// Someone in the joined voice channel, listed under it: 24 px avatar, name, then state icons.
     fn draw_voice_member(&self, ui: &Ui, member: &VoiceMember) {
         let name = self.name_of(member.user_id);
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
-        ui.dummy([width, 32.0]);
-        let center = [origin[0] + 42.0, origin[1] + 16.0];
+        ui.invisible_button(format!("voice-member-{}", member.user_id), [width, VOICE_MEMBER_H]);
+        let hovered = ui.is_item_hovered();
+        let min = [origin[0] + 32.0, origin[1] + 2.0];
+        let max = [origin[0] + width - ROW_INSET, origin[1] + VOICE_MEMBER_H - 2.0];
+        if hovered {
+            skin::rect(ui, min, max, ROW_HOVER, ROW_RADIUS);
+        }
+        let center = [min[0] + 4.0 + VOICE_AVATAR * 0.5, origin[1] + VOICE_MEMBER_H * 0.5];
         let avatar = self.avatars.get(&member.user_id).map(|shot| shot.texture);
-        let transmitting = self.member_talking(member);
-        let ring = transmitting.then_some(GREEN);
-        paint_avatar(ui, avatar, center, 12.0, &initials(&name), ring);
-        let text_h = ui.calc_text_size(&name)[1];
-        ui.get_window_draw_list().add_text(
-            [origin[0] + 60.0, origin[1] + (32.0 - text_h) * 0.5],
-            if self.member_talking(member) { TEXT } else { MUTED },
-            &name,
-        );
-        let mut icon_x = origin[0] + width - 22.0;
-        let draw_icon = |icon_x: f32, texture: ManagedTextureId| {
-            ui.get_window_draw_list().add_image(
-                texture,
-                [icon_x, origin[1] + 9.0],
-                [icon_x + 14.0, origin[1] + 23.0],
-                [0.0, 0.0],
-                [1.0, 1.0],
-                MUTED,
-            );
-        };
-        if member.flags.screen {
-            if let Some(texture) = self.icon("monitor") {
-                draw_icon(icon_x, texture);
-                icon_x -= 18.0;
-            }
+        paint_avatar(ui, avatar, center, VOICE_AVATAR * 0.5, &initials(&name), None);
+        if self.member_talking(member) {
+            ui.get_window_draw_list()
+                .add_circle(center, VOICE_AVATAR * 0.5 + 1.0, GREEN)
+                .thickness(2.0)
+                .build();
         }
-        if member.flags.camera {
-            if let Some(texture) = self.icon("video") {
-                draw_icon(icon_x, texture);
-                icon_x -= 18.0;
-            }
-        }
+        let mut icon_x = max[0] - 4.0 - 16.0;
+        let icon_y = center[1] - 8.0;
+        let mut icons_w = 0.0;
         if member.flags.muted || member.flags.deafened {
             let icon = if member.flags.deafened { "headphone-off" } else { "mic-off" };
-            if let Some(texture) = self.icon(icon) {
-                draw_icon(icon_x, texture);
-            }
+            skin::image(ui, self.icon(icon), [icon_x, icon_y], 16.0, MUTED);
+            icon_x -= 20.0;
+            icons_w += 20.0;
         }
+        if member.flags.camera {
+            skin::image(ui, self.icon("video"), [icon_x, icon_y], 16.0, MUTED);
+            icon_x -= 20.0;
+            icons_w += 20.0;
+        }
+        if member.flags.screen {
+            let live_w = skin::text_size(ui, self.bold_font, 11.0, "LIVE")[0] + 12.0;
+            let live_min = [icon_x + 16.0 - live_w, center[1] - 8.0];
+            skin::rect(ui, live_min, [live_min[0] + live_w, live_min[1] + 16.0], RED, 8.0);
+            skin::text_in_row(ui, self.bold_font, 11.0, live_min[0] + 6.0, live_min[1], 16.0, WHITE, "LIVE");
+            icons_w += live_w + 4.0;
+        }
+        let text_x = center[0] + VOICE_AVATAR * 0.5 + 8.0;
+        let color = if hovered { TEXT_NORMAL } else { MUTED };
+        let shown = skin::ellipsize(ui, None, FONT_SM, &name, (max[0] - 4.0 - icons_w - text_x).max(16.0));
+        skin::text_in_row(ui, None, FONT_SM, text_x, origin[1], VOICE_MEMBER_H, color, &shown);
     }
 
     fn draw_featured_screen_at(&self, ui: &Ui, origin: [f32; 2], width: f32, height: f32) {
         let featured = if self.screen {
-            self.local_screen.as_ref().map(|shot| ("Your screen".to_string(), shot.texture, shot.size))
+            self.local_screen.as_ref().map(|shot| (self.name_of(self.account.as_ref().map(|account| account.id).unwrap_or(0)), shot.texture, shot.size))
         } else {
             None
         };
         let featured = featured.or_else(|| {
             self.voice_members.iter().find(|member| member.flags.screen).and_then(|member| {
-                self.remote_video.get(&(member.user_id, 3)).map(|shot| {
-                    (format!("{} is sharing", self.name_of(member.user_id)), shot.texture, shot.size)
-                })
+                self.remote_video.get(&(member.user_id, 3)).map(|shot| (self.name_of(member.user_id), shot.texture, shot.size))
             })
         });
-        let Some((label, texture, size)) = featured else { return };
+        let max = [origin[0] + width, origin[1] + height];
+        skin::rect(ui, origin, max, TILE_BG, TILE_RADIUS);
+        let Some((name, texture, size)) = featured else { return };
         let shown = if self.screen_shown[0] > 1.0 { self.screen_shown } else { size };
-        let fitted = fit_inside(shown, width - 48.0, (height - 28.0).max(32.0));
+        let fitted = fit_inside(shown, width, height);
         let x = origin[0] + (width - fitted[0]) * 0.5;
-        let y = origin[1] + 24.0;
-        ui.get_window_draw_list().add_text([x, origin[1] + 4.0], GREEN, &label);
+        let y = origin[1] + (height - fitted[1]) * 0.5;
         ui.get_window_draw_list().add_image_rounded(
             texture,
             [x, y],
@@ -2359,9 +3320,30 @@ impl App {
             [0.0, 0.0],
             [1.0, 1.0],
             WHITE,
-            8.0,
+            TILE_RADIUS,
             DrawFlags::ROUND_ALL,
         );
+        self.name_tag(ui, [origin[0] + 8.0, max[1] - 8.0 - 24.0], &name, None, true);
+    }
+
+    /// Bottom-left tile label: name, then a mute or deafen icon, and a red LIVE badge for a stream.
+    fn name_tag(&self, ui: &Ui, min: [f32; 2], name: &str, state_icon: Option<&str>, live: bool) {
+        let semi = self.semibold_font;
+        let name_w = skin::text_size(ui, semi, FONT_SM, name)[0];
+        let live_w = if live { skin::text_size(ui, self.bold_font, 11.0, "LIVE")[0] + 12.0 } else { 0.0 };
+        let icon_w = if state_icon.is_some() { 20.0 } else { 0.0 };
+        let tag_w = 8.0 + name_w + 8.0 + icon_w + if live { live_w + 6.0 } else { 0.0 };
+        skin::rect(ui, min, [min[0] + tag_w, min[1] + 24.0], [0.0, 0.0, 0.0, 0.6], 4.0);
+        let mut x = min[0] + 8.0;
+        if live {
+            skin::rect(ui, [x, min[1] + 4.0], [x + live_w, min[1] + 20.0], RED, 4.0);
+            skin::text_in_row(ui, self.bold_font, 11.0, x + 6.0, min[1] + 4.0, 16.0, WHITE, "LIVE");
+            x += live_w + 6.0;
+        }
+        skin::text_in_row(ui, semi, FONT_SM, x, min[1], 24.0, WHITE, name);
+        if let Some(icon) = state_icon {
+            skin::image(ui, self.icon(icon), [x + name_w + 6.0, min[1] + 4.0], 16.0, WHITE);
+        }
     }
 
     fn draw_voice_tile_at(&self, ui: &Ui, member: &VoiceMember, origin: [f32; 2], tile_w: f32, tile_h: f32) {
@@ -2369,22 +3351,11 @@ impl App {
         let me = self.account.as_ref().map(|account| account.id);
         let talking = self.member_talking(member);
         let max = [origin[0] + tile_w, origin[1] + tile_h];
-        ui.get_window_draw_list()
-            .add_rect(origin, max, [43.0 / 255.0, 45.0 / 255.0, 49.0 / 255.0, 1.0])
-            .rounding(8.0)
-            .filled(true)
-            .build();
-        if talking {
-            ui.get_window_draw_list()
-                .add_rect(origin, max, GREEN)
-                .rounding(8.0)
-                .filled(false)
-                .build();
-        }
+        skin::rect(ui, origin, max, TILE_BG, TILE_RADIUS);
         if let Some((texture, size)) = self.tile_camera(member, me) {
-            let fitted = fit_inside(size, tile_w - 16.0, tile_h - 44.0);
+            let fitted = fit_inside(size, tile_w, tile_h);
             let x = origin[0] + (tile_w - fitted[0]) * 0.5;
-            let y = origin[1] + 12.0;
+            let y = origin[1] + (tile_h - fitted[1]) * 0.5;
             ui.get_window_draw_list().add_image_rounded(
                 texture,
                 [x, y],
@@ -2392,41 +3363,30 @@ impl App {
                 [0.0, 0.0],
                 [1.0, 1.0],
                 WHITE,
-                8.0,
+                TILE_RADIUS,
                 DrawFlags::ROUND_ALL,
             );
         } else {
-            let radius = 36.0;
-            let center = [origin[0] + tile_w * 0.5, origin[1] + tile_h * 0.42];
+            let radius = (TILE_AVATAR * 0.5).min(tile_h * 0.3);
+            let center = [origin[0] + tile_w * 0.5, origin[1] + tile_h * 0.5];
             let avatar = self.avatars.get(&member.user_id).map(|shot| shot.texture);
-            let ring = talking.then_some(GREEN);
-            paint_avatar(ui, avatar, center, radius, &initials(&name), ring);
+            paint_avatar(ui, avatar, center, radius, &initials(&name), None);
         }
-        ui.get_window_draw_list().add_text([origin[0] + 12.0, max[1] - 28.0], TEXT, &name);
-        let icon_x = max[0] - 28.0;
-        if member.flags.deafened {
-            if let Some(texture) = self.icon("headphone-off") {
-                ui.get_window_draw_list().add_image(
-                    texture,
-                    [icon_x, max[1] - 28.0],
-                    [icon_x + 16.0, max[1] - 12.0],
-                    [0.0, 0.0],
-                    [1.0, 1.0],
-                    MUTED,
-                );
-            }
+        if talking {
+            ui.get_window_draw_list()
+                .add_rect([origin[0] + 1.0, origin[1] + 1.0], [max[0] - 1.0, max[1] - 1.0], GREEN)
+                .rounding(TILE_RADIUS)
+                .thickness(2.0)
+                .build();
+        }
+        let state_icon = if member.flags.deafened {
+            Some("headphone-off")
         } else if member.flags.muted {
-            if let Some(texture) = self.icon("mic-off") {
-                ui.get_window_draw_list().add_image(
-                    texture,
-                    [icon_x, max[1] - 28.0],
-                    [icon_x + 16.0, max[1] - 12.0],
-                    [0.0, 0.0],
-                    [1.0, 1.0],
-                    MUTED,
-                );
-            }
-        }
+            Some("mic-off")
+        } else {
+            None
+        };
+        self.name_tag(ui, [origin[0] + 8.0, max[1] - 8.0 - 24.0], &name, state_icon, false);
     }
 
     fn tile_camera(&self, member: &VoiceMember, me: Option<i64>) -> Option<(ManagedTextureId, [f32; 2])> {
@@ -2832,86 +3792,33 @@ fn apply_discord_style(style: &mut Style) {
     style.set_color(StyleColor::TextDisabled, MUTED);
     style.set_color(StyleColor::WindowBg, STAGE_BG);
     style.set_color(StyleColor::ChildBg, STAGE_BG);
-    style.set_color(StyleColor::PopupBg, [17.0 / 255.0, 18.0 / 255.0, 20.0 / 255.0, 1.0]);
-    style.set_color(StyleColor::Border, [0.0, 0.0, 0.0, 0.45]);
-    style.set_color(StyleColor::FrameBg, [56.0 / 255.0, 58.0 / 255.0, 64.0 / 255.0, 1.0]);
-    style.set_color(StyleColor::FrameBgHovered, ROW_SELECTED);
-    style.set_color(StyleColor::FrameBgActive, ROW_SELECTED);
+    style.set_color(StyleColor::PopupBg, FLOATING_BG);
+    style.set_color(StyleColor::Border, with_alpha(FLOATING_BG, 0.6));
+    style.set_color(StyleColor::FrameBg, INPUT_BG);
+    style.set_color(StyleColor::FrameBgHovered, INPUT_BG);
+    style.set_color(StyleColor::FrameBgActive, INPUT_BG);
     style.set_color(StyleColor::Button, BLURPLE);
-    style.set_color(StyleColor::ButtonHovered, [71.0 / 255.0, 82.0 / 255.0, 196.0 / 255.0, 1.0]);
-    style.set_color(StyleColor::ButtonActive, [60.0 / 255.0, 69.0 / 255.0, 165.0 / 255.0, 1.0]);
+    style.set_color(StyleColor::ButtonHovered, BLURPLE_HOVER);
+    style.set_color(StyleColor::ButtonActive, BLURPLE_ACTIVE);
     style.set_color(StyleColor::Header, ROW_SELECTED);
     style.set_color(StyleColor::HeaderHovered, ROW_HOVER);
     style.set_color(StyleColor::HeaderActive, ROW_SELECTED);
-    style.set_color(StyleColor::ScrollbarBg, [0.0, 0.0, 0.0, 0.0]);
-    style.set_color(StyleColor::ScrollbarGrab, [26.0 / 255.0, 27.0 / 255.0, 30.0 / 255.0, 1.0]);
-    style.set_color(StyleColor::TextSelectedBg, [88.0 / 255.0, 101.0 / 255.0, 242.0 / 255.0, 0.45]);
-    style.set_frame_rounding(8.0);
-    style.set_window_rounding(8.0);
-    style.set_popup_rounding(8.0);
-    style.set_scrollbar_rounding(8.0);
+    style.set_color(StyleColor::ScrollbarBg, skin::CLEAR);
+    style.set_color(StyleColor::ScrollbarGrab, SCROLL_THUMB);
+    style.set_color(StyleColor::ScrollbarGrabHovered, SCROLL_THUMB);
+    style.set_color(StyleColor::ScrollbarGrabActive, SCROLL_THUMB);
+    style.set_color(StyleColor::TextSelectedBg, with_alpha(BLURPLE, 0.45));
+    style.set_frame_rounding(INPUT_RADIUS);
+    style.set_window_rounding(MODAL_RADIUS);
+    style.set_popup_rounding(MENU_RADIUS);
+    style.set_scrollbar_rounding(4.0);
+    style.set_scrollbar_size(8.0);
     style.set_window_border_size(0.0);
     style.set_child_border_size(0.0);
     style.set_docking_separator_size(0.0);
     style.set_frame_padding([12.0, 8.0]);
     style.set_item_spacing([8.0, 4.0]);
     style.set_window_padding([8.0, 8.0]);
-}
-
-fn rail_icon(ui: &Ui, id: &str, letters: &str, icon: Option<ManagedTextureId>, fill: [f32; 4], selected: bool) -> bool {
-    let width = ui.content_region_avail()[0].max(48.0);
-    let origin = ui.cursor_screen_pos();
-    let clicked = ui.invisible_button(id, [width, 56.0]);
-    let hovered = ui.is_item_hovered();
-    let draw = ui.get_window_draw_list();
-    let center_x = origin[0] + width * 0.5;
-    let center_y = origin[1] + 28.0;
-    let squircle = selected || hovered;
-    if squircle {
-        draw.add_rect([center_x - 24.0, center_y - 24.0], [center_x + 24.0, center_y + 24.0], fill)
-            .rounding(12.0)
-            .filled(true)
-            .build();
-    } else {
-        draw.add_circle([center_x, center_y], 24.0, fill).filled(true).build();
-    }
-    if selected || hovered {
-        let pill_h = if selected { 40.0 } else { 20.0 };
-        draw.add_rect([origin[0], center_y - pill_h * 0.5], [origin[0] + 4.0, center_y + pill_h * 0.5], WHITE)
-            .rounding(2.0)
-            .filled(true)
-            .build();
-    }
-    if let Some(texture) = icon {
-        draw.add_image(
-            texture,
-            [center_x - 12.0, center_y - 12.0],
-            [center_x + 12.0, center_y + 12.0],
-            [0.0, 0.0],
-            [1.0, 1.0],
-            WHITE,
-        );
-    } else if !letters.is_empty() {
-        let text_size = ui.calc_text_size(letters);
-        draw.add_text(
-            [center_x - text_size[0] * 0.5, center_y - text_size[1] * 0.5],
-            WHITE,
-            letters,
-        );
-    }
-    clicked
-}
-
-fn rail_gap(ui: &Ui) {
-    let width = ui.content_region_avail()[0].max(48.0);
-    let origin = ui.cursor_screen_pos();
-    ui.dummy([width, 12.0]);
-    let center_x = origin[0] + width * 0.5;
-    ui.get_window_draw_list()
-        .add_rect([center_x - 16.0, origin[1] + 5.0], [center_x + 16.0, origin[1] + 7.0], [79.0 / 255.0, 84.0 / 255.0, 92.0 / 255.0, 1.0])
-        .rounding(1.0)
-        .filled(true)
-        .build();
 }
 
 fn nav_row(ui: &Ui, id: &str, icon: Option<ManagedTextureId>, label: &str, selected: bool) -> bool {
@@ -2982,9 +3889,20 @@ fn header_rule(ui: &Ui) {
     let pos = ui.window_pos();
     let size = ui.window_size();
     ui.get_window_draw_list()
-        .add_rect([pos[0], pos[1] + 47.0], [pos[0] + size[0], pos[1] + 48.0], [0.0, 0.0, 0.0, 0.45])
+        .add_rect([pos[0], pos[1] + HEADER_H - 1.0], [pos[0] + size[0], pos[1] + HEADER_H], HEADER_SHADOW)
         .filled(true)
         .build();
+}
+
+/// Discord's uppercase list heading ("DIRECT MESSAGES"): 12 px semibold, muted, 40 px tall.
+fn list_label(ui: &Ui, text: &str, font: Option<FontId>) {
+    let width = ui.content_region_avail()[0].max(32.0);
+    let origin = ui.cursor_screen_pos();
+    ui.dummy([width, CATEGORY_H]);
+    let label = text.to_uppercase();
+    let _font = ui.push_font_with_size(font, FONT_XS);
+    let height = ui.calc_text_size(&label)[1];
+    ui.get_window_draw_list().add_text([origin[0] + 18.0, origin[1] + CATEGORY_H - height - 6.0], MUTED, &label);
 }
 
 fn paint_avatar(ui: &Ui, texture: Option<ManagedTextureId>, center: [f32; 2], radius: f32, letters: &str, ring: Option<[f32; 4]>) {
@@ -3011,10 +3929,25 @@ fn paint_avatar(ui: &Ui, texture: Option<ManagedTextureId>, center: [f32; 2], ra
 }
 
 fn paint_status_dot(ui: &Ui, center: [f32; 2], radius: f32, presence: Presence, backdrop: [f32; 4]) {
-    let dot = [center[0] + radius * 0.62, center[1] + radius * 0.62];
+    let dot = crate::theme::status_dot(center, radius);
     let draw = ui.get_window_draw_list();
-    draw.add_circle(dot, 7.0, backdrop).filled(true).build();
-    draw.add_circle(dot, 5.0, presence_color(presence)).filled(true).build();
+    draw.add_circle(dot.center, dot.cutout, backdrop).filled(true).build();
+    let color = presence_color(presence);
+    draw.add_circle(dot.center, dot.radius, color).filled(true).build();
+    match presence {
+        Presence::Online => {}
+        // Idle is a crescent: a backdrop-colored bite out of the upper left.
+        Presence::Idle => {
+            let bite = dot.radius * 0.62;
+            draw.add_circle([dot.center[0] - dot.radius * 0.42, dot.center[1] - dot.radius * 0.42], bite, backdrop)
+                .filled(true)
+                .build();
+        }
+        // Offline is a hollow ring.
+        Presence::Offline => {
+            draw.add_circle(dot.center, dot.radius * 0.45, backdrop).filled(true).build();
+        }
+    }
 }
 
 fn initials(name: &str) -> String {
@@ -3027,31 +3960,19 @@ fn initials(name: &str) -> String {
     source.to_uppercase()
 }
 
-fn server_fill(id: i64) -> [f32; 4] {
-    const COLORS: [[f32; 4]; 6] = [
-        [88.0 / 255.0, 101.0 / 255.0, 242.0 / 255.0, 1.0],
-        [35.0 / 255.0, 165.0 / 255.0, 89.0 / 255.0, 1.0],
-        [240.0 / 255.0, 178.0 / 255.0, 50.0 / 255.0, 1.0],
-        [235.0 / 255.0, 69.0 / 255.0, 158.0 / 255.0, 1.0],
-        [87.0 / 255.0, 170.0 / 255.0, 242.0 / 255.0, 1.0],
-        [155.0 / 255.0, 89.0 / 255.0, 182.0 / 255.0, 1.0],
-    ];
-    COLORS[(id.unsigned_abs() as usize) % COLORS.len()]
-}
-
 fn presence_color(presence: Presence) -> [f32; 4] {
     match presence {
         Presence::Online => GREEN,
-        Presence::Idle => [240.0 / 255.0, 178.0 / 255.0, 50.0 / 255.0, 1.0],
-        Presence::Offline => MUTED,
+        Presence::Idle => YELLOW,
+        Presence::Offline => OFFLINE,
     }
 }
 
 fn presence_label(presence: Presence) -> &'static str {
     match presence {
-        Presence::Online => "online",
-        Presence::Idle => "idle",
-        Presence::Offline => "offline",
+        Presence::Online => "Online",
+        Presence::Idle => "Idle",
+        Presence::Offline => "Offline",
     }
 }
 

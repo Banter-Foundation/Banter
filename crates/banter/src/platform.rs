@@ -39,11 +39,13 @@ pub(crate) fn run() -> Result<(), String> {
     let ini = banter_server::default_data_dir().join("banter-dock.ini");
     imgui.set_ini_filename(Some(ini)).map_err(|err| err.to_string())?;
     let bold_font = install_font(&mut imgui);
+    let semibold_font = load_face(imgui.font_atlas(), r"C:\Windows\Fonts\seguisb.ttf", 16.0).or(bold_font);
     let mut renderer = GlowRenderer::with_shared_context(Rc::clone(&gl), &mut imgui).map_err(|err| err.to_string())?;
 
     let base = format!("http://{}", banter_server::DEFAULT_ADDR);
     let mut app = App::open(base, banter_server::default_data_dir());
     app.set_bold_font(bold_font);
+    app.set_semibold_font(semibold_font);
     let mut last_time = glfw.get_time();
 
     while !window.should_close() {
@@ -128,7 +130,11 @@ fn ensure_server() -> Result<(), String> {
     Err("the local server did not start".into())
 }
 
-struct GlfwClipboard;
+pub(crate) struct GlfwClipboard;
+
+pub(crate) fn copy_to_clipboard(value: &str) {
+    GlfwClipboard.set(value);
+}
 
 impl ClipboardBackend for GlfwClipboard {
     fn get(&mut self) -> Option<String> {

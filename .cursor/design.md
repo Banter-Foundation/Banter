@@ -20,3 +20,17 @@ The video button turns the camera on or off. The screen button opens Screen Shar
 Clicking a voice channel joins it. Text chat inside a voice channel stays deferred.
 
 The sign-in window is not docked. The password field is hidden as `*` until Show password is checked. Ctrl+C and Ctrl+V use the system clipboard in every text field, including a hidden password. The Ctrl, Shift, Alt, and Super modifiers are reported to Dear ImGui separately from the physical keys.
+
+## Discord skin metrics (ui-polish)
+
+All colors, sizes, radii, and font sizes come from `crates/banter/src/theme.rs`. Do not hard-code a color or pixel size in `ui.rs`; add a constant there instead. `crates/banter/src/skin.rs` holds the shared drawing helpers (text, buttons, inputs, menus, tooltips, shadow, checkbox).
+
+- Columns: rail 72, sidebar 240, members 240. Header 48 with a 1 px shadow line. User panel 52, voice panel 96
+- Rail: 48 px icons, 8 px gap, 12 px top. Pill 4 px wide, 8 px on hover, 40 px selected. Radius 24 (circle) idle, 16 hover/selected
+- Rows: channel 32 px with 2 px gap and 8 px inset, radius 4. Category 40. Member 42. Avatar 32
+- Composer 44 px, radius 8, 16 px side margin, 24 px bottom
+- Call: buttons 56, gap 16, bar 96. Tiles 16:9, gap 8, radius 8, avatar 80
+- Floating: tooltip pad 12x8 with a 5 px arrow, radius 4. Menu 220 wide, 32 px items. Modal 440 wide, radius 8, footer 70. Buttons 38 (44 on sign-in, 16 px label). Inputs 40, radius 3
+- Fonts: Segoe UI 12/14/16/20/24, semibold from `seguisb.ttf`
+- Status dot: 10 px on a 32 px avatar with a 3 px cut-out ring; idle is a crescent, offline a ring
+- Screenshots of this pass: `ui-*.png` in the coordinating agent's media folder
