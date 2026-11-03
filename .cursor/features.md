@@ -12,6 +12,8 @@
 - [*] Presence and mentions
 - [*] GLFW + OpenGL window with Dear ImGui docking
 - [*] Developer settings: Local (`127.0.0.1:3970`) or Remote host, persisted in `dev-server.json`
+- [*] F3 profiler: FPS, RSS, HTTP/WebSocket bytes, frame sections, expensive ops
+- [*] Display settings: VSync, fullscreen, window resolution (saved in video.json)
 
 ## Deferred
 

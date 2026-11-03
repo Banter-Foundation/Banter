@@ -82,6 +82,8 @@ You can drag those panels. The layout is kept in `banter-dock.ini` in the data f
 
 Push-to-talk is the V key, and it is ignored while a text field has the keyboard. The Voice dock also has a Talk button you can hold. Mute, deafen, camera, and screen share are in that same dock. The camera opens at about 720p (`1280x720`) or the nearest available mode, preferring MJPEG so Facecam and Elgato keep working; it does not grab the device's highest resolution and then downscale. If the microphone, speakers, or camera cannot be opened, the voice-connection panel shows one plain error in the subtitle (User Settings still lists every device error). Deafen turns mute on and restores the previous mute when you turn deafen off.
 
+F3 toggles the profiler: FPS, process memory, HTTP and WebSocket traffic, frame section timings, and a log of recent expensive operations. Escape closes it. Optional checkboxes open Dear ImGui Metrics and Demo. User Settings → Voice & Video → Video Settings controls VSync, fullscreen, and window resolution (`video.json` in the data folder).
+
 Voice channels do not have a text box. Text chat inside a voice channel is deferred.
 
 ## Tests

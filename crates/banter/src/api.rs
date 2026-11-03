@@ -1,8 +1,11 @@
 //! HTTP client for the local Banter server.
 
 use std::io::Read;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
+use crate::profiler;
 use base64::engine::general_purpose::STANDARD;
 use banter_server::{
     Account, CallSnapshot, Category, CategoryLayout, Channel, ChannelKind, ChatTarget, DirectChat,
@@ -29,6 +32,13 @@ impl std::fmt::Display for ApiError {
 }
 
 impl std::error::Error for ApiError {}
+
+/// Shared client with a short timeout. The shell polls from the UI thread, so a
+/// stuck read must not freeze or abort the window.
+fn http() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_millis(800)).build())
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct MemberView {
@@ -94,7 +104,7 @@ impl Client {
         password: &str,
     ) -> Result<Session, ApiError> {
         let session: Session = self.send_json(
-            ureq::post(&self.url("/v1/register")),
+            http().post(&self.url("/v1/register")),
             serde_json::json!({
                 "username": username,
                 "display_name": display_name,
@@ -107,7 +117,7 @@ impl Client {
 
     pub fn login(&mut self, username: &str, password: &str) -> Result<Session, ApiError> {
         let session: Session = self.send_json(
-            ureq::post(&self.url("/v1/login")),
+            http().post(&self.url("/v1/login")),
             serde_json::json!({ "username": username, "password": password }),
         )?;
         self.token = Some(session.token.clone());
@@ -115,7 +125,7 @@ impl Client {
     }
 
     pub fn logout(&self) -> Result<(), ApiError> {
-        self.finish(self.auth(ureq::post(&self.url("/v1/logout"))).call())
+        self.call_empty("POST", "/v1/logout", self.auth(http().post(&self.url("/v1/logout"))))
     }
 
     pub fn me(&self) -> Result<Account, ApiError> {
@@ -124,29 +134,39 @@ impl Client {
 
     pub fn set_display_name(&self, display_name: &str) -> Result<Account, ApiError> {
         self.send_json(
-            self.auth(ureq::patch(&self.url("/v1/me"))),
+            self.auth(http().patch(&self.url("/v1/me"))),
             serde_json::json!({ "display_name": display_name }),
         )
     }
 
     pub fn set_avatar(&self, bytes: &[u8]) -> Result<(), ApiError> {
-        self.finish(
-            self.auth(ureq::post(&self.url("/v1/me/avatar")))
-                .set("Content-Type", "application/octet-stream")
-                .send_bytes(bytes),
-        )
+        let start = Instant::now();
+        let result = self
+            .auth(http().post(&self.url("/v1/me/avatar")))
+            .set("Content-Type", "application/octet-stream")
+            .send_bytes(bytes);
+        profiler::record_http("POST", "/v1/me/avatar", start.elapsed(), bytes.len(), 0);
+        self.finish(result)
     }
 
     pub fn clear_avatar(&self) -> Result<(), ApiError> {
-        self.finish(self.auth(ureq::delete(&self.url("/v1/me/avatar"))).call())
+        self.call_empty("DELETE", "/v1/me/avatar", self.auth(http().delete(&self.url("/v1/me/avatar"))))
     }
 
     pub fn avatar(&self, user_id: i64) -> Result<Vec<u8>, ApiError> {
+        let path = format!("/v1/users/{user_id}/avatar");
+        let start = Instant::now();
         let response = self
-            .auth(ureq::get(&self.url(&format!("/v1/users/{user_id}/avatar"))))
+            .auth(http().get(&self.url(&path)))
             .call()
             .map_err(|err| self.http_error(err))?;
-        response.into_reader().bytes().collect::<Result<Vec<_>, _>>().map_err(|err| ApiError::new(err.to_string()))
+        let bytes = response
+            .into_reader()
+            .bytes()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| ApiError::new(err.to_string()))?;
+        profiler::record_http("GET", &path, start.elapsed(), 0, bytes.len());
+        Ok(bytes)
     }
 
     pub fn friend_requests(&self) -> Result<(Vec<FriendRequest>, Vec<FriendRequest>), ApiError> {
@@ -156,17 +176,19 @@ impl Client {
 
     pub fn send_friend_request(&self, username: &str) -> Result<FriendRequest, ApiError> {
         self.send_json(
-            self.auth(ureq::post(&self.url("/v1/friends/requests"))),
+            self.auth(http().post(&self.url("/v1/friends/requests"))),
             serde_json::json!({ "username": username }),
         )
     }
 
     pub fn accept_friend_request(&self, id: i64) -> Result<(), ApiError> {
-        self.finish(self.auth(ureq::post(&self.url(&format!("/v1/friends/requests/{id}/accept")))).call())
+        let path = format!("/v1/friends/requests/{id}/accept");
+        self.call_empty("POST", &path, self.auth(http().post(&self.url(&path))))
     }
 
     pub fn decline_friend_request(&self, id: i64) -> Result<(), ApiError> {
-        self.finish(self.auth(ureq::post(&self.url(&format!("/v1/friends/requests/{id}/decline")))).call())
+        let path = format!("/v1/friends/requests/{id}/decline");
+        self.call_empty("POST", &path, self.auth(http().post(&self.url(&path))))
     }
 
     pub fn friends(&self) -> Result<Vec<Friend>, ApiError> {
@@ -189,14 +211,14 @@ impl Client {
 
     pub fn create_server(&self, name: &str) -> Result<ServerHome, ApiError> {
         self.send_json(
-            self.auth(ureq::post(&self.url("/v1/servers"))),
+            self.auth(http().post(&self.url("/v1/servers"))),
             serde_json::json!({ "name": name }),
         )
     }
 
     pub fn create_invite(&self, server_id: i64) -> Result<String, ApiError> {
         let body: InviteBody = self.send_json(
-            self.auth(ureq::post(&self.url(&format!("/v1/servers/{server_id}/invites")))),
+            self.auth(http().post(&self.url(&format!("/v1/servers/{server_id}/invites")))),
             serde_json::json!({}),
         )?;
         Ok(body.code)
@@ -204,7 +226,7 @@ impl Client {
 
     pub fn join_invite(&self, code: &str) -> Result<ServerHome, ApiError> {
         self.send_json(
-            self.auth(ureq::post(&self.url(&format!("/v1/invites/{code}/join")))),
+            self.auth(http().post(&self.url(&format!("/v1/invites/{code}/join")))),
             serde_json::json!({}),
         )
     }
@@ -214,15 +236,18 @@ impl Client {
     }
 
     pub fn set_nickname(&self, server_id: i64, nickname: Option<&str>) -> Result<(), ApiError> {
+        let path = format!("/v1/servers/{server_id}/nickname");
         self.send_json_empty(
-            self.auth(ureq::put(&self.url(&format!("/v1/servers/{server_id}/nickname")))),
+            "PUT",
+            &path,
+            self.auth(http().put(&self.url(&path))),
             serde_json::json!({ "nickname": nickname }),
         )
     }
 
     pub fn create_category(&self, server_id: i64, name: &str) -> Result<Category, ApiError> {
         self.send_json(
-            self.auth(ureq::post(&self.url(&format!("/v1/servers/{server_id}/categories")))),
+            self.auth(http().post(&self.url(&format!("/v1/servers/{server_id}/categories")))),
             serde_json::json!({ "name": name }),
         )
     }
@@ -235,7 +260,7 @@ impl Client {
         kind: ChannelKind,
     ) -> Result<Channel, ApiError> {
         self.send_json(
-            self.auth(ureq::post(&self.url(&format!("/v1/servers/{server_id}/channels")))),
+            self.auth(http().post(&self.url(&format!("/v1/servers/{server_id}/channels")))),
             serde_json::json!({ "category_id": category_id, "name": name, "kind": kind }),
         )
     }
@@ -250,14 +275,17 @@ impl Client {
         limit: u32,
         query: Option<&str>,
     ) -> Result<Vec<Message>, ApiError> {
-        let mut request = self
-            .auth(ureq::get(&self.url(&target_messages_path(target))))
-            .query("limit", &limit.to_string());
+        let path = target_messages_path(target);
+        let start = Instant::now();
+        let mut request = self.auth(http().get(&self.url(&path))).query("limit", &limit.to_string());
         if let Some(query) = query.map(str::trim).filter(|query| !query.is_empty()) {
             request = request.query("q", query);
         }
         let response = request.call().map_err(|err| self.http_error(err))?;
-        response.into_json().map_err(|err| ApiError::new(err.to_string()))
+        let resp_hint = content_length(&response);
+        let value = response.into_json().map_err(|err| ApiError::new(err.to_string()))?;
+        profiler::record_http("GET", &path, start.elapsed(), 0, resp_hint);
+        Ok(value)
     }
 
     pub fn send_message(
@@ -277,7 +305,7 @@ impl Client {
             })
             .collect::<Vec<_>>();
         self.send_json(
-            self.auth(ureq::post(&self.url("/v1/messages"))),
+            self.auth(http().post(&self.url("/v1/messages"))),
             serde_json::json!({
                 "target": target,
                 "body": body,
@@ -289,21 +317,30 @@ impl Client {
 
     pub fn edit_message(&self, id: i64, body: &str) -> Result<Message, ApiError> {
         self.send_json(
-            self.auth(ureq::patch(&self.url(&format!("/v1/messages/{id}")))),
+            self.auth(http().patch(&self.url(&format!("/v1/messages/{id}")))),
             serde_json::json!({ "body": body }),
         )
     }
 
     pub fn delete_message(&self, id: i64) -> Result<(), ApiError> {
-        self.finish(self.auth(ureq::delete(&self.url(&format!("/v1/messages/{id}")))).call())
+        let path = format!("/v1/messages/{id}");
+        self.call_empty("DELETE", &path, self.auth(http().delete(&self.url(&path))))
     }
 
     pub fn attachment(&self, id: i64) -> Result<Vec<u8>, ApiError> {
+        let path = format!("/v1/attachments/{id}");
+        let start = Instant::now();
         let response = self
-            .auth(ureq::get(&self.url(&format!("/v1/attachments/{id}"))))
+            .auth(http().get(&self.url(&path)))
             .call()
             .map_err(|err| self.http_error(err))?;
-        response.into_reader().bytes().collect::<Result<Vec<_>, _>>().map_err(|err| ApiError::new(err.to_string()))
+        let bytes = response
+            .into_reader()
+            .bytes()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| ApiError::new(err.to_string()))?;
+        profiler::record_http("GET", &path, start.elapsed(), 0, bytes.len());
+        Ok(bytes)
     }
 
     pub fn mentions(&self) -> Result<Vec<Mention>, ApiError> {
@@ -311,12 +348,13 @@ impl Client {
     }
 
     pub fn mark_mention_read(&self, id: i64) -> Result<(), ApiError> {
-        self.finish(self.auth(ureq::post(&self.url(&format!("/v1/mentions/{id}/read")))).call())
+        let path = format!("/v1/mentions/{id}/read");
+        self.call_empty("POST", &path, self.auth(http().post(&self.url(&path))))
     }
 
     pub fn open_dm(&self, user_id: i64) -> Result<DirectChat, ApiError> {
         self.send_json(
-            self.auth(ureq::post(&self.url("/v1/dms"))),
+            self.auth(http().post(&self.url("/v1/dms"))),
             serde_json::json!({ "user_id": user_id }),
         )
     }
@@ -327,36 +365,43 @@ impl Client {
 
     pub fn join_voice(&self, channel_id: i64) -> Result<Vec<VoiceMember>, ApiError> {
         self.send_json(
-            self.auth(ureq::post(&self.url("/v1/voice/join"))),
+            self.auth(http().post(&self.url("/v1/voice/join"))),
             serde_json::json!({ "channel_id": channel_id }),
         )
     }
 
     pub fn leave_voice(&self) -> Result<(), ApiError> {
-        self.finish(self.auth(ureq::post(&self.url("/v1/voice/leave"))).call())
+        self.call_empty("POST", "/v1/voice/leave", self.auth(http().post(&self.url("/v1/voice/leave"))))
     }
 
     pub fn set_flags(&self, flags: VoiceFlags) -> Result<(), ApiError> {
-        self.send_json_empty(self.auth(ureq::post(&self.url("/v1/voice/flags"))), serde_json::json!(flags))
+        self.send_json_empty(
+            "POST",
+            "/v1/voice/flags",
+            self.auth(http().post(&self.url("/v1/voice/flags"))),
+            serde_json::json!(flags),
+        )
     }
 
     pub fn start_call(&self, dm_id: i64) -> Result<CallSnapshot, ApiError> {
-        self.send_json(self.auth(ureq::post(&self.url(&format!("/v1/dms/{dm_id}/call")))), serde_json::json!({}))
+        self.send_json(self.auth(http().post(&self.url(&format!("/v1/dms/{dm_id}/call")))), serde_json::json!({}))
     }
 
     pub fn accept_call(&self, dm_id: i64) -> Result<CallSnapshot, ApiError> {
         self.send_json(
-            self.auth(ureq::post(&self.url(&format!("/v1/dms/{dm_id}/call/accept")))),
+            self.auth(http().post(&self.url(&format!("/v1/dms/{dm_id}/call/accept")))),
             serde_json::json!({}),
         )
     }
 
     pub fn decline_call(&self, dm_id: i64) -> Result<(), ApiError> {
-        self.finish(self.auth(ureq::post(&self.url(&format!("/v1/dms/{dm_id}/call/decline")))).call())
+        let path = format!("/v1/dms/{dm_id}/call/decline");
+        self.call_empty("POST", &path, self.auth(http().post(&self.url(&path))))
     }
 
     pub fn end_call(&self, dm_id: i64) -> Result<(), ApiError> {
-        self.finish(self.auth(ureq::post(&self.url(&format!("/v1/dms/{dm_id}/call/end")))).call())
+        let path = format!("/v1/dms/{dm_id}/call/end");
+        self.call_empty("POST", &path, self.auth(http().post(&self.url(&path))))
     }
 
     fn url(&self, path: &str) -> String {
@@ -372,8 +417,12 @@ impl Client {
     }
 
     fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
-        let response = self.auth(ureq::get(&self.url(path))).call().map_err(|err| self.http_error(err))?;
-        response.into_json().map_err(|err| ApiError::new(err.to_string()))
+        let start = Instant::now();
+        let response = self.auth(http().get(&self.url(path))).call().map_err(|err| self.http_error(err))?;
+        let resp_hint = content_length(&response);
+        let value = response.into_json().map_err(|err| ApiError::new(err.to_string()))?;
+        profiler::record_http("GET", path, start.elapsed(), 0, resp_hint);
+        Ok(value)
     }
 
     fn send_json<T: serde::de::DeserializeOwned>(
@@ -381,12 +430,36 @@ impl Client {
         request: ureq::Request,
         body: serde_json::Value,
     ) -> Result<T, ApiError> {
+        let start = Instant::now();
+        let req_bytes = serde_json::to_vec(&body).map(|bytes| bytes.len()).unwrap_or(0);
+        let method = request.method().to_string();
+        let path = path_from_url(request.url());
         let response = request.send_json(body).map_err(|err| self.http_error(err))?;
-        response.into_json().map_err(|err| ApiError::new(err.to_string()))
+        let resp_hint = content_length(&response);
+        let value = response.into_json().map_err(|err| ApiError::new(err.to_string()))?;
+        profiler::record_http(&method, &path, start.elapsed(), req_bytes, resp_hint);
+        Ok(value)
     }
 
-    fn send_json_empty(&self, request: ureq::Request, body: serde_json::Value) -> Result<(), ApiError> {
-        self.finish(request.send_json(body))
+    fn send_json_empty(
+        &self,
+        method: &str,
+        path: &str,
+        request: ureq::Request,
+        body: serde_json::Value,
+    ) -> Result<(), ApiError> {
+        let start = Instant::now();
+        let req_bytes = serde_json::to_vec(&body).map(|bytes| bytes.len()).unwrap_or(0);
+        let result = request.send_json(body);
+        profiler::record_http(method, path, start.elapsed(), req_bytes, 0);
+        self.finish(result)
+    }
+
+    fn call_empty(&self, method: &str, path: &str, request: ureq::Request) -> Result<(), ApiError> {
+        let start = Instant::now();
+        let result = request.call();
+        profiler::record_http(method, path, start.elapsed(), 0, 0);
+        self.finish(result)
     }
 
     fn finish(&self, result: Result<ureq::Response, ureq::Error>) -> Result<(), ApiError> {
@@ -427,4 +500,20 @@ fn target_messages_path(target: ChatTarget) -> String {
         ChatTarget::Channel(id) => format!("/v1/channels/{id}/messages"),
         ChatTarget::Direct(id) => format!("/v1/dms/{id}/messages"),
     }
+}
+
+fn content_length(response: &ureq::Response) -> usize {
+    response
+        .header("Content-Length")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+fn path_from_url(url: &str) -> String {
+    let rest = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or(url);
+    let path = rest.find('/').map(|index| &rest[index..]).unwrap_or("/");
+    path.split('?').next().unwrap_or(path).to_string()
 }

@@ -12,6 +12,7 @@ mod icons;
 mod logic;
 mod media;
 mod platform;
+mod profiler;
 mod realtime;
 mod session;
 mod settings;

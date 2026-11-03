@@ -1,7 +1,8 @@
 //! User Settings contracts. Written before the settings fixes and kept as written.
 
 use banter::{
-    SettingsSection, SettingsState, StreamDefaults, VoicePrefs, db_to_rms, display_name_dirty, display_name_error,
+    SettingsSection, SettingsState, StreamDefaults, VideoPrefs, VoicePrefs, clamp_window_size, db_to_rms,
+    display_name_dirty, display_name_error,
     load_json, meter_fraction, percent_to_volume, pick_camera, ptt_key, ptt_key_names, rms_to_db, save_json,
     settings_layout, volume_to_percent, wrap_rows, OPEN_MIC_RMS,
 };
@@ -212,6 +213,35 @@ fn stream_defaults_keep_saved_values_when_a_file_has_missing_fields() {
     assert_eq!(partial.resolution, "1080p");
     assert_eq!(partial.fps, StreamDefaults::default().fps);
     assert!(partial.show_cursor);
+}
+
+#[test]
+fn video_prefs_keep_saved_values_when_a_file_has_missing_fields() {
+    let partial: VideoPrefs = serde_json::from_str(r#"{ "vsync": false, "width": 1920 }"#)
+        .expect("an older or partial video.json still loads");
+    assert!(!partial.vsync);
+    assert_eq!(partial.width, 1920);
+    let defaults = VideoPrefs::default();
+    assert_eq!(partial.height, defaults.height);
+    assert_eq!(partial.fullscreen, defaults.fullscreen);
+}
+
+#[test]
+fn every_video_setting_survives_a_restart() {
+    let dir = std::env::temp_dir().join(format!("banter-settings-video-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("video.json");
+    let saved = VideoPrefs {
+        vsync: false,
+        fullscreen: true,
+        width: 1920,
+        height: 1080,
+    };
+    save_json(&path, &saved).unwrap();
+    let loaded: VideoPrefs = load_json(&path).expect("video.json loads");
+    assert_eq!(loaded, saved);
+    assert_eq!(clamp_window_size(100, 50), (640, 480));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

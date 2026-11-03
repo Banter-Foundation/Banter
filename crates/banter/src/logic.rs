@@ -416,6 +416,8 @@ pub struct ScreenShare {
     selected: Option<(CaptureKind, u32)>,
     live_target: Option<(CaptureKind, u32)>,
     live: bool,
+    /// Wayland ScreenCast. The compositor picks the source; there is no Banter target id.
+    portal: bool,
 }
 
 impl ScreenShare {
@@ -424,6 +426,7 @@ impl ScreenShare {
             selected: None,
             live_target: None,
             live: false,
+            portal: false,
         }
     }
 
@@ -447,18 +450,32 @@ impl ScreenShare {
         let Some(target) = self.selected else {
             return false;
         };
+        self.portal = false;
         self.live_target = Some(target);
         self.live = true;
         true
     }
 
+    /// Share through the system ScreenCast dialog. The compositor chooses the source.
+    pub fn go_live_portal(&mut self) {
+        self.portal = true;
+        self.live = true;
+        self.live_target = None;
+    }
+
+    pub fn is_portal(&self) -> bool {
+        self.live && self.portal
+    }
+
     pub fn stop(&mut self) {
         self.live = false;
         self.live_target = None;
+        self.portal = false;
     }
 
     /// Change the live source without ending the stream. Viewers stay in the same session.
     pub fn apply_while_live(&mut self, kind: CaptureKind, id: u32) {
+        self.portal = false;
         self.selected = Some((kind, id));
         if self.live {
             self.live_target = Some((kind, id));
@@ -587,13 +604,6 @@ pub fn hardware_encoder_block(found: bool) -> Option<&'static str> {
     }
 }
 
-pub fn jpeg_quality_for_bitrate(automatic: bool, kbps: u32) -> u8 {
-    if automatic {
-        return 75;
-    }
-    (kbps as f32 / 80.0).clamp(15.0, 95.0) as u8
-}
-
 pub fn encode_jpeg_rgba_quality(width: u32, height: u32, rgba: &[u8], max_edge: u32, quality: u8) -> Result<Vec<u8>, String> {
     let expected = (width as usize)
         .checked_mul(height as usize)
@@ -616,27 +626,6 @@ pub fn encode_jpeg_rgba_quality(width: u32, height: u32, rgba: &[u8], max_edge: 
         .encode(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
         .map_err(|err| err.to_string())?;
     Ok(bytes)
-}
-
-/// Picture packet. A raw JPEG (FF D8) is still accepted so older frames keep decoding.
-pub fn pack_picture(keyframe: bool, width: u32, height: u32, jpeg: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(11 + jpeg.len());
-    out.extend_from_slice(b"BN");
-    out.push(1);
-    out.push(if keyframe { 1 } else { 0 });
-    out.extend_from_slice(&width.to_le_bytes());
-    out.extend_from_slice(&height.to_le_bytes());
-    out.extend_from_slice(jpeg);
-    out
-}
-
-pub fn unpack_picture(bytes: &[u8]) -> (bool, u32, u32, &[u8]) {
-    if bytes.len() >= 12 && bytes.starts_with(b"BN") && bytes[2] == 1 {
-        let width = u32::from_le_bytes(bytes[4..8].try_into().unwrap_or([0; 4]));
-        let height = u32::from_le_bytes(bytes[8..12].try_into().unwrap_or([0; 4]));
-        return (bytes[3] == 1, width, height, &bytes[12..]);
-    }
-    (true, 0, 0, bytes)
 }
 
 pub fn lerp_size(from: [f32; 2], to: [f32; 2], t: f32) -> [f32; 2] {
@@ -664,108 +653,6 @@ pub fn stamp_cursor(rgba: &mut [u8], width: u32, height: u32, x: i32, y: i32, sh
             }
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StreamJob {
-    pub source: u64,
-    pub edge: u32,
-    pub interval_ms: u64,
-    pub quality: u8,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EmittedFrame {
-    pub at_ms: u64,
-    pub job: StreamJob,
-    pub keyframe: bool,
-}
-
-/// Keeps the current pipeline until the next settings have a keyframe, then cuts on a frame boundary.
-#[derive(Clone, Debug)]
-pub struct PrewarmClock {
-    active: StreamJob,
-    pending: Option<StreamJob>,
-    ready: bool,
-    next_ms: u64,
-    started: bool,
-}
-
-impl PrewarmClock {
-    pub fn new(job: StreamJob) -> Self {
-        Self {
-            active: job,
-            pending: None,
-            ready: false,
-            next_ms: 0,
-            started: false,
-        }
-    }
-
-    pub fn active(&self) -> StreamJob {
-        self.active
-    }
-
-    pub fn request(&mut self, job: StreamJob) {
-        if job == self.active && self.pending.is_none() {
-            return;
-        }
-        if self.pending == Some(job) {
-            return;
-        }
-        self.pending = Some(job);
-        self.ready = false;
-    }
-
-    pub fn prewarm_ready(&mut self) {
-        if self.pending.is_some() {
-            self.ready = true;
-        }
-    }
-
-    pub fn poll(&mut self, now_ms: u64) -> Option<EmittedFrame> {
-        if self.started && now_ms < self.next_ms {
-            return None;
-        }
-        let at = if self.started { self.next_ms } else { now_ms };
-        let (job, keyframe) = if self.pending.is_some() && self.ready {
-            let job = self.pending.take().expect("pending job");
-            self.ready = false;
-            self.active = job;
-            (job, true)
-        } else {
-            (self.active, !self.started)
-        };
-        self.started = true;
-        self.next_ms = at.saturating_add(job.interval_ms.max(1));
-        Some(EmittedFrame { at_ms: at, job, keyframe })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FrameReport {
-    pub dropped: u32,
-    pub worst_gap_ms: u64,
-}
-
-pub fn measure_frame_gaps(stamps: &[u64]) -> FrameReport {
-    let mut dropped = 0;
-    let mut worst = 0;
-    let mut intervals = Vec::new();
-    for pair in stamps.windows(2) {
-        let gap = pair[1].saturating_sub(pair[0]);
-        worst = worst.max(gap);
-        intervals.push(gap);
-    }
-    if intervals.len() >= 2 {
-        for index in 1..intervals.len() {
-            let expected = intervals[index - 1].max(1);
-            if intervals[index] > expected + expected / 2 {
-                dropped += (intervals[index] / expected).saturating_sub(1) as u32;
-            }
-        }
-    }
-    FrameReport { dropped, worst_gap_ms: worst }
 }
 
 pub fn equal_power_gains(t: f32) -> (f32, f32) {
@@ -925,6 +812,46 @@ pub fn fps_from_key(key: &str) -> StreamFps {
         "144" => StreamFps::Fps144,
         _ => StreamFps::Fps30,
     }
+}
+
+/// Window and display choices. Missing fields fall back to the defaults.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoPrefs {
+    pub vsync: bool,
+    pub fullscreen: bool,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl Default for VideoPrefs {
+    fn default() -> Self {
+        Self {
+            vsync: true,
+            fullscreen: false,
+            width: 1280,
+            height: 800,
+        }
+    }
+}
+
+/// Common windowed sizes for the Display settings combo.
+pub fn window_size_presets() -> &'static [(i32, i32)] {
+    &[
+        (1280, 720),
+        (1280, 800),
+        (1600, 900),
+        (1920, 1080),
+        (2560, 1440),
+    ]
+}
+
+pub fn window_size_label(width: i32, height: i32) -> String {
+    format!("{width} × {height}")
+}
+
+pub fn clamp_window_size(width: i32, height: i32) -> (i32, i32) {
+    (width.clamp(640, 7680), height.clamp(480, 4320))
 }
 
 /// Missing fields fall back to the defaults, so an older `voice.json` keeps the rest of its choices.

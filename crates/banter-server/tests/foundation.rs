@@ -6,10 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use banter_server::{
-    BanterError, CallPhase, ChannelKind, ChatTarget, Live, MediaKind, MediaPlace, Presence, Store,
-    IDLE_AFTER_MS, MAX_ATTACHMENT_BYTES, MAX_MESSAGE_CHARS, decode_client_media,
-    decode_media_frame, encode_client_media, encode_media_frame, should_receive_audio,
-    should_send_audio, should_send_camera, should_send_screen, VoiceFlags,
+    BanterError, CallPhase, ChannelKind, ChatTarget, ClientSignal, LayerId, Live, MediaKind, MediaPlace, Presence,
+    ServerEvent, Store, IDLE_AFTER_MS, MAX_ATTACHMENT_BYTES, MAX_MESSAGE_CHARS, should_receive_audio,
+    should_send_audio, should_send_camera, should_send_screen, should_send_stream_audio, sdp_fixture,
+    sdp_matches_contract, VoiceFlags,
 };
 
 static SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -56,31 +56,41 @@ fn voice_flag_rules() {
     flags.screen = true;
     assert!(should_send_camera(&flags));
     assert!(should_send_screen(&flags));
+    assert!(should_send_stream_audio(&flags));
+    flags.screen = false;
+    assert!(!should_send_stream_audio(&flags));
+    flags.muted = true;
+    flags.screen = true;
+    assert!(!should_send_audio(&flags));
+    assert!(should_send_stream_audio(&flags));
 }
 
 #[test]
-fn media_frame_round_trip() {
-    let frame = encode_media_frame(MediaKind::Audio, MediaPlace::VoiceChannel(9), 4, b"hi");
-    let parsed = decode_media_frame(&frame).unwrap();
-    assert_eq!(parsed.kind, MediaKind::Audio);
-    assert_eq!(parsed.place, MediaPlace::VoiceChannel(9));
-    assert_eq!(parsed.sender_id, 4);
-    assert_eq!(parsed.payload, b"hi");
+fn signaling_round_trip_and_sdp_contract() {
+    let signal = ClientSignal::SubscribeLayer {
+        place: MediaPlace::VoiceChannel(9),
+        publisher: 4,
+        track: MediaKind::Screen,
+        max_layer: LayerId::Quarter,
+    };
+    let text = serde_json::to_string(&signal).unwrap();
+    let parsed: ClientSignal = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed, signal);
+    assert!(text.contains("\"track\":\"screen\""));
+    assert!(text.contains("\"max_layer\":\"quarter\""));
 
-    let client = encode_client_media(MediaKind::Camera, b"jpg");
-    let (kind, payload) = decode_client_media(&client).unwrap();
-    assert_eq!(kind, MediaKind::Camera);
-    assert_eq!(payload, b"jpg");
-
-    let screen = encode_media_frame(MediaKind::Screen, MediaPlace::DirectCall(3), 8, b"");
-    let parsed = decode_media_frame(&screen).unwrap();
-    assert_eq!(parsed.kind, MediaKind::Screen);
-    assert_eq!(parsed.place, MediaPlace::DirectCall(3));
-    assert_eq!(parsed.sender_id, 8);
-    assert!(parsed.payload.is_empty());
-
-    assert_eq!(decode_media_frame(&[1]).unwrap_err(), BanterError::BadFrame);
-    assert_eq!(decode_client_media(&[9]).unwrap_err(), BanterError::BadFrame);
+    let offer = ClientSignal::RtcOffer {
+        place: MediaPlace::DirectCall(3),
+        sdp: sdp_fixture(),
+    };
+    let text = serde_json::to_string(&offer).unwrap();
+    let parsed: ClientSignal = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed, offer);
+    assert!(sdp_matches_contract(&sdp_fixture()));
+    assert_eq!(MediaKind::UserAudio.code(), 1);
+    assert_eq!(MediaKind::from_code(4), Some(MediaKind::StreamAudio));
+    assert!(serde_json::from_str::<ClientSignal>("nope").is_err());
+    let _ = ServerEvent::CallEnded { dm_id: 1 };
 }
 
 #[test]
@@ -611,18 +621,15 @@ fn voice_channel_is_drop_in_and_routes_media() {
     assert_eq!(members.len(), 2);
 
     let routed = live
-        .route_media(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Audio, b"pcm")
+        .media_subscribers(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::UserAudio)
         .unwrap();
-    assert_eq!(routed.len(), 1);
-    assert_eq!(routed[0].user_id, bob.id);
-    assert_eq!(routed[0].kind, MediaKind::Audio);
-    assert_eq!(routed[0].bytes, b"pcm");
+    assert_eq!(routed, vec![bob.id]);
 
     let mut flags = VoiceFlags::default();
     flags.muted = true;
     live.set_flags(ada.id, flags);
     assert!(live
-        .route_media(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Audio, b"pcm")
+        .media_subscribers(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::UserAudio)
         .unwrap()
         .is_empty());
 
@@ -630,13 +637,13 @@ fn voice_channel_is_drop_in_and_routes_media() {
     flags.push_to_talk = true;
     live.set_flags(ada.id, flags);
     assert!(live
-        .route_media(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Audio, b"pcm")
+        .media_subscribers(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::UserAudio)
         .unwrap()
         .is_empty());
     flags.transmitting = true;
     live.set_flags(ada.id, flags);
     assert_eq!(
-        live.route_media(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Audio, b"pcm")
+        live.media_subscribers(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::UserAudio)
             .unwrap()
             .len(),
         1
@@ -652,23 +659,26 @@ fn voice_channel_is_drop_in_and_routes_media() {
     };
     live.set_flags(ada.id, flags);
     assert!(live
-        .route_media(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Audio, b"pcm")
+        .media_subscribers(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::UserAudio)
+        .unwrap()
+        .is_empty());
+    assert!(live
+        .media_subscribers(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::StreamAudio)
         .unwrap()
         .is_empty());
     let camera = live
-        .route_media(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Camera, b"jpg")
+        .media_subscribers(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Camera)
         .unwrap();
-    assert_eq!(camera.len(), 1);
-    assert_eq!(camera[0].user_id, bob.id);
+    assert_eq!(camera, vec![bob.id]);
     let screen = live
-        .route_media(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Screen, b"jpg")
+        .media_subscribers(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Screen)
         .unwrap();
-    assert_eq!(screen.len(), 1);
+    assert_eq!(screen, vec![bob.id]);
     flags.camera = false;
     flags.screen = false;
     live.set_flags(ada.id, flags);
     assert!(live
-        .route_media(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Camera, b"jpg")
+        .media_subscribers(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::Camera)
         .unwrap()
         .is_empty());
 
@@ -731,23 +741,22 @@ fn direct_message_call() {
     assert_eq!(call.callee, bob.id);
     assert!(live.voice_channel_members(voice_id).is_empty());
     assert!(live
-        .route_media(ada.id, MediaPlace::DirectCall(chat.id), MediaKind::Audio, b"pcm")
+        .media_subscribers(ada.id, MediaPlace::DirectCall(chat.id), MediaKind::UserAudio)
         .unwrap()
         .is_empty());
 
     let active = live.accept_dm_call(&store, bob.id, chat.id).unwrap();
     assert_eq!(active.phase, CallPhase::Active);
     let routed = live
-        .route_media(ada.id, MediaPlace::DirectCall(chat.id), MediaKind::Audio, b"pcm")
+        .media_subscribers(ada.id, MediaPlace::DirectCall(chat.id), MediaKind::UserAudio)
         .unwrap();
-    assert_eq!(routed.len(), 1);
-    assert_eq!(routed[0].user_id, bob.id);
+    assert_eq!(routed, vec![bob.id]);
 
     let mut flags = VoiceFlags::default();
     flags.deafened = true;
     live.set_flags(bob.id, flags);
     assert!(live
-        .route_media(ada.id, MediaPlace::DirectCall(chat.id), MediaKind::Audio, b"pcm")
+        .media_subscribers(ada.id, MediaPlace::DirectCall(chat.id), MediaKind::UserAudio)
         .unwrap()
         .is_empty());
     flags = VoiceFlags {
@@ -756,11 +765,20 @@ fn direct_message_call() {
     };
     live.set_flags(ada.id, flags);
     assert_eq!(
-        live.route_media(ada.id, MediaPlace::DirectCall(chat.id), MediaKind::Camera, b"jpg")
-            .unwrap()
-            .len(),
-        1
+        live.media_subscribers(ada.id, MediaPlace::DirectCall(chat.id), MediaKind::Camera)
+            .unwrap(),
+        vec![bob.id]
     );
+    live.handle_signal(
+        bob.id,
+        ClientSignal::SubscribeLayer {
+            place: MediaPlace::DirectCall(chat.id),
+            publisher: ada.id,
+            track: MediaKind::Camera,
+            max_layer: LayerId::Half,
+        },
+    )
+    .unwrap();
 
     live.end_dm_call(ada.id, chat.id).unwrap();
     assert!(live.call(chat.id).is_none());

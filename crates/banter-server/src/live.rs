@@ -5,12 +5,12 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::error::BanterError;
 use crate::model::*;
+use crate::sfu::ForwardTable;
 use crate::store::Store;
 
 #[derive(Clone, Debug)]
 pub(crate) enum Outbound {
     Text(String),
-    Binary(Vec<u8>),
 }
 
 struct UserLive {
@@ -26,6 +26,7 @@ struct LiveInner {
     calls: HashMap<i64, CallSnapshot>,
     sockets: HashMap<i64, Vec<(u64, UnboundedSender<Outbound>)>>,
     next_socket: u64,
+    forward: ForwardTable,
 }
 
 pub struct Live {
@@ -40,6 +41,7 @@ impl Live {
                 calls: HashMap::new(),
                 sockets: HashMap::new(),
                 next_socket: 1,
+                forward: ForwardTable::new(),
             }),
         }
     }
@@ -88,6 +90,7 @@ impl Live {
     }
 
     pub fn disconnect(&self, user_id: i64) {
+        crate::room::close_user(user_id);
         let channels;
         let ended_calls;
         {
@@ -104,6 +107,7 @@ impl Live {
                 user.voice_channel = None;
             }
             inner.sockets.remove(&user_id);
+            inner.forward.unsubscribe_user(user_id);
             ended_calls = take_calls(&mut inner, user_id);
         }
         for channel_id in channels {
@@ -144,6 +148,7 @@ impl Live {
     }
 
     pub fn leave_voice(&self, user_id: i64) {
+        crate::room::close_user(user_id);
         let previous = {
             let mut inner = self.lock();
             let Some(user) = inner.users.get_mut(&user_id) else {
@@ -284,66 +289,55 @@ impl Live {
         })
     }
 
-    pub fn route_media(
-        &self,
-        sender: i64,
-        place: MediaPlace,
-        kind: MediaKind,
-        payload: &[u8],
-    ) -> Result<Vec<RoutedMedia>, BanterError> {
+    /// Who may receive this track. Empty when the sender is in the room but gated off, or the call is still ringing.
+    ///
+    /// Voice media is not copied here. The SFU forwards RTP for these subscribers.
+    pub fn media_subscribers(&self, sender: i64, place: MediaPlace, kind: MediaKind) -> Result<Vec<i64>, BanterError> {
         let inner = self.lock();
-        let Some(sender_state) = inner.users.get(&sender) else {
-            return Err(BanterError::NotFound);
-        };
-        let allowed = match place {
-            MediaPlace::VoiceChannel(channel_id) => sender_state.voice_channel == Some(channel_id),
-            MediaPlace::DirectCall(dm_id) => match inner.calls.get(&dm_id) {
-                Some(call) if call.caller == sender || call.callee == sender => {
-                    if call.phase != CallPhase::Active {
-                        return Ok(Vec::new());
-                    }
-                    true
-                }
-                _ => false,
-            },
-        };
-        if !allowed {
-            return Err(BanterError::NotFound);
+        subscribers_of(&inner, sender, place, kind)
+    }
+
+    pub fn note_layer(&self, publisher: i64, track: MediaKind, layer: LayerId) {
+        self.lock().forward.note_layer(publisher, track, layer);
+    }
+
+    /// Record the packet in the forward table and return the subscribers who should receive it.
+    pub fn admit_rtp(&self, channel_id: i64, publisher: i64, kind: MediaKind, layer: LayerId, bytes: usize, keyframe: bool) -> Vec<i64> {
+        let mut inner = self.lock();
+        let allowed = subscribers_of(&inner, publisher, MediaPlace::VoiceChannel(channel_id), kind).unwrap_or_default();
+        inner
+            .forward
+            .push(publisher, kind, layer, bytes, keyframe)
+            .into_iter()
+            .map(|item| item.subscriber)
+            .filter(|subscriber| allowed.contains(subscriber))
+            .collect()
+    }
+
+    pub fn subscribe_voice_pair(&self, left: i64, right: i64) {
+        if left == right {
+            return;
         }
-        let send = match kind {
-            MediaKind::Audio => should_send_audio(&sender_state.flags),
-            MediaKind::Camera => should_send_camera(&sender_state.flags),
-            MediaKind::Screen => should_send_screen(&sender_state.flags),
-        };
-        if !send {
-            return Ok(Vec::new());
+        let mut inner = self.lock();
+        for kind in [MediaKind::UserAudio, MediaKind::StreamAudio, MediaKind::Camera, MediaKind::Screen] {
+            inner.forward.subscribe(left, right, kind, LayerId::Full);
+            inner.forward.subscribe(right, left, kind, LayerId::Full);
         }
-        let recipients = match place {
-            MediaPlace::VoiceChannel(channel_id) => inner
-                .users
-                .iter()
-                .filter(|(user_id, user)| **user_id != sender && user.voice_channel == Some(channel_id))
-                .map(|(user_id, user)| (*user_id, user.flags))
-                .collect::<Vec<_>>(),
-            MediaPlace::DirectCall(dm_id) => {
-                let call = inner.calls.get(&dm_id).ok_or(BanterError::NotFound)?;
-                let other = if call.caller == sender { call.callee } else { call.caller };
-                let flags = inner.users.get(&other).map(|user| user.flags).unwrap_or_default();
-                vec![(other, flags)]
-            }
+    }
+
+    pub fn take_keyframes(&self) -> Vec<crate::sfu::KeyframeRequest> {
+        self.lock().forward.take_keyframes()
+    }
+
+    pub fn handle_signal(&self, user_id: i64, signal: ClientSignal) -> Result<(), BanterError> {
+        let prepared = {
+            let mut inner = self.lock();
+            prepare_signal(&mut inner, user_id, signal)?
         };
-        let mut routed = Vec::new();
-        for (user_id, flags) in recipients {
-            if kind == MediaKind::Audio && !should_receive_audio(&flags) {
-                continue;
-            }
-            routed.push(RoutedMedia {
-                user_id,
-                kind,
-                bytes: payload.to_vec(),
-            });
+        for (recipients, event) in prepared {
+            self.send_event(&recipients, &event);
         }
-        Ok(routed)
+        Ok(())
     }
 
     pub(crate) fn register_socket(&self, user_id: i64, tx: UnboundedSender<Outbound>) -> u64 {
@@ -371,15 +365,6 @@ impl Live {
                 for (_, tx) in list {
                     let _ = tx.send(Outbound::Text(text.clone()));
                 }
-            }
-        }
-    }
-
-    pub(crate) fn send_binary(&self, user_id: i64, bytes: Vec<u8>) {
-        let inner = self.lock();
-        if let Some(list) = inner.sockets.get(&user_id) {
-            for (_, tx) in list {
-                let _ = tx.send(Outbound::Binary(bytes.clone()));
             }
         }
     }
@@ -435,6 +420,156 @@ fn calls_involving(calls: &HashMap<i64, CallSnapshot>, user_id: i64) -> Vec<i64>
         .filter(|(_, call)| call.caller == user_id || call.callee == user_id)
         .map(|(dm_id, _)| *dm_id)
         .collect()
+}
+
+fn subscribers_of(inner: &LiveInner, sender: i64, place: MediaPlace, kind: MediaKind) -> Result<Vec<i64>, BanterError> {
+    let Some(sender_state) = inner.users.get(&sender) else {
+        return Err(BanterError::NotFound);
+    };
+    let allowed = match place {
+        MediaPlace::VoiceChannel(channel_id) => sender_state.voice_channel == Some(channel_id),
+        MediaPlace::DirectCall(dm_id) => match inner.calls.get(&dm_id) {
+            Some(call) if call.caller == sender || call.callee == sender => {
+                if call.phase != CallPhase::Active {
+                    return Ok(Vec::new());
+                }
+                true
+            }
+            _ => false,
+        },
+    };
+    if !allowed {
+        return Err(BanterError::NotFound);
+    }
+    if !kind.publish_allowed(&sender_state.flags) {
+        return Ok(Vec::new());
+    }
+    let recipients = match place {
+        MediaPlace::VoiceChannel(channel_id) => inner
+            .users
+            .iter()
+            .filter(|(user_id, user)| **user_id != sender && user.voice_channel == Some(channel_id))
+            .map(|(user_id, user)| (*user_id, user.flags))
+            .collect::<Vec<_>>(),
+        MediaPlace::DirectCall(dm_id) => {
+            let call = inner.calls.get(&dm_id).ok_or(BanterError::NotFound)?;
+            let other = if call.caller == sender { call.callee } else { call.caller };
+            let flags = inner.users.get(&other).map(|user| user.flags).unwrap_or_default();
+            vec![(other, flags)]
+        }
+    };
+    let mut routed = Vec::new();
+    for (user_id, flags) in recipients {
+        if kind.is_audio() && !should_receive_audio(&flags) {
+            continue;
+        }
+        routed.push(user_id);
+    }
+    Ok(routed)
+}
+
+fn prepare_signal(inner: &mut LiveInner, user_id: i64, signal: ClientSignal) -> Result<Vec<(Vec<i64>, ServerEvent)>, BanterError> {
+    match signal {
+        ClientSignal::Activity => Ok(Vec::new()),
+        ClientSignal::RtcOffer { place, sdp } => relay_p2p(inner, user_id, place, ServerEvent::RtcOffer { place, from: user_id, sdp }),
+        ClientSignal::RtcAnswer { place, sdp } => relay_p2p(inner, user_id, place, ServerEvent::RtcAnswer { place, from: user_id, sdp }),
+        ClientSignal::RtcIce {
+            place,
+            candidate,
+            sdp_mid,
+            sdp_mline_index,
+        } => relay_p2p(
+            inner,
+            user_id,
+            place,
+            ServerEvent::RtcIce {
+                place,
+                from: user_id,
+                candidate,
+                sdp_mid,
+                sdp_mline_index,
+            },
+        ),
+        ClientSignal::SubscribeLayer {
+            place,
+            publisher,
+            track,
+            max_layer,
+        } => {
+            ensure_in_place(inner, user_id, place)?;
+            match place {
+                MediaPlace::VoiceChannel(_) => {
+                    inner.forward.subscribe(user_id, publisher, track, max_layer);
+                    let layers = inner.forward.wanted_layers(publisher, track);
+                    let subscribers = inner.forward.subscriber_count(publisher, track);
+                    Ok(vec![(
+                        vec![publisher],
+                        ServerEvent::WantedLayers {
+                            place,
+                            track,
+                            layers,
+                            subscribers,
+                        },
+                    )])
+                }
+                MediaPlace::DirectCall(_) => {
+                    let peer = other_party(inner, user_id, place)?;
+                    Ok(vec![(
+                        vec![peer],
+                        ServerEvent::SubscribeLayer {
+                            place,
+                            subscriber: user_id,
+                            publisher,
+                            track,
+                            max_layer,
+                        },
+                    )])
+                }
+            }
+        }
+    }
+}
+
+/// Voice signaling stops at the SFU. Direct calls are relayed and the server does not terminate media.
+fn relay_p2p(inner: &LiveInner, user_id: i64, place: MediaPlace, event: ServerEvent) -> Result<Vec<(Vec<i64>, ServerEvent)>, BanterError> {
+    ensure_in_place(inner, user_id, place)?;
+    match place {
+        MediaPlace::VoiceChannel(_) => Ok(Vec::new()),
+        MediaPlace::DirectCall(_) => {
+            let peer = other_party(inner, user_id, place)?;
+            Ok(vec![(vec![peer], event)])
+        }
+    }
+}
+
+fn ensure_in_place(inner: &LiveInner, user_id: i64, place: MediaPlace) -> Result<(), BanterError> {
+    match place {
+        MediaPlace::VoiceChannel(channel_id) => {
+            let joined = inner.users.get(&user_id).and_then(|user| user.voice_channel) == Some(channel_id);
+            if joined { Ok(()) } else { Err(BanterError::NotFound) }
+        }
+        MediaPlace::DirectCall(dm_id) => match inner.calls.get(&dm_id) {
+            Some(call) if call.phase == CallPhase::Active && (call.caller == user_id || call.callee == user_id) => Ok(()),
+            Some(_) => Err(BanterError::NotInCall),
+            None => Err(BanterError::NotInCall),
+        },
+    }
+}
+
+fn other_party(inner: &LiveInner, user_id: i64, place: MediaPlace) -> Result<i64, BanterError> {
+    match place {
+        MediaPlace::VoiceChannel(_) => Err(BanterError::NotFound),
+        MediaPlace::DirectCall(dm_id) => {
+            let call = inner.calls.get(&dm_id).ok_or(BanterError::NotInCall)?;
+            if call.caller == user_id {
+                Ok(call.callee)
+            } else if call.callee == user_id {
+                Ok(call.caller)
+            } else {
+                Err(BanterError::NotInCall)
+            }
+        }
+    }
 }
 
 fn take_calls(inner: &mut LiveInner, user_id: i64) -> Vec<(i64, i64)> {
