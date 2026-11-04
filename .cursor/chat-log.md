@@ -772,4 +772,11 @@ Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-postgres-punchlist`
 - Critical gap closed: existing `banter-pg` volumes upgrade profile columns/tables on boot.
 - Local port conflict and stale `banter.db` docs fixed; `.env.example` shipped.
 
+---
+## 2026-11-04 BA-64 Settings as separate polished window
+
+Owl (via coordinator): Move User Settings into a dedicated GLFW/ImGui window so the main Banter window stays usable; polish settings chrome (layout, spacing, nav hierarchy); fix known overflow (My Account avatar buttons); closing settings must return focus cleanly with no stuck modal state. Do not hijack theme PR #2. Separate worktree/branch under D:\Projects\Project Banter. Never touch E:. Open PR; do not merge until Owl says so. Report PR URL + how to open/try the window.
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-settings-window` on `cursor/settings-separate-window-af13`. Implemented shared-context Banter Settings OS window, dual draw passes, chrome polish, avatar stack-on-narrow. Tests: `cargo test -p banter --test settings` 28 passed. PR opened; not merged.
+
 

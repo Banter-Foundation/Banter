@@ -46,10 +46,10 @@ use crate::profiler;
 use crate::realtime::Realtime;
 use crate::session::{load_token, save_token, session_path};
 use crate::settings::{
-    SettingsState, account_avatar_actions_origin_x, db_to_rms, device_error_text, display_name_dirty,
-    display_name_error, meter_fraction, percent_to_volume, rms_to_db, settings_layout, slider_fraction,
-    slider_track_width, voice_bar_error_lines, volume_to_percent, wrap_rows, SETTINGS_NAV_LIST_W,
-    SETTINGS_TOP_PAD,
+    SettingsState, account_avatar_actions_place, db_to_rms, device_error_text, display_name_dirty,
+    display_name_error, meter_fraction, percent_to_volume, rms_to_db, settings_layout, settings_nav_list_w,
+    settings_nav_list_x, slider_fraction, slider_track_width, voice_bar_error_lines, volume_to_percent,
+    wrap_rows, SETTINGS_NAV_HEADING_GAP, SETTINGS_NAV_SECTION_GAP, SETTINGS_TOP_PAD,
 };
 use crate::skin::{self, MenuTone, Tone};
 use crate::theme::*;
@@ -508,7 +508,24 @@ impl App {
         self.refresh_crop_preview(imgui);
     }
 
-    pub(crate) fn draw(&mut self, ui: &Ui) {
+    /// True while User Settings should be shown in the dedicated Banter Settings OS window.
+    pub(crate) fn settings_os_window_desired(&self) -> bool {
+        self.settings.os_window_desired()
+    }
+
+    pub(crate) fn take_settings_window_focus(&mut self) -> bool {
+        self.settings.take_needs_focus()
+    }
+
+    /// OS window chrome closed the settings window — clear modal/recording state on the main app.
+    pub(crate) fn notify_settings_window_closed(&mut self) {
+        self.settings.window_closed();
+        self.settings_popup_open = false;
+        self.settings_error.clear();
+    }
+
+    /// Main Banter window. User Settings lives in a separate GLFW window so this shell stays usable.
+    pub(crate) fn draw_main(&mut self, ui: &Ui) {
         if !ui.io().want_capture_keyboard() && ui.is_key_pressed(Key::F3) {
             profiler::global().toggle();
         }
@@ -533,9 +550,6 @@ impl App {
         self.draw_server_dropdown(ui);
         self.draw_context_menu(ui);
         self.draw_modal(ui);
-        if self.settings.is_open() {
-            self.draw_settings(ui);
-        }
         if self.share_open {
             self.draw_share(ui);
         }
@@ -545,7 +559,7 @@ impl App {
         self.draw_profile_card(ui);
         self.draw_profiler(ui);
         if ui.is_key_pressed(Key::Escape) {
-            if self.crop_open {
+            if self.crop_open && !self.settings.is_open() {
                 self.crop_open = false;
             } else if self.profile.is_open() {
                 self.close_profile();
@@ -561,14 +575,32 @@ impl App {
                 self.share_open = false;
             } else if profiler::global().is_open() {
                 profiler::global().set_open(false);
-            } else if self.settings.is_open() {
-                self.settings.escape(self.settings_popup_open);
             }
+            // Escape on the main window does not close User Settings — that belongs to the settings window.
         }
-        if self.crop_open {
+        // Avatar crop opened from My Account draws on the settings window, not here.
+        if self.crop_open && !self.settings.is_open() {
             self.draw_avatar_crop(ui);
         }
         self.finish_voice_flags(ui);
+    }
+
+    /// Dedicated Banter Settings window surface (My Account / Voice & Video / Developer).
+    pub(crate) fn draw_settings_window(&mut self, ui: &Ui) {
+        if !self.settings.is_open() {
+            return;
+        }
+        self.draw_settings(ui);
+        if self.crop_open {
+            self.draw_avatar_crop(ui);
+        }
+        if ui.is_key_pressed(Key::Escape) {
+            if self.crop_open {
+                self.crop_open = false;
+            } else {
+                self.settings.escape(self.settings_popup_open);
+            }
+        }
     }
 
     fn draw_shell(&mut self, ui: &Ui) {
@@ -4125,10 +4157,14 @@ impl App {
     }
 
     fn open_settings(&mut self) {
-        self.settings.open();
+        self.open_settings_section(self.settings.section());
+    }
+
+    fn open_settings_section(&mut self, section: SettingsSection) {
+        self.settings.open_section(section);
         self.settings_error.clear();
         self.display_name = self.account.as_ref().map(|account| account.display_name.clone()).unwrap_or_default();
-        if self.settings.section() == SettingsSection::Voice {
+        if section == SettingsSection::Voice {
             self.devices_ready = false;
         }
         if !self.cameras_loaded {
@@ -4353,8 +4389,7 @@ impl App {
         }
         if open_settings {
             self.close_profile();
-            self.open_settings();
-            self.settings.select(SettingsSection::Account);
+            self.open_settings_section(SettingsSection::Account);
         }
         if let Some(user_id) = message_user {
             if let Some(chat) = self.note(self.client.open_dm(user_id)) {
@@ -5077,12 +5112,13 @@ impl App {
     }
 
     fn draw_settings_nav(&mut self, ui: &Ui, nav_w: f32) {
-        let list_x = (nav_w - SETTINGS_NAV_LIST_W).max(0.0) + 20.0;
-        let list_w = (nav_w - list_x - 6.0).max(32.0);
+        let list_x = settings_nav_list_x(nav_w);
+        let list_w = settings_nav_list_w(nav_w);
         ui.set_cursor_pos([list_x, SETTINGS_TOP_PAD]);
         ui.indent_by(list_x);
         ui.child_window("settings-nav-list").size([list_w, 0.0]).build(ui, || {
             settings_form_label(ui, self.bold_font, "USER SETTINGS");
+            ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
             for section in [SettingsSection::Account, SettingsSection::Voice] {
                 let (id, icon, label) = match section {
                     SettingsSection::Account => ("settings-account", "user", "My Account"),
@@ -5092,10 +5128,13 @@ impl App {
                 if nav_row(ui, id, self.icon(icon), label, self.settings.section() == section) {
                     self.select_settings(section);
                 }
-                ui.dummy([0.0, 2.0]);
+                ui.dummy([0.0, 4.0]);
             }
+            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
             settings_divider(ui, ui.content_region_avail()[0]);
+            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
             settings_form_label(ui, self.bold_font, "DEVELOPER");
+            ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
             if nav_row(
                 ui,
                 "settings-developer",
@@ -5105,8 +5144,9 @@ impl App {
             ) {
                 self.select_settings(SettingsSection::Developer);
             }
-            ui.dummy([0.0, 2.0]);
+            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
             settings_divider(ui, ui.content_region_avail()[0]);
+            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
             if nav_row(ui, "settings-logout", self.icon("log-out"), "Log Out", false) {
                 self.logout();
             }
@@ -5136,7 +5176,10 @@ impl App {
 
     fn draw_developer_settings(&mut self, ui: &Ui, width: f32) {
         settings_page_title(ui, self.bold_font, "Developer");
-        ui.text_colored(MUTED, "Choose which Banter server this client talks to.");
+        ui.text_colored(
+            MUTED,
+            "Choose which Banter server this client talks to. Changes apply without rebuilding.",
+        );
         settings_spacer(ui);
 
         settings_form_label(ui, self.bold_font, "SERVER");
@@ -5190,13 +5233,38 @@ impl App {
 
     fn draw_account_settings(&mut self, ui: &Ui, width: f32) {
         settings_page_title(ui, self.bold_font, "My Account");
+        ui.text_colored(MUTED, "Display name, username, and avatar for this Banter account.");
+        settings_spacer(ui);
         let Some(account) = self.account.clone() else { return };
         let avatar = self.avatars.get(&account.id).map(|shot| shot.texture);
 
         // Profile card: banner, avatar, and name, then the editable fields on an inner panel.
         let card = ui.cursor_screen_pos();
         let banner_h = 100.0;
-        let header_h = 72.0;
+        let change_label = "Change Avatar";
+        let remove_label = "Remove Avatar";
+        let frame_pad = 24.0;
+        let change_w = ui.calc_text_size(change_label)[0] + frame_pad;
+        let remove_w = ui.calc_text_size(remove_label)[0] + frame_pad;
+        let gap = 8.0;
+        let name_left = card[0] + 124.0;
+        let name_reserve = {
+            let _font = ui.push_font_with_size(self.bold_font, 20.0);
+            ui.calc_text_size(&account.display_name)[0].min(width * 0.35).max(48.0)
+        };
+        let place = account_avatar_actions_place(
+            card[0],
+            card[1],
+            width,
+            banner_h,
+            16.0,
+            name_left,
+            name_reserve,
+            change_w,
+            remove_w,
+            gap,
+        );
+        let header_h = if place.stacked { 112.0 } else { 72.0 };
         let fields_h = 190.0;
         let card_h = banner_h + header_h + fields_h + 16.0;
         let avatar_center = [card[0] + 16.0 + 46.0, card[1] + banner_h + 8.0];
@@ -5216,15 +5284,7 @@ impl App {
             draw.add_text([card[0] + 124.0, card[1] + banner_h + 14.0], TEXT, &account.display_name);
         }
         paint_avatar(ui, avatar, avatar_center, 40.0, &initials(&account.display_name), None);
-        // Right-align Change + Remove as one group so both stay inside the card (Discord-like).
-        let change_label = "Change Avatar";
-        let remove_label = "Remove Avatar";
-        let frame_pad = 24.0;
-        let change_w = ui.calc_text_size(change_label)[0] + frame_pad;
-        let remove_w = ui.calc_text_size(remove_label)[0] + frame_pad;
-        let gap = 8.0;
-        let actions_x = account_avatar_actions_origin_x(card[0], width, 16.0, change_w, remove_w, gap);
-        ui.set_cursor_screen_pos([actions_x, card[1] + banner_h + 14.0]);
+        ui.set_cursor_screen_pos([place.x, place.y]);
         if ui.button(change_label) {
             self.status.clear();
             self.pick_avatar();
@@ -5303,6 +5363,8 @@ impl App {
 
     fn draw_voice_settings(&mut self, ui: &Ui, width: f32) {
         settings_page_title(ui, self.bold_font, "Voice & Video");
+        ui.text_colored(MUTED, "Devices, volumes, input mode, and camera for voice and video.");
+        settings_spacer(ui);
         self.ensure_audio_devices();
         let gap = 16.0;
         let two_columns = width >= 460.0;

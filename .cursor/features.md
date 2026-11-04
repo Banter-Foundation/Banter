@@ -14,6 +14,7 @@
 - [*] 1:1 direct messages that can start a call. Starting or accepting a call opens a Discord-style call stage in that DM (large avatar while ringing, two tiles when active, shared call controls).
 - [*] Presence and mentions
 - [*] GLFW + OpenGL window with Dear ImGui docking
+- [*] User Settings in a dedicated Banter Settings GLFW window (My Account, Voice & Video, Developer); main shell stays usable; Escape / close returns focus cleanly
 - [*] Developer settings: Local (`127.0.0.1:3970`) or Remote host, persisted in `dev-server.json`. Client startup does not require local unless logged in on Local or the user picks Local; missing local asks for remote instead of hard-failing.
 - [*] F3 profiler: FPS, RSS, HTTP/WebSocket bytes, frame sections, expensive ops
 - [*] Display settings: VSync, fullscreen, window resolution (saved in video.json). With VSync on, the client UI matches the current monitor’s refresh rate and reapplies when the window moves or the display mode changes (not stream capture FPS).
