@@ -381,10 +381,31 @@ impl Client {
         category_id: i64,
         name: &str,
         kind: ChannelKind,
+        icon: Option<&str>,
     ) -> Result<Channel, ApiError> {
         self.send_json(
             self.auth(http().post(&self.url(&format!("/v1/servers/{server_id}/channels")))),
-            serde_json::json!({ "category_id": category_id, "name": name, "kind": kind }),
+            serde_json::json!({
+                "category_id": category_id,
+                "name": name,
+                "kind": kind,
+                "icon": icon,
+            }),
+        )
+    }
+
+    pub fn update_channel(
+        &self,
+        server_id: i64,
+        channel_id: i64,
+        name: &str,
+        icon: Option<&str>,
+    ) -> Result<Channel, ApiError> {
+        self.send_json(
+            self.auth(http().patch(&self.url(&format!(
+                "/v1/servers/{server_id}/channels/{channel_id}"
+            )))),
+            serde_json::json!({ "name": name, "icon": icon }),
         )
     }
 

@@ -139,7 +139,8 @@ CREATE TABLE IF NOT EXISTS channels (
     category_id BIGINT NOT NULL REFERENCES categories(id),
     name TEXT NOT NULL,
     kind TEXT NOT NULL,
-    position BIGINT NOT NULL
+    position BIGINT NOT NULL,
+    icon TEXT
 );
 
 CREATE TABLE IF NOT EXISTS direct_messages (

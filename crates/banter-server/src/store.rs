@@ -661,8 +661,10 @@ impl Store {
         category_id: i64,
         name: &str,
         kind: ChannelKind,
+        icon: Option<&str>,
     ) -> Result<Channel, BanterError> {
         let name = clean_label(name)?;
+        let icon = crate::normalize_channel_icon(icon)?;
         self.require_flag(user_id, server_id, PERM_MANAGE_CHANNELS).await?;
         let category_server: Option<i64> =
             sqlx::query_scalar("SELECT server_id FROM categories WHERE id = $1")
@@ -681,14 +683,15 @@ impl Store {
         .await
         .map_err(db_err)?;
         let id: i64 = sqlx::query_scalar(
-            "INSERT INTO channels (server_id, category_id, name, kind, position)
-             VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            "INSERT INTO channels (server_id, category_id, name, kind, position, icon)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
         )
         .bind(server_id)
         .bind(category_id)
         .bind(&name)
         .bind(kind.as_str())
         .bind(position)
+        .bind(&icon)
         .fetch_one(&self.pool)
         .await
         .map_err(db_err)?;
@@ -702,6 +705,47 @@ impl Store {
             name,
             kind,
             position,
+            icon,
+        })
+    }
+
+    /// Rename a channel and set or clear its optional Lucide icon.
+    pub async fn update_channel(
+        &self,
+        user_id: i64,
+        server_id: i64,
+        channel_id: i64,
+        name: &str,
+        icon: Option<&str>,
+    ) -> Result<Channel, BanterError> {
+        let name = clean_label(name)?;
+        let icon = crate::normalize_channel_icon(icon)?;
+        self.require_flag(user_id, server_id, PERM_MANAGE_CHANNELS).await?;
+        let existing = channel_by_id(&self.pool, channel_id).await?;
+        if existing.server_id != server_id {
+            return Err(BanterError::NotFound);
+        }
+        let result = sqlx::query(
+            "UPDATE channels SET name = $1, icon = $2 WHERE id = $3 AND server_id = $4",
+        )
+        .bind(&name)
+        .bind(&icon)
+        .bind(channel_id)
+        .bind(server_id)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        if result.rows_affected() == 0 {
+            return Err(BanterError::NotFound);
+        }
+        Ok(Channel {
+            id: existing.id,
+            server_id: existing.server_id,
+            category_id: existing.category_id,
+            name,
+            kind: existing.kind,
+            position: existing.position,
+            icon,
         })
     }
 
@@ -2287,46 +2331,41 @@ async fn layout_of(pool: &PgPool, server_id: i64) -> Result<Vec<CategoryLayout>,
             position: row.get("position"),
         };
         let channel_rows = sqlx::query(
-            "SELECT id, server_id, category_id, name, kind, position
+            "SELECT id, server_id, category_id, name, kind, position, icon
              FROM channels WHERE category_id = $1 ORDER BY position, id",
         )
         .bind(category.id)
         .fetch_all(pool)
         .await
         .map_err(db_err)?;
-        let channels = channel_rows
-            .iter()
-            .map(|row| Channel {
-                id: row.get("id"),
-                server_id: row.get("server_id"),
-                category_id: row.get("category_id"),
-                name: row.get("name"),
-                kind: ChannelKind::parse(&row.get::<String, _>("kind")).unwrap_or(ChannelKind::Text),
-                position: row.get("position"),
-            })
-            .collect();
+        let channels = channel_rows.iter().map(channel_from_row).collect();
         layouts.push(CategoryLayout { category, channels });
     }
     Ok(layouts)
 }
 
-async fn channel_by_id(pool: &PgPool, id: i64) -> Result<Channel, BanterError> {
-    let row = sqlx::query(
-        "SELECT id, server_id, category_id, name, kind, position FROM channels WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(db_err)?
-    .ok_or(BanterError::NotFound)?;
-    Ok(Channel {
+fn channel_from_row(row: &sqlx::postgres::PgRow) -> Channel {
+    Channel {
         id: row.get("id"),
         server_id: row.get("server_id"),
         category_id: row.get("category_id"),
         name: row.get("name"),
         kind: ChannelKind::parse(&row.get::<String, _>("kind")).unwrap_or(ChannelKind::Text),
         position: row.get("position"),
-    })
+        icon: row.get("icon"),
+    }
+}
+
+async fn channel_by_id(pool: &PgPool, id: i64) -> Result<Channel, BanterError> {
+    let row = sqlx::query(
+        "SELECT id, server_id, category_id, name, kind, position, icon FROM channels WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_err)?
+    .ok_or(BanterError::NotFound)?;
+    Ok(channel_from_row(&row))
 }
 
 async fn require_text_access(pool: &PgPool, user_id: i64, target: ChatTarget) -> Result<(), BanterError> {
@@ -2369,21 +2408,14 @@ async fn require_text_access_tx(
     match target {
         ChatTarget::Channel(channel_id) => {
             let row = sqlx::query(
-                "SELECT id, server_id, category_id, name, kind, position FROM channels WHERE id = $1",
+                "SELECT id, server_id, category_id, name, kind, position, icon FROM channels WHERE id = $1",
             )
             .bind(channel_id)
             .fetch_optional(&mut **tx)
             .await
             .map_err(db_err)?
             .ok_or(BanterError::NotFound)?;
-            let channel = Channel {
-                id: row.get("id"),
-                server_id: row.get("server_id"),
-                category_id: row.get("category_id"),
-                name: row.get("name"),
-                kind: ChannelKind::parse(&row.get::<String, _>("kind")).unwrap_or(ChannelKind::Text),
-                position: row.get("position"),
-            };
+            let channel = channel_from_row(&row);
             let found: Option<bool> =
                 sqlx::query_scalar("SELECT TRUE FROM memberships WHERE user_id = $1 AND server_id = $2")
                     .bind(user_id)

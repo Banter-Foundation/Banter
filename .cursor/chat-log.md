@@ -878,3 +878,13 @@ Agent: Branch cursor/bfmd-chat-formatting-f6a3. Implemented bfmd parser/serializ
 Owl: Banter profile UI is very broken and needs major work (beyond the earlier “credible baseline”). Fix layout/chrome of profile view + customization editor so it is usable and Discord-like again. Reference: /cursor/stores/self/media/discord-profile-customization-ref.png. Living review: /cursor/stores/self/docs/profile-system-review.md. Context: /cursor/stores/self/docs/project-context.md. Preferences: /cursor/stores/self/preferences.md. Focus on UI correctness/clarity (overflow, broken panels, editor columns, preview, Save/Cancel, cosmetics pickers, board cards). Open PR with gh; do not merge until Owl says so. Report PR + what was fixed. Task: Major repair of broken profile UI (BA-73 if that key exists)
 
 Agent: Branch `cursor/profile-ui-repair-c26f`. Overlay windows + clipped columns; layout contracts in profile.rs; cosmetics-first editor; footer Save/Cancel; stacked board widget radios; preview wrap/clip. Client profile_customization 17 passed. Opening PR; do not merge until Owl says so.
+
+## 2026-11-04 22:30:07 +00:00 — Optional icons on channels (BA-78)
+
+Owl wants optional channel icons in Banter. Repo Banter-Foundation/Banter. Branch from main. Use gh (no GitHub MCP). Implement: optional Lucide or uploaded/custom icon (prefer Lucide); sidebar shows icon or kind default; Manage Channels can set/clear in create/edit UI; Postgres migration; open PR; do not merge until Owl says so. Preferences and project-context in store. Task BA-78.
+
+Agent: Branch `cursor/channel-icons-ded0`. Lucide id on `channels.icon` (no uploads). Migration 004, create/update API, create/edit UI picker, sidebar/header. Opening PR; do not merge until Owl says so.
+
+### Reasoning summary (BA-78)
+- Uploads are disabled (BA-61), so Lucide icon ids fit existing Banter icon usage better than custom image uploads.
+- Edit Channel was missing; Manage Channels already gates create, so edit reuses that permission and adds a context-menu entry.

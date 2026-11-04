@@ -150,6 +150,10 @@ fn router(state: HttpState) -> Router {
         .route("/v1/servers/{id}/nickname", axum::routing::put(set_nickname))
         .route("/v1/servers/{id}/categories", post(create_category))
         .route("/v1/servers/{id}/channels", post(create_channel))
+        .route(
+            "/v1/servers/{id}/channels/{channel_id}",
+            axum::routing::patch(update_channel),
+        )
         .route("/v1/servers/{id}/layout", get(layout))
         .route("/v1/channels/{id}/messages", get(channel_messages))
         .route("/v1/channels/{id}/board", get(get_board))
@@ -616,6 +620,8 @@ struct ChannelBody {
     category_id: i64,
     name: String,
     kind: ChannelKind,
+    #[serde(default)]
+    icon: Option<String>,
 }
 
 async fn create_channel(
@@ -624,7 +630,52 @@ async fn create_channel(
     Path(id): Path<i64>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<Channel>, BanterError> {
-    Ok(Json(state.store.create_channel(account.id, id, body.category_id, &body.name, body.kind).await?))
+    Ok(Json(
+        state
+            .store
+            .create_channel(
+                account.id,
+                id,
+                body.category_id,
+                &body.name,
+                body.kind,
+                body.icon.as_deref(),
+            )
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct ServerChannelPath {
+    id: i64,
+    channel_id: i64,
+}
+
+#[derive(Deserialize)]
+struct UpdateChannelBody {
+    name: String,
+    #[serde(default)]
+    icon: Option<String>,
+}
+
+async fn update_channel(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(path): Path<ServerChannelPath>,
+    Json(body): Json<UpdateChannelBody>,
+) -> Result<Json<Channel>, BanterError> {
+    Ok(Json(
+        state
+            .store
+            .update_channel(
+                account.id,
+                path.id,
+                path.channel_id,
+                &body.name,
+                body.icon.as_deref(),
+            )
+            .await?,
+    ))
 }
 
 async fn layout(

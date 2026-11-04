@@ -895,10 +895,40 @@ fn channel_context_menu_offers_invite_and_copy_for_foundation() {
         Some(banter::ContextMenuTone::Brand)
     );
 
-    let owner = banter::channel_context_menu(42, "general", 3, true);
+    let manager = banter::channel_context_menu(42, "general", 3, true);
     assert_eq!(
-        banter::context_menu_labels(&owner),
-        ["Invite People", "Copy Name", "Copy Channel ID"]
+        banter::context_menu_labels(&manager),
+        ["Invite People", "Edit Channel", "Copy Name", "Copy Channel ID"]
+    );
+    assert!(banter::context_menu_actions(&manager).contains(
+        &banter::ContextMenuAction::EditChannel { channel_id: 42 }
+    ));
+}
+
+#[test]
+fn channel_display_icon_uses_custom_or_kind_default() {
+    use banter_server::ChannelKind;
+
+    assert_eq!(banter::channel_display_icon(ChannelKind::Text, None), "hash");
+    assert_eq!(
+        banter::channel_display_icon(ChannelKind::Voice, None),
+        "volume-2"
+    );
+    assert_eq!(
+        banter::channel_display_icon(ChannelKind::Board, None),
+        "pencil"
+    );
+    assert_eq!(
+        banter::channel_display_icon(ChannelKind::Text, Some("mic")),
+        "mic"
+    );
+    assert_eq!(
+        banter::channel_display_icon(ChannelKind::Text, Some("not-a-real-icon")),
+        "hash"
+    );
+    assert_eq!(
+        banter::channel_display_icon(ChannelKind::Voice, Some("")),
+        "volume-2"
     );
 }
 
