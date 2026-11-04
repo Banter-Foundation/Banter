@@ -119,6 +119,7 @@ fn router(state: HttpState) -> Router {
         .route("/v1/me/profile", axum::routing::patch(patch_profile))
         .route("/v1/me/banner", post(upload_banner).delete(delete_banner))
         .route("/v1/profile/cosmetics", get(list_cosmetics))
+        .route("/v1/profile/badges", get(list_badges))
         .route("/v1/users/{id}", get(user_profile))
         .route("/v1/users/{id}/avatar", get(avatar))
         .route("/v1/users/{id}/banner", get(banner))
@@ -247,6 +248,10 @@ async fn patch_profile(
 
 async fn list_cosmetics() -> Json<Vec<crate::CosmeticItem>> {
     Json(crate::cosmetics_catalog())
+}
+
+async fn list_badges() -> Json<Vec<crate::BadgeItem>> {
+    Json(crate::badges_catalog())
 }
 
 async fn upload_banner(

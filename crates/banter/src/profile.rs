@@ -35,6 +35,34 @@ pub enum ProfileBoardTab {
     Wishlist,
 }
 
+/// Left-column Discord editor slot currently being picked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileEditorSlot {
+    Nameplate,
+    Avatar,
+    AvatarDecoration,
+    DisplayNameStyle,
+    Theme,
+    Banner,
+    ProfileEffect,
+    ProfileFrame,
+    Badges,
+}
+
+/// Deferred banner/avatar change while the customization editor is open.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProfileMediaDraft {
+    Unchanged,
+    Clear,
+    Bytes(Vec<u8>),
+}
+
+impl ProfileMediaDraft {
+    pub fn is_unchanged(&self) -> bool {
+        matches!(self, Self::Unchanged)
+    }
+}
+
 pub use banter_server::ProfileWidgetKind;
 
 /// Floating profile card state. Drawable-free so unit tests own the contract.
@@ -347,6 +375,29 @@ pub fn profile_editor_sections() -> &'static [&'static str] {
         "Profile Effect",
         "Profile Frame",
     ]
+}
+
+/// Slot pairs as laid out in Discord's customization left column.
+pub fn profile_editor_slot_rows() -> &'static [(&'static str, &'static [ProfileEditorSlot])] {
+    &[
+        ("Nameplate", &[ProfileEditorSlot::Nameplate]),
+        (
+            "Avatar",
+            &[ProfileEditorSlot::Avatar, ProfileEditorSlot::AvatarDecoration],
+        ),
+        ("Display Name Style", &[ProfileEditorSlot::DisplayNameStyle]),
+        ("Theme & Banner", &[ProfileEditorSlot::Theme, ProfileEditorSlot::Banner]),
+        (
+            "Profile Effect & Frame",
+            &[ProfileEditorSlot::ProfileEffect, ProfileEditorSlot::ProfileFrame],
+        ),
+        ("Badges", &[ProfileEditorSlot::Badges]),
+    ]
+}
+
+/// How many badges to show before a +N overflow chip (Discord profile row).
+pub fn profile_badge_row_visible_cap() -> usize {
+    6
 }
 
 pub fn profile_board_tabs() -> &'static [ProfileBoardTab] {

@@ -15,7 +15,7 @@ For a longer status table (what works, caveats, deferred), see [feature-status.m
 - Voice media is Opus and simulcast H.264 over WebRTC. See [streaming.md](streaming.md)
 - 1:1 direct messages that can start a call
 - Presence and mentions
-- Discord-parity user profiles: banner, theme, nameplate, avatar decorations, display-name style, profile effect/frame, About Me, pronouns, custom status, Member Since, connections, and Board / Activity / Wishlist widgets
+- Discord-parity user profiles: banner, theme, nameplate, avatar decorations, display-name style, profile effect/frame, About Me, pronouns, custom status, Member Since, connections, badge row, Board game cards, and user-authored Activity / Wishlist rows
 
 ## Deferred
 

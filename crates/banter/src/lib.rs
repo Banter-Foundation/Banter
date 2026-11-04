@@ -16,6 +16,7 @@ mod logic;
 mod media;
 mod platform;
 mod profile;
+mod profile_paint;
 mod profiler;
 mod realtime;
 mod session;

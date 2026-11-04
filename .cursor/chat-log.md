@@ -666,3 +666,9 @@ Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/s
 
 Owl asked to audit Discord profile parity after PR #12 and fix only clear proven defects. GamesInRotation/GamesILike editor rebuilt payload from JSON every frame so typing incomplete JSON reverted — structured title/tag rows instead. Audit report in Project store docs/profile-system-review.md.
 
+
+## 2026-11-04 00:35:16 -06:00 — Finish Discord 1:1 profile parity (BA-62)
+
+Owl: keep working profiles until Discord 1:1; prioritize High gaps from profile-system-review; incorporate PR #21; stacked PRs OK; do not merge until Owl says.
+
+Agent: Expanded cursor/profile-games-widget-fix-21d4 with server badges/activity/wishlist + client Discord editor chrome, board cards, Save/Cancel media, full preview. Updating review doc and PR #21.

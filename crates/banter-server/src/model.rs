@@ -13,6 +13,8 @@ pub const MAX_PRONOUNS_CHARS: usize = 40;
 pub const MAX_CUSTOM_STATUS_CHARS: usize = 128;
 pub const MAX_PROFILE_WIDGETS: usize = 8;
 pub const MAX_PROFILE_CONNECTIONS: usize = 10;
+pub const MAX_PROFILE_ACTIVITY: usize = 20;
+pub const MAX_PROFILE_WISHLIST: usize = 20;
 pub const IDLE_AFTER_MS: i64 = 5 * 60 * 1000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,10 +69,50 @@ pub struct ProfileConnectionInput {
     pub url: String,
 }
 
+/// One equipped Banter badge shown on the profile badge row.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileBadge {
+    pub id: String,
+    pub label: String,
+    pub color: u32,
+    pub shape: crate::BadgeShape,
+}
+
+/// User-authored Activity tab row (empty until the owner adds entries).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileActivity {
+    pub id: i64,
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileActivityInput {
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+}
+
+/// User-authored Wishlist tab game (empty until the owner adds entries).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileWishlistItem {
+    pub id: i64,
+    pub title: String,
+    pub tag: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileWishlistInput {
+    pub title: String,
+    pub tag: String,
+}
+
 /// Partial update for Discord-parity profile customization.
 ///
 /// Omitted fields stay unchanged. Empty strings clear optional text / cosmetic
-/// ids. When `widgets` or `connections` is present, the full list is replaced.
+/// ids. When `widgets`, `connections`, `badge_ids`, `activity`, or `wishlist`
+/// is present, the full list is replaced.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProfilePatch {
     pub display_name: Option<String>,
@@ -86,6 +128,12 @@ pub struct ProfilePatch {
     pub profile_frame_id: Option<String>,
     pub widgets: Option<Vec<ProfileWidgetInput>>,
     pub connections: Option<Vec<ProfileConnectionInput>>,
+    #[serde(default)]
+    pub badge_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub activity: Option<Vec<ProfileActivityInput>>,
+    #[serde(default)]
+    pub wishlist: Option<Vec<ProfileWishlistInput>>,
 }
 
 /// Public profile a signed-in viewer is allowed to see.
@@ -118,6 +166,12 @@ pub struct UserProfile {
     pub profile_frame_id: Option<String>,
     pub widgets: Vec<ProfileWidget>,
     pub connections: Vec<ProfileConnection>,
+    #[serde(default)]
+    pub badges: Vec<ProfileBadge>,
+    #[serde(default)]
+    pub activity: Vec<ProfileActivity>,
+    #[serde(default)]
+    pub wishlist: Vec<ProfileWishlistItem>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

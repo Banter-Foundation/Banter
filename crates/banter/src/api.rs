@@ -156,6 +156,10 @@ impl Client {
         self.get_json("/v1/profile/cosmetics")
     }
 
+    pub fn profile_badges(&self) -> Result<Vec<banter_server::BadgeItem>, ApiError> {
+        self.get_json("/v1/profile/badges")
+    }
+
     pub fn set_avatar(&self, bytes: &[u8]) -> Result<(), ApiError> {
         let start = Instant::now();
         let result = self

@@ -2,10 +2,10 @@
 //! Written before the profile editor state landed.
 
 use banter::{
-    ProfileAction, ProfileBoardTab, ProfileCard, ProfileKind, ProfileMode, ProfileWidgetKind,
-    display_name_style_color, games_from_payload, games_to_payload, games_widget_cap,
-    profile_board_tabs, profile_editor_sections, profile_heading, profile_primary_actions,
-    profile_view_shows_board,
+    ProfileAction, ProfileBoardTab, ProfileCard, ProfileEditorSlot, ProfileKind, ProfileMediaDraft,
+    ProfileMode, ProfileWidgetKind, display_name_style_color, games_from_payload, games_to_payload,
+    games_widget_cap, profile_badge_row_visible_cap, profile_board_tabs, profile_editor_sections,
+    profile_editor_slot_rows, profile_heading, profile_primary_actions, profile_view_shows_board,
 };
 
 #[test]
@@ -154,4 +154,18 @@ fn games_widget_payload_round_trips_without_raw_json() {
     assert_eq!(games_widget_cap(ProfileWidgetKind::GamesInRotation), 5);
     assert_eq!(games_widget_cap(ProfileWidgetKind::GamesILike), 20);
     assert_eq!(games_widget_cap(ProfileWidgetKind::FavoriteGame), 0);
+}
+
+#[test]
+fn editor_slot_rows_match_discord_customization_ref() {
+    let rows = profile_editor_slot_rows();
+    assert_eq!(rows[0].0, "Nameplate");
+    assert_eq!(rows[0].1, &[ProfileEditorSlot::Nameplate]);
+    assert!(rows.iter().any(|(label, _)| *label == "Theme & Banner"));
+    assert!(rows.iter().any(|(label, _)| *label == "Profile Effect & Frame"));
+    assert!(rows.iter().any(|(label, _)| *label == "Badges"));
+    assert_eq!(profile_editor_sections().len(), 8);
+    assert_eq!(profile_badge_row_visible_cap(), 6);
+    assert!(ProfileMediaDraft::Unchanged.is_unchanged());
+    assert!(!ProfileMediaDraft::Clear.is_unchanged());
 }

@@ -318,3 +318,11 @@ Documented Arch server + release hot-swap progress. Workflow on `main` lowercase
 
 Games In Rotation / Games I Like no longer use a raw JSON text field that reset on every incomplete keystroke. The editor uses title + tag rows with add/remove, capped at Discord board limits (5 / 20). Payload helpers live in profile.rs with a unit test.
 
+
+## 2026-11-04 00:35:16 -06:00 [Winter] — Discord 1:1 profile parity push (BA-62)
+
+Close High gaps from the BA-60 review: Discord-style editor slot chrome, richer Banter-owned cosmetic/badge paint, board game cards, full center preview, banner/avatar deferred to Save/Cancel, badge row, and Activity/Wishlist data model (empty until user-authored).
+
+- Server: badges catalog + `badge_ids`, `profile_activity`, `profile_wishlist`; `GET /v1/profile/badges`; ProfilePatch fields
+- Client: slot thumbnails, procedural cosmetics/badges/game cards, Board/Activity/Wishlist editors, media drafts on Save
+- Tests: client profile_customization 12; server profile_customization 8 (Postgres :5433)
