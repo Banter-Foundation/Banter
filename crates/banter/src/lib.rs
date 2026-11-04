@@ -5,12 +5,14 @@
 //! Local (or they choose Local in Developer settings). A configured Remote is used
 //! as-is. Fresh Local with nothing listening opens the UI and asks for a remote.
 //!
-//! Deferred, and not implemented: reactions, bold and italic, text chat inside a
-//! voice channel, group chats, roles, kick, and ban. Profile About Me / custom
-//! status / cosmetics are implemented for Discord profile parity.
-//! See `docs/foundation.md`.
+//! Deferred, and not implemented: reactions, text chat inside a voice channel,
+//! group chats, roles, kick, and ban. Profile About Me / custom status /
+//! cosmetics are implemented for Discord profile parity. Chat bold/italic and
+//! related styles use BFMD (`bfmd` module). See `docs/foundation.md`.
 
 mod api;
+pub mod bfmd;
+mod bfmd_paint;
 mod icons;
 mod logic;
 mod media;
@@ -26,6 +28,7 @@ pub mod theme;
 mod ui;
 
 pub use api::{Client, websocket_url};
+pub use bfmd::{parse as parse_bfmd, plain_text as bfmd_plain_text, Flag as BfmdFlag};
 pub use icons::rasterize_lucide;
 pub use logic::*;
 pub use media::{
