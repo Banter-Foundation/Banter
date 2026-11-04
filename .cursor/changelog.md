@@ -424,3 +424,7 @@ Shipped pre-release Version-1-test-7 from main `537e1e3` (Stay signed in PR #27 
 
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-7
 - Assets: Banter-windows-version-1-test-7.zip, Banter-linux-version-1-test-7.zip, banter-server.exe, banter-server-linux
+
+## 2026-11-04 01:29:50 -06:00 [Winter] — Docs retarget Version-1-test-8
+
+Retarget published Docker/pre-release defaults to `version-1-test-8` / `Version-1-test-8` after DrawListMut panic fix (BA-69 / PR #31) and media unused-code warnings (BA-68 / PR #29) landed on main. Older tags stay. Compose default remains `:latest`.
