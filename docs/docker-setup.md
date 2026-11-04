@@ -2,10 +2,34 @@
 
 Run **`banter-server`** behind **Caddy** with a separate **PostgreSQL** container and blue/green app slots (`banter-a` / `banter-b`). The desktop Banter app is **not** in the image; build and run that on the host (see [build-and-run.md](build-and-run.md)).
 
-Image name: **`ghcr.io/snowedinowl/banter`** (tags from GitHub Releases, plus `latest`).
-Published pre-release tag: **`version-1-test-4.1`** (earlier tags remain on GHCR / Releases).
+Image name: **`ghcr.io/snowedinowl/banter`** (owner must be lowercase; tags from GitHub Releases, plus `latest`).
 
 **Production / release hosts:** use **Docker Compose v2** (`docker compose`) with [`scripts/deploy-hot-swap.sh`](../scripts/deploy-hot-swap.sh). Podman still works for local Postgres-only or image builds.
+
+## Status (2026-11-03 evening)
+
+Where Arch server + release auto-deploy stand right now:
+
+| Piece | State |
+| --- | --- |
+| Compose stack (Postgres, Caddy, `banter-a`/`banter-b`) | In repo; ready on the server checkout |
+| `scripts/deploy-hot-swap.sh` | In `main` — skips `docker pull` for local-only tags (e.g. `banter-server:local`) |
+| `release-deploy.yml` | In `main` — lowercases GHCR owner; pushes with `GHCR_WRITE_TOKEN` (not `GITHUB_TOKEN`) |
+| Repo Actions secrets | Set: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_PATH`, `GHCR_READ_TOKEN`, `GHCR_WRITE_TOKEN` |
+| GHCR package `banter` | **Not created yet** — every release `build-push` has failed before a successful push |
+| Server first boot / hot-swap via Actions | **Blocked** on a successful image push |
+| Latest release tried | `Version-1-test-6` — login OK, push failed: *token does not match expected scopes* |
+
+**Next step (human):** replace `GHCR_WRITE_TOKEN` (and ideally `GHCR_READ_TOKEN`) with a **classic** PAT that has both **`write:packages`** and **`read:packages`**. Fine-grained / read-only tokens produce the scopes error. Then re-run the failed workflow or publish `Version-1-test-7`. Deploy job has not been reached yet; SSH secrets are untested until push succeeds.
+
+**Manual bootstrap** (if you need the server up before GHCR works):
+
+```bash
+cd "$DEPLOY_PATH"   # e.g. ~/Banter
+git pull
+docker build -t banter-server:local .
+BANTER_IMAGE=banter-server:local ./scripts/deploy-hot-swap.sh
+```
 
 Never put Banter builds or data on `E:`. Prefer `D:\Projects\Project Banter`.
 
@@ -87,8 +111,8 @@ If standby health fails, the current active slot is left serving.
 | `DEPLOY_USER` | SSH user |
 | `DEPLOY_SSH_KEY` | Private key for that user |
 | `DEPLOY_PATH` | Absolute path to the Banter checkout on the server |
-| `GHCR_WRITE_TOKEN` | Classic PAT with **`write:packages`** (+ `read:packages`) — Actions uses this to push images to GHCR |
-| `GHCR_READ_TOKEN` | PAT with **`read:packages`** so the server can `docker pull` (can be the same token as `GHCR_WRITE_TOKEN`) |
+| `GHCR_WRITE_TOKEN` | **Classic** PAT with **`write:packages`** and **`read:packages`** — Actions uses this to push images. `GITHUB_TOKEN` alone cannot create the package on this account |
+| `GHCR_READ_TOKEN` | PAT with **`read:packages`** for the server `docker pull` (same classic PAT as write is fine) |
 
 ### One-time server setup
 
@@ -165,7 +189,11 @@ docker run --rm -p 3970:3970 \
 | Port already allocated | Free 3970/3980 or set `BANTER_PORT` for Caddy’s host port |
 | Health fails on 3980 | `docker compose logs banter-a` / `banter-b`; confirm Postgres is healthy |
 | Caddy 502 | Check `deploy/active` and that that slot is running; re-run deploy script |
-| Cannot pull from GHCR | Set `GHCR_READ_TOKEN` / `GHCR_TOKEN` with `read:packages` |
+| Cannot pull from GHCR | Set `GHCR_READ_TOKEN` / `GHCR_TOKEN` with `read:packages`; package must exist and be public or grant the token Read |
+| Push: `repository name must be lowercase` | Fixed on `main` — image owner is lowercased in the workflow |
+| Push: `permission_denied: read_package` (with `GITHUB_TOKEN`) | Expected on this user account — use `GHCR_WRITE_TOKEN` |
+| Push: `token does not match expected scopes` | Classic PAT missing **`write:packages`** — recreate token, update secret, re-run |
+| Local `BANTER_IMAGE=banter-server:local` tries Docker Hub | Need script from `main` that skips pull for tags without a registry host |
 | Client won’t connect | Developer → Remote must use host **3970** (Caddy), not 3980 |
 | Want a clean DB | `docker compose down -v` (deletes Postgres and file volumes) |
 
