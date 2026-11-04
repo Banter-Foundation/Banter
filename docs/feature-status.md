@@ -16,8 +16,8 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Discord-like temporary skin (rail, sidebar, chat, members, modals) | Working — **not** final Banter branding |
 | Chat rows (avatar, grouping, hover toolbar, bottom-anchored history) | Working |
 | Drop-in voice: mute, deafen, PTT, connection panel | Working (SFU audio forward + open-mic Opus timeline fixed 2026-11-03) |
-| Camera on/off with mirrored local preview (~720p prefer, MJPEG) | Working (device-dependent) |
-| Screen share Go Live + quality / source switching | Working (WebRTC H.264 SFU/P2P; remotes receive after RID/SSRC fix) |
+| Camera on/off with mirrored local RGBA preview (~720p prefer; device MJPEG OK) | Working (device-dependent); wire is WebRTC H.264 |
+| Screen share Go Live + quality / source switching | Working (WebRTC H.264 SFU/P2P; OpenH264 / hardware when available; remotes receive after RID/SSRC fix) |
 | 1:1 DMs + start a call | Working — phone icon opens a Discord-style call stage (ringing avatar / two tiles when active) |
 | User Settings: My Account, Voice & Video, Developer (Local/Remote API, persisted) | Working |
 | Embedded + standalone server, SQLite data | Working |
@@ -29,7 +29,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 - **Skin is temporary.** Controls sit where Discord users expect; Banter’s own look comes later. No Discord logos.
 - **Voice / calls / presence** are process-local on the server. Restart clears who is in voice and who is online.
 - **One `client-session.json` per data dir.** Last login wins the next cold start when two clients share a machine and folder.
-- **Stream encoder** is OpenH264 (Constrained Baseline) over WebRTC; hardware H.264 is used when the MFT/NVENC/VA-API path emits that profile, otherwise software.
+- **Stream encoder** is H.264 Constrained Baseline over WebRTC (OpenH264 software path; Media Foundation / NVENC / VA-API when the probe accepts Constrained Baseline).
 - **Voice-connection subtitle** shows one plain device error (Settings still lists every device error).
 - **Speaker loopback / per-app mix** for streams: Windows only.
 - **GDI / naive screenshots** of the OpenGL window can come back blank or solid; prefer PrintWindow / existing capture tooling when documenting UI.

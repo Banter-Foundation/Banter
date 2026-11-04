@@ -38,7 +38,8 @@ fn corrupt_mjpeg_is_an_error_not_a_wasm_message() {
 
 #[test]
 fn frames_from_a_camera_that_is_no_longer_chosen_are_dropped() {
-    assert_eq!(current_camera_frame(Some((1, vec![7])), 1), Some(vec![7]));
-    assert_eq!(current_camera_frame(Some((0, vec![7])), 1), None);
+    let rgba = vec![7_u8; 4];
+    assert_eq!(current_camera_frame(Some((1, 1, 1, rgba.clone())), 1), Some((1, 1, rgba)));
+    assert_eq!(current_camera_frame(Some((0, 1, 1, vec![7])), 1), None);
     assert_eq!(current_camera_frame(None, 1), None);
 }

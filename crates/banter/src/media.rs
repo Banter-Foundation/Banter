@@ -26,8 +26,8 @@ use std::time::{Duration, Instant};
 use banter_server::{ClientSignal, LayerId, MediaKind, MediaPlace, ServerEvent, VoiceFlags, should_send_camera, should_send_screen, should_send_stream_audio};
 
 use crate::logic::{
-    AUDIO_FRAME_SAMPLES, CameraChoice, CaptureKind, MixSource, automatic_gain, cancel_echo, encode_jpeg_rgba, fade_gain,
-    frame_rms, mic_opus_frame, mix_equal_power, resample_mono_i16, scale_i16, stamp_cursor, suppress_noise,
+    AUDIO_FRAME_SAMPLES, CameraChoice, CaptureKind, MixSource, automatic_gain, cancel_echo, fade_gain, frame_rms,
+    mic_opus_frame, mix_equal_power, resample_mono_i16, scale_i16, stamp_cursor, suppress_noise,
 };
 
 const FLAG_MUTED: u32 = 1;
@@ -142,8 +142,8 @@ pub struct Media {
     stop: Arc<AtomicBool>,
     errors: Arc<Mutex<Vec<String>>>,
     playback: Arc<Mutex<VecDeque<f32>>>,
-    /// The latest local camera JPEG, tagged with the device index it came from.
-    local_camera: Arc<Mutex<Option<(u32, Vec<u8>)>>>,
+    /// Latest local camera preview as RGBA, tagged with the device index it came from.
+    local_camera: Arc<Mutex<Option<(u32, u32, u32, Vec<u8>)>>>,
     local_screen: Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>,
     camera_index: Arc<AtomicU32>,
     camera_preview: Arc<AtomicBool>,
@@ -357,8 +357,14 @@ impl Media {
     pub fn take_video(&self) -> Vec<VideoFrame> {
         let mut frames = Vec::new();
         let chosen = self.camera_index.load(Ordering::Relaxed);
-        if let Some(jpeg) = current_camera_frame(self.local_camera.lock().expect("camera").take(), chosen) {
-            frames.push(VideoFrame { sender: None, kind: MediaKind::Camera, jpeg, rgba: None, layer: LayerId::Full });
+        if let Some((width, height, rgba)) = current_camera_frame(self.local_camera.lock().expect("camera").take(), chosen) {
+            frames.push(VideoFrame {
+                sender: None,
+                kind: MediaKind::Camera,
+                jpeg: Vec::new(),
+                rgba: Some((width, height, rgba)),
+                layer: LayerId::Full,
+            });
         }
         if let Some((width, height, rgba)) = self.local_screen.lock().expect("screen").take() {
             frames.push(VideoFrame {
@@ -860,7 +866,7 @@ fn camera_loop(
     flags: Arc<AtomicU32>,
     in_place: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
-    local: Arc<Mutex<Option<(u32, Vec<u8>)>>>,
+    local: Arc<Mutex<Option<(u32, u32, u32, Vec<u8>)>>>,
     errors: Arc<Mutex<Vec<String>>>,
     camera_index: Arc<AtomicU32>,
     camera_preview: Arc<AtomicBool>,
@@ -907,7 +913,7 @@ fn camera_loop(
         }
         let Some(device) = camera.as_mut() else { continue };
         match capture_camera(device) {
-            Ok((jpeg, width, height, i420)) => {
+            Ok((preview_w, preview_h, preview_rgba, width, height, i420)) => {
                 if reported {
                     device_recovered(&errors, "camera");
                     reported = false;
@@ -915,7 +921,7 @@ fn camera_loop(
                 if send && width >= 2 && height >= 2 && !i420.is_empty() {
                     pictures.store(rtc::RawPicture { width, height, i420, key: false });
                 }
-                *local.lock().expect("camera") = Some((choice.device_index(), jpeg));
+                *local.lock().expect("camera") = Some((choice.device_index(), preview_w, preview_h, preview_rgba));
             }
             // Reported once per failure run; a failing camera fails every frame, about 30 times a second.
             Err(err) if !reported => {
@@ -1067,16 +1073,37 @@ pub fn decode_camera_frame(frame: &nokhwa::Buffer) -> Result<(u32, u32, Vec<u8>)
     Ok((image.width(), image.height(), image.into_raw()))
 }
 
+/// Shrink a camera RGBA frame for the local preview tile. Not a wire codec — outbound video is I420 → H.264.
+pub fn camera_preview_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "frame is too large".to_string())?;
+    if rgba.len() != expected {
+        return Err("rgba size does not match the frame".into());
+    }
+    let (preview, out_w, out_h) = encode::fit_rgba(rgba, width, height, 640);
+    Ok((out_w, out_h, preview))
+}
+
+/// True when a Constrained Baseline hardware H.264 encoder is visible. OpenH264 is always the fallback.
+pub fn hardware_encoder_available() -> bool {
+    !encode::hardware_probe().is_empty()
+}
+
 /// The local preview slot holds the device index with each frame, so a frame captured just before the user
 /// picked another camera is never shown as the new camera.
-pub fn current_camera_frame(slot: Option<(u32, Vec<u8>)>, chosen_device: u32) -> Option<Vec<u8>> {
+pub fn current_camera_frame(
+    slot: Option<(u32, u32, u32, Vec<u8>)>,
+    chosen_device: u32,
+) -> Option<(u32, u32, Vec<u8>)> {
     match slot {
-        Some((device, jpeg)) if device == chosen_device => Some(jpeg),
+        Some((device, width, height, rgba)) if device == chosen_device => Some((width, height, rgba)),
         _ => None,
     }
 }
 
-fn capture_camera(camera: &mut nokhwa::Camera) -> Result<(Vec<u8>, u32, u32, Vec<u8>), String> {
+fn capture_camera(camera: &mut nokhwa::Camera) -> Result<(u32, u32, Vec<u8>, u32, u32, Vec<u8>), String> {
     let frame = camera.frame().map_err(|err| err.to_string())?;
     let (width, height, rgb) = decode_camera_frame(&frame)?;
     let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
@@ -1089,9 +1116,9 @@ fn capture_camera(camera: &mut nokhwa::Camera) -> Result<(Vec<u8>, u32, u32, Vec
         (Vec::new(), 0, 0)
     };
     let started = Instant::now();
-    let jpeg = encode_jpeg_rgba(width, height, &rgba, 640)?;
-    crate::profiler::record_media("camera_capture", started.elapsed(), jpeg.len());
-    Ok((jpeg, out_w, out_h, i420))
+    let (preview_w, preview_h, preview) = camera_preview_rgba(width, height, &rgba)?;
+    crate::profiler::record_media("camera_capture", started.elapsed(), preview.len());
+    Ok((preview_w, preview_h, preview, out_w, out_h, i420))
 }
 
 /// What the capture thread should record. `Portal` opens the system ScreenCast dialog.

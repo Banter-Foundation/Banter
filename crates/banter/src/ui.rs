@@ -3311,11 +3311,15 @@ impl App {
             self.delivered.insert((sender, frame.kind), frame.layer);
         }
         let shot = if let Some((width, height, rgba)) = frame.rgba.as_ref() {
-            upload_rgba(imgui, *width, *height, rgba)
-        } else if frame.sender.is_none() && frame.kind == MediaKind::Camera && camera_preview_mirrored() {
-            mirrored_camera_shot(imgui, &frame.jpeg)
-        } else {
+            if frame.sender.is_none() && frame.kind == MediaKind::Camera && camera_preview_mirrored() {
+                mirrored_camera_rgba(imgui, *width, *height, rgba)
+            } else {
+                upload_rgba(imgui, *width, *height, rgba)
+            }
+        } else if !frame.jpeg.is_empty() {
             upload_jpeg(imgui, &frame.jpeg)
+        } else {
+            None
         };
         let Some(shot) = shot else { return };
         if frame.kind == MediaKind::Screen {
@@ -4897,7 +4901,9 @@ impl App {
             self.stream_resolution = resolution_from_key(&stream.resolution);
             self.stream_fps = fps_from_key(&stream.fps);
             self.stream = stream;
-            self.stream.hardware = false;
+            self.stream.hardware = media::hardware_encoder_available();
+        } else {
+            self.stream.hardware = media::hardware_encoder_available();
         }
         if let Some(dev) = load_json::<DevServerPrefs>(&self.data_dir.join("dev-server.json")) {
             self.dev_server = dev;
@@ -4921,7 +4927,8 @@ impl App {
     fn save_stream(&mut self) {
         self.stream.resolution = resolution_key(self.stream_resolution).to_string();
         self.stream.fps = fps_key(self.stream_fps).to_string();
-        self.stream.hardware = false;
+        // Capability flag for the UI — wire encode is always H.264 (hardware when present, else OpenH264).
+        self.stream.hardware = media::hardware_encoder_available();
         let _ = save_json(&self.data_dir.join("stream.json"), &self.stream);
     }
 
@@ -5435,10 +5442,9 @@ impl App {
     }
 }
 
-fn mirrored_camera_shot(imgui: &mut Context, jpeg: &[u8]) -> Option<Shot> {
-    let image = image::load_from_memory(jpeg).ok()?.into_rgba8();
-    let mirrored = mirror_rgba(image.width(), image.height(), image.as_raw()).ok()?;
-    upload_rgba(imgui, image.width(), image.height(), &mirrored)
+fn mirrored_camera_rgba(imgui: &mut Context, width: u32, height: u32, rgba: &[u8]) -> Option<Shot> {
+    let mirrored = mirror_rgba(width, height, rgba).ok()?;
+    upload_rgba(imgui, width, height, &mirrored)
 }
 
 fn source_key(kind: CaptureKind, id: u32) -> (u8, u32) {

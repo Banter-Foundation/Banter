@@ -534,4 +534,13 @@ Agent: Worktree Banter-friend-dm on cursor/friend-auto-open-dm-fe6d. Tests first
 ## Summary
 
 Adding a friend (accept or mutual complete) auto-opens their DM on test/owl-fixes.
+## 2026-11-03 19:25:59 -06:00 — BA-38 proper video codec (not JPEG spray)
+
+Owl (via coordinator BA-38): Video/camera uses dumb JPEG instead of correct way. Replace with proper realtime video codec path (WebRTC / H.264 or VP8 as fits Banter). Branch from test/owl-fixes, merge into test/owl-fixes only. Worktree under Project Banter/worktrees/. Coordinate with camera/screen agents. Never E:.
+
+Agent: Wire path was already WebRTC H.264; leftover JPEG spray was local camera preview re-encode plus stale docs/UI. Wrote video_codec tests first, switched camera preview to RGBA like screen, probe-driven stream.hardware, updated docs. Branch cursor/video-codec-h264-db1f → merge test/owl-fixes. Left peer subscribe (BA-36/37) alone.
+
+## Summary
+
+Camera preview is RGBA; outbound video stays I420→H.264 over WebRTC; docs no longer claim software JPEG spray.
 

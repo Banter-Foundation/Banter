@@ -24,8 +24,8 @@ pub use api::{Client, websocket_url};
 pub use icons::rasterize_lucide;
 pub use logic::*;
 pub use media::{
-    current_camera_frame, decode_camera_frame, pick_preferred_camera_mode, preferred_camera_height,
-    preferred_camera_width, CameraModeChoice,
+    camera_preview_rgba, current_camera_frame, decode_camera_frame, hardware_encoder_available,
+    pick_preferred_camera_mode, preferred_camera_height, preferred_camera_width, CameraModeChoice,
 };
 pub use session::{load_token, save_token};
 pub use settings::*;

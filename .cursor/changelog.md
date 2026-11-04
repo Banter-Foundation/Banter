@@ -199,6 +199,15 @@ Voice-channel SFU dropped every screen (and camera) packet because `bind_declare
 ## 2026-11-03 19:24:57 -06:00 [Winter] — Discord-style one-on-one call stage
 
 Starting or accepting a DM call now replaces that conversation's chat stage with a Discord-like call view. Ringing shows a large peer avatar, status text, and Accept/Decline; an active call shows two participant tiles and the shared call control bar. Theme helpers and tests cover when the stage opens and the ringing layout. Stage disconnect ends a call as well as leaving voice. Never touched E:.
+## 2026-11-03 19:25:59 -06:00 [Winter] — Replace camera JPEG spray with H.264 path clarity
+
+Camera local preview no longer JPEG-encodes every frame. Capture still feeds I420 into the existing WebRTC H.264 encode path (OpenH264 or hardware). Docs and stream.hardware now match that stack instead of "software JPEG".
+
+- `media.rs`: RGBA camera preview helpers; wire path unchanged (PictureSlot → OpenH264/H.264)
+- `ui.rs`: mirrored local camera from RGBA; hardware flag from probe
+- Tests first: `crates/banter/tests/video_codec.rs`
+- Docs: streaming, architecture, feature-status, design, memory
+- Never touched E:. Branch merges into test/owl-fixes only.
 
 
 ## 2026-11-03 19:26:23 -06:00 [Winter] — Auto-open DM when adding a friend

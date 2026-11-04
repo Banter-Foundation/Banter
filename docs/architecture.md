@@ -22,9 +22,9 @@ Banter/
 | `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |
 | `settings.rs` | User Settings rules and `SettingsState` (layout, mic test, keybinds) — kept drawable-free for unit tests |
 | `api.rs` | HTTP client (`ureq`) for `/v1/*` |
-| `realtime.rs` | WebSocket client for presence, chat events, and binary media frames |
+| `realtime.rs` | WebSocket client for presence, chat events, and WebRTC signaling |
 | `session.rs` | Load/save `client-session.json` |
-| `media.rs` (+ `media/loopback.rs`) | Mic/speakers (cpal), camera (nokhwa), screen share (xcap), stream encode (software JPEG), live quality cutover |
+| `media.rs` (+ `media/encode.rs`, `rtc.rs`, …) | Mic/speakers (cpal), camera (nokhwa), screen share (xcap), I420→H.264 encode, WebRTC publish/subscribe |
 | `logic.rs` | Pure helpers (key held, Dev Server prefs / URL normalize, etc.) |
 | `icons.rs` | Lucide SVG → texture |
 | `session` / prefs | Voice, stream, and `dev-server.json` live under the data dir, not in git |
@@ -43,7 +43,7 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 | `store.rs` | SQLite persistence (`schema.sql`) |
 | `live.rs` | In-memory presence, voice membership, calls, WebSocket fan-out |
 | `model.rs` | Shared types (accounts, channels, messages, voice flags, …) |
-| `codec.rs` | Binary media frame encode/decode |
+| `codec.rs` | Shared Opus/H.264 SDP contract (profile, RIDs, STUN/TURN helpers) |
 | `error.rs` | `BanterError` → HTTP responses |
 
 ### Persistence vs memory
@@ -68,8 +68,8 @@ Contract tests live in `crates/banter-server/tests/foundation.rs`.
 
 - Joining a voice channel (or starting a DM call) registers membership on the server and opens media paths on the client.
 - **Mute / deafen / push-to-talk** are client flags also pushed to the server; PTT defaults to **V** (ignored while a text field is focused) plus a Talk button. F1–F12 are available as keybinds.
-- **Camera:** local preview is mirrored; outbound frames are not. Open prefers ~`1280x720` (or nearest available), FPS near 30, MJPEG on ties — not the device’s absolute highest mode. MJPEG cameras are decoded for preview/send.
-- **Screen share:** choose Screens or Applications, set resolution and FPS independently (default **720p / 30**), then **Go Live**. Nothing is sent until then. Encoder today is **software JPEG**; hardware H.264 is not implemented and the UI says so when unavailable.
+- **Camera:** local preview is mirrored RGBA; outbound is I420 → H.264 over WebRTC (not JPEG spray). Open prefers ~`1280x720` (or nearest available), FPS near 30, device MJPEG on ties — not the device’s absolute highest mode. Device MJPEG is only the webcam capture format.
+- **Screen share:** choose Screens or Applications, set resolution and FPS independently (default **720p / 30**), then **Go Live**. Nothing is sent until then. Encoder is **H.264 Constrained Baseline** (hardware when probed, else OpenH264).
 - Mid-stream changes (source, size, FPS, bitrate) **pre-warm** on a side path and cut over on a frame boundary after an encoded keyframe; viewers resize without tearing the stream identity. Stream audio can mix mic, speaker loopback, and (on Windows) per-app sources with volumes.
 - Voice & stream prefs restore from `voice.json` / `stream.json`. Developer Local/Remote restores from `dev-server.json`.
 - Text chat **inside** a voice channel is deferred; the server rejects that path until Owl says otherwise.
