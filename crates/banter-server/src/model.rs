@@ -68,6 +68,7 @@ pub struct Category {
 pub enum ChannelKind {
     Text,
     Voice,
+    Board,
 }
 
 impl ChannelKind {
@@ -75,6 +76,7 @@ impl ChannelKind {
         match self {
             Self::Text => "text",
             Self::Voice => "voice",
+            Self::Board => "board",
         }
     }
 
@@ -82,6 +84,7 @@ impl ChannelKind {
         match value {
             "text" => Ok(Self::Text),
             "voice" => Ok(Self::Voice),
+            "board" => Ok(Self::Board),
             _ => Err(BanterError::InvalidName),
         }
     }
@@ -548,7 +551,7 @@ impl MediaPlace {
 }
 
 /// Client messages on the authenticated websocket. Media itself is UDP, not these frames.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ClientSignal {
     Activity,
@@ -571,6 +574,10 @@ pub enum ClientSignal {
         publisher: i64,
         track: MediaKind,
         max_layer: LayerId,
+    },
+    BoardOp {
+        channel_id: i64,
+        op: BoardOp,
     },
 }
 
@@ -596,7 +603,7 @@ pub struct VoiceMember {
 }
 
 /// Realtime events pushed over the websocket. Media is UDP, not a binary frame.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ServerEvent {
     Presence {
@@ -662,4 +669,135 @@ pub enum ServerEvent {
         layers: Vec<LayerId>,
         subscribers: u32,
     },
+    BoardChanged {
+        channel_id: i64,
+        revision: i64,
+        ops: Vec<BoardOp>,
+        from: i64,
+    },
+}
+
+pub const MAX_BOARD_ASSET_BYTES: usize = 10 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BoardElementKind {
+    Rect,
+    Ellipse,
+    Diamond,
+    Triangle,
+    Line,
+    Arrow,
+    Freehand,
+    Text,
+    Sticky,
+    Image,
+    FileCard,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BoardStrokeStyle {
+    #[default]
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+fn default_stroke_width() -> f64 {
+    2.0
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BoardElement {
+    pub id: String,
+    pub kind: BoardElementKind,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    #[serde(default)]
+    pub points: Vec<[f64; 2]>,
+    pub stroke: String,
+    pub fill: String,
+    #[serde(default = "default_stroke_width")]
+    pub stroke_width: f64,
+    #[serde(default)]
+    pub stroke_style: BoardStrokeStyle,
+    #[serde(default)]
+    pub rotation: f64,
+    pub z: i64,
+    #[serde(default)]
+    pub locked: bool,
+    #[serde(default)]
+    pub group_id: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub asset_id: Option<i64>,
+    #[serde(default)]
+    pub filename: Option<String>,
+    pub updated_by: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BoardScene {
+    pub revision: i64,
+    pub elements: Vec<BoardElement>,
+}
+
+impl BoardScene {
+    pub fn empty() -> Self {
+        Self {
+            revision: 0,
+            elements: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BoardOp {
+    Upsert {
+        base_revision: i64,
+        elements: Vec<BoardElement>,
+    },
+    Delete {
+        base_revision: i64,
+        ids: Vec<String>,
+    },
+    Reorder {
+        base_revision: i64,
+        ids: Vec<String>,
+    },
+    Group {
+        base_revision: i64,
+        ids: Vec<String>,
+        group_id: String,
+    },
+    Ungroup {
+        base_revision: i64,
+        group_ids: Vec<String>,
+    },
+}
+
+impl BoardOp {
+    pub fn base_revision(&self) -> i64 {
+        match self {
+            Self::Upsert { base_revision, .. }
+            | Self::Delete { base_revision, .. }
+            | Self::Reorder { base_revision, .. }
+            | Self::Group { base_revision, .. }
+            | Self::Ungroup { base_revision, .. } => *base_revision,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoardAsset {
+    pub id: i64,
+    pub channel_id: i64,
+    pub filename: String,
+    pub byte_size: i64,
+    pub content_type: String,
 }

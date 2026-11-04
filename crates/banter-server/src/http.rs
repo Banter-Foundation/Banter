@@ -42,7 +42,7 @@ impl FromRequestParts<HttpState> for Auth {
         let token = header_value
             .strip_prefix("Bearer ")
             .ok_or(BanterError::InvalidCredentials)?;
-        Ok(Auth(state.store.session_account(token)?))
+        Ok(Auth(state.store.session_account(token).await?))
     }
 }
 
@@ -53,7 +53,8 @@ impl IntoResponse for BanterError {
             BanterError::UsernameTaken
             | BanterError::AlreadyFriends
             | BanterError::RequestExists
-            | BanterError::AlreadyMember => StatusCode::CONFLICT,
+            | BanterError::AlreadyMember
+            | BanterError::BoardConflict => StatusCode::CONFLICT,
             BanterError::NotFound | BanterError::InvalidInvite => StatusCode::NOT_FOUND,
             BanterError::NotMember
             | BanterError::NotOwner
@@ -68,18 +69,18 @@ impl IntoResponse for BanterError {
     }
 }
 
-pub fn serve(addr: &str, data_dir: &std::path::Path) -> Result<(), BanterError> {
-    let store = Arc::new(Store::open(data_dir)?);
-    let live = Arc::new(Live::new());
-    let state = HttpState {
-        store: Arc::clone(&store),
-        live: Arc::clone(&live),
-    };
+pub fn serve(addr: &str, data_dir: &std::path::Path, database_url: &str) -> Result<(), BanterError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|err| BanterError::Bind(err.to_string()))?;
     runtime.block_on(async move {
+        let store = Arc::new(Store::open(data_dir, database_url).await?);
+        let live = Arc::new(Live::new());
+        let state = HttpState {
+            store: Arc::clone(&store),
+            live: Arc::clone(&live),
+        };
         let app = router(state.clone()).layer(RequestBodyLimitLayer::new(20 * 1024 * 1024));
         let listener = tokio::net::TcpListener::bind(addr)
             .await
@@ -90,7 +91,7 @@ pub fn serve(addr: &str, data_dir: &std::path::Path) -> Result<(), BanterError> 
             loop {
                 tokio::time::sleep(Duration::from_secs(15)).await;
                 for (user_id, presence) in idle_live.refresh(now_ms()) {
-                    let audience = idle_store.related_user_ids(user_id).unwrap_or_default();
+                    let audience = idle_store.related_user_ids(user_id).await.unwrap_or_default();
                     idle_live.send_event(
                         &audience,
                         &ServerEvent::Presence {
@@ -130,6 +131,10 @@ fn router(state: HttpState) -> Router {
         .route("/v1/servers/{id}/channels", post(create_channel))
         .route("/v1/servers/{id}/layout", get(layout))
         .route("/v1/channels/{id}/messages", get(channel_messages))
+        .route("/v1/channels/{id}/board", get(get_board))
+        .route("/v1/channels/{id}/board/ops", post(apply_board_ops))
+        .route("/v1/channels/{id}/board/assets", post(upload_board_asset))
+        .route("/v1/board-assets/{id}", get(board_asset))
         .route("/v1/dms", get(list_dms).post(open_dm))
         .route("/v1/dms/{id}/messages", get(dm_messages))
         .route("/v1/dms/{id}/call", post(start_call))
@@ -160,8 +165,8 @@ struct RegisterBody {
 }
 
 async fn register(State(state): State<HttpState>, Json(body): Json<RegisterBody>) -> Result<Json<Session>, BanterError> {
-    let account = state.store.register(&body.username, &body.display_name, &body.password)?;
-    let session = state.store.login(&account.username, &body.password)?;
+    let account = state.store.register(&body.username, &body.display_name, &body.password).await?;
+    let session = state.store.login(&account.username, &body.password).await?;
     Ok(Json(session))
 }
 
@@ -172,12 +177,12 @@ struct LoginBody {
 }
 
 async fn login(State(state): State<HttpState>, Json(body): Json<LoginBody>) -> Result<Json<Session>, BanterError> {
-    Ok(Json(state.store.login(&body.username, &body.password)?))
+    Ok(Json(state.store.login(&body.username, &body.password).await?))
 }
 
 async fn logout(State(state): State<HttpState>, headers: HeaderMap) -> Result<StatusCode, BanterError> {
     if let Some(token) = bearer(&headers) {
-        state.store.logout(token)?;
+        state.store.logout(token).await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -196,7 +201,7 @@ async fn patch_me(
     Auth(account): Auth,
     Json(body): Json<DisplayNameBody>,
 ) -> Result<Json<Account>, BanterError> {
-    Ok(Json(state.store.set_display_name(account.id, &body.display_name)?))
+    Ok(Json(state.store.set_display_name(account.id, &body.display_name).await?))
 }
 
 async fn upload_avatar(
@@ -204,17 +209,17 @@ async fn upload_avatar(
     Auth(account): Auth,
     body: Bytes,
 ) -> Result<StatusCode, BanterError> {
-    state.store.set_avatar(account.id, &body)?;
+    state.store.set_avatar(account.id, &body).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_avatar(State(state): State<HttpState>, Auth(account): Auth) -> Result<StatusCode, BanterError> {
-    state.store.clear_avatar(account.id)?;
+    state.store.clear_avatar(account.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn avatar(State(state): State<HttpState>, Path(id): Path<i64>) -> Result<Response, BanterError> {
-    let bytes = state.store.avatar_bytes(id)?;
+    let bytes = state.store.avatar_bytes(id).await?;
     Ok(([(header::CONTENT_TYPE, "image/png")], bytes).into_response())
 }
 
@@ -228,14 +233,14 @@ async fn create_request(
     Auth(account): Auth,
     Json(body): Json<UsernameBody>,
 ) -> Result<Json<FriendRequest>, BanterError> {
-    let request = state.store.send_friend_request(account.id, &body.username)?;
+    let request = state.store.send_friend_request(account.id, &body.username).await?;
     state.live.send_event(
         &[request.to_id, request.from_id],
         &ServerEvent::FriendRequest {
             request: request.clone(),
         },
     );
-    if state.store.friends(account.id)?.iter().any(|friend| friend.id == request.to_id) {
+    if state.store.friends(account.id).await?.iter().any(|friend| friend.id == request.to_id) {
         state.live.send_event(&[request.from_id, request.to_id], &ServerEvent::FriendsChanged);
     }
     Ok(Json(request))
@@ -246,8 +251,8 @@ async fn list_requests(
     Auth(account): Auth,
 ) -> Result<Json<serde_json::Value>, BanterError> {
     Ok(Json(json!({
-        "incoming": state.store.incoming_requests(account.id)?,
-        "outgoing": state.store.outgoing_requests(account.id)?,
+        "incoming": state.store.incoming_requests(account.id).await?,
+        "outgoing": state.store.outgoing_requests(account.id).await?,
     })))
 }
 
@@ -256,8 +261,8 @@ async fn accept_request(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, BanterError> {
-    let incoming = state.store.incoming_requests(account.id)?;
-    state.store.accept_friend_request(account.id, id)?;
+    let incoming = state.store.incoming_requests(account.id).await?;
+    state.store.accept_friend_request(account.id, id).await?;
     let mut ids = vec![account.id];
     if let Some(request) = incoming.iter().find(|request| request.id == id) {
         ids.push(request.from_id);
@@ -271,19 +276,19 @@ async fn decline_request(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, BanterError> {
-    state.store.decline_friend_request(account.id, id)?;
+    state.store.decline_friend_request(account.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn list_friends(State(state): State<HttpState>, Auth(account): Auth) -> Result<Json<Vec<Friend>>, BanterError> {
-    Ok(Json(state.store.friends(account.id)?))
+    Ok(Json(state.store.friends(account.id).await?))
 }
 
 async fn list_presence(
     State(state): State<HttpState>,
     Auth(account): Auth,
 ) -> Result<Json<Vec<serde_json::Value>>, BanterError> {
-    let ids = state.store.related_user_ids(account.id)?;
+    let ids = state.store.related_user_ids(account.id).await?;
     let presence = ids
         .into_iter()
         .map(|user_id| {
@@ -306,14 +311,14 @@ async fn create_server(
     Auth(account): Auth,
     Json(body): Json<NameBody>,
 ) -> Result<Json<ServerHome>, BanterError> {
-    Ok(Json(state.store.create_server(account.id, &body.name)?))
+    Ok(Json(state.store.create_server(account.id, &body.name).await?))
 }
 
 async fn list_servers(
     State(state): State<HttpState>,
     Auth(account): Auth,
 ) -> Result<Json<Vec<ServerSummary>>, BanterError> {
-    Ok(Json(state.store.servers(account.id)?))
+    Ok(Json(state.store.servers(account.id).await?))
 }
 
 async fn create_invite(
@@ -321,7 +326,7 @@ async fn create_invite(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, BanterError> {
-    let code = state.store.create_invite(account.id, id)?;
+    let code = state.store.create_invite(account.id, id).await?;
     Ok(Json(json!({"code": code})))
 }
 
@@ -330,7 +335,7 @@ async fn join_invite(
     Auth(account): Auth,
     Path(code): Path<String>,
 ) -> Result<Json<ServerHome>, BanterError> {
-    Ok(Json(state.store.join_invite(account.id, &code)?))
+    Ok(Json(state.store.join_invite(account.id, &code).await?))
 }
 
 async fn members(
@@ -338,7 +343,7 @@ async fn members(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<serde_json::Value>>, BanterError> {
-    let members = state.store.members(account.id, id)?;
+    let members = state.store.members(account.id, id).await?;
     let enriched = members
         .into_iter()
         .map(|member| {
@@ -370,7 +375,7 @@ async fn set_nickname(
 ) -> Result<StatusCode, BanterError> {
     state
         .store
-        .set_nickname(account.id, id, body.nickname.as_deref())?;
+        .set_nickname(account.id, id, body.nickname.as_deref()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -380,7 +385,7 @@ async fn create_category(
     Path(id): Path<i64>,
     Json(body): Json<NameBody>,
 ) -> Result<Json<Category>, BanterError> {
-    Ok(Json(state.store.create_category(account.id, id, &body.name)?))
+    Ok(Json(state.store.create_category(account.id, id, &body.name).await?))
 }
 
 #[derive(Deserialize)]
@@ -396,7 +401,7 @@ async fn create_channel(
     Path(id): Path<i64>,
     Json(body): Json<ChannelBody>,
 ) -> Result<Json<Channel>, BanterError> {
-    Ok(Json(state.store.create_channel(account.id, id, body.category_id, &body.name, body.kind)?))
+    Ok(Json(state.store.create_channel(account.id, id, body.category_id, &body.name, body.kind).await?))
 }
 
 async fn layout(
@@ -404,13 +409,104 @@ async fn layout(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<CategoryLayout>>, BanterError> {
-    Ok(Json(state.store.layout(account.id, id)?))
+    Ok(Json(state.store.layout(account.id, id).await?))
 }
 
 #[derive(Deserialize)]
 struct ListQuery {
     limit: Option<u32>,
     q: Option<String>,
+}
+
+async fn get_board(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+) -> Result<Json<BoardScene>, BanterError> {
+    Ok(Json(state.store.board_scene(account.id, id).await?))
+}
+
+#[derive(Deserialize)]
+struct BoardOpsBody {
+    ops: Vec<BoardOp>,
+}
+
+async fn apply_board_ops(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+    Json(body): Json<BoardOpsBody>,
+) -> Result<Json<BoardScene>, BanterError> {
+    if body.ops.is_empty() {
+        return Ok(Json(state.store.board_scene(account.id, id).await?));
+    }
+    let mut scene = None;
+    let mut applied = Vec::new();
+    for op in body.ops {
+        let next = state.store.apply_board_op(account.id, id, op.clone()).await?;
+        applied.push(op);
+        scene = Some(next);
+    }
+    let scene = scene.unwrap();
+    broadcast_board(&state, id, account.id, scene.revision, applied).await;
+    Ok(Json(scene))
+}
+
+#[derive(Deserialize)]
+struct BoardAssetBody {
+    filename: String,
+    content_type: Option<String>,
+    data_base64: String,
+}
+
+async fn upload_board_asset(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+    Json(body): Json<BoardAssetBody>,
+) -> Result<Json<BoardAsset>, BanterError> {
+    let bytes = STANDARD
+        .decode(body.data_base64.trim())
+        .map_err(|_| BanterError::FileTooLarge)?;
+    let content_type = body.content_type.unwrap_or_else(|| "application/octet-stream".into());
+    Ok(Json(state.store.upload_board_asset(
+        account.id,
+        id,
+        &body.filename,
+        &content_type,
+        &bytes,
+    ).await?))
+}
+
+async fn board_asset(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+) -> Result<Response, BanterError> {
+    let (asset, bytes) = state.store.read_board_asset(account.id, id).await?;
+    let filename = asset.filename.replace('"', "");
+    Ok((
+        [
+            (header::CONTENT_TYPE, asset.content_type),
+            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{filename}\"")),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+async fn broadcast_board(state: &HttpState, channel_id: i64, from: i64, revision: i64, ops: Vec<BoardOp>) {
+    if let Ok(ids) = state.store.channel_member_ids(channel_id).await {
+        state.live.send_event(
+            &ids,
+            &ServerEvent::BoardChanged {
+                channel_id,
+                revision,
+                ops,
+                from,
+            },
+        );
+    }
 }
 
 async fn channel_messages(
@@ -439,8 +535,8 @@ async fn messages_for(
 ) -> Result<Json<Vec<Message>>, BanterError> {
     let limit = query.limit.unwrap_or(100);
     let messages = match query.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
-        Some(q) => state.store.search_messages(user_id, target, q)?,
-        None => state.store.messages(user_id, target, limit)?,
+        Some(q) => state.store.search_messages(user_id, target, q).await?,
+        None => state.store.messages(user_id, target, limit).await?,
     };
     Ok(Json(messages))
 }
@@ -459,15 +555,15 @@ async fn open_dm(
     let peer = if let Some(user_id) = body.user_id {
         user_id
     } else if let Some(username) = body.username {
-        state.store.user_by_username(&username)?.id
+        state.store.user_by_username(&username).await?.id
     } else {
         return Err(BanterError::NotFound);
     };
-    Ok(Json(state.store.open_dm(account.id, peer)?))
+    Ok(Json(state.store.open_dm(account.id, peer).await?))
 }
 
 async fn list_dms(State(state): State<HttpState>, Auth(account): Auth) -> Result<Json<Vec<DirectChat>>, BanterError> {
-    Ok(Json(state.store.direct_messages(account.id)?))
+    Ok(Json(state.store.direct_messages(account.id).await?))
 }
 
 #[derive(Deserialize)]
@@ -500,8 +596,8 @@ async fn send_message(
     let borrowed: Vec<(&str, &[u8])> = files.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice())).collect();
     let message = state
         .store
-        .send_message(account.id, body.target, &body.body, body.reply_to, &borrowed)?;
-    let ids = state.store.target_user_ids(body.target)?;
+        .send_message(account.id, body.target, &body.body, body.reply_to, &borrowed).await?;
+    let ids = state.store.target_user_ids(body.target).await?;
     state.live.send_event(
         &ids,
         &ServerEvent::MessageCreated {
@@ -523,9 +619,9 @@ async fn edit_message(
     Path(id): Path<i64>,
     Json(body): Json<EditBody>,
 ) -> Result<Json<Message>, BanterError> {
-    let message = state.store.edit_message(account.id, id, &body.body)?;
-    let target = state.store.message_target(id)?;
-    let ids = state.store.target_user_ids(target)?;
+    let message = state.store.edit_message(account.id, id, &body.body).await?;
+    let target = state.store.message_target(id).await?;
+    let ids = state.store.target_user_ids(target).await?;
     state.live.send_event(
         &ids,
         &ServerEvent::MessageEdited {
@@ -541,9 +637,9 @@ async fn delete_message(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, BanterError> {
-    let target = state.store.message_target(id)?;
-    let ids = state.store.target_user_ids(target)?;
-    state.store.delete_message(account.id, id)?;
+    let target = state.store.message_target(id).await?;
+    let ids = state.store.target_user_ids(target).await?;
+    state.store.delete_message(account.id, id).await?;
     state.live.send_event(&ids, &ServerEvent::MessageDeleted { target, message_id: id });
     Ok(StatusCode::NO_CONTENT)
 }
@@ -553,7 +649,7 @@ async fn attachment(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<Response, BanterError> {
-    let (filename, bytes) = state.store.read_attachment(account.id, id)?;
+    let (filename, bytes) = state.store.read_attachment(account.id, id).await?;
     let filename = filename.replace('"', "");
     Ok((
         [
@@ -566,7 +662,7 @@ async fn attachment(
 }
 
 async fn mentions(State(state): State<HttpState>, Auth(account): Auth) -> Result<Json<Vec<Mention>>, BanterError> {
-    Ok(Json(state.store.unread_mentions(account.id)?))
+    Ok(Json(state.store.unread_mentions(account.id).await?))
 }
 
 async fn read_mention(
@@ -574,7 +670,7 @@ async fn read_mention(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, BanterError> {
-    state.store.mark_mention_read(account.id, id)?;
+    state.store.mark_mention_read(account.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -588,7 +684,7 @@ async fn join_voice(
     Auth(account): Auth,
     Json(body): Json<VoiceJoinBody>,
 ) -> Result<Json<Vec<VoiceMember>>, BanterError> {
-    state.live.join_server_voice(&state.store, account.id, body.channel_id)?;
+    state.live.join_server_voice(&state.store, account.id, body.channel_id).await?;
     Ok(Json(state.live.voice_channel_members(body.channel_id)))
 }
 
@@ -611,7 +707,7 @@ async fn start_call(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<Json<CallSnapshot>, BanterError> {
-    Ok(Json(state.live.start_dm_call(&state.store, account.id, id)?))
+    Ok(Json(state.live.start_dm_call(&state.store, account.id, id).await?))
 }
 
 async fn accept_call(
@@ -619,7 +715,7 @@ async fn accept_call(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<Json<CallSnapshot>, BanterError> {
-    Ok(Json(state.live.accept_dm_call(&state.store, account.id, id)?))
+    Ok(Json(state.live.accept_dm_call(&state.store, account.id, id).await?))
 }
 
 async fn decline_call(
@@ -650,7 +746,7 @@ async fn ws(
     Query(query): Query<TokenQuery>,
     upgrade: WebSocketUpgrade,
 ) -> Result<Response, BanterError> {
-    let account = state.store.session_account(&query.token)?;
+    let account = state.store.session_account(&query.token).await?;
     Ok(upgrade.on_upgrade(move |socket| handle_socket(state, account.id, socket)))
 }
 
@@ -658,7 +754,7 @@ async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let socket_id = state.live.register_socket(user_id, tx);
     state.live.connect(user_id, now_ms());
-    if let Ok(audience) = state.store.related_user_ids(user_id) {
+    if let Ok(audience) = state.store.related_user_ids(user_id).await {
         state.live.send_event(
             &audience,
             &ServerEvent::Presence {
@@ -683,14 +779,17 @@ async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
             WsMessage::Text(text) => {
                 if let Ok(signal) = serde_json::from_str::<ClientSignal>(&text) {
                     if matches!(signal, ClientSignal::Activity) {
-                        note_ws_activity(&state, user_id);
+                        note_ws_activity(&state, user_id).await;
+                    }
+                    if let ClientSignal::BoardOp { channel_id, op } = &signal {
+                        apply_board_signal(&state, user_id, *channel_id, op.clone()).await;
                     }
                     let signal_for_room = signal.clone();
                     if state.live.handle_signal(user_id, signal).is_ok() {
                         apply_voice_signal(&state, user_id, signal_for_room);
                     }
                 } else if text.contains("activity") {
-                    note_ws_activity(&state, user_id);
+                    note_ws_activity(&state, user_id).await;
                 }
             }
             WsMessage::Binary(_) => {
@@ -703,7 +802,7 @@ async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
     writer.abort();
     state.live.unregister_socket(user_id, socket_id);
     state.live.disconnect(user_id);
-    if let Ok(audience) = state.store.related_user_ids(user_id) {
+    if let Ok(audience) = state.store.related_user_ids(user_id).await {
         state.live.send_event(
             &audience,
             &ServerEvent::Presence {
@@ -739,9 +838,18 @@ fn apply_voice_signal(state: &HttpState, user_id: i64, signal: ClientSignal) {
     }
 }
 
-fn note_ws_activity(state: &HttpState, user_id: i64) {
+async fn apply_board_signal(state: &HttpState, user_id: i64, channel_id: i64, op: BoardOp) {
+    match state.store.apply_board_op(user_id, channel_id, op.clone()).await {
+        Ok(scene) => {
+            broadcast_board(state, channel_id, user_id, scene.revision, vec![op]).await;
+        }
+        Err(_) => {}
+    }
+}
+
+async fn note_ws_activity(state: &HttpState, user_id: i64) {
     state.live.note_activity(user_id, now_ms());
-    if let Ok(audience) = state.store.related_user_ids(user_id) {
+    if let Ok(audience) = state.store.related_user_ids(user_id).await {
         state.live.send_event(
             &audience,
             &ServerEvent::Presence {

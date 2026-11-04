@@ -11,6 +11,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Friends list + friend requests | Working |
 | Create server, invite join, member list, server nickname | Working |
 | Text + voice channels in categories (owner creates) | Working |
+| Drawing board channels (shapes, stickies, images, files, realtime ops) | Working |
 | Send / reply / edit / delete / attach / search messages | Working |
 | Mentions + presence | Working |
 | Discord-like temporary skin (rail, sidebar, chat, members, modals) | Working — **not** final Banter branding |
@@ -20,7 +21,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Screen share Go Live + quality / source switching | Working (software JPEG; H.264 not available) |
 | 1:1 DMs + start a call | Working |
 | User Settings: My Account, Voice & Video, Developer (Local/Remote API, persisted) | Working |
-| Embedded + standalone server, SQLite data | Working |
+| Embedded + standalone server, PostgreSQL data | Working |
 | Containerized `banter-server` (`ghcr.io/snowedinowl/banter`) | Working |
 | Linux native client (XDG paths, PipeWire-ready capture) | Working; loopback/app audio still Windows-only |
 

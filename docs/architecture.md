@@ -5,7 +5,7 @@ Two crates in one Cargo workspace (`Cargo.toml` at the repo root).
 ```text
 Banter/
   crates/banter/           # desktop client
-  crates/banter-server/    # local API + SQLite + live state
+  crates/banter-server/    # local API + PostgreSQL + live state
   docs/
   Dockerfile               # server image only
   docker-compose.yml
@@ -40,7 +40,7 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 | `main.rs` | Resolve `listen_addr`, print data dir, `serve` |
 | `lib.rs` | `DEFAULT_ADDR`, `listen_addr`, `default_data_dir` / `resolve_data_dir`, re-exports |
 | `http.rs` | Axum router: auth, friends, servers, channels, messages, DMs/calls, voice join/leave/flags, `/v1/ws` |
-| `store.rs` | SQLite persistence (`schema.sql`) |
+| `store.rs` | PostgreSQL persistence (`schema.sql` via sqlx) |
 | `live.rs` | In-memory presence, voice membership, calls, WebSocket fan-out |
 | `model.rs` | Shared types (accounts, channels, messages, voice flags, …) |
 | `codec.rs` | Binary media frame encode/decode |
@@ -48,7 +48,7 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 
 ### Persistence vs memory
 
-- **Survives restart:** accounts, friend graph, servers, invites, nicknames, categories, channels, messages, attachments, avatars (`banter.db` + files).
+- **Survives restart:** accounts, friend graph, servers, invites, nicknames, categories, channels, messages, attachment metadata in PostgreSQL; avatars and file bytes under `BANTER_DATA`.
 - **Resets when the server process stops:** voice channel membership, 1:1 call state, presence, open WebSockets.
 
 ### HTTP surface (high level)

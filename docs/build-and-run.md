@@ -5,8 +5,9 @@ Prefer keeping the checkout and Cargo `target/` on `D:\Projects\Project Banter` 
 ## Prerequisites (Windows)
 
 1. **Rust stable** (project has been built with 1.99.x).
-2. **Visual Studio Build Tools** with a C/C++ toolchain. SQLite (bundled) and Dear ImGui need `cl.exe`. Open an **x64 Native Tools** / Developer PowerShell, or run `vcvars64.bat` before `cargo` — `cl.exe` is not on a plain PowerShell PATH.
-3. A display (GLFW opens a real window).
+2. **Visual Studio Build Tools** with a C/C++ toolchain. Dear ImGui needs `cl.exe`. Open an **x64 Native Tools** / Developer PowerShell, or run `vcvars64.bat` before `cargo` — `cl.exe` is not on a plain PowerShell PATH.
+3. **PostgreSQL** reachable at `BANTER_DATABASE_URL` (default `postgres://banter:banter@127.0.0.1:5432/banter`). For local work: `podman compose up -d postgres` (or Docker Compose).
+4. A display (GLFW opens a real window).
 
 ```powershell
 cd "D:\Projects\Project Banter"

@@ -43,6 +43,10 @@ pub enum BanterError {
     NotTextChannel,
     #[error("that channel is not a voice channel")]
     NotVoiceChannel,
+    #[error("that channel is not a drawing board")]
+    NotBoardChannel,
+    #[error("the board changed; reload and try again")]
+    BoardConflict,
     #[error("reply target is not in this conversation")]
     ReplyTargetMissing,
     #[error("direct messages are between friends")]
@@ -82,6 +86,8 @@ impl BanterError {
             Self::FileTooLarge => "file_too_large",
             Self::NotTextChannel => "not_text_channel",
             Self::NotVoiceChannel => "not_voice_channel",
+            Self::NotBoardChannel => "not_board_channel",
+            Self::BoardConflict => "board_conflict",
             Self::ReplyTargetMissing => "reply_target_missing",
             Self::NotFriend => "not_friend",
             Self::AlreadyMember => "already_member",

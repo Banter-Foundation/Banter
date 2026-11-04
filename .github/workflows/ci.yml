@@ -7,6 +7,22 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: banter
+          POSTGRES_PASSWORD: banter
+          POSTGRES_DB: banter
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U banter -d banter"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BANTER_DATABASE_URL: postgres://banter:banter@127.0.0.1:5432/banter
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -22,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: server
-        run: cargo test -p banter-server
-      - name: client
-        run: cargo test -p banter
+      - name: client unit
+        run: cargo test -p banter --lib
+      - name: server unit
+        run: cargo test -p banter-server --lib

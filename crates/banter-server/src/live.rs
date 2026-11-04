@@ -118,8 +118,8 @@ impl Live {
         }
     }
 
-    pub fn join_server_voice(&self, store: &Store, user_id: i64, channel_id: i64) -> Result<(), BanterError> {
-        let channel = store.channel_access(user_id, channel_id)?;
+    pub async fn join_server_voice(&self, store: &Store, user_id: i64, channel_id: i64) -> Result<(), BanterError> {
+        let channel = store.channel_access(user_id, channel_id).await?;
         if channel.kind != ChannelKind::Voice {
             return Err(BanterError::NotVoiceChannel);
         }
@@ -178,8 +178,8 @@ impl Live {
         members_of(&inner, channel_id)
     }
 
-    pub fn start_dm_call(&self, store: &Store, user_id: i64, dm_id: i64) -> Result<CallSnapshot, BanterError> {
-        let (_me, peer) = store.dm_participants(user_id, dm_id)?;
+    pub async fn start_dm_call(&self, store: &Store, user_id: i64, dm_id: i64) -> Result<CallSnapshot, BanterError> {
+        let (_me, peer) = store.dm_participants(user_id, dm_id).await?;
         let snapshot = {
             let mut inner = self.lock();
             if let Some(existing) = inner.calls.get(&dm_id).cloned() {
@@ -218,7 +218,7 @@ impl Live {
         Ok(snapshot)
     }
 
-    pub fn accept_dm_call(&self, _store: &Store, user_id: i64, dm_id: i64) -> Result<CallSnapshot, BanterError> {
+    pub async fn accept_dm_call(&self, _store: &Store, user_id: i64, dm_id: i64) -> Result<CallSnapshot, BanterError> {
         let snapshot = {
             let mut inner = self.lock();
             let Some(call) = inner.calls.get(&dm_id).cloned() else {
@@ -470,7 +470,7 @@ fn subscribers_of(inner: &LiveInner, sender: i64, place: MediaPlace, kind: Media
 
 fn prepare_signal(inner: &mut LiveInner, user_id: i64, signal: ClientSignal) -> Result<Vec<(Vec<i64>, ServerEvent)>, BanterError> {
     match signal {
-        ClientSignal::Activity => Ok(Vec::new()),
+        ClientSignal::Activity | ClientSignal::BoardOp { .. } => Ok(Vec::new()),
         ClientSignal::RtcOffer { place, sdp } => relay_p2p(inner, user_id, place, ServerEvent::RtcOffer { place, from: user_id, sdp }),
         ClientSignal::RtcAnswer { place, sdp } => relay_p2p(inner, user_id, place, ServerEvent::RtcAnswer { place, from: user_id, sdp }),
         ClientSignal::RtcIce {

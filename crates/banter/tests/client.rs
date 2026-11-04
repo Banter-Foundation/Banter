@@ -31,6 +31,33 @@ fn message(id: i64, body: &str, reply_to: Option<i64>) -> Message {
     }
 }
 
+
+fn test_db_url() -> String {
+    let base = std::env::var("BANTER_DATABASE_URL")
+        .unwrap_or_else(|_| banter_server::DEFAULT_DATABASE_URL.to_string());
+    let schema = format!(
+        "c{}{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let pool = sqlx::PgPool::connect(&base).await.expect("postgres");
+        sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS {schema}"))
+            .execute(&pool)
+            .await
+            .expect("schema");
+    });
+    let sep = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{sep}options=-csearch_path%3D{schema}")
+}
+
 #[test]
 fn session_token_round_trip() {
     let dir = std::env::temp_dir().join(format!("banter-client-session-{}", std::process::id()));
@@ -318,7 +345,8 @@ fn client_can_register_and_send_a_message() {
     let addr = format!("127.0.0.1:{port}");
     let serve_addr = addr.clone();
     let serve_dir = dir.clone();
-    let server = std::thread::spawn(move || banter_server::serve(&serve_addr, &serve_dir));
+    let db_url = test_db_url();
+    let server = std::thread::spawn(move || banter_server::serve(&serve_addr, &serve_dir, &db_url));
     let base = format!("http://{addr}");
     let mut ready = false;
     for _ in 0..50 {
@@ -419,7 +447,8 @@ fn second_client_receives_voice_and_a_live_quality_switch() {
     let addr = format!("127.0.0.1:{port}");
     let serve_addr = addr.clone();
     let serve_dir = dir.clone();
-    let server = std::thread::spawn(move || banter_server::serve(&serve_addr, &serve_dir));
+    let db_url = test_db_url();
+    let server = std::thread::spawn(move || banter_server::serve(&serve_addr, &serve_dir, &db_url));
     let base = format!("http://{addr}");
     for _ in 0..50 {
         if ureq::get(&format!("{base}/v1/health")).call().is_ok() {
