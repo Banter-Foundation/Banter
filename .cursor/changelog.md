@@ -259,3 +259,13 @@ Shipped pre-release Version-1-test-3 from main `0d08c40` after owl-fixes merge (
 - Release: https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-3
 - Assets: Banter-windows-version-1-test-3.zip, Banter-linux-version-1-test-3.zip, banter-server.exe, banter-server-linux
 - Local Owl try: release banter-server + banter on 127.0.0.1:3970
+
+## 2026-11-03 20:33:55 -06:00 [Winter] — Clean up canceled BA-50 channel type templates
+
+Removed canceled channel-type templates work from agent bc-31605c6f under D:\Projects\Project Banter. No commits had landed; branch tip matched main. Never touched Banter-ui-theme or E:.
+
+- Deleted local branch `cursor/channel-type-templates-adb6` (was 3522fdd; not on origin)
+- Switched primary checkout back to `main`
+- Discarded uncommitted edits in `crates/banter-server/src/{error,lib,model,store}.rs`
+- Deleted untracked `crates/banter-server/src/channel_types.rs`, `crates/banter-server/tests/channel_types.rs`, `crates/banter/tests/channel_types.rs`
+- No channel-type worktree under `worktrees/`; `Banter-ui-theme` kept

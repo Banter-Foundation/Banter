@@ -31,3 +31,5 @@
 - 2026-11-03 BA-41: Adding a friend auto-opens their DM. `open_dm_peer_after_friend_add` in `logic.rs`; UI calls it after accept and after a send that completes friendship. Pending-only send does not open. Branch `cursor/friend-auto-open-dm-fe6d` → merge into `test/owl-fixes` only. Worktree `D:\Projects\Project Banter\worktrees\Banter-friend-dm`.
 
 - 2026-11-03 20:03 America/Chicago: Pre-release Version-1-test-3 from main `0d08c40` (docs tip later `c8b7a60`). Image `ghcr.io/snowedinowl/banter:version-1-test-3`. Assets Win+Linux client zips + `banter-server.exe` + `banter-server-linux`. Merged owl-fixes branches/worktrees cleaned; keep `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Owl rule: clean temp after ship. Never E:.
+
+- 2026-11-03 20:33 America/Chicago: BA-50 channel type templates canceled. Cleaned agent bc-31605c6f leftover: deleted local `cursor/channel-type-templates-adb6`, discarded uncommitted channel_types WIP on primary checkout, returned to `main`. No channel-type worktree. Kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Never E:.
