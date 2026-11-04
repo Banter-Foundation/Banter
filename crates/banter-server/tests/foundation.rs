@@ -728,7 +728,6 @@ fn voice_channel_audio_forwards_after_pair_subscribe_without_prior_layer_note() 
         "audio RTP must not wait on an OnOpen SSRC→RID map"
     );
     assert_eq!(banter_server::inbound_rtp_layer(MediaKind::StreamAudio, None), Some(LayerId::Full));
-    assert_eq!(banter_server::inbound_rtp_layer(MediaKind::Camera, None), None);
     assert_eq!(
         banter_server::inbound_rtp_layer(MediaKind::Camera, Some("h")),
         Some(LayerId::Half)
@@ -737,6 +736,72 @@ fn voice_channel_audio_forwards_after_pair_subscribe_without_prior_layer_note() 
         banter_server::inbound_rtp_layer(MediaKind::Screen, Some("q")),
         Some(LayerId::Quarter)
     );
+}
+
+#[test]
+fn voice_channel_screen_forwards_without_onopen_rid_map() {
+    // webrtc bind_declared_ssrc fires OnOpen with rid=None for Banter's fixed
+    // screen SSRCs. The SFU used to drop every screen packet, so remotes never
+    // saw Go Live. Prefer RID, then SCREEN_SSRC_Q offsets, then Full.
+    let store = Store::open(&scratch()).unwrap();
+    let ada = store.register("screenada", "ScreenAda", "password1").unwrap();
+    let bob = store.register("screenbob", "ScreenBob", "password1").unwrap();
+    let home = store.create_server(ada.id, "ScreenFwd").unwrap();
+    let voice_id = home.categories[1].channels[0].id;
+    let code = store.create_invite(ada.id, home.server.id).unwrap();
+    store.join_invite(bob.id, &code).unwrap();
+
+    let live = Live::new();
+    live.join_server_voice(&store, ada.id, voice_id).unwrap();
+    live.join_server_voice(&store, bob.id, voice_id).unwrap();
+    live.set_flags(
+        ada.id,
+        VoiceFlags {
+            screen: true,
+            transmitting: true,
+            ..VoiceFlags::default()
+        },
+    );
+    live.subscribe_voice_pair(ada.id, bob.id);
+
+    let got = live.admit_rtp(voice_id, ada.id, MediaKind::Screen, LayerId::Full, 1200, true);
+    assert!(
+        got.contains(&bob.id),
+        "screen RTP on a voice channel must reach the other member after pair subscribe, got {got:?}"
+    );
+
+    assert_eq!(
+        banter_server::inbound_rtp_layer_for_packet(MediaKind::Screen, None, 0),
+        Some(LayerId::Full),
+        "screen must not wait on an OnOpen SSRC→RID map"
+    );
+    assert_eq!(
+        banter_server::inbound_rtp_layer_for_packet(MediaKind::Screen, Some(""), banter_server::SCREEN_SSRC_Q),
+        Some(LayerId::Quarter),
+        "empty RID still resolves from the Banter screen quarter SSRC"
+    );
+    assert_eq!(
+        banter_server::inbound_rtp_layer_for_packet(
+            MediaKind::Screen,
+            None,
+            banter_server::SCREEN_SSRC_Q + 1
+        ),
+        Some(LayerId::Half)
+    );
+    assert_eq!(
+        banter_server::inbound_rtp_layer_for_packet(
+            MediaKind::Screen,
+            None,
+            banter_server::SCREEN_SSRC_Q + 2
+        ),
+        Some(LayerId::Full)
+    );
+    assert_eq!(
+        banter_server::inbound_rtp_layer_for_packet(MediaKind::Screen, Some("h"), 0),
+        Some(LayerId::Half),
+        "a known RID still wins over SSRC guesses"
+    );
+    assert_eq!(banter_server::inbound_rtp_layer(MediaKind::Screen, None), Some(LayerId::Full));
 }
 
 #[test]

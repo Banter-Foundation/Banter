@@ -442,4 +442,16 @@ mod tests {
         assert_eq!(released[0].subscriber, 2);
         assert_eq!(table.egress(2), 80);
     }
+
+    #[test]
+    fn screen_forwards_after_pair_subscribe_without_prior_note_layer() {
+        // subscribe_voice_pair → refresh_dynacast marks Full as publishing so the
+        // first screen keyframe is not dropped waiting on note_layer.
+        let mut table = ForwardTable::new();
+        table.subscribe(2, 1, MediaKind::Screen, LayerId::Full);
+        let released = table.push(1, MediaKind::Screen, LayerId::Full, 1200, true);
+        assert_eq!(released.len(), 1, "screen Full must reach the subscriber after pair subscribe");
+        assert_eq!(released[0].subscriber, 2);
+        assert_eq!(table.egress(2), 1200);
+    }
 }

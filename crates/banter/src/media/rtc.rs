@@ -730,10 +730,7 @@ impl PeerConnectionEventHandler for Handler {
         let me = self.me;
         tokio::spawn(async move {
             let id = track.track_id().await;
-            let (sender, kind, layer) = parse_track(&id, peer.load(Ordering::Relaxed));
-            if sender == me && sender != 0 {
-                return;
-            }
+            let (parsed_sender, kind, layer) = parse_track(&id, peer.load(Ordering::Relaxed));
             let mut opus = OpusListen::new().ok();
             let mut video = super::encode::PictureDecoder::open().ok();
             let mut h264 = H264Packet::default();
@@ -741,6 +738,10 @@ impl PeerConnectionEventHandler for Handler {
             while let Some(event) = track.poll().await {
                 match event {
                     TrackRemoteEvent::OnRtpPacket(packet) => {
+                        let sender = remote_picture_sender(&id, parsed_sender, peer.load(Ordering::Relaxed));
+                        if sender == me && sender != 0 {
+                            continue;
+                        }
                         if kind.is_audio() {
                             if flags.load(Ordering::Relaxed) & FLAG_DEAFENED != 0 {
                                 continue;
@@ -777,20 +778,44 @@ impl PeerConnectionEventHandler for Handler {
     }
 }
 
+/// Who owns a remote picture. SFU forward track ids embed the publisher. P2P tracks
+/// are named only `camera` / `screen`, so the live peer id must win once signaling sets it —
+/// otherwise Go Live tiles are keyed under sender `0` and never show for the other user.
+fn remote_picture_sender(track_id: &str, parsed_sender: i64, peer: i64) -> i64 {
+    if track_id.starts_with("fwd-") {
+        parsed_sender
+    } else if peer != 0 {
+        peer
+    } else {
+        parsed_sender
+    }
+}
+
 fn parse_track(id: &str, peer: i64) -> (i64, MediaKind, LayerId) {
     if let Some(rest) = id.strip_prefix("fwd-") {
-        let mut parts = rest.split('-');
-        let sender = parts.next().and_then(|value| value.parse().ok()).unwrap_or(peer);
-        let kind = kind_of(parts.next().unwrap_or("user_audio"));
-        let layer = parts.next().and_then(LayerId::from_rid).unwrap_or(LayerId::Full);
-        return (sender, kind, layer);
+        return parse_fwd_track(rest, peer);
     }
     (peer, kind_of(id), LayerId::Full)
+}
+
+/// `fwd-{publisher}-{kind}-{rid}` where `kind` may contain underscores (`user_audio`).
+fn parse_fwd_track(rest: &str, peer: i64) -> (i64, MediaKind, LayerId) {
+    let Some((publisher, after)) = rest.split_once('-') else {
+        return (peer, MediaKind::UserAudio, LayerId::Full);
+    };
+    let sender = publisher.parse().unwrap_or(peer);
+    if let Some((kind_token, rid)) = after.rsplit_once('-') {
+        if LayerId::from_rid(rid).is_some() {
+            return (sender, kind_of(kind_token), LayerId::from_rid(rid).unwrap_or(LayerId::Full));
+        }
+    }
+    (sender, kind_of(after), LayerId::Full)
 }
 
 fn kind_of(id: &str) -> MediaKind {
     match id {
         "stream_audio" => MediaKind::StreamAudio,
+        "user_audio" => MediaKind::UserAudio,
         "camera" => MediaKind::Camera,
         "screen" => MediaKind::Screen,
         _ => MediaKind::UserAudio,
@@ -809,5 +834,37 @@ fn push_playback(playback: &Mutex<VecDeque<f32>>, output_rate: &AtomicU32, pcm: 
     let cap = (rate as usize / 5).max(960);
     while queue.len() > cap {
         queue.pop_front();
+    }
+}
+
+#[cfg(test)]
+mod receive_tests {
+    use super::*;
+
+    #[test]
+    fn fwd_screen_track_names_carry_publisher_and_layer() {
+        let (sender, kind, layer) = parse_track("fwd-42-screen-f", 0);
+        assert_eq!(sender, 42);
+        assert_eq!(kind, MediaKind::Screen);
+        assert_eq!(layer, LayerId::Full);
+        let (sender, kind, layer) = parse_track("fwd-9-screen-h", 0);
+        assert_eq!(sender, 9);
+        assert_eq!(kind, MediaKind::Screen);
+        assert_eq!(layer, LayerId::Half);
+    }
+
+    #[test]
+    fn fwd_stream_audio_keeps_underscore_kind() {
+        let (sender, kind, layer) = parse_track("fwd-7-stream_audio-f", 0);
+        assert_eq!(sender, 7);
+        assert_eq!(kind, MediaKind::StreamAudio);
+        assert_eq!(layer, LayerId::Full);
+    }
+
+    #[test]
+    fn p2p_screen_pictures_follow_the_live_peer_id() {
+        assert_eq!(remote_picture_sender("screen", 0, 99), 99);
+        assert_eq!(remote_picture_sender("screen", 0, 0), 0);
+        assert_eq!(remote_picture_sender("fwd-5-screen-f", 5, 99), 5);
     }
 }

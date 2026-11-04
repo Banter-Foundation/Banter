@@ -502,6 +502,18 @@ Agent: Rewrote draw_share to a Discord-style overlay card (underline tabs, thumb
 
 Stream Select picker now matches Discord’s Go Live chrome; landed on test/owl-fixes only.
 
+
+## 2026-11-03 19:24:45 -06:00 — Fix screen share for remote peers (BA-36)
+
+Owl (via coordinator): Streaming to other users doesn't work. Fix screen share so remote peers receive it. Root D:\Projects\Project Banter. Never E:. Branch off test/owl-fixes; merge PR into test/owl-fixes not main. Clear commits/docs. Worktree under Project Banter/worktrees/.
+
+Agent: Same class of bug as voice SFU — OnOpen left rid empty for declared screen SSRCs so every Go Live packet was dropped; forward filter also mismatched empty rid vs q/h/f rows. P2P could key remote tiles under sender 0. Tests first, then room/sfu/rtc + docs. Branch cursor/screen-share-remote-peers-7b55, worktree Banter-screen-share.
+
+## Summary
+
+Screen SFU forwards without waiting on OnOpen RID; remotes can show Go Live.
+
+
 ## 2026-11-03 19:24:57 -06:00 — Add Discord-like 1:1 call UI when calling
 
 Owl test item: call doesn't bring up the one-on-one call UI. Add Discord-like 1:1 call UI when calling. D:\Projects\Project Banter. Never E:. Branch from test/owl-fixes, merge into test/owl-fixes only. Clear commits. Worktree under Project Banter/worktrees/.

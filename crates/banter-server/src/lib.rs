@@ -22,8 +22,8 @@ pub use error::BanterError;
 pub use live::Live;
 pub use model::*;
 pub use room::{
-    attach_publish_tracks, inbound_rtp_layer, publish_offer_sdp, sample_bytes, PublishTracks, CAMERA_SSRC_Q, H264_PT,
-    OPUS_PT, SCREEN_SSRC_Q, STREAM_AUDIO_SSRC, USER_AUDIO_SSRC,
+    attach_publish_tracks, inbound_rtp_layer, inbound_rtp_layer_for_packet, publish_offer_sdp, sample_bytes,
+    PublishTracks, CAMERA_SSRC_Q, H264_PT, OPUS_PT, SCREEN_SSRC_Q, STREAM_AUDIO_SSRC, USER_AUDIO_SSRC,
 };
 pub use sfu::{bench_eight_publishers, BenchReport, ForwardTable};
 pub use store::Store;

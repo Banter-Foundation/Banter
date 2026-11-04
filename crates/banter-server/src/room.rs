@@ -215,11 +215,15 @@ impl PeerConnectionEventHandler for Handler {
                         layers.insert(init.ssrc, init.rid.unwrap_or_default());
                     }
                     TrackRemoteEvent::OnRtpPacket(packet) => {
-                        let mapped = layers.get(&packet.header.ssrc).map(String::as_str);
-                        let Some(layer) = inbound_rtp_layer(kind, mapped) else {
+                        let mapped = layers
+                            .get(&packet.header.ssrc)
+                            .map(String::as_str)
+                            .filter(|rid| !rid.is_empty());
+                        let Some(layer) = inbound_rtp_layer_for_packet(kind, mapped, packet.header.ssrc) else {
                             continue;
                         };
-                        let rid = mapped.unwrap_or("").to_string();
+                        // Forward rows are keyed by RID (`q`/`h`/`f`), not by the raw OnOpen string.
+                        let rid = layer.rid().unwrap_or("").to_string();
                         live.note_layer(user_id, kind, layer);
                         let subscribers = live.admit_rtp(channel_id, user_id, kind, layer, packet.payload.len(), rtp_is_key(&packet.payload));
                         let targets: Vec<Arc<TrackLocalStaticRTP>> = {
@@ -446,12 +450,45 @@ fn kind_token(kind: MediaKind) -> &'static str {
 ///
 /// Audio never waits on an OnOpen SSRC→RID map. That map often missed the mic
 /// SSRC (or arrived late), so voice-channel Opus was dropped while 1:1 P2P still
-/// worked. Video still needs a known RID.
+/// worked. Screen and camera used to require a RID too; `bind_declared_ssrc`
+/// fires OnOpen with `rid=None` for Banter's fixed publish SSRCs, so remotes
+/// never received Go Live. Prefer a known RID, then Banter's fixed publish SSRC
+/// bases, then Full.
 pub fn inbound_rtp_layer(kind: MediaKind, mapped_rid: Option<&str>) -> Option<LayerId> {
+    inbound_rtp_layer_for_packet(kind, mapped_rid, 0)
+}
+
+/// Resolve the simulcast layer for one inbound packet.
+///
+/// `mapped_rid` is the OnOpen RID when present and non-empty. `ssrc` is the packet
+/// SSRC so screen/camera can fall back to `SCREEN_SSRC_Q` / `CAMERA_SSRC_Q` offsets
+/// when OnOpen never supplied a RID.
+pub fn inbound_rtp_layer_for_packet(kind: MediaKind, mapped_rid: Option<&str>, ssrc: u32) -> Option<LayerId> {
     if kind.is_audio() {
         return Some(LayerId::Full);
     }
-    mapped_rid.and_then(LayerId::from_rid)
+    if let Some(layer) = mapped_rid.filter(|rid| !rid.is_empty()).and_then(LayerId::from_rid) {
+        return Some(layer);
+    }
+    if let Some(layer) = layer_from_publish_ssrc(kind, ssrc) {
+        return Some(layer);
+    }
+    Some(LayerId::Full)
+}
+
+/// Banter publishers use fixed SSRCs: base=`q`, +1=`h`, +2=`f`.
+fn layer_from_publish_ssrc(kind: MediaKind, ssrc: u32) -> Option<LayerId> {
+    let base = match kind {
+        MediaKind::Camera => CAMERA_SSRC_Q,
+        MediaKind::Screen => SCREEN_SSRC_Q,
+        MediaKind::UserAudio | MediaKind::StreamAudio => return None,
+    };
+    match ssrc.checked_sub(base) {
+        Some(0) => Some(LayerId::Quarter),
+        Some(1) => Some(LayerId::Half),
+        Some(2) => Some(LayerId::Full),
+        _ => None,
+    }
 }
 
 async fn attach_forward(pc: &impl PeerConnection, subscriber: i64, publisher: i64) -> bool {
