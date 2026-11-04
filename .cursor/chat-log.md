@@ -838,3 +838,25 @@ Agent: Rebased and merged #29 onto main after #31; skipped #2; building Win+Linu
 Owl: merge open fixes (#29); skip UI theme #2; cut Version-1-test-8; Win+Linux; GHCR; docs; gh CLI.
 
 Agent: Merged #29 (`f4c3da8`) after rebase onto #31 tip; skipped #2. Published Version-1-test-8 at https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-8. Image ghcr.io/snowedinowl/banter:version-1-test-8 (+ latest). Tagged tip `80ece87`.
+
+## 2026-11-04 BA-72 Clarify Reddit replies UI
+
+Owl: Reddit reply threading works on main (#22) but the UI is not clear enough. Improve visual clarity only (behavior already shipped).
+
+Spec of what exists: nested DFS tree, +/- collapse, inline reply composer, Discord-like leaf rows.
+
+Improve:
+- Stronger indent / thread guides so nesting depth is obvious
+- Clearer collapse/expand control and parent/child relationship
+- Clearer Reply affordance and inline composer vs top-level composer
+- Spacing/typography so threads scan like Reddit without losing Banter message-row polish
+
+Open PR with gh (no GitHub MCP). Do not merge until Owl says so.
+Context: /cursor/stores/self/docs/project-context.md
+Preferences: /cursor/stores/self/preferences.md
+Task key: will be BA-72 if create succeeded — title Clarify Reddit replies UI. Use tracker title if key differs.
+
+Report PR URL.
+
+### Summary (agent)
+Visual clarity only on branch `cursor/clarify-reddit-replies-ui-adac`. Theme metrics + chat row chrome (guides, chevron fold, Reply link, accented inline composer). Did not merge.

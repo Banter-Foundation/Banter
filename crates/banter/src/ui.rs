@@ -2443,6 +2443,7 @@ impl App {
         let by_id: HashMap<i64, Message> = messages.iter().cloned().map(|m| (m.id, m)).collect();
         let rows = comment_tree_rows(&messages, &self.collapsed_comments);
         let mut previous_at: Option<i64> = None;
+        let mut previous_depth: Option<u32> = None;
         for row in &rows {
             let Some(message) = by_id.get(&row.message_id) else {
                 continue;
@@ -2464,6 +2465,15 @@ impl App {
                     MUTED,
                 )
                 .build();
+            }
+            // Roots get more air; nested replies stay tighter so a thread reads as one block.
+            let gap = match (previous_depth, row.depth) {
+                (Some(0), 0) | (Some(_), 0) => COMMENT_ROW_GAP_ROOT,
+                (Some(_), _) => COMMENT_ROW_GAP_NESTED,
+                (None, _) => 0.0,
+            };
+            if gap > 0.0 {
+                ui.dummy([width, gap]);
             }
             let visual_depth = row.depth.min(COMMENT_MAX_VISUAL_DEPTH);
             let indent = COMMENT_INDENT * visual_depth as f32;
@@ -2488,17 +2498,24 @@ impl App {
                 ui.calc_text_size_with_opts(&body, false, text_w)[1]
             };
             let collapsed_note_h = if row.collapsed && row.child_count > 0 { 18.0 } else { 0.0 };
-            let row_h = (22.0 + body_h.max(20.0) + collapsed_note_h).max(48.0);
+            let action_h = COMMENT_ACTION_H;
+            let row_h = (22.0 + body_h.max(20.0) + collapsed_note_h + action_h + 4.0).max(52.0);
             let origin = ui.cursor_screen_pos();
             ui.dummy([width, row_h + 2.0]);
             let row_max = [origin[0] + width, origin[1] + row_h];
             let hot = pointer_in(ui, [origin[0], origin[1] - 16.0], row_max);
-            if hot {
+            let replying_here = self.reply_to == Some(message.id);
+            if hot || replying_here {
+                let fill = if replying_here {
+                    with_alpha(BLURPLE, 0.10)
+                } else {
+                    ROW_HOVER
+                };
                 ui.get_window_draw_list()
                     .add_rect(
                         [origin[0] + 4.0, origin[1]],
                         [origin[0] + width - 4.0, origin[1] + row_h],
-                        ROW_HOVER,
+                        fill,
                     )
                     .filled(true)
                     .build();
@@ -2511,25 +2528,48 @@ impl App {
                     mouse,
                 );
             }
-            // Reddit thread line + collapse control.
-            // Drop DrawListMut before tool() — it acquires the same window draw list.
-            if row.depth > 0 || row.child_count > 0 {
-                let line_x = origin[0] + indent + 8.0;
+            // Nested depth guides: one vertical rail per ancestor level, plus an L stub to the avatar.
+            // Drop DrawListMut before fold / tool hit targets — they acquire the same window draw list.
+            if visual_depth > 0 || row.child_count > 0 {
                 {
                     let draw = ui.get_window_draw_list();
-                    draw.add_line([line_x, origin[1] + 4.0], [line_x, origin[1] + row_h - 4.0], COMMENT_THREAD_LINE)
-                        .thickness(2.0)
-                        .build();
+                    for level in 1..=visual_depth.max(if row.child_count > 0 { 1 } else { 0 }) {
+                        let guide_x = origin[0] + 16.0 + COMMENT_INDENT * (level.saturating_sub(1) as f32) + COMMENT_COLLAPSE_W * 0.5;
+                        let color = if level == visual_depth.max(1) {
+                            COMMENT_THREAD_LINE
+                        } else {
+                            with_alpha(COMMENT_THREAD_LINE, 0.55)
+                        };
+                        draw.add_line([guide_x, origin[1]], [guide_x, origin[1] + row_h], color)
+                            .thickness(COMMENT_GUIDE_THICK)
+                            .build();
+                    }
+                    if visual_depth > 0 {
+                        let deep = origin[0] + 16.0 + COMMENT_INDENT * (visual_depth.saturating_sub(1) as f32) + COMMENT_COLLAPSE_W * 0.5;
+                        let stub_y = origin[1] + 22.0;
+                        draw.add_line([deep, stub_y], [deep + COMMENT_CONNECTOR_W, stub_y], COMMENT_THREAD_LINE)
+                            .thickness(COMMENT_GUIDE_THICK)
+                            .build();
+                    }
                 }
                 if row.child_count > 0 {
-                    ui.set_cursor_screen_pos([line_x - 8.0, origin[1] + 4.0]);
-                    let icon = if row.collapsed { "plus" } else { "minus" };
+                    let fold_level = if visual_depth == 0 { 1 } else { visual_depth };
+                    let guide_x = origin[0]
+                        + 16.0
+                        + COMMENT_INDENT * (fold_level.saturating_sub(1) as f32)
+                        + COMMENT_COLLAPSE_W * 0.5;
                     let tip = if row.collapsed {
                         format!("Expand {} replies", row.child_count)
                     } else {
-                        "Collapse thread".to_string()
+                        format!("Collapse {} replies", row.child_count)
                     };
-                    if self.tool(ui, &format!("fold-{}", message.id), icon, false, Some(&tip)) {
+                    if self.comment_fold_control(
+                        ui,
+                        message.id,
+                        [guide_x - COMMENT_FOLD_HIT * 0.5, origin[1] + 2.0],
+                        row.collapsed,
+                        &tip,
+                    ) {
                         *collapse = Some(message.id);
                     }
                 }
@@ -2573,18 +2613,50 @@ impl App {
             }
             if row.collapsed && row.child_count > 0 {
                 let note_y = origin[1] + 22.0 + body_h.max(20.0);
-                ui.set_cursor_screen_pos([origin[0] + text_x, note_y]);
                 let label = if row.child_count == 1 {
-                    "1 more reply".to_string()
+                    "▸ 1 more reply".to_string()
                 } else {
-                    format!("{} more replies", row.child_count)
+                    format!("▸ {} more replies", row.child_count)
                 };
-                ui.text_colored(BLURPLE_TEXT, label);
+                let label_w = {
+                    let _small = ui.push_font_with_size(None, 13.0);
+                    ui.calc_text_size(&label)[0]
+                };
+                ui.set_cursor_screen_pos([origin[0] + text_x, note_y]);
+                if ui.invisible_button(format!("expand-note-{}", message.id), [label_w.max(8.0) + 4.0, 16.0]) {
+                    *collapse = Some(message.id);
+                }
+                {
+                    let _small = ui.push_font_with_size(None, 13.0);
+                    ui.get_window_draw_list()
+                        .add_text([origin[0] + text_x, note_y], BLURPLE_TEXT, &label);
+                }
             }
-            let mut attachment_y = origin[1] + row_h - collapsed_note_h;
-            if collapsed_note_h > 0.0 {
-                attachment_y = origin[1] + 22.0 + body_h.max(20.0) + collapsed_note_h;
+            let action_y = origin[1] + 22.0 + body_h.max(20.0) + collapsed_note_h + 2.0;
+            // Always-visible Reddit-style Reply link (hover toolbar still has the icon).
+            {
+                let reply_label = if replying_here { "Replying…" } else { "Reply" };
+                let reply_w = {
+                    let _small = ui.push_font_with_size(self.semibold_font, 12.0);
+                    ui.calc_text_size(reply_label)[0]
+                };
+                ui.set_cursor_screen_pos([origin[0] + text_x, action_y]);
+                if ui.invisible_button(format!("reply-link-{}", message.id), [reply_w.max(8.0) + 4.0, COMMENT_ACTION_H]) {
+                    *reply = Some(message.id);
+                }
+                let reply_hot = ui.is_item_hovered();
+                let reply_color = if replying_here || reply_hot {
+                    BLURPLE_TEXT
+                } else {
+                    MUTED
+                };
+                {
+                    let _small = ui.push_font_with_size(self.semibold_font, 12.0);
+                    ui.get_window_draw_list()
+                        .add_text([origin[0] + text_x, action_y + 2.0], reply_color, reply_label);
+                }
             }
+            let mut attachment_y = action_y + action_h;
             for attachment in &message.attachments {
                 ui.set_cursor_screen_pos([origin[0] + text_x, attachment_y]);
                 ui.text(format!("file: {} ({} bytes)", attachment.filename, attachment.byte_size));
@@ -2613,12 +2685,13 @@ impl App {
                 for (index, name) in tools.iter().enumerate() {
                     ui.set_cursor_screen_pos([bar_x + 4.0 + index as f32 * 32.0, bar_y]);
                     let tip = match *name {
-                        "reply" => "Reply",
+                        "reply" => "Reply in thread",
                         "pencil" => "Edit",
                         "trash-2" => "Delete",
                         _ => "More",
                     };
-                    if self.tool(ui, &format!("{name}-{}", message.id), name, false, Some(tip)) {
+                    let active = *name == "reply" && replying_here;
+                    if self.tool(ui, &format!("{name}-{}", message.id), name, active, Some(tip)) {
                         match *name {
                             "reply" => *reply = Some(message.id),
                             "pencil" => *edit = Some(message.id),
@@ -2635,52 +2708,101 @@ impl App {
                     }
                 }
             }
-            // Inline Reddit reply composer scoped to this parent comment.
-            if self.reply_to == Some(message.id) {
+            // Inline Reddit reply composer — accent stripe + header so it is not the bottom bar.
+            if replying_here {
                 let box_x = origin[0] + text_x;
-                let box_w = (width - text_x - 24.0).max(120.0);
-                ui.set_cursor_screen_pos([box_x, row_end + 4.0]);
-                ui.dummy([box_w, 64.0]);
+                let box_w = (width - text_x - 24.0).max(160.0);
+                let box_top = row_end + 4.0;
+                let box_h = COMMENT_INLINE_HEADER_H + COMMENT_INLINE_INPUT_H + COMMENT_INLINE_FOOTER_H;
+                ui.set_cursor_screen_pos([box_x, box_top]);
+                ui.dummy([box_w, box_h]);
                 skin::rect_corners(
                     ui,
-                    [box_x, row_end + 4.0],
-                    [box_x + box_w, row_end + 4.0 + 40.0],
-                    COMPOSER_BG,
+                    [box_x, box_top],
+                    [box_x + box_w, box_top + box_h],
+                    COMMENT_INLINE_BG,
                     COMPOSER_RADIUS,
                     DrawFlags::ROUND_ALL,
                 );
-                let parent_name = name.clone();
-                ui.set_cursor_screen_pos([box_x + 8.0, row_end + 8.0]);
+                {
+                    let draw = ui.get_window_draw_list();
+                    draw.add_rect(
+                        [box_x, box_top],
+                        [box_x + COMMENT_INLINE_ACCENT_W, box_top + box_h],
+                        BLURPLE,
+                    )
+                    .filled(true)
+                    .build();
+                }
+                let header = format!("Replying to {name}");
+                skin::text(
+                    ui,
+                    self.semibold_font,
+                    12.0,
+                    [box_x + 12.0, box_top + 4.0],
+                    BLURPLE_TEXT,
+                    &header,
+                );
+                let input_y = box_top + COMMENT_INLINE_HEADER_H;
+                skin::rect_corners(
+                    ui,
+                    [box_x + 8.0, input_y],
+                    [box_x + box_w - 8.0, input_y + COMMENT_INLINE_INPUT_H],
+                    COMPOSER_BG,
+                    6.0,
+                    DrawFlags::ROUND_ALL,
+                );
+                ui.set_cursor_screen_pos([box_x + 16.0, input_y + 8.0]);
                 let submit = {
                     let _font = ui.push_font_with_size(None, FONT_MD);
                     let _border = ui.push_style_var(StyleVar::FrameBorderSize(0.0));
                     let _bg = ui.push_style_color(StyleColor::FrameBg, skin::CLEAR);
                     let _hint = ui.push_style_color(StyleColor::TextDisabled, PLACEHOLDER);
                     let _text = ui.push_style_color(StyleColor::Text, TEXT_NORMAL);
-                    ui.set_next_item_width((box_w - 16.0).max(40.0));
+                    ui.set_next_item_width((box_w - 32.0).max(40.0));
                     ui.input_text(&format!("##inline-reply-{}", message.id), &mut self.reply_draft)
-                        .hint(format!("Reply to {parent_name}"))
+                        .hint(format!("Write a reply to {name}"))
                         .enter_returns_true(true)
                         .build()
                 };
                 if submit {
                     *inline_submit = true;
                 }
-                ui.set_cursor_screen_pos([box_x, row_end + 48.0]);
-                if ui.small_button(format!("Cancel##inline-{}", message.id)) {
+                let footer_y = input_y + COMMENT_INLINE_INPUT_H + 4.0;
+                let cancel_w = 72.0;
+                let send_w = 72.0;
+                if skin::button(
+                    ui,
+                    &format!("inline-cancel-{}", message.id),
+                    "Cancel",
+                    Tone::Secondary,
+                    [box_x + box_w - 8.0 - send_w - 8.0 - cancel_w, footer_y],
+                    [cancel_w, 24.0],
+                    true,
+                    self.semibold_font,
+                ) {
                     *inline_cancel = true;
                 }
-                ui.same_line();
                 let can_send = !self.reply_draft.trim().is_empty() || self.pending_file.is_some();
-                if can_send && ui.small_button(format!("Reply##inline-go-{}", message.id)) {
+                if skin::button(
+                    ui,
+                    &format!("inline-go-{}", message.id),
+                    "Reply",
+                    Tone::Brand,
+                    [box_x + box_w - 8.0 - send_w, footer_y],
+                    [send_w, 24.0],
+                    can_send,
+                    self.semibold_font,
+                ) {
                     *inline_submit = true;
                 }
-                row_end += 68.0;
+                row_end = box_top + box_h + 4.0;
             }
             // Keep each row ending at its own bottom edge for scroll measurement.
             ui.set_cursor_screen_pos([origin[0], row_end]);
             ui.dummy([0.0, 0.0]);
             previous_at = Some(message.created_at);
+            previous_depth = Some(row.depth);
         }
     }
 
@@ -2795,12 +2917,17 @@ impl App {
 
     fn composer_footer_h(&self) -> f32 {
         // Replies use an inline composer under the parent comment (Reddit). Bottom strip is edit/file only.
-        let strip = if self.editing.is_some() || self.pending_file.is_some() { 34.0 } else { 0.0 };
+        let strip = if self.editing.is_some() || self.pending_file.is_some() || self.reply_to.is_some() {
+            34.0
+        } else {
+            0.0
+        };
         8.0 + strip + COMPOSER_H + COMPOSER_BOTTOM
     }
 
     /// Rounded message bar for top-level posts: upload button, `Message #channel` placeholder,
-    /// and a strip above it while editing or holding a file. Nested replies use the inline box.
+    /// and a strip above it while editing, holding a file, or while an inline reply is open.
+    /// Nested replies use the accented inline box under the parent comment.
     fn draw_composer(&mut self, ui: &Ui, target: ChatTarget) {
         let origin = ui.cursor_screen_pos();
         let width = ui.content_region_avail()[0];
@@ -2809,21 +2936,26 @@ impl App {
         let mut y = origin[1] + 8.0;
         ui.dummy([width, self.composer_footer_h()]);
         let strip = if self.editing.is_some() {
-            Some("Editing message".to_string())
+            Some(("Editing message".to_string(), false))
+        } else if let Some((name, bytes)) = &self.pending_file {
+            Some((format!("{name} ({} KB)", bytes.len().div_ceil(1024)), false))
+        } else if self.reply_to.is_some() {
+            Some(("Replying in the thread above — this bar starts a new top-level post".to_string(), true))
         } else {
-            self.pending_file
-                .as_ref()
-                .map(|(name, bytes)| format!("{name} ({} KB)", bytes.len().div_ceil(1024)))
+            None
         };
-        if let Some(label) = &strip {
+        if let Some((label, reply_hint)) = &strip {
             skin::rect_corners(ui, [bar_x, y], [bar_x + bar_w, y + 34.0], SIDEBAR_BG, COMPOSER_RADIUS, DrawFlags::ROUND_TOP);
             let shown = skin::ellipsize(ui, None, FONT_SM, label, bar_w - 64.0);
-            skin::text_in_row(ui, None, FONT_SM, bar_x + 16.0, y, 34.0, TEXT_SECONDARY, &shown);
-            if skin::icon_button(ui, "composer-cancel", self.icon("x"), [bar_x + bar_w - 8.0 - 24.0, y + 5.0], 24.0, 16.0, TEXT_SECONDARY, TEXT_NORMAL, None) {
-                if self.editing.take().is_some() {
-                    self.composer.clear();
-                } else {
-                    self.pending_file = None;
+            let color = if *reply_hint { BLURPLE_TEXT } else { TEXT_SECONDARY };
+            skin::text_in_row(ui, None, FONT_SM, bar_x + 16.0, y, 34.0, color, &shown);
+            if !*reply_hint {
+                if skin::icon_button(ui, "composer-cancel", self.icon("x"), [bar_x + bar_w - 8.0 - 24.0, y + 5.0], 24.0, 16.0, TEXT_SECONDARY, TEXT_NORMAL, None) {
+                    if self.editing.take().is_some() {
+                        self.composer.clear();
+                    } else {
+                        self.pending_file = None;
+                    }
                 }
             }
             y += 34.0;
@@ -2841,7 +2973,11 @@ impl App {
             bar_x + 8.0
         };
         let channel_mark = if self.stage_icon() == Some("hash") { "#" } else { "@" };
-        let hint = format!("Message {channel_mark}{}", self.stage_title());
+        let hint = if self.reply_to.is_some() {
+            format!("New post in {channel_mark}{}", self.stage_title())
+        } else {
+            format!("Message {channel_mark}{}", self.stage_title())
+        };
         ui.set_cursor_screen_pos([input_x, y]);
         let submit = {
             let _font = ui.push_font_with_size(None, FONT_MD);
@@ -4244,6 +4380,43 @@ impl App {
             if ui.is_item_hovered() {
                 skin::item_tooltip(ui, self.semibold_font, tip);
             }
+        }
+        clicked
+    }
+
+    /// Compact fold control on a thread guide: chevron shows collapsed vs expanded.
+    fn comment_fold_control(&self, ui: &Ui, message_id: i64, min: [f32; 2], collapsed: bool, tip: &str) -> bool {
+        let size = COMMENT_FOLD_HIT;
+        ui.set_cursor_screen_pos(min);
+        let clicked = ui.invisible_button(format!("fold-{message_id}"), [size, size]);
+        let hovered = ui.is_item_hovered();
+        let icon = if collapsed { "chevron-right" } else { "chevron-down" };
+        {
+            let draw = ui.get_window_draw_list();
+            let fill = if hovered {
+                with_alpha(COMMENT_THREAD_HOVER, 0.25)
+            } else {
+                with_alpha(COMMENT_THREAD_LINE, 0.20)
+            };
+            draw.add_rect(min, [min[0] + size, min[1] + size], fill)
+                .rounding(4.0)
+                .filled(true)
+                .build();
+            if let Some(texture) = self.icon(icon) {
+                let pad = 3.0;
+                let tint = if hovered { COMMENT_THREAD_HOVER } else { TEXT_SECONDARY };
+                draw.add_image(
+                    texture,
+                    [min[0] + pad, min[1] + pad],
+                    [min[0] + size - pad, min[1] + size - pad],
+                    [0.0, 0.0],
+                    [1.0, 1.0],
+                    tint,
+                );
+            }
+        }
+        if hovered {
+            skin::item_tooltip(ui, self.semibold_font, tip);
         }
         clicked
     }

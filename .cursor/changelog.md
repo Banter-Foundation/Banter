@@ -435,3 +435,13 @@ Shipped pre-release Version-1-test-8 from main `80ece87` (DrawListMut PR #31, me
 
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-8
 - Assets: Banter-windows-version-1-test-8.zip, Banter-linux-version-1-test-8.zip, banter-server.exe, banter-server-linux
+
+## 2026-11-04 02:02:48 -06:00 [Winter] — Clarify Reddit replies UI (BA-72)
+
+Visual-only clarity pass on Reddit-style reply threading already shipped in #22. Behavior unchanged (DFS tree, collapse, inline reply, top-level bottom bar).
+
+- Stronger nesting: 32 px indent, per-depth thread guides, L-connector to child avatar
+- Clearer fold: compact chevron control on the guide + clickable “▸ N more replies”
+- Clearer Reply: always-visible Reply link; accented inline composer (header, stripe, Cancel/Reply) vs bottom top-level bar hint strip
+- Spacing: root gap vs tighter nested gap; soft blurple wash on the active reply parent
+- Docs: design, features, architecture, feature-status

@@ -91,10 +91,31 @@ pub const RAIL_SEPARATOR_H: f32 = 2.0;
 pub const RAIL_PILL_W: f32 = 4.0;
 
 // Reddit-style comment threads in text chat / DMs.
-pub const COMMENT_INDENT: f32 = 24.0;
+/// Horizontal step per nesting depth (wide enough that depth reads at a glance).
+pub const COMMENT_INDENT: f32 = 32.0;
 pub const COMMENT_MAX_VISUAL_DEPTH: u32 = 12;
-pub const COMMENT_COLLAPSE_W: f32 = 18.0;
-pub const COMMENT_THREAD_LINE: [f32; 4] = hex(0x4E5058);
+/// Gutter for the fold control sitting on the innermost thread guide.
+pub const COMMENT_COLLAPSE_W: f32 = 22.0;
+/// Hit target for collapse / expand (kept smaller than the 32 px toolbar tools).
+pub const COMMENT_FOLD_HIT: f32 = 20.0;
+pub const COMMENT_GUIDE_THICK: f32 = 2.0;
+/// Horizontal stub from the deepest guide toward the avatar (parent → child).
+pub const COMMENT_CONNECTOR_W: f32 = 12.0;
+/// Extra space before a new root comment so threads scan as blocks.
+pub const COMMENT_ROW_GAP_ROOT: f32 = 12.0;
+/// Tighter gap between nested replies inside one thread.
+pub const COMMENT_ROW_GAP_NESTED: f32 = 4.0;
+/// Always-visible Reddit-style action row under a comment (Reply link).
+pub const COMMENT_ACTION_H: f32 = 18.0;
+pub const COMMENT_INLINE_HEADER_H: f32 = 22.0;
+pub const COMMENT_INLINE_INPUT_H: f32 = 40.0;
+pub const COMMENT_INLINE_FOOTER_H: f32 = 30.0;
+pub const COMMENT_INLINE_ACCENT_W: f32 = 3.0;
+/// Thread guide (muted rail). Hover / active uses `COMMENT_THREAD_HOVER`.
+pub const COMMENT_THREAD_LINE: [f32; 4] = hex(0x6D6F78);
+pub const COMMENT_THREAD_HOVER: [f32; 4] = hex(0xB5BAC1);
+/// Inline reply composer fill — darker than the bottom top-level bar (`COMPOSER_BG`).
+pub const COMMENT_INLINE_BG: [f32; 4] = hex(0x2B2D31);
 
 // Channel list.
 pub const CHANNEL_ROW_H: f32 = 32.0;
