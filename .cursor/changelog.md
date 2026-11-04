@@ -313,3 +313,14 @@ Shipped pre-release Version-1-test-4.1 from main `c6163fc` (client startup witho
 Documented Arch server + release hot-swap progress. Workflow on `main` lowercases the GHCR owner and logs in with `GHCR_WRITE_TOKEN`. Deploy secrets are set. Releases through `Version-1-test-6` still fail at image push: the write PAT must be a classic token with `write:packages` (current error: token scopes). No GHCR `banter` package exists yet; SSH deploy is untested until push succeeds. Manual path: local `docker build -t banter-server:local` + deploy script (skip-pull for local tags).
 
 - Docs: `docs/docker-setup.md` Status section + troubleshooting; `docs/feature-status.md` container row
+
+## 2026-11-04 00:12:12 -06:00 [Winter] — Fix SFU forward SSRC rewrite (BA-55)
+
+Server voice channels stayed silent and peers never got camera/screen because the SFU cloned publisher RTP into forward tracks unchanged. `RTCRtpSender::write_rtp` drops packets whose SSRC/PT/extensions are not on that sender leg (errors are logged inside the webrtc driver, so `write_rtp` still returned Ok). `rewrite_forward_rtp` now stamps the forward-track SSRC and payload type and clears inbound header extensions before forward.
+
+- `room.rs`: `rewrite_forward_rtp`; Forward rows store outbound SSRC/PT; OnRtpPacket uses them
+- Tests: room unit + foundation `sfu_forward_rtp_rewrites_publisher_ssrc_for_write_rtp` (plus existing voice_channel_* admit tests)
+- Docs: streaming.md, feature-status.md, architecture.md
+- Branch: cursor/server-vc-media-receive-03f6 — PR only, do not merge until Owl says
+- Never touched E:
+

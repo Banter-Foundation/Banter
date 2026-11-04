@@ -69,6 +69,7 @@ Contract tests live in `crates/banter-server/tests/foundation.rs`.
 ## Voice, camera, and stream (high level)
 
 - Joining a voice channel (or starting a DM call) registers membership on the server and opens media paths on the client.
+- Voice-channel SFU forward stamps each packet with the forward track’s negotiated SSRC/payload type and strips inbound RTP header extensions before `write_rtp` (publisher SSRCs are not valid on those senders).
 - **Mute / deafen / push-to-talk** are client flags also pushed to the server; PTT defaults to **V** (ignored while a text field is focused) plus a Talk button. F1–F12 are available as keybinds.
 - **Camera:** local preview is mirrored RGBA; outbound is I420 → H.264 over WebRTC (not JPEG spray). Open prefers ~`1280x720` (or nearest available), FPS near 30, device MJPEG on ties — not the device’s absolute highest mode. Device MJPEG is only the webcam capture format.
 - **Screen share:** choose Screens or Applications, set resolution and FPS independently (default **720p / 30**), then **Go Live**. Nothing is sent until then. Encoder is **H.264 Constrained Baseline** (hardware when probed, else OpenH264).

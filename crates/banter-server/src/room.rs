@@ -68,6 +68,10 @@ struct Forward {
     publisher: i64,
     kind: MediaKind,
     rid: String,
+    /// Negotiated outbound SSRC on this forward track. Inbound publisher SSRCs
+    /// must be rewritten to this before `write_rtp` or the sender rejects the packet.
+    ssrc: u32,
+    payload_type: u8,
     track: Arc<TrackLocalStaticRTP>,
 }
 
@@ -226,7 +230,7 @@ impl PeerConnectionEventHandler for Handler {
                         let rid = layer.rid().unwrap_or("").to_string();
                         live.note_layer(user_id, kind, layer);
                         let subscribers = live.admit_rtp(channel_id, user_id, kind, layer, packet.payload.len(), rtp_is_key(&packet.payload));
-                        let targets: Vec<Arc<TrackLocalStaticRTP>> = {
+                        let targets: Vec<(Arc<TrackLocalStaticRTP>, u32, u8)> = {
                             let table = forwards().lock().expect("forwards");
                             table
                                 .iter()
@@ -236,11 +240,12 @@ impl PeerConnectionEventHandler for Handler {
                                         && (kind.is_audio() || row.rid == rid)
                                         && subscribers.contains(&row.subscriber)
                                 })
-                                .map(|row| Arc::clone(&row.track))
+                                .map(|row| (Arc::clone(&row.track), row.ssrc, row.payload_type))
                                 .collect()
                         };
-                        for target in targets {
-                            if let Err(err) = target.write_rtp(packet.clone()).await {
+                        for (target, out_ssrc, out_pt) in targets {
+                            let outbound = rewrite_forward_rtp(packet.clone(), out_ssrc, out_pt);
+                            if let Err(err) = target.write_rtp(outbound).await {
                                 let _ = err;
                             }
                         }
@@ -491,6 +496,25 @@ fn layer_from_publish_ssrc(kind: MediaKind, ssrc: u32) -> Option<LayerId> {
     }
 }
 
+/// Prepare an inbound publisher RTP packet for an SFU forward track.
+///
+/// `webrtc` `RTCRtpSender::write_rtp` rejects any packet whose SSRC is not on
+/// the sender's negotiated encodings, whose payload type is not on that leg, or
+/// whose header-extension ids were not negotiated there. Banter's forward
+/// tracks use their own SSRCs (`next_ssrc`), so cloning the publisher packet
+/// unchanged made every voice / camera / screen forward fail silently — peers
+/// heard nothing and saw no remote tiles. Strip inbound extensions (ids differ
+/// per PeerConnection) and stamp the outbound SSRC + payload type.
+pub fn rewrite_forward_rtp(mut packet: rtc::rtp::Packet, outbound_ssrc: u32, outbound_payload_type: u8) -> rtc::rtp::Packet {
+    packet.header.ssrc = outbound_ssrc;
+    packet.header.payload_type = outbound_payload_type;
+    packet.header.extension = false;
+    packet.header.extension_profile = 0;
+    packet.header.extensions.clear();
+    packet.header.extensions_padding = 0;
+    packet
+}
+
 async fn attach_forward(pc: &impl PeerConnection, subscriber: i64, publisher: i64) -> bool {
     let layers = [
         (MediaKind::UserAudio, ""),
@@ -511,6 +535,7 @@ async fn attach_forward(pc: &impl PeerConnection, subscriber: i64, publisher: i6
             continue;
         }
         let ssrc = next_ssrc();
+        let payload_type = if kind.is_audio() { OPUS_PT } else { H264_PT };
         let id = format!("fwd-{publisher}-{}-{}", kind_token(kind), if rid.is_empty() { "f" } else { rid });
         let track_kind = if kind.is_audio() { RtpCodecKind::Audio } else { RtpCodecKind::Video };
         let codec = if kind.is_audio() { opus_codec() } else { h264_codec() };
@@ -541,6 +566,8 @@ async fn attach_forward(pc: &impl PeerConnection, subscriber: i64, publisher: i6
             publisher,
             kind,
             rid: rid.to_string(),
+            ssrc,
+            payload_type,
             track: local,
         });
         added = true;
@@ -662,4 +689,49 @@ mod tests {
         assert_eq!(LayerId::Quarter.rid(), Some("q"));
         assert_eq!(LayerId::Full.rid(), Some("f"));
     }
+
+    #[test]
+    fn rewrite_forward_rtp_stamps_outbound_ssrc_pt_and_strips_extensions() {
+        // Publisher mic/camera SSRCs are not the SFU forward-track SSRCs. Without a
+        // rewrite, write_rtp rejects every packet and peers get silence + blank tiles.
+        let mut packet = rtc::rtp::Packet::default();
+        packet.header.version = 2;
+        packet.header.ssrc = USER_AUDIO_SSRC;
+        packet.header.payload_type = 99;
+        packet.header.sequence_number = 42;
+        packet.header.timestamp = 7_000;
+        packet.header.marker = true;
+        packet.header.extension = true;
+        packet.header.extension_profile = 0xbede;
+        packet.header.extensions = vec![rtc::rtp::header::Extension {
+            id: 3,
+            payload: bytes::Bytes::from_static(&[1, 2, 3]),
+        }];
+        packet.header.extensions_padding = 1;
+        packet.payload = bytes::Bytes::from_static(&[0xfc, 0x00]);
+
+        let out = rewrite_forward_rtp(packet, 0x8100_00aa, OPUS_PT);
+        assert_eq!(out.header.ssrc, 0x8100_00aa, "must use the forward track SSRC");
+        assert_eq!(out.header.payload_type, OPUS_PT);
+        assert!(!out.header.extension);
+        assert!(out.header.extensions.is_empty(), "inbound extension ids are per-PC");
+        assert_eq!(out.header.extensions_padding, 0);
+        assert_eq!(out.header.sequence_number, 42);
+        assert_eq!(out.header.timestamp, 7_000);
+        assert!(out.header.marker);
+        assert_eq!(out.payload.as_ref(), &[0xfc, 0x00]);
+    }
+
+    #[test]
+    fn rewrite_forward_rtp_maps_video_publish_ssrc_to_forward_ssrc() {
+        let mut packet = rtc::rtp::Packet::default();
+        packet.header.ssrc = SCREEN_SSRC_Q + 2; // publisher Full layer
+        packet.header.payload_type = H264_PT;
+        packet.payload = bytes::Bytes::from_static(&[0x67, 0x42]);
+        let out = rewrite_forward_rtp(packet, 0x8100_00bb, H264_PT);
+        assert_ne!(out.header.ssrc, SCREEN_SSRC_Q + 2);
+        assert_eq!(out.header.ssrc, 0x8100_00bb);
+        assert_eq!(out.header.payload_type, H264_PT);
+    }
+
 }
