@@ -854,6 +854,14 @@ mod receive_tests {
     }
 
     #[test]
+    fn fwd_camera_track_names_carry_publisher_and_layer() {
+        let (sender, kind, layer) = parse_track("fwd-42-camera-h", 0);
+        assert_eq!(sender, 42);
+        assert_eq!(kind, MediaKind::Camera);
+        assert_eq!(layer, LayerId::Half);
+    }
+
+    #[test]
     fn fwd_stream_audio_keeps_underscore_kind() {
         let (sender, kind, layer) = parse_track("fwd-7-stream_audio-f", 0);
         assert_eq!(sender, 7);
@@ -866,5 +874,12 @@ mod receive_tests {
         assert_eq!(remote_picture_sender("screen", 0, 99), 99);
         assert_eq!(remote_picture_sender("screen", 0, 0), 0);
         assert_eq!(remote_picture_sender("fwd-5-screen-f", 5, 99), 5);
+    }
+
+    #[test]
+    fn p2p_camera_pictures_follow_the_live_peer_id() {
+        assert_eq!(remote_picture_sender("camera", 0, 99), 99);
+        assert_eq!(remote_picture_sender("camera", 0, 0), 0);
+        assert_eq!(remote_picture_sender("fwd-5-camera-f", 5, 99), 5);
     }
 }

@@ -18,7 +18,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Chat rows (avatar, grouping, hover toolbar, bottom-anchored history) | Working |
 | Right-click context menus (messages, members/friends/DMs, channels) | Working — foundation actions only; no kick/ban/profiles |
 | Drop-in voice: mute, deafen, PTT, connection panel | Working (SFU audio forward + open-mic Opus timeline fixed 2026-11-03) |
-| Camera on/off with mirrored local RGBA preview (~720p prefer; device MJPEG OK) | Working (device-dependent); wire is WebRTC H.264 |
+| Camera on/off with mirrored local RGBA preview (~720p prefer; device MJPEG OK) | Working (device-dependent); wire is WebRTC H.264; remotes receive after shared RID/SSRC SFU fix |
 | Screen share Go Live + quality / source switching | Working (WebRTC H.264 SFU/P2P; OpenH264 / hardware when available; remotes receive after RID/SSRC fix) |
 | 1:1 DMs + start a call | Working — phone icon opens a Discord-style call stage (ringing avatar / two tiles when active) |
 | User Settings: My Account, Voice & Video, Developer (Local/Remote API, persisted) | Working |

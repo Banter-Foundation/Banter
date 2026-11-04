@@ -805,6 +805,63 @@ fn voice_channel_screen_forwards_without_onopen_rid_map() {
 }
 
 #[test]
+fn voice_channel_camera_forwards_without_onopen_rid_map() {
+    // Same class of bug as Opus/screen: OnOpen often never maps SSRC→RID for camera, so the
+    // SFU dropped every H.264 packet and remotes never saw the tile. Prefer RID, then Banter's
+    // fixed publish SSRCs, then Full — never wait forever on OnOpen.
+    let store = Store::open(&scratch()).unwrap();
+    let ada = store.register("camada", "CamAda", "password1").unwrap();
+    let bob = store.register("cambob", "CamBob", "password1").unwrap();
+    let home = store.create_server(ada.id, "CamFwd").unwrap();
+    let voice_id = home.categories[1].channels[0].id;
+    let code = store.create_invite(ada.id, home.server.id).unwrap();
+    store.join_invite(bob.id, &code).unwrap();
+
+    let live = Live::new();
+    live.join_server_voice(&store, ada.id, voice_id).unwrap();
+    live.join_server_voice(&store, bob.id, voice_id).unwrap();
+    live.set_flags(
+        ada.id,
+        VoiceFlags {
+            camera: true,
+            ..VoiceFlags::default()
+        },
+    );
+    live.subscribe_voice_pair(ada.id, bob.id);
+
+    let got = live.admit_rtp(voice_id, ada.id, MediaKind::Camera, LayerId::Full, 1200, true);
+    assert!(
+        got.contains(&bob.id),
+        "camera RTP on a voice channel must reach the other member after pair subscribe, got {got:?}"
+    );
+
+    assert_eq!(
+        banter_server::inbound_rtp_layer_for_packet(MediaKind::Camera, None, 0),
+        Some(LayerId::Full),
+        "camera must not wait on an OnOpen SSRC→RID map"
+    );
+    assert_eq!(
+        banter_server::inbound_rtp_layer_for_packet(MediaKind::Camera, Some(""), banter_server::CAMERA_SSRC_Q),
+        Some(LayerId::Quarter),
+        "empty RID still resolves from the Banter camera quarter SSRC"
+    );
+    assert_eq!(
+        banter_server::inbound_rtp_layer_for_packet(
+            MediaKind::Camera,
+            None,
+            banter_server::CAMERA_SSRC_Q + 2
+        ),
+        Some(LayerId::Full)
+    );
+    assert_eq!(
+        banter_server::inbound_rtp_layer_for_packet(MediaKind::Camera, Some("h"), 0),
+        Some(LayerId::Half),
+        "a known RID still wins over SSRC guesses"
+    );
+    assert_eq!(banter_server::inbound_rtp_layer(MediaKind::Camera, None), Some(LayerId::Full));
+}
+
+#[test]
 fn direct_message_call() {
     let store = Store::open(&scratch()).unwrap();
     let ada = store.register("ada", "Ada", "password1").unwrap();

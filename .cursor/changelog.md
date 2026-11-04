@@ -213,6 +213,14 @@ Camera local preview no longer JPEG-encodes every frame. Capture still feeds I42
 
 When a friendship becomes active (accept an incoming request, or send a username that completes a mutual pending request), the client opens that friend's DM. Pending-only sends stay on Add Friend. Helper `open_dm_peer_after_friend_add` decides the peer after the friends list refreshes. Never touched E:.
 
+## 2026-11-03 19:28:01 -06:00 [Winter] — Fix camera so remote peers see it
+
+Voice-channel camera RTP was dropped when OnOpen never mapped SSRC→RID (same class of bug as Opus/screen). Rebased onto the shared SFU RID/SSRC receive path from PR #8; adds camera admit coverage and P2P camera peer tagging without regressing screen forward.
+
+- SFU: same `inbound_rtp_layer_for_packet` path as screen; camera foundation admit + SSRC unit tests
+- Client: `remote_picture_sender` / `parse_fwd_track` cover camera as well as screen
+- Docs: `docs/feature-status.md`. Never touched E:.
+
 ## 2026-11-03 19:28:05 -06:00 [Winter] — Discord-style right-click context menus
 
 Owl test item: there were no right-click menus. Added Discord-like floating context menus for messages, members (and friends/DMs), and channels, wired to foundation actions only (reply/edit/delete/copy, mention/message/call/add friend, invite/copy channel). Kick and ban stay deferred. Pure menu builders live in logic.rs with tests written first.

@@ -533,6 +533,7 @@ Agent: Worktree Banter-friend-dm on cursor/friend-auto-open-dm-fe6d. Tests first
 ## Summary
 
 Adding a friend (accept or mutual complete) auto-opens their DM on test/owl-fixes.
+
 ## 2026-11-03 19:25:59 -06:00 — BA-38 proper video codec (not JPEG spray)
 
 Owl (via coordinator BA-38): Video/camera uses dumb JPEG instead of correct way. Replace with proper realtime video codec path (WebRTC / H.264 or VP8 as fits Banter). Branch from test/owl-fixes, merge into test/owl-fixes only. Worktree under Project Banter/worktrees/. Coordinate with camera/screen agents. Never E:.
@@ -542,6 +543,16 @@ Agent: Wire path was already WebRTC H.264; leftover JPEG spray was local camera 
 ## Summary
 
 Camera preview is RGBA; outbound video stays I420→H.264 over WebRTC; docs no longer claim software JPEG spray.
+
+## 2026-11-03 19:28:01 -06:00 — Camera streaming to other users (BA-37)
+
+Owl (via coordinator): video/camera streaming to other users doesn't work. Fix camera so remote peers see it. D:\Projects\Project Banter. Never E:. Branch from test/owl-fixes, merge into test/owl-fixes only. Prefer proper media path coordination with JPEG-replacement agent if overlapping. Camera receive path focus. Clear commits. Worktree under Project Banter/worktrees/.
+
+Agent: Same SFU RID/SSRC root cause as screen (PR #8 / a091fad). Rebased onto that tip; kept screen forward tests and added camera admit + P2P camera peer-id coverage. No regression of screen RID/forward. Branch cursor/camera-receive-peers-eac6 → merge test/owl-fixes. Never touched E:.
+
+## Summary
+
+Remote peers can receive camera over the shared SFU receive path; screen RID/forward coverage preserved.
 
 ## 2026-11-03 19:28:05 -06:00 — Add Discord-like context menus (BA-42 / Owl test)
 

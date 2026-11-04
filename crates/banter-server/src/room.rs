@@ -631,4 +631,35 @@ mod tests {
         let sdp = publish_offer_sdp().await.expect("offer");
         assert!(sdp_matches_contract(&sdp), "{sdp}");
     }
+
+    #[test]
+    fn camera_and_screen_layers_resolve_from_publish_ssrc_without_rid() {
+        // Shared SFU receive path: OnOpen often omits RID; Banter SSRCs still map.
+        assert_eq!(
+            inbound_rtp_layer_for_packet(MediaKind::Camera, None, CAMERA_SSRC_Q),
+            Some(LayerId::Quarter)
+        );
+        assert_eq!(
+            inbound_rtp_layer_for_packet(MediaKind::Camera, None, CAMERA_SSRC_Q + 1),
+            Some(LayerId::Half)
+        );
+        assert_eq!(
+            inbound_rtp_layer_for_packet(MediaKind::Camera, None, CAMERA_SSRC_Q + 2),
+            Some(LayerId::Full)
+        );
+        assert_eq!(
+            inbound_rtp_layer_for_packet(MediaKind::Screen, None, SCREEN_SSRC_Q),
+            Some(LayerId::Quarter)
+        );
+        assert_eq!(
+            inbound_rtp_layer_for_packet(MediaKind::Screen, Some(""), SCREEN_SSRC_Q + 2),
+            Some(LayerId::Full)
+        );
+        assert_eq!(
+            inbound_rtp_layer_for_packet(MediaKind::Screen, Some("h"), SCREEN_SSRC_Q),
+            Some(LayerId::Half)
+        );
+        assert_eq!(LayerId::Quarter.rid(), Some("q"));
+        assert_eq!(LayerId::Full.rid(), Some("f"));
+    }
 }
