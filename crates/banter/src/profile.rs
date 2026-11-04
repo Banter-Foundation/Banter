@@ -4,6 +4,175 @@
 
 use banter_server::cosmetics_catalog;
 
+use crate::theme::{
+    BUTTON_H, PROFILE_BANNER_H, PROFILE_BOARD_W, PROFILE_BODY_MIN_H, PROFILE_EDITOR_COL_GAP,
+    PROFILE_EDITOR_FOOTER_H, PROFILE_EDITOR_OUTER_PAD, PROFILE_EDITOR_W, PROFILE_PAD,
+    PROFILE_PREVIEW_MIN_W, PROFILE_W,
+};
+
+/// Axis-aligned panel used by the profile view and customization editor layouts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProfilePanelRect {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+}
+
+impl ProfilePanelRect {
+    pub fn width(self) -> f32 {
+        self.max[0] - self.min[0]
+    }
+
+    pub fn height(self) -> f32 {
+        self.max[1] - self.min[1]
+    }
+
+    pub fn size(self) -> [f32; 2] {
+        [self.width(), self.height()]
+    }
+
+    pub fn contains(self, point: [f32; 2]) -> bool {
+        point[0] >= self.min[0]
+            && point[0] <= self.max[0]
+            && point[1] >= self.min[1]
+            && point[1] <= self.max[1]
+    }
+
+    /// True when the interiors do not overlap (edges may touch).
+    pub fn disjoint(self, other: Self) -> bool {
+        self.max[0] <= other.min[0]
+            || other.max[0] <= self.min[0]
+            || self.max[1] <= other.min[1]
+            || other.max[1] <= self.min[1]
+    }
+}
+
+/// Floating profile view: identity column + board, anchored near the click.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProfileViewLayout {
+    pub card: ProfilePanelRect,
+    pub identity: ProfilePanelRect,
+    pub board: ProfilePanelRect,
+}
+
+/// Discord-style customization editor: left slots, center preview, right board, footer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProfileEditorLayout {
+    pub frame: ProfilePanelRect,
+    pub left: ProfilePanelRect,
+    pub preview: ProfilePanelRect,
+    pub board: ProfilePanelRect,
+    pub footer: ProfilePanelRect,
+    pub save: ProfilePanelRect,
+    pub cancel: ProfilePanelRect,
+    pub close: ProfilePanelRect,
+}
+
+/// Place the floating view card near `anchor`, flipping so it stays on-screen.
+pub fn profile_view_layout(display: [f32; 2], anchor: [f32; 2]) -> ProfileViewLayout {
+    let gap = 8.0;
+    let margin = 8.0;
+    let card_w = PROFILE_W + gap + PROFILE_BOARD_W;
+    let card_h = (PROFILE_BANNER_H + PROFILE_BODY_MIN_H)
+        .min(display[1] - margin * 2.0)
+        .max(200.0);
+    let mut min = [anchor[0] + gap, anchor[1]];
+    if min[0] + card_w > display[0] - margin {
+        min[0] = (anchor[0] - card_w - gap).max(margin);
+    }
+    if min[1] + card_h > display[1] - margin {
+        min[1] = (display[1] - card_h - margin).max(margin);
+    }
+    let card = ProfilePanelRect {
+        min,
+        max: [min[0] + card_w, min[1] + card_h],
+    };
+    let identity = ProfilePanelRect {
+        min: card.min,
+        max: [card.min[0] + PROFILE_W, card.max[1]],
+    };
+    let board = ProfilePanelRect {
+        min: [identity.max[0] + gap, card.min[1] + PROFILE_PAD],
+        max: [card.max[0] - PROFILE_PAD, card.max[1] - PROFILE_PAD],
+    };
+    ProfileViewLayout {
+        card,
+        identity,
+        board,
+    }
+}
+
+/// Three-column customization chrome that fits inside `display` with a Save/Cancel footer.
+pub fn profile_editor_layout(display: [f32; 2]) -> ProfileEditorLayout {
+    let outer = PROFILE_EDITOR_OUTER_PAD;
+    let frame = ProfilePanelRect {
+        min: [outer, outer],
+        max: [(display[0] - outer).max(outer + 320.0), (display[1] - outer).max(outer + 240.0)],
+    };
+    let inner_min = [frame.min[0] + PROFILE_PAD, frame.min[1] + PROFILE_PAD];
+    let inner_max = [frame.max[0] - PROFILE_PAD, frame.max[1] - PROFILE_EDITOR_FOOTER_H];
+    let footer = ProfilePanelRect {
+        min: [frame.min[0], frame.max[1] - PROFILE_EDITOR_FOOTER_H],
+        max: frame.max,
+    };
+    let avail_w = (inner_max[0] - inner_min[0]).max(0.0);
+    let gaps = PROFILE_EDITOR_COL_GAP * 2.0;
+    let ideal = PROFILE_EDITOR_W + PROFILE_W + PROFILE_BOARD_W + gaps;
+    let (left_w, preview_w) = if avail_w >= ideal {
+        (PROFILE_EDITOR_W, PROFILE_W)
+    } else {
+        // Keep preview readable; shrink side columns first.
+        let preview_w = PROFILE_PREVIEW_MIN_W.min(PROFILE_W).min(avail_w * 0.4);
+        let side = ((avail_w - preview_w - gaps) * 0.5).max(140.0);
+        (side, preview_w)
+    };
+    let body_h = (inner_max[1] - inner_min[1]).max(0.0);
+    let left = ProfilePanelRect {
+        min: inner_min,
+        max: [inner_min[0] + left_w, inner_min[1] + body_h],
+    };
+    let preview = ProfilePanelRect {
+        min: [left.max[0] + PROFILE_EDITOR_COL_GAP, inner_min[1]],
+        max: [
+            left.max[0] + PROFILE_EDITOR_COL_GAP + preview_w,
+            inner_min[1] + body_h,
+        ],
+    };
+    let board = ProfilePanelRect {
+        min: [preview.max[0] + PROFILE_EDITOR_COL_GAP, inner_min[1]],
+        max: [inner_max[0], inner_min[1] + body_h],
+    };
+    let btn_w = 120.0;
+    let btn_y = footer.min[1] + (PROFILE_EDITOR_FOOTER_H - BUTTON_H) * 0.5;
+    let cancel = ProfilePanelRect {
+        min: [footer.min[0] + PROFILE_PAD, btn_y],
+        max: [footer.min[0] + PROFILE_PAD + btn_w, btn_y + BUTTON_H],
+    };
+    let save = ProfilePanelRect {
+        min: [footer.max[0] - PROFILE_PAD - btn_w, btn_y],
+        max: [footer.max[0] - PROFILE_PAD, btn_y + BUTTON_H],
+    };
+    let close_size = 28.0;
+    let close = ProfilePanelRect {
+        min: [frame.max[0] - PROFILE_PAD - close_size, frame.min[1] + 10.0],
+        max: [frame.max[0] - PROFILE_PAD, frame.min[1] + 10.0 + close_size],
+    };
+    ProfileEditorLayout {
+        frame,
+        left,
+        preview,
+        board,
+        footer,
+        save,
+        cancel,
+        close,
+    }
+}
+
+/// Content width inside an editor/board column after horizontal pad.
+pub fn profile_column_content_width(column_w: f32) -> f32 {
+    (column_w - PROFILE_PAD).max(80.0)
+}
+
 /// How the viewer relates to the profile being shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProfileKind {

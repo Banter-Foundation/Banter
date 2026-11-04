@@ -21,7 +21,7 @@ Banter/
 | `theme.rs` | Skin metrics and colors (temporary Discord dark theme) |
 | `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |
 | `settings.rs` | User Settings rules and `SettingsState` (OS-window host desire, layout, mic test, keybinds) — kept drawable-free for unit tests |
-| `profile.rs` | Discord-parity profile card + customization editor state (`ProfileCard`, cosmetics drafts, board tabs, media drafts, editor slots) — drawable-free for unit tests |
+| `profile.rs` | Discord-parity profile card + customization editor state (`ProfileCard`, cosmetics drafts, board tabs, media drafts, editor slots) plus view/editor layout contracts (`profile_view_layout`, `profile_editor_layout`) — drawable-free for unit tests |
 | `profile_paint.rs` | Procedural Banter-owned paint for nameplates, decorations, frames, effects, badges, and board game cards |
 | `api.rs` | HTTP client (`ureq`) for `/v1/*` |
 | `realtime.rs` | WebSocket client for presence, chat events, and WebRTC signaling |

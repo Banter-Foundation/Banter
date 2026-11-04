@@ -872,3 +872,9 @@ Agent: Branch cursor/bfmd-chat-formatting-f6a3. Implemented bfmd parser/serializ
 - Persistence reuses existing message.body string; no schema migration.
 - Composer toggles whole draft because ImGui InputText selection APIs are limited in this stack.
 - v1 styles rendered: bold, italic, underline, strike, size, color, background, hr (plus parse for font/align/heading).
+
+## 2026-11-04 08:06:41 +00:00 — Major repair of broken profile UI (BA-73)
+
+Owl: Banter profile UI is very broken and needs major work (beyond the earlier “credible baseline”). Fix layout/chrome of profile view + customization editor so it is usable and Discord-like again. Reference: /cursor/stores/self/media/discord-profile-customization-ref.png. Living review: /cursor/stores/self/docs/profile-system-review.md. Context: /cursor/stores/self/docs/project-context.md. Preferences: /cursor/stores/self/preferences.md. Focus on UI correctness/clarity (overflow, broken panels, editor columns, preview, Save/Cancel, cosmetics pickers, board cards). Open PR with gh; do not merge until Owl says so. Report PR + what was fixed. Task: Major repair of broken profile UI (BA-73 if that key exists)
+
+Agent: Branch `cursor/profile-ui-repair-c26f`. Overlay windows + clipped columns; layout contracts in profile.rs; cosmetics-first editor; footer Save/Cancel; stacked board widget radios; preview wrap/clip. Client profile_customization 17 passed. Opening PR; do not merge until Owl says so.

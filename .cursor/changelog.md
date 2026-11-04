@@ -455,3 +455,11 @@ Implement BFMD v1 for Banter chat: parser/state machine, persist BFMD in message
 - `ui.rs` / `platform.rs` — message rows + format toolbar; italic/bold-italic fonts
 - `docs/bfmd.md` — in-repo copy of the Sickle-adapted spec
 - Tests: `crates/banter/tests/bfmd.rs` + unit tests in `bfmd.rs`
+
+## 2026-11-04 08:06:41 +00:00 [ubuntu] — Major repair of broken profile UI (BA-73)
+
+Profile view and customization editor were drawing without a dedicated ImGui overlay window and without clipped columns, so panels overflowed, editor columns collided, Save/Cancel sat on top of the board, cosmetics pickers spilled past the left column, and board widget kind radios on one line blew past the board width.
+
+- `profile.rs` / `theme.rs`: `profile_view_layout` + `profile_editor_layout` contracts (disjoint identity/board; three editor columns + footer Save/Cancel/close)
+- `ui.rs`: overlay windows for view + customize; clipped scroll children for identity/left/preview/board; cosmetics-first left column; stacked widget kind radios; auto-sized board widget cards; wrapped preview About Me; Cancel left / Save right footer
+- Tests: client `profile_customization` 17 passed (layout contracts included).
