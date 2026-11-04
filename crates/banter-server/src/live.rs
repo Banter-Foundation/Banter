@@ -163,6 +163,15 @@ impl Live {
         Ok(())
     }
 
+    /// Test-only membership. Real joins go through `join_server_voice`, which checks the channel.
+    #[cfg(test)]
+    pub(crate) fn seed_voice_member(&self, user_id: i64, channel_id: i64) {
+        let mut inner = self.lock();
+        let user = entry(&mut inner, user_id);
+        user.connected = true;
+        user.voice_channel = Some(channel_id);
+    }
+
     pub fn leave_voice(&self, user_id: i64) {
         crate::room::close_user(user_id);
         let previous = {

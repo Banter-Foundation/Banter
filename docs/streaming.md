@@ -17,11 +17,14 @@ Voice-channel SFU notes (reliability):
 - Forward rows are keyed by the resolved layer RID (`q`/`h`/`f`), not by an empty OnOpen string.
 - The forward table treats unpublished audio as layer `Full` so the first packet is not dropped before `note_layer`. Pair subscribe marks screen Full publishing so the first keyframe is admitted.
 - Before `write_rtp` on a forward track, the SFU rewrites the packet to the track’s negotiated SSRC and payload type and strips inbound header extensions. Publishing SSRCs are not the forward-track SSRCs; leaving them unchanged made `RTCRtpSender::write_rtp` reject every Opus / H.264 packet (silence + blank remote tiles on server VC while 1:1 P2P still worked).
+- Camera and screen are simulcast. The stack drops `a=ssrc` on a rid m-line and accepts a video SSRC only when the packet carries the negotiated MID and RID header extensions. Microphone audio is one encoding, so it does not need them. Direct calls use the same video packets.
 - Trickle ICE that arrives before the SFU slot exists is buffered and applied when the offer is accepted.
 - Open-mic quiet frames still feed Opus (DTX); mute / deafen / PTT-up stop the track. Speaking glow still uses the RMS / PTT level.
 - P2P remote screen/camera tiles use the live peer id from signaling once it is known; SFU forward track ids already embed the publisher.
 
 ICE is host candidates, `BANTER_STUN` (default `stun:stun.l.google.com:19302`, empty disables it), and optional `BANTER_TURN` with `BANTER_TURN_USER` and `BANTER_TURN_PASSWORD`.
+
+Compose does not publish the SFU’s random UDP port, so a desktop can finish websocket signaling (the talking glow) and a direct call, and still receive no guild media. `BANTER_UDP_MIN` / `BANTER_UDP_MAX` bind each voice PeerConnection to that range. `BANTER_ADVERTISE_IP` rewrites host candidates to an address the client can reach (the compose default is `127.0.0.1`). Slot A publishes UDP `40000-40049`. Slot B publishes `40100-40149`. A client on another machine needs the host’s reachable IP in `BANTER_ADVERTISE_IP` and that range open. Direct calls stay peer-to-peer and do not use these ports.
 
 ## Layers and the slider
 

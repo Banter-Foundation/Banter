@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use banter_server::{
-    sample_bytes, ClientSignal, LayerId, MediaKind, MediaPlace, ServerEvent, CAMERA_SSRC_Q, H264_PT, OPUS_PT, SCREEN_SSRC_Q,
-    STREAM_AUDIO_SSRC, USER_AUDIO_SSRC,
+    mids_by_track, sample_bytes, simulcast_extensions, ClientSignal, LayerId, MediaKind, MediaPlace, ServerEvent,
+    CAMERA_SSRC_Q, H264_PT, OPUS_PT, SCREEN_SSRC_Q, STREAM_AUDIO_SSRC, USER_AUDIO_SSRC,
 };
 use bytes::Bytes;
 use rtc::rtp::codec::h264::H264Packet;
@@ -515,9 +515,11 @@ async fn run_call(
     let tracks = banter_server::attach_publish_tracks(&pc).await?;
     let mut remote_ready = false;
     let mut pending_ice = Vec::new();
+    let mut mids = HashMap::new();
     if offerer {
         let offer = pc.create_offer(None).await.map_err(|err| err.to_string())?;
         pc.set_local_description(offer.clone()).await.map_err(|err| err.to_string())?;
+        mids.extend(mids_by_track(&offer.sdp));
         let _ = signals.send(ClientSignal::RtcOffer { place, sdp: offer.sdp });
     }
     loop {
@@ -544,11 +546,13 @@ async fn run_call(
                         match event {
                             ServerEvent::RtcOffer { sdp, from, .. } => {
                                 if from != 0 { peer.store(from, Ordering::Relaxed); }
+                                mids.extend(mids_by_track(&sdp));
                                 let offer = RTCSessionDescription::offer(sdp).map_err(|err| err.to_string())?;
                                 pc.set_remote_description(offer).await.map_err(|err| err.to_string())?;
                                 remote_ready = true;
                                 let answer = pc.create_answer(None).await.map_err(|err| err.to_string())?;
                                 pc.set_local_description(answer.clone()).await.map_err(|err| err.to_string())?;
+                                mids.extend(mids_by_track(&answer.sdp));
                                 let _ = signals.send(ClientSignal::RtcAnswer { place, sdp: answer.sdp });
                                 for candidate in pending_ice.drain(..) {
                                     let _ = pc.add_ice_candidate(candidate).await;
@@ -556,6 +560,7 @@ async fn run_call(
                             }
                             ServerEvent::RtcAnswer { sdp, from, .. } => {
                                 if from != 0 { peer.store(from, Ordering::Relaxed); }
+                                mids.extend(mids_by_track(&sdp));
                                 let answer = RTCSessionDescription::answer(sdp).map_err(|err| err.to_string())?;
                                 pc.set_remote_description(answer).await.map_err(|err| err.to_string())?;
                                 remote_ready = true;
@@ -579,7 +584,7 @@ async fn run_call(
             }
             packet = media_rx.recv() => {
                 let Some(packet) = packet else { break };
-                write_packet(&tracks, packet).await;
+                write_packet(&tracks, packet, &mids).await;
             }
             ice = ice_rx.recv() => {
                 let Some(ice) = ice else { continue };
@@ -609,7 +614,7 @@ fn apply_control(control: &Control, event: &ServerEvent) {
     }
 }
 
-async fn write_packet(tracks: &banter_server::PublishTracks, packet: Outgoing) {
+async fn write_packet(tracks: &banter_server::PublishTracks, packet: Outgoing, mids: &HashMap<String, String>) {
     match packet {
         Outgoing::Audio { kind, bytes } => {
             let (track, ssrc) = if kind == MediaKind::StreamAudio {
@@ -621,6 +626,13 @@ async fn write_packet(tracks: &banter_server::PublishTracks, packet: Outgoing) {
             let _ = track.write_sample(ssrc, OPUS_PT, &sample, &[]).await;
         }
         Outgoing::Video { kind, layer, bytes } => {
+            let Some(rid) = layer.rid() else {
+                return;
+            };
+            let track_id = if kind == MediaKind::Screen { "screen" } else { "camera" };
+            let Some(mid) = mids.get(track_id) else {
+                return;
+            };
             let (track, base) = if kind == MediaKind::Screen {
                 (&tracks.screen, SCREEN_SSRC_Q)
             } else {
@@ -633,7 +645,8 @@ async fn write_packet(tracks: &banter_server::PublishTracks, packet: Outgoing) {
                 LayerId::Off => return,
             };
             let sample = sample_bytes(bytes, 33);
-            let _ = track.write_sample(ssrc, H264_PT, &sample, &[]).await;
+            let extensions = simulcast_extensions(mid, rid);
+            let _ = track.write_sample(ssrc, H264_PT, &sample, &extensions).await;
         }
     }
 }

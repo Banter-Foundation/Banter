@@ -2,7 +2,7 @@
 //!
 //! Direct calls never reach this module. Their offers are relayed by `Live`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
@@ -73,6 +73,141 @@ struct Forward {
     ssrc: u32,
     payload_type: u8,
     track: Arc<TrackLocalStaticRTP>,
+}
+
+/// `a=mid` for each `a=msid` track in one SDP. Simulcast video is demuxed by this mid.
+pub fn mids_by_track(sdp: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let mut mid: Option<String> = None;
+    for line in sdp.split(['\n', '\r']) {
+        let line = line.trim();
+        if line.starts_with("m=") {
+            mid = None;
+        } else if let Some(value) = line.strip_prefix("a=mid:") {
+            mid = Some(value.trim().to_string());
+        } else if let Some(value) = line.strip_prefix("a=msid:") {
+            let track = value.split_whitespace().nth(1);
+            if let (Some(mid), Some(track)) = (mid.clone(), track) {
+                if !track.is_empty() {
+                    out.insert(track.to_string(), mid);
+                }
+            }
+        }
+    }
+    out
+}
+
+struct Utf8Ext(String);
+
+impl rtc::shared::marshal::MarshalSize for Utf8Ext {
+    fn marshal_size(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl rtc::shared::marshal::Marshal for Utf8Ext {
+    fn marshal_to(&self, buf: &mut [u8]) -> rtc::shared::error::Result<usize> {
+        let bytes = self.0.as_bytes();
+        if buf.len() < bytes.len() {
+            return Err(rtc::shared::error::Error::ErrBufferShort);
+        }
+        buf[..bytes.len()].copy_from_slice(bytes);
+        Ok(bytes.len())
+    }
+}
+
+/// MID + RID header extensions for one simulcast layer.
+///
+/// The receiver throws away `a=ssrc` on a rid/simulcast m-line and only binds an
+/// SSRC when the packet carries both extensions. Without them, camera and screen
+/// RTP is dropped in a guild channel and in a direct call. Microphone audio is a
+/// single encoding, so it still arrives.
+pub fn simulcast_extensions(mid: &str, rid: &str) -> Vec<rtc::rtp::extension::HeaderExtension> {
+    vec![
+        rtc::rtp::extension::HeaderExtension::Custom {
+            uri: MID_EXT.into(),
+            extension: Box::new(Utf8Ext(mid.to_string())),
+        },
+        rtc::rtp::extension::HeaderExtension::Custom {
+            uri: RID_EXT.into(),
+            extension: Box::new(Utf8Ext(rid.to_string())),
+        },
+    ]
+}
+
+/// Host ICE candidate with `BANTER_ADVERTISE_IP` substituted for the container address.
+///
+/// Compose publishes a fixed UDP range. A candidate that still says `172.17.0.x`
+/// never reaches the desktop, so the talking glow updates over the websocket and
+/// no guild audio, camera, or screen arrives. Direct calls are peer-to-peer and
+/// do not use this candidate.
+pub fn rewrite_advertised_candidate(candidate: String) -> String {
+    let advertise = std::env::var("BANTER_ADVERTISE_IP").ok().filter(|value| !value.is_empty());
+    rewrite_host_candidate(candidate, advertise.as_deref())
+}
+
+fn rewrite_host_candidate(candidate: String, advertise: Option<&str>) -> String {
+    let Some(advertise) = advertise.filter(|value| !value.is_empty()) else {
+        return candidate;
+    };
+    let Some(body) = candidate.strip_prefix("candidate:") else {
+        return candidate;
+    };
+    let mut parts: Vec<&str> = body.split_whitespace().collect();
+    if parts.len() < 8 || parts[6] != "typ" || parts[7] != "host" {
+        return candidate;
+    }
+    let address_is_v6 = parts[4].contains(':');
+    let advertise_is_v6 = advertise.contains(':');
+    if address_is_v6 != advertise_is_v6 {
+        return candidate;
+    }
+    parts[4] = advertise;
+    format!("candidate:{}", parts.join(" "))
+}
+
+fn udp_port_range() -> Option<(u16, u16)> {
+    let min = std::env::var("BANTER_UDP_MIN").ok()?.parse::<u16>().ok()?;
+    let max = std::env::var("BANTER_UDP_MAX").ok()?.parse::<u16>().ok()?;
+    if min == 0 || max < min {
+        return None;
+    }
+    Some((min, max))
+}
+
+fn claimed_udp() -> &'static Mutex<HashSet<u16>> {
+    static CLAIMED: OnceLock<Mutex<HashSet<u16>>> = OnceLock::new();
+    CLAIMED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+struct UdpPort(Option<u16>);
+
+impl Drop for UdpPort {
+    fn drop(&mut self) {
+        if let Some(port) = self.0.take() {
+            claimed_udp().lock().expect("udp ports").remove(&port);
+        }
+    }
+}
+
+/// One UDP port from `BANTER_UDP_MIN`–`BANTER_UDP_MAX`, or an ephemeral port when unset.
+fn sfu_udp_bind() -> (Vec<String>, Option<u16>) {
+    let Some((min, max)) = udp_port_range() else {
+        return (vec!["0.0.0.0:0".to_string()], None);
+    };
+    let mut claimed = claimed_udp().lock().expect("udp ports");
+    for port in min..=max {
+        if claimed.contains(&port) {
+            continue;
+        }
+        if std::net::UdpSocket::bind(("0.0.0.0", port)).is_err() {
+            continue;
+        }
+        claimed.insert(port);
+        return (vec![format!("0.0.0.0:{port}")], Some(port));
+    }
+    eprintln!("voice sfu: no free UDP port in {min}-{max}");
+    (vec!["0.0.0.0:0".to_string()], None)
 }
 
 fn ice_servers() -> Vec<RTCIceServer> {
@@ -187,12 +322,13 @@ impl PeerConnectionEventHandler for Handler {
         let Ok(init) = event.candidate.to_json() else {
             return;
         };
+        let candidate = rewrite_advertised_candidate(init.candidate);
         self.live.send_event(
             &[self.user_id],
             &ServerEvent::RtcIce {
                 place: MediaPlace::VoiceChannel(self.channel_id),
                 from: 0,
-                candidate: init.candidate,
+                candidate,
                 sdp_mid: init.sdp_mid,
                 sdp_mline_index: init.sdp_mline_index,
             },
@@ -346,6 +482,8 @@ async fn run_session(
         channel_id,
         remote: Arc::clone(&remote),
     });
+    let (udp_addrs, udp_port) = sfu_udp_bind();
+    let _udp_claim = UdpPort(udp_port);
     let pc = PeerConnectionBuilder::new()
         .with_configuration(
             RTCConfigurationBuilder::default()
@@ -355,7 +493,7 @@ async fn run_session(
         .with_media_engine(media)
         .with_interceptor_registry(registry)
         .with_handler(handler)
-        .with_udp_addrs(vec!["0.0.0.0:0".to_string()])
+        .with_udp_addrs(udp_addrs)
         .build()
         .await
         .map_err(|err| err.to_string())?;
@@ -651,7 +789,240 @@ pub fn sample_bytes(payload: Vec<u8>, duration_ms: u64) -> rtc::media::Sample {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
+    use webrtc::peer_connection::{
+        PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceCandidateInit,
+        RTCSessionDescription, register_default_interceptors,
+    };
+
     use crate::codec::sdp_matches_contract;
+    use crate::live::Live;
+    use crate::model::ServerEvent;
+
+    #[test]
+    fn mids_follow_msid_and_host_candidates_can_be_rewritten() {
+        let sdp = "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:0\r\na=msid:banter user_audio\r\n\
+                   m=video 9 UDP/TLS/RTP/SAVPF 102\r\na=mid:2\r\na=msid:banter camera\r\n\
+                   m=video 9 UDP/TLS/RTP/SAVPF 102\r\na=mid:3\r\na=msid:banter screen\r\n";
+        let mids = mids_by_track(sdp);
+        assert_eq!(mids.get("camera").map(String::as_str), Some("2"));
+        assert_eq!(mids.get("screen").map(String::as_str), Some("3"));
+        let candidate = "candidate:1 1 udp 2130706431 172.17.0.2 40000 typ host generation 0".to_string();
+        let rewritten = super::rewrite_host_candidate(candidate.clone(), Some("127.0.0.1"));
+        assert_eq!(rewritten, "candidate:1 1 udp 2130706431 127.0.0.1 40000 typ host generation 0");
+        let unchanged = super::rewrite_host_candidate(candidate, None);
+        assert_eq!(unchanged, "candidate:1 1 udp 2130706431 172.17.0.2 40000 typ host generation 0");
+    }
+
+    /// Two local peer connections in one voice channel. Direct calls never touch this
+    /// path; if the SFU drops RTP, guild voice shows the talking flag and stays silent.
+    #[tokio::test]
+    async fn voice_channel_sfu_delivers_audio_camera_and_screen() {
+        std::env::set_var("BANTER_STUN", "");
+        std::env::remove_var("BANTER_ADVERTISE_IP");
+        std::env::remove_var("BANTER_UDP_MIN");
+        std::env::remove_var("BANTER_UDP_MAX");
+        let live = Arc::new(Live::new());
+        let channel_id = 42;
+        let ada = 101;
+        let bob = 202;
+        live.seed_voice_member(ada, channel_id);
+        live.seed_voice_member(bob, channel_id);
+        live.set_flags(
+            ada,
+            crate::model::VoiceFlags {
+                transmitting: true,
+                camera: true,
+                screen: true,
+                ..crate::model::VoiceFlags::default()
+            },
+        );
+
+        let ada_got = Arc::new(Mutex::new(Vec::<String>::new()));
+        let bob_got = Arc::new(Mutex::new(Vec::<String>::new()));
+        let ada_task = member_session(Arc::clone(&live), ada, channel_id, Arc::clone(&ada_got), true);
+        let bob_task = member_session(Arc::clone(&live), bob, channel_id, Arc::clone(&bob_got), false);
+        let (ada_err, bob_err) = tokio::join!(ada_task, bob_task);
+        close_user(ada);
+        close_user(bob);
+
+        let bob_tracks = bob_got.lock().expect("bob").clone();
+        assert!(ada_err.is_none(), "publisher session failed: {}", ada_err.unwrap_or_default());
+        assert!(bob_err.is_none(), "subscriber session failed: {}", bob_err.unwrap_or_default());
+        let audio = format!("fwd-{ada}-user_audio-f");
+        let camera = format!("fwd-{ada}-camera-f");
+        let screen = format!("fwd-{ada}-screen-f");
+        assert!(bob_tracks.iter().any(|id| id == &audio), "guild voice forwarded no microphone audio, got {bob_tracks:?}");
+        assert!(bob_tracks.iter().any(|id| id == &camera), "guild voice forwarded no camera, got {bob_tracks:?}");
+        assert!(bob_tracks.iter().any(|id| id == &screen), "guild voice forwarded no screen, got {bob_tracks:?}");
+    }
+
+    struct Probe {
+        ice_tx: tokio::sync::mpsc::UnboundedSender<RTCIceCandidateInit>,
+        got: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl PeerConnectionEventHandler for Probe {
+        async fn on_ice_candidate(&self, event: webrtc::peer_connection::RTCPeerConnectionIceEvent) {
+            if let Ok(init) = event.candidate.to_json() {
+                let _ = self.ice_tx.send(init);
+            }
+        }
+
+        async fn on_track(&self, track: Arc<dyn TrackRemote>) {
+            let got = Arc::clone(&self.got);
+            tokio::spawn(async move {
+                let id = track.track_id().await;
+                let mut announced = false;
+                while let Some(event) = track.poll().await {
+                    if matches!(event, TrackRemoteEvent::OnRtpPacket(_)) && !announced {
+                        announced = true;
+                        got.lock().expect("tracks").push(id.clone());
+                    }
+                    if matches!(event, TrackRemoteEvent::OnEnded) {
+                        break;
+                    }
+                }
+            });
+        }
+    }
+
+    async fn member_session(
+        live: Arc<Live>,
+        user_id: i64,
+        channel_id: i64,
+        got: Arc<Mutex<Vec<String>>>,
+        publish: bool,
+    ) -> Option<String> {
+        let (signal_tx, mut signal_rx) = tokio::sync::mpsc::unbounded_channel();
+        live.register_socket(user_id, signal_tx);
+        let (ice_tx, mut ice_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut media = media_engine().expect("media");
+        let registry = register_default_interceptors(rtc::interceptor::Registry::new(), &mut media).expect("interceptors");
+        let pc = match PeerConnectionBuilder::new()
+            .with_configuration(RTCConfigurationBuilder::default().with_ice_servers(ice_servers()).build())
+            .with_media_engine(media)
+            .with_interceptor_registry(registry)
+            .with_handler(Arc::new(Probe { ice_tx, got }))
+            .with_udp_addrs(vec!["127.0.0.1:0".to_string()])
+            .build()
+            .await
+        {
+            Ok(pc) => pc,
+            Err(err) => return Some(err.to_string()),
+        };
+        let tracks = match attach_publish_tracks(&pc).await {
+            Ok(tracks) => tracks,
+            Err(err) => return Some(err),
+        };
+        let offer = match pc.create_offer(None).await {
+            Ok(offer) => offer,
+            Err(err) => return Some(err.to_string()),
+        };
+        if let Err(err) = pc.set_local_description(offer.clone()).await {
+            return Some(format!("set local offer: {err}"));
+        }
+        let mids = mids_by_track(&offer.sdp);
+        if publish && (mids.get("camera").is_none() || mids.get("screen").is_none()) {
+            return Some(format!("offer is missing camera/screen mids: {mids:?}"));
+        }
+        accept_offer(Arc::clone(&live), user_id, channel_id, offer.sdp);
+
+        let mut remote_ready = false;
+        let mut pending_ice = Vec::new();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::select! {
+                incoming = signal_rx.recv() => {
+                    let Some(crate::live::Outbound::Text(text)) = incoming else { break };
+                    let Ok(event) = serde_json::from_str::<ServerEvent>(&text) else { continue };
+                    match event {
+                        ServerEvent::RtcAnswer { sdp, .. } => {
+                            let answer = match RTCSessionDescription::answer(sdp) {
+                                Ok(answer) => answer,
+                                Err(err) => return Some(format!("answer sdp: {err}")),
+                            };
+                            if let Err(err) = pc.set_remote_description(answer).await {
+                                return Some(format!("set remote answer: {err}"));
+                            }
+                            remote_ready = true;
+                            for candidate in pending_ice.drain(..) {
+                                let _ = pc.add_ice_candidate(candidate).await;
+                            }
+                        }
+                        ServerEvent::RtcOffer { sdp, .. } => {
+                            if publish {
+                                let remote_mids = mids_by_track(&sdp);
+                                if let Some(remote_camera) = remote_mids.get("camera") {
+                                    assert_eq!(
+                                        remote_camera.as_str(),
+                                        mids.get("camera").map(String::as_str).unwrap_or(""),
+                                        "renegotiation moved the camera mid"
+                                    );
+                                }
+                            }
+                            let offer = match RTCSessionDescription::offer(sdp) {
+                                Ok(offer) => offer,
+                                Err(err) => return Some(format!("renegotiation sdp: {err}")),
+                            };
+                            if let Err(err) = pc.set_remote_description(offer).await {
+                                return Some(format!("set remote renegotiation offer: {err}"));
+                            }
+                            let answer = match pc.create_answer(None).await {
+                                Ok(answer) => answer,
+                                Err(err) => return Some(format!("renegotiation answer: {err}")),
+                            };
+                            if let Err(err) = pc.set_local_description(answer.clone()).await {
+                                return Some(format!("set local renegotiation answer: {err}"));
+                            }
+                            accept_answer(user_id, answer.sdp);
+                            remote_ready = true;
+                            for candidate in pending_ice.drain(..) {
+                                let _ = pc.add_ice_candidate(candidate).await;
+                            }
+                        }
+                        ServerEvent::RtcIce { candidate, sdp_mid, sdp_mline_index, .. } => {
+                            let init = RTCIceCandidateInit { candidate, sdp_mid, sdp_mline_index, ..Default::default() };
+                            if remote_ready {
+                                let _ = pc.add_ice_candidate(init).await;
+                            } else {
+                                pending_ice.push(init);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                ice = ice_rx.recv() => {
+                    let Some(ice) = ice else { continue };
+                    accept_ice(user_id, ice.candidate, ice.sdp_mid, ice.sdp_mline_index);
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {
+                    if publish && remote_ready {
+                        let audio = sample_bytes(vec![0xfc, 0xff, 0xfe], 20);
+                        let _ = tracks.user_audio.write_sample(USER_AUDIO_SSRC, OPUS_PT, &audio, &[]).await;
+                        let video = sample_bytes(vec![0x65, 0x88, 0x84, 0x00], 33);
+                        if let Some(mid) = mids.get("camera") {
+                            let extensions = simulcast_extensions(mid, "f");
+                            let _ = tracks.camera.write_sample(CAMERA_SSRC_Q + 2, H264_PT, &video, &extensions).await;
+                        }
+                        if let Some(mid) = mids.get("screen") {
+                            let extensions = simulcast_extensions(mid, "f");
+                            let _ = tracks.screen.write_sample(SCREEN_SSRC_Q + 2, H264_PT, &video, &extensions).await;
+                        }
+                    }
+                }
+            }
+        }
+        let _ = pc.close().await;
+        None
+    }
 
     #[tokio::test]
     async fn publish_offer_locks_profile_and_rids() {

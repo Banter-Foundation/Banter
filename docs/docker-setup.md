@@ -53,7 +53,7 @@ Clean start: this stack does not import old SQLite `banter.db` files.
 
 1. **Docker** with Compose v2 on the release host (`docker compose`). Locally, Podman is fine for builds / Postgres-only.
 2. Repo checkout on the server (path used as `DEPLOY_PATH`).
-3. Free host ports **3970** (public API), **3980** (deploy health), and Postgres (**5432**), or override via env.
+3. Free host ports **3970** (public API), **3980** (deploy health), Postgres (**5432**), and the guild-voice UDP ranges **40000-40049** (slot A) and **40100-40149** (slot B), or override via env.
 
 ## Quick start (local / first boot)
 
@@ -169,6 +169,8 @@ docker run --rm -p 3970:3970 \
 | `BANTER_DATABASE_URL` | `postgres://banter:banter@postgres:5432/banter` (compose) / `postgres://banter:banter@127.0.0.1:5432/banter` (host) | Postgres URL |
 | `BANTER_IMAGE` | `ghcr.io/snowedinowl/banter:latest` | App image for both slots |
 | `BANTER_PG_PORT` | `5432` | Host port for Postgres |
+| `BANTER_UDP_MIN` / `BANTER_UDP_MAX` | `40000`-`40049` on slot A, `40100`-`40149` on slot B | SFU UDP ports. Compose publishes the same range on the host. Required for guild voice, camera, and screen. |
+| `BANTER_ADVERTISE_IP` | `127.0.0.1` in Compose | Address written into the SFU’s host ICE candidates. Use the host’s reachable IP when the desktop is not on this machine, and open the UDP range. |
 | `GHCR_TOKEN` / `GITHUB_TOKEN` | (none) | Used by deploy script to `docker login ghcr.io` |
 
 ## Files in the repo
