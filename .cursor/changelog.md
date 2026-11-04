@@ -187,6 +187,15 @@ Created branch test/owl-fixes from origin/main (89f41b0) for sibling Owl-fix wor
 
 Restyled the Screen Share / Go Live picker to match Discord’s Stream Select: dark overlay card, underline Screens / Applications tabs, larger thumbnail tiles with blurple selection border and check badge, Quality and Stream audio under the grid, Cancel plus green Go Live (and red Stop Streaming when live) in the footer. UI-only; share/select/go-live logic unchanged. Theme constants `SHARE_*` in theme.rs. Worktree Banter-stream-select on cursor/stream-select-discord-d812, merging into test/owl-fixes.
 
+## 2026-11-03 19:24:45 -06:00 [Winter] — Fix screen share so remotes receive Go Live
+
+Voice-channel SFU dropped every screen (and camera) packet because `bind_declared_ssrc` fires OnOpen with `rid=None` for Banter's fixed publish SSRCs, and forward rows were keyed by that empty string instead of `q`/`h`/`f`. P2P tiles could also key under sender `0` until signaling set the peer id.
+
+- SFU: `inbound_rtp_layer_for_packet` prefers RID, then `SCREEN_SSRC_Q` / `CAMERA_SSRC_Q` offsets, then Full; forwards use the resolved layer RID
+- Client: P2P remote screen/camera pictures follow the live peer id; SFU `fwd-` ids still embed the publisher
+- Tests first: foundation screen admit path, SFU unit forward after pair subscribe, rtc receive parse/peer id
+- Docs: `docs/streaming.md`, `docs/feature-status.md`. Worktree `Banter-screen-share`. Never touched E:.
+
 ## 2026-11-03 19:24:57 -06:00 [Winter] — Discord-style one-on-one call stage
 
 Starting or accepting a DM call now replaces that conversation's chat stage with a Discord-like call view. Ringing shows a large peer avatar, status text, and Accept/Decline; an active call shows two participant tiles and the shared call control bar. Theme helpers and tests cover when the stage opens and the ringing layout. Stage disconnect ends a call as well as leaving voice. Never touched E:.

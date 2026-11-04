@@ -13,9 +13,12 @@ Both sides offer the same four tracks: `user_audio`, `stream_audio`, `camera`, a
 Voice-channel SFU notes (reliability):
 
 - Inbound **audio** RTP is forwarded without waiting on an OnOpen SSRC→RID map (that map often missed the mic SSRC and dropped every Opus packet in a channel while 1:1 P2P still worked).
-- The forward table treats unpublished audio as layer `Full` so the first packet is not dropped before `note_layer`.
+- Inbound **screen/camera** RTP prefers OnOpen RID, then Banter’s fixed publish SSRC bases (`SCREEN_SSRC_Q` / `CAMERA_SSRC_Q` + 0/1/2 for `q`/`h`/`f`), then `Full`. Waiting only on OnOpen dropped every Go Live / camera packet for remotes (`bind_declared_ssrc` leaves `rid=None`).
+- Forward rows are keyed by the resolved layer RID (`q`/`h`/`f`), not by an empty OnOpen string.
+- The forward table treats unpublished audio as layer `Full` so the first packet is not dropped before `note_layer`. Pair subscribe marks screen Full publishing so the first keyframe is admitted.
 - Trickle ICE that arrives before the SFU slot exists is buffered and applied when the offer is accepted.
 - Open-mic quiet frames still feed Opus (DTX); mute / deafen / PTT-up stop the track. Speaking glow still uses the RMS / PTT level.
+- P2P remote screen/camera tiles use the live peer id from signaling once it is known; SFU forward track ids already embed the publisher.
 
 ICE is host candidates, `BANTER_STUN` (default `stun:stun.l.google.com:19302`, empty disables it), and optional `BANTER_TURN` with `BANTER_TURN_USER` and `BANTER_TURN_PASSWORD`.
 
