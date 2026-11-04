@@ -70,6 +70,8 @@ pub(crate) fn run() -> Result<(), String> {
     imgui.set_ini_filename(Some(ini)).map_err(|err| err.to_string())?;
     let bold_font = install_font(&mut imgui);
     let semibold_font = load_first_face(imgui.font_atlas(), &semibold_font_paths(), 16.0).or(bold_font);
+    let italic_font = load_first_face(imgui.font_atlas(), &italic_font_paths(), 16.0);
+    let bold_italic_font = load_first_face(imgui.font_atlas(), &bold_italic_font_paths(), 16.0).or(bold_font);
     let mut renderer = GlowRenderer::with_shared_context(Rc::clone(&gl), &mut imgui).map_err(|err| err.to_string())?;
 
     let mut app = App::open(base, data_dir);
@@ -80,6 +82,8 @@ pub(crate) fn run() -> Result<(), String> {
     }
     app.set_bold_font(bold_font);
     app.set_semibold_font(semibold_font);
+    app.set_italic_font(italic_font);
+    app.set_bold_italic_font(bold_italic_font);
     let mut last_time = glfw.get_time();
     // (vsync, refresh_hz) last pushed to GLFW. Reapplied when the window moves
     // to another monitor or the active mode's Hz changes.
@@ -612,6 +616,56 @@ fn semibold_font_paths() -> Vec<&'static str> {
         ];
         paths.extend(bold_font_paths());
         paths
+    }
+}
+
+fn italic_font_paths() -> Vec<&'static str> {
+    #[cfg(windows)]
+    {
+        return vec![r"C:\Windows\Fonts\segoeuii.ttf"];
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return vec![
+            "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
+            "/Library/Fonts/Arial Italic.ttf",
+        ];
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        vec![
+            "/usr/share/fonts/liberation/LiberationSans-Italic.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf",
+            "/usr/share/fonts/noto/NotoSans-Italic.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Italic.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Oblique.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+        ]
+    }
+}
+
+fn bold_italic_font_paths() -> Vec<&'static str> {
+    #[cfg(windows)]
+    {
+        return vec![r"C:\Windows\Fonts\segoeuiz.ttf"];
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return vec![
+            "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
+            "/Library/Fonts/Arial Bold Italic.ttf",
+        ];
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        vec![
+            "/usr/share/fonts/liberation/LiberationSans-BoldItalic.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf",
+            "/usr/share/fonts/noto/NotoSans-BoldItalic.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-BoldItalic.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-BoldOblique.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+        ]
     }
 }
 
