@@ -6,9 +6,9 @@
 //! as-is. Fresh Local with nothing listening opens the UI and asks for a remote.
 //!
 //! Deferred, and not implemented: reactions, text chat inside a voice channel,
-//! group chats, roles, kick, and ban. Profile About Me / custom status /
-//! cosmetics are implemented for Discord profile parity. Chat bold/italic and
-//! related styles use BFMD (`bfmd` module). See `docs/foundation.md`.
+//! group chats, kick, and ban. Profile About Me / custom status / cosmetics
+//! and guild roles are implemented. Chat bold/italic and related styles use
+//! BFMD (`bfmd` module). See `docs/foundation.md`.
 
 mod api;
 pub mod bfmd;

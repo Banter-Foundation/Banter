@@ -1369,8 +1369,7 @@ pub enum ContextMenuEntry {
     Separator,
 }
 
-/// Actions the signed-in shell can run from a context menu. Kick, ban, roles, and
-/// profiles stay deferred; these match the foundation slice only.
+/// Actions the signed-in shell can run from a context menu. Kick and ban stay deferred.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContextMenuAction {
     Reply { message_id: i64 },
@@ -1384,6 +1383,7 @@ pub enum ContextMenuAction {
     CallUser { user_id: i64 },
     AddFriend { username: String },
     InvitePeople { server_id: i64 },
+    AssignRoles { user_id: i64 },
     CopyChannelName { name: String },
     CopyChannelId { channel_id: i64 },
 }
@@ -1432,7 +1432,13 @@ pub fn message_context_menu(message_id: i64, author_id: i64, body: &str, mine: O
 }
 
 /// Right-click menu for a member, friend, or DM peer. Self gets mention and copy only.
-pub fn member_context_menu(user_id: i64, username: &str, mine: Option<i64>, is_friend: bool) -> Vec<ContextMenuEntry> {
+pub fn member_context_menu(
+    user_id: i64,
+    username: &str,
+    mine: Option<i64>,
+    is_friend: bool,
+    assign_roles: bool,
+) -> Vec<ContextMenuEntry> {
     let mut entries = vec![menu_item(
         "ctx-mention",
         "Mention",
@@ -1466,6 +1472,14 @@ pub fn member_context_menu(user_id: i64, username: &str, mine: Option<i64>, is_f
             ));
         }
     }
+    if assign_roles {
+        entries.push(menu_item(
+            "ctx-roles",
+            "Roles",
+            ContextMenuTone::Normal,
+            ContextMenuAction::AssignRoles { user_id },
+        ));
+    }
     entries.push(ContextMenuEntry::Separator);
     entries.push(menu_item(
         "ctx-copy-user",
@@ -1476,6 +1490,41 @@ pub fn member_context_menu(user_id: i64, username: &str, mine: Option<i64>, is_f
         },
     ));
     entries
+}
+
+/// Online members with a hoisted role group under that role, highest position first.
+/// Other online members go under ONLINE. Offline members go under OFFLINE even when hoisted.
+pub fn plan_member_groups(rows: &[(bool, Option<(i64, String)>)]) -> Vec<(String, Vec<usize>)> {
+    let mut hoist: Vec<(i64, String, Vec<usize>)> = Vec::new();
+    let mut online = Vec::new();
+    let mut offline = Vec::new();
+    for (index, (is_online, key)) in rows.iter().enumerate() {
+        if !is_online {
+            offline.push(index);
+            continue;
+        }
+        if let Some((position, name)) = key {
+            if let Some(group) = hoist.iter_mut().find(|group| group.0 == *position && group.1 == *name) {
+                group.2.push(index);
+            } else {
+                hoist.push((*position, name.clone(), vec![index]));
+            }
+        } else {
+            online.push(index);
+        }
+    }
+    hoist.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
+    let mut groups = Vec::new();
+    for (_, name, indexes) in hoist {
+        groups.push((name.to_uppercase(), indexes));
+    }
+    if !online.is_empty() {
+        groups.push(("ONLINE".into(), online));
+    }
+    if !offline.is_empty() {
+        groups.push(("OFFLINE".into(), offline));
+    }
+    groups
 }
 
 /// Right-click menu for a text or voice channel in the sidebar.
@@ -1560,6 +1609,31 @@ pub fn context_menu_height(entries: &[ContextMenuEntry]) -> f32 {
         }
     }
     height
+}
+
+#[cfg(test)]
+mod member_group_tests {
+    use super::plan_member_groups;
+
+    #[test]
+    fn hoists_online_members_and_keeps_offline_together() {
+        let rows = vec![
+            (true, Some((2, "Mods".into()))),
+            (true, None),
+            (false, Some((2, "Mods".into()))),
+            (true, Some((5, "Admin".into()))),
+            (true, Some((2, "Mods".into()))),
+        ];
+        let groups = plan_member_groups(&rows);
+        assert_eq!(groups[0].0, "ADMIN");
+        assert_eq!(groups[0].1, vec![3]);
+        assert_eq!(groups[1].0, "MODS");
+        assert_eq!(groups[1].1, vec![0, 4]);
+        assert_eq!(groups[2].0, "ONLINE");
+        assert_eq!(groups[2].1, vec![1]);
+        assert_eq!(groups[3].0, "OFFLINE");
+        assert_eq!(groups[3].1, vec![2]);
+    }
 }
 
 /// Keep a floating menu inside the display so right-clicks near the edge still work.

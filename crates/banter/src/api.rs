@@ -9,7 +9,7 @@ use crate::profiler;
 use base64::engine::general_purpose::STANDARD;
 use banter_server::{
     Account, CallSnapshot, Category, CategoryLayout, Channel, ChannelKind, ChatTarget, CosmeticItem,
-    DirectChat, Friend, FriendRequest, Mention, Message, Presence, ProfilePatch, ServerHome,
+    DirectChat, Friend, FriendRequest, GuildRole, Mention, Message, Presence, ProfilePatch, ServerHome,
     ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember,
 };
 use serde::Deserialize;
@@ -54,6 +54,8 @@ pub struct MemberView {
     pub presence: Presence,
     #[serde(default)]
     pub custom_status: Option<String>,
+    #[serde(default)]
+    pub roles: Vec<GuildRole>,
 }
 
 #[derive(Deserialize)]
@@ -291,6 +293,64 @@ impl Client {
 
     pub fn members(&self, server_id: i64) -> Result<Vec<MemberView>, ApiError> {
         self.get_json(&format!("/v1/servers/{server_id}/members"))
+    }
+
+    pub fn roles(&self, server_id: i64) -> Result<Vec<GuildRole>, ApiError> {
+        self.get_json(&format!("/v1/servers/{server_id}/roles"))
+    }
+
+    pub fn create_role(
+        &self,
+        server_id: i64,
+        name: &str,
+        color: i64,
+        hoist: bool,
+        permissions: i64,
+    ) -> Result<GuildRole, ApiError> {
+        self.send_json(
+            self.auth(http().post(&self.url(&format!("/v1/servers/{server_id}/roles")))),
+            serde_json::json!({
+                "name": name,
+                "color": color,
+                "hoist": hoist,
+                "permissions": permissions,
+            }),
+        )
+    }
+
+    pub fn update_role(
+        &self,
+        server_id: i64,
+        role_id: i64,
+        name: &str,
+        color: i64,
+        hoist: bool,
+        permissions: i64,
+    ) -> Result<GuildRole, ApiError> {
+        self.send_json(
+            self.auth(http().patch(&self.url(&format!("/v1/servers/{server_id}/roles/{role_id}")))),
+            serde_json::json!({
+                "name": name,
+                "color": color,
+                "hoist": hoist,
+                "permissions": permissions,
+            }),
+        )
+    }
+
+    pub fn delete_role(&self, server_id: i64, role_id: i64) -> Result<(), ApiError> {
+        let path = format!("/v1/servers/{server_id}/roles/{role_id}");
+        self.call_empty("DELETE", &path, self.auth(http().delete(&self.url(&path))))
+    }
+
+    pub fn set_member_roles(&self, server_id: i64, user_id: i64, role_ids: &[i64]) -> Result<(), ApiError> {
+        let path = format!("/v1/servers/{server_id}/members/{user_id}/roles");
+        self.send_json_empty(
+            "PUT",
+            &path,
+            self.auth(http().put(&self.url(&path))),
+            serde_json::json!({ "role_ids": role_ids }),
+        )
     }
 
     pub fn set_nickname(&self, server_id: i64, nickname: Option<&str>) -> Result<(), ApiError> {

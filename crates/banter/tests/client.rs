@@ -832,7 +832,7 @@ fn message_context_menu_lists_reply_copy_and_own_actions() {
 
 #[test]
 fn member_context_menu_skips_self_actions_and_friend_when_already_friends() {
-    let stranger = banter::member_context_menu(7, "ada", Some(1), false);
+    let stranger = banter::member_context_menu(7, "ada", Some(1), false, false);
     assert_eq!(
         banter::context_menu_labels(&stranger),
         ["Mention", "Message", "Call", "Add Friend", "Copy Username"]
@@ -854,7 +854,7 @@ fn member_context_menu_skips_self_actions_and_friend_when_already_friends() {
         Some(banter::ContextMenuTone::Brand)
     );
 
-    let friend = banter::member_context_menu(7, "ada", Some(1), true);
+    let friend = banter::member_context_menu(7, "ada", Some(1), true, false);
     assert_eq!(
         banter::context_menu_labels(&friend),
         ["Mention", "Message", "Call", "Copy Username"]
@@ -863,8 +863,15 @@ fn member_context_menu_skips_self_actions_and_friend_when_already_friends() {
         .iter()
         .any(|action| matches!(action, banter::ContextMenuAction::AddFriend { .. })));
 
-    let self_menu = banter::member_context_menu(1, "owl", Some(1), false);
+    let self_menu = banter::member_context_menu(1, "owl", Some(1), false, false);
     assert_eq!(banter::context_menu_labels(&self_menu), ["Mention", "Copy Username"]);
+
+    let manager = banter::member_context_menu(7, "ada", Some(1), true, true);
+    assert_eq!(
+        banter::context_menu_labels(&manager),
+        ["Mention", "Message", "Call", "Roles", "Copy Username"]
+    );
+    assert!(banter::context_menu_actions(&manager).contains(&banter::ContextMenuAction::AssignRoles { user_id: 7 }));
 }
 
 #[test]

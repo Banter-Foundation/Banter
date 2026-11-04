@@ -92,4 +92,4 @@ cargo test -p banter
 
 ## Not in this build
 
-About Me, custom status, reactions, bold and italic, text chat inside a voice channel, group chats, roles, kick, and ban. See [docs/foundation.md](docs/foundation.md) and [docs/feature-status.md](docs/feature-status.md).
+Reactions, text chat inside a voice channel, group chats, kick, and ban. About Me and custom status are on My Account and the profile. Guild roles are in the server menu. See [docs/foundation.md](docs/foundation.md) and [docs/feature-status.md](docs/feature-status.md).

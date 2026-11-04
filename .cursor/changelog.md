@@ -473,3 +473,10 @@ Shipped pre-release Version-1-test-9. Older tags stay. Compose default remains `
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-9
 - Assets: Banter-windows-version-1-test-9.zip, Banter-linux-version-1-test-9.zip, banter-server.exe, banter-server-linux
 - `room::tests::voice_channel_sfu_delivers_audio_camera_and_screen` passed (microphone, camera, and screen RTP).
+
+## 2026-11-04 15:57:00 -0500 [ubuntu] — About Me, custom status, and guild roles
+
+My Account saves About Me and a custom status. The status shows under your name and on member rows. Servers get an @everyone role plus extra roles with a color, an optional hoist, and permission bits. The server menu edits roles. A member's context menu assigns them. Kick and ban stay deferred.
+
+- Migration `003_guild_roles`. Creating a channel or category requires Manage Channels. Creating an invite requires Create Invite. The owner has every permission.
+- Tests: `roles::` 3 passed, `member_group` passed, `member_context_menu` passed, `guild_roles_gate_channels_and_stay_below_the_actor` and `server_invite_members_nickname_and_channels` passed against Postgres.

@@ -15,6 +15,11 @@ use crate::badges::{badge_exists, badge_item, MAX_EQUIPPED_BADGES};
 use crate::cosmetics::{cosmetic_exists, CosmeticKind, DEFAULT_THEME_PRIMARY, DEFAULT_THEME_SECONDARY};
 use crate::error::BanterError;
 use crate::model::*;
+use crate::roles::{
+    grants_only_held, has_permission, next_role_position, role_color_ok, EVERYONE_NAME, EVERYONE_PERMISSIONS,
+    MAX_GUILD_ROLES, PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_CHANNELS, PERM_MANAGE_ROLES,
+    ROLE_PERMISSION_MASK,
+};
 
 pub struct Store {
     pool: PgPool,
@@ -163,7 +168,13 @@ impl Store {
             Some(server_id) => member_nickname(&self.pool, server_id, target_id).await?,
             None => None,
         };
-        load_user_profile(&self.pool, target_id, nickname, is_self, is_friend).await
+        let mut profile = load_user_profile(&self.pool, target_id, nickname, is_self, is_friend).await?;
+        if let Some(server_id) = server_id {
+            if is_member(&self.pool, target_id, server_id).await? {
+                profile.roles = roles_for_member(&self.pool, server_id, target_id).await?;
+            }
+        }
+        Ok(profile)
     }
 
     /// Apply a Discord-parity profile customization patch for the owner.
@@ -522,12 +533,13 @@ impl Store {
         insert_channel_tx(&mut tx, server_id, text_category, "general", ChannelKind::Text, 0).await?;
         let voice_category = insert_category_tx(&mut tx, server_id, "Voice Channels", 1).await?;
         insert_channel_tx(&mut tx, server_id, voice_category, "General", ChannelKind::Voice, 0).await?;
+        insert_everyone_role_tx(&mut tx, server_id).await?;
         tx.commit().await.map_err(db_err)?;
         self.server_home(owner_id, server_id).await
     }
 
     pub async fn create_invite(&self, user_id: i64, server_id: i64) -> Result<String, BanterError> {
-        self.require_member(user_id, server_id).await?;
+        self.require_flag(user_id, server_id, PERM_CREATE_INVITE).await?;
         for _ in 0..8 {
             let code = invite_code();
             let result = sqlx::query(
@@ -594,7 +606,9 @@ impl Store {
 
     pub async fn members(&self, user_id: i64, server_id: i64) -> Result<Vec<Member>, BanterError> {
         self.require_member(user_id, server_id).await?;
-        members_of(&self.pool, server_id).await
+        let mut members = members_of(&self.pool, server_id).await?;
+        attach_member_roles(&self.pool, server_id, &mut members).await?;
+        Ok(members)
     }
 
     pub async fn set_nickname(&self, user_id: i64, server_id: i64, nickname: Option<&str>) -> Result<(), BanterError> {
@@ -615,7 +629,7 @@ impl Store {
 
     pub async fn create_category(&self, user_id: i64, server_id: i64, name: &str) -> Result<Category, BanterError> {
         let name = clean_label(name)?;
-        self.require_owner(user_id, server_id).await?;
+        self.require_flag(user_id, server_id, PERM_MANAGE_CHANNELS).await?;
         let position: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(position) + 1, 0) FROM categories WHERE server_id = $1",
         )
@@ -649,7 +663,7 @@ impl Store {
         kind: ChannelKind,
     ) -> Result<Channel, BanterError> {
         let name = clean_label(name)?;
-        self.require_owner(user_id, server_id).await?;
+        self.require_flag(user_id, server_id, PERM_MANAGE_CHANNELS).await?;
         let category_server: Option<i64> =
             sqlx::query_scalar("SELECT server_id FROM categories WHERE id = $1")
                 .bind(category_id)
@@ -1163,20 +1177,193 @@ impl Store {
         }
     }
 
-    async fn require_owner(&self, user_id: i64, server_id: i64) -> Result<(), BanterError> {
+    async fn require_flag(&self, user_id: i64, server_id: i64, flag: i64) -> Result<(), BanterError> {
         if !is_member(&self.pool, user_id, server_id).await? {
             return Err(BanterError::NotMember);
         }
-        let owner: i64 = sqlx::query_scalar("SELECT owner_id FROM servers WHERE id = $1")
-            .bind(server_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(db_err)?;
-        if owner == user_id {
+        let bits = permission_bits(&self.pool, user_id, server_id).await?;
+        if has_permission(bits, flag) {
             Ok(())
         } else {
             Err(BanterError::NotOwner)
         }
+    }
+
+    pub async fn roles(&self, user_id: i64, server_id: i64) -> Result<Vec<GuildRole>, BanterError> {
+        self.require_member(user_id, server_id).await?;
+        roles_on_server(&self.pool, server_id).await
+    }
+
+    pub async fn create_role(
+        &self,
+        user_id: i64,
+        server_id: i64,
+        name: &str,
+        color: i64,
+        hoist: bool,
+        permissions: i64,
+    ) -> Result<GuildRole, BanterError> {
+        let name = clean_label(name)?;
+        if name == EVERYONE_NAME {
+            return Err(BanterError::InvalidName);
+        }
+        let color = clean_role_color(color)?;
+        let permissions = permissions & ROLE_PERMISSION_MASK;
+        self.require_flag(user_id, server_id, PERM_MANAGE_ROLES).await?;
+        let actor_bits = permission_bits(&self.pool, user_id, server_id).await?;
+        if !grants_only_held(actor_bits, permissions) {
+            return Err(BanterError::RoleHierarchy);
+        }
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles WHERE server_id = $1")
+            .bind(server_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_err)?;
+        if count >= MAX_GUILD_ROLES {
+            return Err(BanterError::TooManyRoles);
+        }
+        let positions = role_positions(&self.pool, server_id).await?;
+        let ceiling = actor_ceiling(&self.pool, user_id, server_id).await?;
+        let Some(position) = next_role_position(&positions, ceiling) else {
+            return Err(BanterError::RoleHierarchy);
+        };
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO roles (server_id, name, color, position, hoist, permissions, everyone)
+             VALUES ($1, $2, $3, $4, $5, $6, FALSE) RETURNING id",
+        )
+        .bind(server_id)
+        .bind(&name)
+        .bind(color)
+        .bind(position)
+        .bind(hoist)
+        .bind(permissions)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?;
+        role_by_id(&self.pool, server_id, id).await
+    }
+
+    pub async fn update_role(
+        &self,
+        user_id: i64,
+        server_id: i64,
+        role_id: i64,
+        name: &str,
+        color: i64,
+        hoist: bool,
+        permissions: i64,
+    ) -> Result<GuildRole, BanterError> {
+        let color = clean_role_color(color)?;
+        let permissions = permissions & ROLE_PERMISSION_MASK;
+        self.require_flag(user_id, server_id, PERM_MANAGE_ROLES).await?;
+        let role = role_by_id(&self.pool, server_id, role_id).await?;
+        let ceiling = actor_ceiling(&self.pool, user_id, server_id).await?;
+        if !role.everyone && role.position >= ceiling {
+            return Err(BanterError::RoleHierarchy);
+        }
+        let actor_bits = permission_bits(&self.pool, user_id, server_id).await?;
+        if !grants_only_held(actor_bits, permissions) {
+            return Err(BanterError::RoleHierarchy);
+        }
+        let name = if role.everyone {
+            EVERYONE_NAME.to_string()
+        } else {
+            let name = clean_label(name)?;
+            if name == EVERYONE_NAME {
+                return Err(BanterError::InvalidName);
+            }
+            name
+        };
+        sqlx::query(
+            "UPDATE roles SET name = $1, color = $2, hoist = $3, permissions = $4
+             WHERE id = $5 AND server_id = $6",
+        )
+        .bind(&name)
+        .bind(color)
+        .bind(hoist && !role.everyone)
+        .bind(permissions)
+        .bind(role_id)
+        .bind(server_id)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        role_by_id(&self.pool, server_id, role_id).await
+    }
+
+    pub async fn delete_role(&self, user_id: i64, server_id: i64, role_id: i64) -> Result<(), BanterError> {
+        self.require_flag(user_id, server_id, PERM_MANAGE_ROLES).await?;
+        let role = role_by_id(&self.pool, server_id, role_id).await?;
+        if role.everyone {
+            return Err(BanterError::InvalidName);
+        }
+        let ceiling = actor_ceiling(&self.pool, user_id, server_id).await?;
+        if role.position >= ceiling {
+            return Err(BanterError::RoleHierarchy);
+        }
+        sqlx::query("DELETE FROM roles WHERE id = $1 AND server_id = $2")
+            .bind(role_id)
+            .bind(server_id)
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    pub async fn set_member_roles(
+        &self,
+        user_id: i64,
+        server_id: i64,
+        target_id: i64,
+        role_ids: &[i64],
+    ) -> Result<(), BanterError> {
+        self.require_flag(user_id, server_id, PERM_MANAGE_ROLES).await?;
+        if !is_member(&self.pool, target_id, server_id).await? {
+            return Err(BanterError::NotMember);
+        }
+        let ceiling = actor_ceiling(&self.pool, user_id, server_id).await?;
+        let roles = roles_on_server(&self.pool, server_id).await?;
+        let mut chosen = Vec::new();
+        for role_id in role_ids {
+            let Some(role) = roles.iter().find(|role| role.id == *role_id) else {
+                return Err(BanterError::NotFound);
+            };
+            if role.everyone {
+                continue;
+            }
+            if role.position >= ceiling {
+                return Err(BanterError::RoleHierarchy);
+            }
+            if !chosen.contains(role_id) {
+                chosen.push(*role_id);
+            }
+        }
+        let actor_bits = permission_bits(&self.pool, user_id, server_id).await?;
+        for role_id in &chosen {
+            let permissions = roles.iter().find(|role| role.id == *role_id).map(|role| role.permissions).unwrap_or(0);
+            if !grants_only_held(actor_bits, permissions) {
+                return Err(BanterError::RoleHierarchy);
+            }
+        }
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        sqlx::query("DELETE FROM member_roles WHERE server_id = $1 AND user_id = $2")
+            .bind(server_id)
+            .bind(target_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        for role_id in chosen {
+            sqlx::query(
+                "INSERT INTO member_roles (server_id, user_id, role_id) VALUES ($1, $2, $3)",
+            )
+            .bind(server_id)
+            .bind(target_id)
+            .bind(role_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(())
     }
 }
 
@@ -1374,6 +1561,7 @@ async fn load_user_profile(
         badges,
         activity: list_activity(pool, user_id).await?,
         wishlist: list_wishlist(pool, user_id).await?,
+        roles: Vec::new(),
     })
 }
 
@@ -1721,6 +1909,137 @@ fn ordered_pair(a: i64, b: i64) -> (i64, i64) {
     if a < b { (a, b) } else { (b, a) }
 }
 
+async fn insert_everyone_role_tx(tx: &mut Transaction<'_, Postgres>, server_id: i64) -> Result<(), BanterError> {
+    sqlx::query(
+        "INSERT INTO roles (server_id, name, color, position, hoist, permissions, everyone)
+         VALUES ($1, $2, 0, 0, FALSE, $3, TRUE)",
+    )
+    .bind(server_id)
+    .bind(EVERYONE_NAME)
+    .bind(EVERYONE_PERMISSIONS)
+    .execute(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+fn map_role(row: &sqlx::postgres::PgRow) -> GuildRole {
+    GuildRole {
+        id: row.get("id"),
+        server_id: row.get("server_id"),
+        name: row.get("name"),
+        color: row.get("color"),
+        position: row.get("position"),
+        hoist: row.get("hoist"),
+        permissions: row.get("permissions"),
+        everyone: row.get("everyone"),
+    }
+}
+
+fn clean_role_color(color: i64) -> Result<i64, BanterError> {
+    if role_color_ok(color) {
+        Ok(color)
+    } else {
+        Err(BanterError::InvalidName)
+    }
+}
+
+async fn roles_on_server(pool: &PgPool, server_id: i64) -> Result<Vec<GuildRole>, BanterError> {
+    let rows = sqlx::query(
+        "SELECT id, server_id, name, color, position, hoist, permissions, everyone
+         FROM roles WHERE server_id = $1
+         ORDER BY position DESC, id ASC",
+    )
+    .bind(server_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows.iter().map(map_role).collect())
+}
+
+async fn roles_for_member(pool: &PgPool, server_id: i64, user_id: i64) -> Result<Vec<GuildRole>, BanterError> {
+    let roles = roles_on_server(pool, server_id).await?;
+    let held: Vec<i64> = sqlx::query_scalar(
+        "SELECT role_id FROM member_roles WHERE server_id = $1 AND user_id = $2",
+    )
+    .bind(server_id)
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(roles
+        .into_iter()
+        .filter(|role| role.everyone || held.contains(&role.id))
+        .collect())
+}
+
+async fn role_by_id(pool: &PgPool, server_id: i64, role_id: i64) -> Result<GuildRole, BanterError> {
+    let row = sqlx::query(
+        "SELECT id, server_id, name, color, position, hoist, permissions, everyone
+         FROM roles WHERE id = $1 AND server_id = $2",
+    )
+    .bind(role_id)
+    .bind(server_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_err)?
+    .ok_or(BanterError::NotFound)?;
+    Ok(map_role(&row))
+}
+
+async fn role_positions(pool: &PgPool, server_id: i64) -> Result<Vec<i64>, BanterError> {
+    sqlx::query_scalar("SELECT position FROM roles WHERE server_id = $1")
+        .bind(server_id)
+        .fetch_all(pool)
+        .await
+        .map_err(db_err)
+}
+
+async fn server_owner_id(pool: &PgPool, server_id: i64) -> Result<i64, BanterError> {
+    sqlx::query_scalar("SELECT owner_id FROM servers WHERE id = $1")
+        .bind(server_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(db_err)?
+        .ok_or(BanterError::NotFound)
+}
+
+async fn permission_bits(pool: &PgPool, user_id: i64, server_id: i64) -> Result<i64, BanterError> {
+    if server_owner_id(pool, server_id).await? == user_id {
+        return Ok(PERM_ADMINISTRATOR);
+    }
+    let bits: Vec<i64> = sqlx::query_scalar(
+        "SELECT permissions FROM roles
+         WHERE server_id = $1 AND (
+            everyone OR id IN (SELECT role_id FROM member_roles WHERE server_id = $1 AND user_id = $2)
+         )",
+    )
+    .bind(server_id)
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(bits.into_iter().fold(0, |acc, bit| acc | bit))
+}
+
+async fn actor_ceiling(pool: &PgPool, user_id: i64, server_id: i64) -> Result<i64, BanterError> {
+    if server_owner_id(pool, server_id).await? == user_id {
+        return Ok(i64::MAX);
+    }
+    let top: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(position), 0) FROM roles
+         WHERE server_id = $1 AND (
+            everyone OR id IN (SELECT role_id FROM member_roles WHERE server_id = $1 AND user_id = $2)
+         )",
+    )
+    .bind(server_id)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(top)
+}
+
 async fn is_member(pool: &PgPool, user_id: i64, server_id: i64) -> Result<bool, BanterError> {
     let found: Option<bool> =
         sqlx::query_scalar("SELECT TRUE FROM memberships WHERE user_id = $1 AND server_id = $2")
@@ -1761,9 +2080,33 @@ async fn members_of(pool: &PgPool, server_id: i64) -> Result<Vec<Member>, Banter
                 is_owner: user_id == owner,
                 has_avatar: row.get::<Option<String>, _>("avatar_file").is_some(),
                 avatar_rev: row.get("avatar_rev"),
+                roles: Vec::new(),
             }
         })
         .collect())
+}
+
+async fn attach_member_roles(pool: &PgPool, server_id: i64, members: &mut [Member]) -> Result<(), BanterError> {
+    let roles = roles_on_server(pool, server_id).await?;
+    let link_rows = sqlx::query("SELECT user_id, role_id FROM member_roles WHERE server_id = $1")
+        .bind(server_id)
+        .fetch_all(pool)
+        .await
+        .map_err(db_err)?;
+    let links: Vec<(i64, i64)> = link_rows
+        .iter()
+        .map(|row| (row.get("user_id"), row.get("role_id")))
+        .collect();
+    for member in members {
+        member.roles = roles
+            .iter()
+            .filter(|role| {
+                role.everyone || links.iter().any(|(user_id, role_id)| *user_id == member.user_id && *role_id == role.id)
+            })
+            .cloned()
+            .collect();
+    }
+    Ok(())
 }
 
 async fn insert_category_tx(
