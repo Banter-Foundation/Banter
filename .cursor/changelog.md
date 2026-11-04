@@ -363,4 +363,13 @@ Landed the required Postgres cutover audit punch-list items so long-lived volume
 - Shipped `.env.example` for database URL, PG port, data dir, bind/port.
 - Verified on Compose Postgres `127.0.0.1:5433`: migrations, profile_customization 7/7, foundation 18/18. Do not merge until Owl says so.
 
+## 2026-11-04 00:49:40 -06:00 [Winter] — Settings as separate polished window (BA-64)
+
+User Settings opens in its own **Banter Settings** GLFW window (shared OpenGL context) instead of a full-screen overlay, so the main Banter shell stays usable. Closing the window chrome, Escape, or the in-UI X clears recording/mic-test state and returns focus to the main window.
+
+- `platform.rs`: create/destroy shared-context settings host; dual ImGui pass (`draw_main` / `draw_settings_window`)
+- `settings.rs`: OS-window desire, focus one-shot, nav list helpers, narrow My Account avatar action stacking
+- Settings chrome: clearer nav section gaps, page subtitles on My Account / Voice / Developer
+- Tests first in `crates/banter/tests/settings.rs` (28 passed including prior refresh-rate cases)
+
 
