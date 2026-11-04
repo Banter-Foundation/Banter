@@ -50,3 +50,4 @@ Desktop.ini
 .DS_Store
 $RECYCLE.BIN/
 deploy/compose.standby.yml
+/dist

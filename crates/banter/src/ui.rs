@@ -27,13 +27,14 @@ use crate::logic::{
     CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry, ContextMenuTone, DevServerPrefs, MixSource,
     MuteMemory, ScreenShare, ServerTarget, SettingsSection, StreamDefaults, StreamFps, StreamResolution, VideoPrefs,
     VoicePrefs, api_base_for, camera_preview_mirrored, channel_context_menu, clamp_context_menu_pos, clamp_window_size,
-    context_menu_height, default_stream_fps, default_stream_resolution, discord_shell_columns, encode_jpeg_rgba,
-    fps_block, fps_from_key, fps_key, hardware_encoder_block, insert_mention, lerp_size, load_json, local_api_base,
-    member_context_menu, message_context_menu, mirror_rgba, password_blocks_copy, password_is_masked, push_to_talk_held,
-    remove_message, resolution_block, resolution_from_key, resolution_key, save_json, speaking_from_level,
-    stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge, stream_resolution_label,
-    stream_resolutions, upsert_message, chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba,
-    crop_window, message_is_followup, message_starts_new_day, window_size_label, window_size_presets, OPEN_MIC_RMS,
+    comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution, discord_shell_columns,
+    encode_jpeg_rgba, fps_block, fps_from_key, fps_key, grouped_mix_sources, hardware_encoder_block, insert_mention,
+    lerp_size, load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, password_blocks_copy,
+    password_is_masked, push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key,
+    save_json, speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
+    stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message, chat_date_separator,
+    chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day, window_size_label,
+    window_size_presets, OPEN_MIC_RMS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
@@ -224,7 +225,12 @@ pub(crate) struct App {
     invite_copied: bool,
     icons: HashMap<String, Shot>,
     icons_ready: bool,
+    /// Parent message for an inline Reddit-style reply composer (`None` = top-level only).
     reply_to: Option<i64>,
+    /// Draft text for the inline reply box (separate from the bottom top-level composer).
+    reply_draft: String,
+    /// Locally collapsed comment threads (Reddit fold); not persisted.
+    collapsed_comments: HashSet<i64>,
     editing: Option<i64>,
     pending_file: Option<(String, Vec<u8>)>,
     avatars: HashMap<i64, Shot>,
@@ -392,6 +398,8 @@ impl App {
             icons: HashMap::new(),
             icons_ready: false,
             reply_to: None,
+            reply_draft: String::new(),
+            collapsed_comments: HashSet::new(),
             editing: None,
             pending_file: None,
             avatars: HashMap::new(),
@@ -1319,10 +1327,12 @@ impl App {
             ContextMenuAction::Reply { message_id } => {
                 self.editing = None;
                 self.reply_to = Some(message_id);
+                self.reply_draft.clear();
             }
             ContextMenuAction::Edit { message_id } => {
                 if let Some(message) = self.messages.iter().find(|message| message.id == message_id) {
                     self.reply_to = None;
+                    self.reply_draft.clear();
                     self.editing = Some(message_id);
                     self.composer = message.body.clone();
                 }
@@ -2137,6 +2147,8 @@ impl App {
                     self.selected = Some(channel.clone());
                     self.search.clear();
                     self.reply_to = None;
+                    self.reply_draft.clear();
+                    self.collapsed_comments.clear();
                     self.editing = None;
                     self.messages.clear();
                     if channel.kind == ChannelKind::Text {
@@ -2335,16 +2347,22 @@ impl App {
         edit: &mut Option<i64>,
         delete: &mut Option<i64>,
         save: &mut Option<(i64, String)>,
+        collapse: &mut Option<i64>,
+        inline_submit: &mut bool,
+        inline_cancel: &mut bool,
     ) {
         let offset = zone_offset_secs();
         let now = chrono::Local::now().timestamp_millis();
         let width = ui.content_region_avail()[0].max(160.0);
-        let text_x = 72.0;
-        let text_w = (width - text_x - 24.0).max(40.0);
         let messages = self.messages.clone();
-        let mut previous: Option<(i64, i64)> = None;
-        for message in &messages {
-            if previous.is_some_and(|(_, at)| message_starts_new_day(at, message.created_at, offset)) {
+        let by_id: HashMap<i64, Message> = messages.iter().cloned().map(|m| (m.id, m)).collect();
+        let rows = comment_tree_rows(&messages, &self.collapsed_comments);
+        let mut previous_at: Option<i64> = None;
+        for row in &rows {
+            let Some(message) = by_id.get(&row.message_id) else {
+                continue;
+            };
+            if previous_at.is_some_and(|at| message_starts_new_day(at, message.created_at, offset)) {
                 let label = chat_date_separator(message.created_at, offset);
                 let origin = ui.cursor_screen_pos();
                 ui.dummy([width, 28.0]);
@@ -2352,13 +2370,30 @@ impl App {
                 let label_w = ui.calc_text_size(&label)[0];
                 let mid_y = origin[1] + 14.0;
                 let draw = ui.get_window_draw_list();
-                draw.add_line([origin[0] + 16.0, mid_y], [origin[0] + (width - label_w) * 0.5 - 8.0, mid_y], MUTED).build();
+                draw.add_line([origin[0] + 16.0, mid_y], [origin[0] + (width - label_w) * 0.5 - 8.0, mid_y], MUTED)
+                    .build();
                 draw.add_text([origin[0] + (width - label_w) * 0.5, origin[1] + 6.0], MUTED, &label);
-                draw.add_line([origin[0] + (width + label_w) * 0.5 + 8.0, mid_y], [origin[0] + width - 16.0, mid_y], MUTED).build();
+                draw.add_line(
+                    [origin[0] + (width + label_w) * 0.5 + 8.0, mid_y],
+                    [origin[0] + width - 16.0, mid_y],
+                    MUTED,
+                )
+                .build();
             }
-            let follow = previous
-                .is_some_and(|(author, at)| message_is_followup(author, at, message.author_id, message.created_at, offset));
-            let name = message.author_nickname.clone().unwrap_or_else(|| message.author_display_name.clone());
+            let visual_depth = row.depth.min(COMMENT_MAX_VISUAL_DEPTH);
+            let indent = COMMENT_INDENT * visual_depth as f32;
+            let collapse_gutter = if row.child_count > 0 || row.depth > 0 {
+                COMMENT_COLLAPSE_W
+            } else {
+                0.0
+            };
+            let avatar_x = 16.0 + indent + collapse_gutter;
+            let text_x = avatar_x + 40.0 + 16.0;
+            let text_w = (width - text_x - 24.0).max(40.0);
+            let name = message
+                .author_nickname
+                .clone()
+                .unwrap_or_else(|| message.author_display_name.clone());
             let edited = if message.edited_at.is_some() { " (edited)" } else { "" };
             let body = format!("{}{edited}", message.body);
             let body_h = if message.body.is_empty() {
@@ -2367,14 +2402,19 @@ impl App {
                 let _body_font = ui.push_font_with_size(None, 16.0);
                 ui.calc_text_size_with_opts(&body, false, text_w)[1]
             };
-            let row_h = if follow { body_h.max(22.0) } else { 22.0 + body_h.max(20.0) }.max(if follow { 22.0 } else { 48.0 });
+            let collapsed_note_h = if row.collapsed && row.child_count > 0 { 18.0 } else { 0.0 };
+            let row_h = (22.0 + body_h.max(20.0) + collapsed_note_h).max(48.0);
             let origin = ui.cursor_screen_pos();
             ui.dummy([width, row_h + 2.0]);
             let row_max = [origin[0] + width, origin[1] + row_h];
             let hot = pointer_in(ui, [origin[0], origin[1] - 16.0], row_max);
             if hot {
                 ui.get_window_draw_list()
-                    .add_rect([origin[0] + 4.0, origin[1]], [origin[0] + width - 4.0, origin[1] + row_h], ROW_HOVER)
+                    .add_rect(
+                        [origin[0] + 4.0, origin[1]],
+                        [origin[0] + width - 4.0, origin[1] + row_h],
+                        ROW_HOVER,
+                    )
                     .filled(true)
                     .build();
             }
@@ -2386,59 +2426,77 @@ impl App {
                     mouse,
                 );
             }
-            if follow {
-                if hot {
-                    let gutter = clock_short(message.created_at, offset);
-                    let _small = ui.push_font_with_size(None, 12.0);
-                    let gutter_w = ui.calc_text_size(&gutter)[0];
-                    ui.get_window_draw_list().add_text([origin[0] + text_x - gutter_w - 8.0, origin[1] + 2.0], MUTED, &gutter);
-                    if pointer_in(ui, [origin[0], origin[1]], [origin[0] + text_x, origin[1] + row_h]) {
-                        ui.tooltip_text(chat_time_hover(message.created_at, offset));
+            // Reddit thread line + collapse control.
+            if row.depth > 0 || row.child_count > 0 {
+                let line_x = origin[0] + indent + 8.0;
+                let draw = ui.get_window_draw_list();
+                draw.add_line([line_x, origin[1] + 4.0], [line_x, origin[1] + row_h - 4.0], COMMENT_THREAD_LINE)
+                    .thickness(2.0)
+                    .build();
+                if row.child_count > 0 {
+                    ui.set_cursor_screen_pos([line_x - 8.0, origin[1] + 4.0]);
+                    let icon = if row.collapsed { "plus" } else { "minus" };
+                    let tip = if row.collapsed {
+                        format!("Expand {} replies", row.child_count)
+                    } else {
+                        "Collapse thread".to_string()
+                    };
+                    if self.tool(ui, &format!("fold-{}", message.id), icon, false, Some(&tip)) {
+                        *collapse = Some(message.id);
                     }
                 }
-            } else {
-                let center = [origin[0] + 36.0, origin[1] + 22.0];
-                let avatar = self.avatars.get(&message.author_id).map(|shot| shot.texture);
-                ui.set_cursor_screen_pos([center[0] - 20.0, center[1] - 20.0]);
-                if ui.invisible_button(format!("msg-avatar-{}", message.id), [40.0, 40.0]) {
-                    self.open_profile(message.author_id, [center[0] + 24.0, center[1]]);
-                }
-                paint_avatar(ui, avatar, center, 20.0, &initials(&name), None);
-                let name_w = {
-                    let _bold = ui.push_font_with_size(self.bold_font, 16.0);
-                    ui.calc_text_size(&name)[0]
-                };
-                ui.set_cursor_screen_pos([origin[0] + text_x, origin[1] + 2.0]);
-                if ui.invisible_button(format!("msg-name-{}", message.id), [name_w.max(8.0), 18.0]) {
-                    self.open_profile(message.author_id, [origin[0] + text_x + name_w, origin[1]]);
-                }
-                {
-                    let _bold = ui.push_font_with_size(self.bold_font, 16.0);
-                    ui.get_window_draw_list().add_text([origin[0] + text_x, origin[1] + 2.0], TEXT, &name);
-                }
-                let stamp = chat_time_label(message.created_at, now, offset);
-                let stamp_pos = [origin[0] + text_x + name_w + 8.0, origin[1] + 5.0];
-                let stamp_w = {
-                    let _small = ui.push_font_with_size(None, 12.0);
-                    let width = ui.calc_text_size(&stamp)[0];
-                    ui.get_window_draw_list().add_text(stamp_pos, MUTED, &stamp);
-                    width
-                };
-                if pointer_in(ui, stamp_pos, [stamp_pos[0] + stamp_w, stamp_pos[1] + 16.0]) {
-                    ui.tooltip_text(chat_time_hover(message.created_at, offset));
-                }
+            }
+            let center = [origin[0] + avatar_x + 20.0, origin[1] + 22.0];
+            let avatar = self.avatars.get(&message.author_id).map(|shot| shot.texture);
+            ui.set_cursor_screen_pos([center[0] - 20.0, center[1] - 20.0]);
+            if ui.invisible_button(format!("msg-avatar-{}", message.id), [40.0, 40.0]) {
+                self.open_profile(message.author_id, [center[0] + 24.0, center[1]]);
+            }
+            paint_avatar(ui, avatar, center, 20.0, &initials(&name), None);
+            let name_w = {
+                let _bold = ui.push_font_with_size(self.bold_font, 16.0);
+                ui.calc_text_size(&name)[0]
+            };
+            ui.set_cursor_screen_pos([origin[0] + text_x, origin[1] + 2.0]);
+            if ui.invisible_button(format!("msg-name-{}", message.id), [name_w.max(8.0), 18.0]) {
+                self.open_profile(message.author_id, [origin[0] + text_x + name_w, origin[1]]);
+            }
+            {
+                let _bold = ui.push_font_with_size(self.bold_font, 16.0);
+                ui.get_window_draw_list()
+                    .add_text([origin[0] + text_x, origin[1] + 2.0], TEXT, &name);
+            }
+            let stamp = chat_time_label(message.created_at, now, offset);
+            let stamp_pos = [origin[0] + text_x + name_w + 8.0, origin[1] + 5.0];
+            let stamp_w = {
+                let _small = ui.push_font_with_size(None, 12.0);
+                let width = ui.calc_text_size(&stamp)[0];
+                ui.get_window_draw_list().add_text(stamp_pos, MUTED, &stamp);
+                width
+            };
+            if pointer_in(ui, stamp_pos, [stamp_pos[0] + stamp_w, stamp_pos[1] + 16.0]) {
+                ui.tooltip_text(chat_time_hover(message.created_at, offset));
             }
             if !message.body.is_empty() {
-                ui.set_cursor_screen_pos([origin[0] + text_x, origin[1] + if follow { 0.0 } else { 22.0 }]);
+                ui.set_cursor_screen_pos([origin[0] + text_x, origin[1] + 22.0]);
                 let _body_font = ui.push_font_with_size(None, 16.0);
                 let _wrap = ui.push_text_wrap_pos(origin[0] + text_x + text_w);
                 ui.text_wrapped(&body);
             }
-            if let Some(reply_to) = message.reply_to {
-                ui.set_cursor_screen_pos([origin[0] + text_x, origin[1] + row_h - 16.0]);
-                ui.text_colored(BLURPLE, format!("replying to {reply_to}"));
+            if row.collapsed && row.child_count > 0 {
+                let note_y = origin[1] + 22.0 + body_h.max(20.0);
+                ui.set_cursor_screen_pos([origin[0] + text_x, note_y]);
+                let label = if row.child_count == 1 {
+                    "1 more reply".to_string()
+                } else {
+                    format!("{} more replies", row.child_count)
+                };
+                ui.text_colored(BLURPLE_TEXT, label);
             }
-            let mut attachment_y = origin[1] + row_h;
+            let mut attachment_y = origin[1] + row_h - collapsed_note_h;
+            if collapsed_note_h > 0.0 {
+                attachment_y = origin[1] + 22.0 + body_h.max(20.0) + collapsed_note_h;
+            }
             for attachment in &message.attachments {
                 ui.set_cursor_screen_pos([origin[0] + text_x, attachment_y]);
                 ui.text(format!("file: {} ({} bytes)", attachment.filename, attachment.byte_size));
@@ -2448,7 +2506,7 @@ impl App {
                 }
                 attachment_y += 22.0;
             }
-            let row_end = attachment_y.max(origin[1] + row_h + 2.0);
+            let mut row_end = attachment_y.max(origin[1] + row_h + 2.0);
             if hot {
                 let mut tools = vec!["reply"];
                 if mine == Some(message.author_id) {
@@ -2489,11 +2547,52 @@ impl App {
                     }
                 }
             }
-            // The toolbar and body text move the cursor; every row must end at its own bottom edge, or the
-            // next row shifts while one is hovered and the measured history height stops matching the scroll extent.
+            // Inline Reddit reply composer scoped to this parent comment.
+            if self.reply_to == Some(message.id) {
+                let box_x = origin[0] + text_x;
+                let box_w = (width - text_x - 24.0).max(120.0);
+                ui.set_cursor_screen_pos([box_x, row_end + 4.0]);
+                ui.dummy([box_w, 64.0]);
+                skin::rect_corners(
+                    ui,
+                    [box_x, row_end + 4.0],
+                    [box_x + box_w, row_end + 4.0 + 40.0],
+                    COMPOSER_BG,
+                    COMPOSER_RADIUS,
+                    DrawFlags::ROUND_ALL,
+                );
+                let parent_name = name.clone();
+                ui.set_cursor_screen_pos([box_x + 8.0, row_end + 8.0]);
+                let submit = {
+                    let _font = ui.push_font_with_size(None, FONT_MD);
+                    let _border = ui.push_style_var(StyleVar::FrameBorderSize(0.0));
+                    let _bg = ui.push_style_color(StyleColor::FrameBg, skin::CLEAR);
+                    let _hint = ui.push_style_color(StyleColor::TextDisabled, PLACEHOLDER);
+                    let _text = ui.push_style_color(StyleColor::Text, TEXT_NORMAL);
+                    ui.set_next_item_width((box_w - 16.0).max(40.0));
+                    ui.input_text(&format!("##inline-reply-{}", message.id), &mut self.reply_draft)
+                        .hint(format!("Reply to {parent_name}"))
+                        .enter_returns_true(true)
+                        .build()
+                };
+                if submit {
+                    *inline_submit = true;
+                }
+                ui.set_cursor_screen_pos([box_x, row_end + 48.0]);
+                if ui.small_button(format!("Cancel##inline-{}", message.id)) {
+                    *inline_cancel = true;
+                }
+                ui.same_line();
+                let can_send = !self.reply_draft.trim().is_empty() || self.pending_file.is_some();
+                if can_send && ui.small_button(format!("Reply##inline-go-{}", message.id)) {
+                    *inline_submit = true;
+                }
+                row_end += 68.0;
+            }
+            // Keep each row ending at its own bottom edge for scroll measurement.
             ui.set_cursor_screen_pos([origin[0], row_end]);
             ui.dummy([0.0, 0.0]);
-            previous = Some((message.author_id, message.created_at));
+            previous_at = Some(message.created_at);
         }
     }
 
@@ -2509,6 +2608,9 @@ impl App {
         let mut edit = None;
         let mut delete = None;
         let mut save = None;
+        let mut collapse = None;
+        let mut inline_submit = false;
+        let mut inline_cancel = false;
         let footer = self.composer_footer_h();
         ui.child_window("history").size([0.0, -footer]).build(ui, || {
             let stick = crate::theme::chat_should_stick(ui.scroll_y(), ui.scroll_max_y(), self.chat_jump);
@@ -2530,7 +2632,17 @@ impl App {
                     }
                 }
             }
-            self.draw_message_rows(ui, mine, &mut reply, &mut edit, &mut delete, &mut save);
+            self.draw_message_rows(
+                ui,
+                mine,
+                &mut reply,
+                &mut edit,
+                &mut delete,
+                &mut save,
+                &mut collapse,
+                &mut inline_submit,
+                &mut inline_cancel,
+            );
             self.history_h = ui.cursor_pos()[1] - history_top;
             if stick {
                 ui.set_scroll_here_y(1.0);
@@ -2539,7 +2651,18 @@ impl App {
         });
         if let Some(id) = reply {
             self.reply_to = Some(id);
+            self.reply_draft.clear();
             self.editing = None;
+        }
+        if let Some(id) = collapse {
+            toggle_comment_collapsed(&mut self.collapsed_comments, id);
+        }
+        if inline_cancel {
+            self.reply_to = None;
+            self.reply_draft.clear();
+        }
+        if inline_submit {
+            self.submit_inline_reply(target);
         }
         if let Some(id) = edit {
             if let Some(message) = self.messages.iter().find(|message| message.id == id) {
@@ -2547,11 +2670,17 @@ impl App {
             }
             self.editing = Some(id);
             self.reply_to = None;
+            self.reply_draft.clear();
             self.pending_file = None;
         }
         if let Some(id) = delete {
             if self.note(self.client.delete_message(id)).is_some() {
                 remove_message(&mut self.messages, id);
+                self.collapsed_comments.remove(&id);
+                if self.reply_to == Some(id) {
+                    self.reply_to = None;
+                    self.reply_draft.clear();
+                }
             }
         }
         if let Some((id, filename)) = save {
@@ -2577,12 +2706,13 @@ impl App {
     }
 
     fn composer_footer_h(&self) -> f32 {
-        let strip = if self.reply_to.is_some() || self.editing.is_some() || self.pending_file.is_some() { 34.0 } else { 0.0 };
+        // Replies use an inline composer under the parent comment (Reddit). Bottom strip is edit/file only.
+        let strip = if self.editing.is_some() || self.pending_file.is_some() { 34.0 } else { 0.0 };
         8.0 + strip + COMPOSER_H + COMPOSER_BOTTOM
     }
 
-    /// Rounded message bar: upload button, `Message #channel` placeholder, and a strip above it
-    /// while replying, editing, or holding a file.
+    /// Rounded message bar for top-level posts: upload button, `Message #channel` placeholder,
+    /// and a strip above it while editing or holding a file. Nested replies use the inline box.
     fn draw_composer(&mut self, ui: &Ui, target: ChatTarget) {
         let origin = ui.cursor_screen_pos();
         let width = ui.content_region_avail()[0];
@@ -2590,20 +2720,12 @@ impl App {
         let bar_w = (width - COMPOSER_MARGIN * 2.0).max(120.0);
         let mut y = origin[1] + 8.0;
         ui.dummy([width, self.composer_footer_h()]);
-        let strip = if let Some(id) = self.reply_to {
-            let author = self
-                .messages
-                .iter()
-                .find(|message| message.id == id)
-                .map(|message| message.author_nickname.clone().unwrap_or_else(|| message.author_display_name.clone()));
-            Some(match author {
-                Some(name) => format!("Replying to {name}"),
-                None => "Replying to a message".to_string(),
-            })
-        } else if self.editing.is_some() {
+        let strip = if self.editing.is_some() {
             Some("Editing message".to_string())
         } else {
-            self.pending_file.as_ref().map(|(name, bytes)| format!("{name} ({} KB)", bytes.len().div_ceil(1024)))
+            self.pending_file
+                .as_ref()
+                .map(|(name, bytes)| format!("{name} ({} KB)", bytes.len().div_ceil(1024)))
         };
         if let Some(label) = &strip {
             skin::rect_corners(ui, [bar_x, y], [bar_x + bar_w, y + 34.0], SIDEBAR_BG, COMPOSER_RADIUS, DrawFlags::ROUND_TOP);
@@ -2612,8 +2734,7 @@ impl App {
             if skin::icon_button(ui, "composer-cancel", self.icon("x"), [bar_x + bar_w - 8.0 - 24.0, y + 5.0], 24.0, 16.0, TEXT_SECONDARY, TEXT_NORMAL, None) {
                 if self.editing.take().is_some() {
                     self.composer.clear();
-                }
-                if self.reply_to.take().is_none() {
+                } else {
                     self.pending_file = None;
                 }
             }
@@ -3392,17 +3513,42 @@ impl App {
             return;
         }
         // Chat attachments are disabled (BA-61); never send pending file bytes.
+        // Bottom bar always posts a top-level comment (Reddit main composer).
         if self.pending_file.take().is_some() {
             self.open_modal(Modal::UploadsUnavailable);
             return;
         }
-        if let Some(message) = self.note(self.client.send_message(target, &body, self.reply_to, &[])) {
+        if let Some(message) = self.note(self.client.send_message(target, &body, None, &[])) {
             if self.search.trim().is_empty() {
                 upsert_message(&mut self.messages, message);
             }
             self.chat_jump = true;
             self.composer.clear();
+            self.pending_file = None;
+        }
+    }
+
+    /// Send a reply nested under `reply_to` from the inline Reddit composer.
+    fn submit_inline_reply(&mut self, target: ChatTarget) {
+        let Some(parent) = self.reply_to else {
+            return;
+        };
+        let body = self.reply_draft.clone();
+        // Chat attachments are disabled (BA-61); never send pending file bytes.
+        if self.pending_file.take().is_some() {
+            self.open_modal(Modal::UploadsUnavailable);
+            return;
+        }
+        if let Some(message) = self.note(self.client.send_message(target, &body, Some(parent), &[])) {
+            if self.search.trim().is_empty() {
+                upsert_message(&mut self.messages, message);
+            }
+            self.chat_jump = true;
+            self.reply_draft.clear();
             self.reply_to = None;
+            self.pending_file = None;
+            // Expand the parent so the new reply is visible.
+            self.collapsed_comments.remove(&parent);
         }
     }
 
@@ -3477,6 +3623,8 @@ impl App {
         self.messages.clear();
         self.search.clear();
         self.reply_to = None;
+        self.reply_draft.clear();
+        self.collapsed_comments.clear();
         self.editing = None;
         self.shown_invite.clear();
         self.reload_layout();
@@ -3508,6 +3656,8 @@ impl App {
         self.selected = None;
         self.search.clear();
         self.reply_to = None;
+        self.reply_draft.clear();
+        self.collapsed_comments.clear();
         self.editing = None;
         self.reload_messages();
     }
@@ -4817,7 +4967,7 @@ impl App {
             "mic", "mic-off", "headphones", "headphone-off", "video", "video-off", "monitor", "monitor-off",
             "phone-off", "settings", "chevron-down", "chevron-up", "plus", "hash", "volume-2", "users", "search", "paperclip",
             "x", "user", "log-out", "pencil", "trash-2", "reply", "check", "chevron-right", "circle-plus", "folder-plus",
-            "message-circle", "phone", "user-plus", "signal", "ellipsis",
+            "message-circle", "phone", "user-plus", "signal", "ellipsis", "minus",
         ] {
             if let Ok(rgba) = rasterize_lucide(name, 32, [255, 255, 255]) {
                 if let Some(shot) = upload_rgba(imgui, 32, 32, &rgba) {
@@ -6103,7 +6253,7 @@ impl App {
         settings_form_label(ui, self.bold_font, "DISPLAY");
         ui.text_colored(
             MUTED,
-            "Window size and sync. Turning VSync off can raise FPS; tearing may show up.",
+            "Window size and sync. With VSync on, the UI follows the current monitor’s refresh rate. Turning it off can raise FPS; tearing may show up.",
         );
         settings_spacer(ui);
         if settings_toggle_row(ui, "video-vsync", "VSync", &mut self.video.vsync, width) {
@@ -6351,30 +6501,40 @@ impl App {
     fn draw_audio_sources(&mut self, ui: &Ui, width: f32) {
         self.ensure_audio_devices();
         settings_form_label(ui, self.bold_font, "STREAM AUDIO");
-        ui.text_colored(MUTED, "Turn on every app or device to mix into the stream. Each one has its own volume.");
+        ui.text_colored(
+            MUTED,
+            "Turn on every app or device to mix into the stream. Each one has its own volume.",
+        );
         settings_spacer(ui);
-        let count = self.stream.sources.len();
-        if count == 0 {
+        let groups = grouped_mix_sources(&self.stream.sources);
+        if groups.is_empty() {
             ui.text_colored(MUTED, "No audio sources were found.");
+            return;
         }
-        for index in 0..count {
-            let mut enabled = self.stream.sources[index].enabled;
-            let name = self.stream.sources[index].name.clone();
-            let id = self.stream.sources[index].id.clone();
-            if settings_toggle_row(ui, &format!("src-{id}"), &name, &mut enabled, width) {
-                self.stream.sources[index].enabled = enabled;
-                self.save_stream();
-            }
-            if enabled {
-                let mut volume = self.stream.sources[index].volume;
-                let release = settings_volume_slider(ui, &format!("vol-{id}"), &mut volume, width);
-                self.stream.sources[index].volume = volume;
-                if release {
-                    self.save_stream();
-                }
+        for (group_index, (group, indices)) in groups.into_iter().enumerate() {
+            if group_index > 0 {
                 settings_spacer(ui);
             }
-            settings_divider(ui, width);
+            settings_form_label(ui, self.bold_font, group.label());
+            for index in indices {
+                let mut enabled = self.stream.sources[index].enabled;
+                let name = self.stream.sources[index].name.clone();
+                let id = self.stream.sources[index].id.clone();
+                if settings_toggle_row(ui, &format!("src-{id}"), &name, &mut enabled, width) {
+                    self.stream.sources[index].enabled = enabled;
+                    self.save_stream();
+                }
+                if enabled {
+                    let mut volume = self.stream.sources[index].volume;
+                    let release = settings_volume_slider(ui, &format!("vol-{id}"), &mut volume, width);
+                    self.stream.sources[index].volume = volume;
+                    if release {
+                        self.save_stream();
+                    }
+                    settings_spacer(ui);
+                }
+                settings_divider(ui, width);
+            }
         }
     }
 
@@ -7122,10 +7282,6 @@ fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
 
 fn zone_offset_secs() -> i32 {
     chrono::Local::now().offset().local_minus_utc()
-}
-
-fn clock_short(ms: i64, offset: i32) -> String {
-    chat_time_label(ms, ms, offset).trim_start_matches("Today at ").to_string()
 }
 
 fn pointer_in(ui: &Ui, min: [f32; 2], max: [f32; 2]) -> bool {

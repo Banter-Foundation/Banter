@@ -16,6 +16,7 @@ Voice-channel SFU notes (reliability):
 - Inbound **screen/camera** RTP prefers OnOpen RID, then Banter’s fixed publish SSRC bases (`SCREEN_SSRC_Q` / `CAMERA_SSRC_Q` + 0/1/2 for `q`/`h`/`f`), then `Full`. Waiting only on OnOpen dropped every Go Live / camera packet for remotes (`bind_declared_ssrc` leaves `rid=None`).
 - Forward rows are keyed by the resolved layer RID (`q`/`h`/`f`), not by an empty OnOpen string.
 - The forward table treats unpublished audio as layer `Full` so the first packet is not dropped before `note_layer`. Pair subscribe marks screen Full publishing so the first keyframe is admitted.
+- Before `write_rtp` on a forward track, the SFU rewrites the packet to the track’s negotiated SSRC and payload type and strips inbound header extensions. Publishing SSRCs are not the forward-track SSRCs; leaving them unchanged made `RTCRtpSender::write_rtp` reject every Opus / H.264 packet (silence + blank remote tiles on server VC while 1:1 P2P still worked).
 - Trickle ICE that arrives before the SFU slot exists is buffered and applied when the offer is accepted.
 - Open-mic quiet frames still feed Opus (DTX); mute / deafen / PTT-up stop the track. Speaking glow still uses the RMS / PTT level.
 - P2P remote screen/camera tiles use the live peer id from signaling once it is known; SFU forward track ids already embed the publisher.
@@ -33,6 +34,8 @@ If nobody wants a layer, the publisher is told to pause it (dynacast). The first
 ## Capture
 
 Microphones and speakers stay on the operating system’s normal devices. Desktop and application audio are a separate Opus track, not mixed into the microphone. Windows uses WASAPI loopback. Linux uses the PulseAudio sink monitor (`parec`) and, for one application, the PipeWire node for that process (`pw-cat`). The same `loop:` and `app:` source ids are used on both.
+
+In Stream Select / stream options, checkable mix sources are grouped: **Audio channels** (`mic:` and `loop:` system devices) and **Apps** (`app:` process loopback). Several can stay on and mix into one stream-audio track; each keeps its own volume.
 
 Camera and screen frames are I420, then H.264. Local previews are RGBA (mirrored for the local camera). Stream-select thumbnails may still be JPEG stills. The resolution and frame-rate pickers are caps. A prewarm cutover reconfigures the encoder on the next keyframe.
 
