@@ -645,3 +645,9 @@ Agent: main at b110a9f (93827cf + dust Postgres/hot-swap + docs retarget PR #13 
 ## Summary
 
 Version-1-test-4 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
+
+## 2026-11-03 21:56:19 -06:00 — Client starts without forcing local server (BA-54)
+
+Owl wants Banter client startup changed, then merged to main and a new pre-release Version-1-test-4.1. Project root D:\Projects\Project Banter (NEVER touch E:). Do not require local server to start except: logged in on local; user selects local; remote already selected uses remote. If local cannot start and not on usable remote: ask for remote. Ship: branch from main, merge, pre-release Version-1-test-4.1 (same pattern as test-4), update docs, cleanup, report.
+
+Agent: Branched cursor/client-startup-no-force-local-be5c from main 45240ca. Wrote startup policy tests first, then logic/platform/ui + docs.

@@ -9,7 +9,7 @@ Banter is a local desktop chat app with a Discord-like layout (temporary skin). 
 | Desktop client | `banter` → `banter.exe` | GLFW window, OpenGL 3.3, Dear ImGui docking UI, media capture, HTTP + WebSocket client |
 | Local server | `banter-server` | Accounts, servers, channels, messages in PostgreSQL; files under `BANTER_DATA`; voice/calls/presence in memory; Axum HTTP + WebSocket |
 
-The client talks to `http://127.0.0.1:3970` by default (Developer → Local). If nothing is listening there in Local mode, it starts an embedded `banter-server` in the background on that address. User Settings → Developer can switch to a Remote host (`host`, `host:port`, or `http(s)://…`); the choice is saved in `dev-server.json` under the data directory.
+The client talks to `http://127.0.0.1:3970` by default (Developer → Local). Startup does **not** require a local server unless you are already logged in on Local (it then tries to start the embedded server) or you choose Local in Developer settings. A saved Remote is used as-is with no local process. Fresh Local with nothing listening opens the UI and asks for a remote host instead of failing hard. User Settings → Developer (and the sign-in gear) switch Local vs Remote (`host`, `host:port`, or `http(s)://…`); the choice is saved in `dev-server.json` under the data directory.
 
 ## Stack
 

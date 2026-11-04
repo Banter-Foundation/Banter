@@ -446,6 +446,16 @@ impl App {
         self.semibold_font = font;
     }
 
+    /// Open the sign-in Server options overlay and show why Banter is asking for a remote.
+    pub(crate) fn prompt_remote_server(&mut self, message: &str) {
+        self.dev_server.target = ServerTarget::Remote;
+        self.login_options = true;
+        self.login_options_frames = 0;
+        self.settings_error = message.to_string();
+        // Keep Developer prefs Local/Remote honest once the user applies a host.
+        // Until then the active base may still be the local placeholder.
+    }
+
     pub(crate) fn set_v_held(&mut self, held: bool) {
         self.v_held = held;
     }

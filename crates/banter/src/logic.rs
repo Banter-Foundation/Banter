@@ -316,6 +316,53 @@ pub fn api_base_for(prefs: &DevServerPrefs) -> Result<String, String> {
     }
 }
 
+/// How process startup should treat the loopback server.
+///
+/// The desktop window always opens. Local is only *started* when the user is already
+/// logged in on Local, or when they explicitly choose Local in Developer settings.
+/// A configured Remote never requires local. Fresh Local with nothing listening asks
+/// for a remote instead of failing the process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartupLocalPolicy {
+    /// Use the configured remote API; do not start or require local.
+    SkipLocalUseRemote,
+    /// Attempt to start the embedded local server (logged-in Local session).
+    StartLocal,
+    /// Use local only if something is already listening; otherwise prompt for remote.
+    PreferRunningLocalElseAskRemote,
+}
+
+/// Decide whether startup should start, reuse, or skip the local server.
+pub fn startup_local_policy(prefs: &DevServerPrefs, has_saved_session: bool) -> StartupLocalPolicy {
+    match prefs.target {
+        ServerTarget::Remote => StartupLocalPolicy::SkipLocalUseRemote,
+        ServerTarget::Local if has_saved_session => StartupLocalPolicy::StartLocal,
+        ServerTarget::Local => StartupLocalPolicy::PreferRunningLocalElseAskRemote,
+    }
+}
+
+/// Whether the sign-in / server-options UI should open asking for a remote host.
+///
+/// `local_available` is true when the loopback health check succeeded (already running
+/// or freshly started). Logged-in Local that failed to start still prompts rather than
+/// exiting the process.
+pub fn startup_should_prompt_remote(
+    prefs: &DevServerPrefs,
+    local_available: bool,
+    _has_saved_session: bool,
+) -> bool {
+    match prefs.target {
+        ServerTarget::Remote => api_base_for(prefs).is_err(),
+        ServerTarget::Local => !local_available,
+    }
+}
+
+/// API base string used while the window opens. Invalid Remote falls back to the
+/// local placeholder until the user enters a usable host.
+pub fn startup_api_base(prefs: &DevServerPrefs) -> String {
+    api_base_for(prefs).unwrap_or_else(|_| local_api_base())
+}
+
 /// Screen-share resolutions in Discord's Go Live menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamResolution {

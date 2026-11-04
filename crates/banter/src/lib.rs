@@ -1,7 +1,9 @@
 //! Banter desktop client.
 //!
 //! The window is GLFW and OpenGL. Dear ImGui is the docking branch (dear-imgui-rs).
-//! If nothing is listening on 127.0.0.1:3970, the client starts the local server.
+//! Startup does not require a local server unless the user is already logged in on
+//! Local (or they choose Local in Developer settings). A configured Remote is used
+//! as-is. Fresh Local with nothing listening opens the UI and asks for a remote.
 //!
 //! Deferred, and not implemented: reactions, bold and italic, text chat inside a
 //! voice channel, group chats, roles, kick, and ban. Profile About Me / custom
