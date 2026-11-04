@@ -1,6 +1,6 @@
 # Session memory
 
-- 2026-11-04 BA-79: Nested server-rail folders with hex colors on branch `cursor/server-folders-hex-48c4` → PR https://github.com/Banter-Foundation/Banter/pull/44 (do not merge until Owl says). Migration `004_server_folders`. Per-user layout; max depth 8; delete promotes children.
+- 2026-11-04 BA-79: Nested server-rail folders with hex colors on branch `cursor/server-folders-hex-48c4` → PR https://github.com/Banter-Foundation/Banter/pull/44 (do not merge until Owl says). Migration `005_server_folders` (after `004_channel_icons`). Per-user layout; max depth 8; delete promotes children. Merged to main per Owl.
 - Project path: `D:\Projects\Project Banter` (exact; space in name). Former path `D:\Projects\Banter` was moved here on 2026-11-03 with git history intact. Git remote for this cloud checkout is `Banter-Foundation/Banter`. Do not force-push. Do not commit `auth.json`, `client-session.json`, `voice.json`, `stream.json`, `.env`, or anything under `%LOCALAPPDATA%\Banter`.
 - Never read, write, build, or delete anything on `E:`. Builds stay in `D:\Projects\Project Banter\target`. Linked worktrees live under `D:\Projects\Project Banter\worktrees\` (ignored by the primary checkout via `/worktrees/` in `.gitignore`).
 - Rust stable 1.99.1. Compile C/C++ with the VS 18 Build Tools `vcvars64.bat` on PATH. `cl.exe` is not on the default PowerShell path.

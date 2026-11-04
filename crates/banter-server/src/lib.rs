@@ -10,6 +10,7 @@
 //! guild roles are implemented. See `docs/foundation.md`.
 
 mod badges;
+mod channel_icons;
 mod codec;
 mod cosmetics;
 mod debuglog;
@@ -25,6 +26,7 @@ mod sfu;
 mod store;
 
 pub use badges::{badge_exists, badge_item, badges_catalog, BadgeItem, BadgeShape, MAX_EQUIPPED_BADGES};
+pub use channel_icons::{is_channel_icon, normalize_channel_icon, CHANNEL_ICON_CHOICES};
 pub use codec::{sdp_fixture, sdp_matches_contract, stun_url, turn_server, H264_FMTP, H264_PROFILE_LEVEL_ID};
 pub use cosmetics::{
     cosmetics_catalog, display_name_style_color, CosmeticItem, CosmeticKind, DEFAULT_THEME_PRIMARY,

@@ -496,12 +496,26 @@ Shipped pre-release Version-1-test-10 from main after About Me, custom status, g
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-10
 - Assets: Banter-windows-version-1-test-10.zip, Banter-linux-version-1-test-10.zip, Banter-macos-arm-version-1-test-10.zip, banter-server.exe, banter-server-linux, banter-server-macos-arm
 
+## 2026-11-04 22:30:07 +00:00 [ubuntu] — Optional Lucide icons on channels (BA-78)
+
+Channels can store an optional Lucide icon id. The sidebar and channel header show it when set, otherwise the kind defaults (hash / volume-2 / pencil). Create Channel and Edit Channel (context menu for Manage Channels) include a Lucide picker with a Default clear tile. Uploaded/custom image icons are not used (chat uploads stay disabled).
+
+### Changelog
+- New features: optional channel Lucide icons; Edit Channel modal; migration `004_channel_icons`
+- Bug fixes: none
+- Other: `PATCH /v1/servers/{id}/channels/{channel_id}`; create channel body accepts `icon`
+
+- Migration `004_channel_icons` adds nullable `channels.icon` (also in tip `schema.sql`)
+- Server allowlist `CHANNEL_ICON_CHOICES` / `normalize_channel_icon`
+- Client picker, sidebar, and header use `channel_display_icon`
+- Tests: foundation icon create/update/clear, migration column upgrade, client menu + display helper
+
 ## 2026-11-04 16:33:43 -0600 [ubuntu] — Nested server-rail folders with hex colors (BA-79)
 
 The server rail can group servers into nested folders. Each folder has an optional `#RRGGBB` color. Collapse state, nesting, and order persist per signed-in user in Postgres.
 
-- Migration `004_server_folders`: `server_folders` + `server_folder_memberships`
+- Migration `005_server_folders`: `server_folders` + `server_folder_memberships` (renumbered after `004_channel_icons`)
 - API: `GET /v1/me/server-rail`, create/patch/delete folders, `PUT /v1/me/servers/{id}/folder`
 - Client: rail tree with folder icons, context menus, create/rename/recolor modal (hex + RGB sliders)
 - Nesting rules: per-user; folders under folders up to depth 8; delete promotes children; cycles rejected; invalid hex rejected
-- Tests: foundation `server_folders_nest_hex_color_collapse_and_delete`, client `server_folders`, migrate `004_server_folders`
+- Tests: foundation `server_folders_nest_hex_color_collapse_and_delete`, client `server_folders`, migrate `005_server_folders`

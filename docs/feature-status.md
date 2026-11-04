@@ -13,7 +13,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Create server, invite join, member list, server nickname | Working |
 | Nested server-rail folders (subfolders, hex color, collapse) | Working — per-user layout in Postgres (BA-79) |
 | Guild roles (@everyone, color, hoist, permissions, assign from the member menu) | Working — kick and ban stay deferred |
-| Text + voice channels in categories (Manage Channels; owner has every permission) | Working |
+| Text + voice channels in categories (Manage Channels; owner has every permission; optional Lucide channel icons) | Working |
 | Drawing board channels (shapes, stickies, images, files, realtime ops) | Working |
 | Send / reply / edit / delete / search messages | Working |
 | Reddit-style reply threading (nested replies, collapse, inline composer) | Working — text channels + DMs; `reply_to` is the parent pointer; BA-72 clarity: stronger guides, chevron fold, Reply link, distinct inline composer |

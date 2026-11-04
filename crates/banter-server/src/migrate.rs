@@ -25,8 +25,12 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("migrations/003_guild_roles.sql"),
     ),
     (
-        "004_server_folders",
-        include_str!("migrations/004_server_folders.sql"),
+        "004_channel_icons",
+        include_str!("migrations/004_channel_icons.sql"),
+    ),
+    (
+        "005_server_folders",
+        include_str!("migrations/005_server_folders.sql"),
     ),
 ];
 

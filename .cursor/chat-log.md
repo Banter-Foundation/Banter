@@ -879,6 +879,16 @@ Owl: Banter profile UI is very broken and needs major work (beyond the earlier â
 
 Agent: Branch `cursor/profile-ui-repair-c26f`. Overlay windows + clipped columns; layout contracts in profile.rs; cosmetics-first editor; footer Save/Cancel; stacked board widget radios; preview wrap/clip. Client profile_customization 17 passed. Opening PR; do not merge until Owl says so.
 
+## 2026-11-04 22:30:07 +00:00 â€” Optional icons on channels (BA-78)
+
+Owl wants optional channel icons in Banter. Repo Banter-Foundation/Banter. Branch from main. Use gh (no GitHub MCP). Implement: optional Lucide or uploaded/custom icon (prefer Lucide); sidebar shows icon or kind default; Manage Channels can set/clear in create/edit UI; Postgres migration; open PR; do not merge until Owl says so. Preferences and project-context in store. Task BA-78.
+
+Agent: Branch `cursor/channel-icons-ded0`. Lucide id on `channels.icon` (no uploads). Migration 004, create/update API, create/edit UI picker, sidebar/header. Opening PR; do not merge until Owl says so.
+
+### Reasoning summary (BA-78)
+- Uploads are disabled (BA-61), so Lucide icon ids fit existing Banter icon usage better than custom image uploads.
+- Edit Channel was missing; Manage Channels already gates create, so edit reuses that permission and adds a context-menu entry.
+
 ## 2026-11-04 BA-79 nested server folders
 
 Owl wants **server folders** on the Banter server rail that:
@@ -902,4 +912,4 @@ Task: Nested server folders with hex colors (BA-79)
 Report PR URL + nesting rules.
 
 ### Summary
-Implemented per-user nested server-rail folders with hex colors, Postgres migration 004, API, and rail UX. Opened PR; not merged.
+Implemented per-user nested server-rail folders with hex colors, Postgres migration (renumbered to 005 after channel icons 004), API, and rail UX. Opened PR; merging after Owl said so.

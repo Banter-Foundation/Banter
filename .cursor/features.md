@@ -7,7 +7,7 @@
 - [*] Friend requests and a friends list. Accepting a request (or completing a mutual add) opens that friend's DM.
 - [*] Create a server, join by invite, member list, and server nickname
 - [*] Nested server-rail folders with custom hex colors (BA-79): create/rename/delete, nest servers and subfolders, collapse/expand (persisted), color via hex + RGB sliders; per-user Postgres layout
-- [*] Text and voice channels in categories
+- [*] Text and voice channels in categories. Channels may optionally use a Lucide icon (picker on create/edit); the sidebar and header fall back to hash / volume-2 / pencil when unset. Anyone with Manage Channels can set or clear the icon.
 - [*] Send, reply, edit, delete, and search. Text channels and DMs use Reddit-style nested reply threads (strong indent/guides, chevron collapse, always-visible Reply link, accented inline composer vs top-level bar). Leaf rows keep Discord-like avatar, time, and hover toolbar polish. Message bodies use **BFMD** (Better Formatted Markdown) for styles: bold, italic, underline, strikethrough, size, color, highlight, font, align, heading, and horizontal rule. Plain text remains valid BFMD. Composer toolbar applies B/I/U/S; message rows render styled runs in ImGui.
 - [*] Attach a file from the composer is temporarily disabled (BA-61): the attach control opens a Banter dialog that says exactly `Currently Unavailable` instead of uploading.
 - [*] Discord-style right-click menus on messages, members/friends/DMs, and channels (foundation actions only; kick/ban stay deferred)
