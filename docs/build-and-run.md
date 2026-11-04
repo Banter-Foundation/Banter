@@ -91,7 +91,7 @@ Server foundation tests in `crates/banter-server/tests/foundation.rs` are the AP
 
 Full walkthrough: **[docker-setup.md](docker-setup.md)**.
 
-Image: **`ghcr.io/snowedinowl/banter`** (`version-1-test-3` for the current pre-release; older `version-1-test-1` / `version-1-test-2` tags stay). Server only — not the desktop app.
+Image: **`ghcr.io/snowedinowl/banter`** (`version-1-test-4` for the current pre-release; older `version-1-test-1` / `version-1-test-2` / `version-1-test-3` tags stay). Server only — not the desktop app.
 
 ```powershell
 cd "D:\Projects\Project Banter"
@@ -102,4 +102,4 @@ Invoke-RestMethod http://127.0.0.1:3970/v1/health
 
 If host port `3970` is taken, publish another (see the setup guide) and point **User Settings → Developer → Remote** at that host port.
 
-Pre-release artifacts: [Version-1-test-3](https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-3). Do not move older release tags for later UI-only commits.
+Pre-release artifacts: [Version-1-test-4](https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-4). Do not move older release tags for later UI-only commits.
