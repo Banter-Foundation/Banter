@@ -31,7 +31,7 @@ All colors, sizes, radii, and font sizes come from `crates/banter/src/theme.rs`.
 - Rail: 48 px icons, 8 px gap, 12 px top. Pill 4 px wide, 8 px on hover, 40 px selected. Radius 24 (circle) idle, 16 hover/selected
 - Rows: channel 32 px with 2 px gap and 8 px inset, radius 4. Category 40. Member 42. Avatar 32
 - Composer 44 px, radius 8, 16 px side margin, 24 px bottom
-- Call: buttons 56, gap 16, bar 96. Tiles 16:9, gap 8, radius 8, avatar 80
+- Call: buttons 56, gap 16, bar 96. Tiles 16:9, gap 8, radius 8, avatar 80. A 1:1 DM call replaces the chat stage: ringing shows a 120 px peer avatar with status text and Accept/Decline; an active call shows two participant tiles and the same control bar as voice. Header uses the call background and hides search and the member list while that call is open.
 - Floating: tooltip pad 12x8 with a 5 px arrow, radius 4. Menu 220 wide, 32 px items. Modal 440 wide, radius 8, footer 70. Buttons 38 (44 on sign-in, 16 px label). Inputs 40, radius 3
 - Fonts: 12/14/16/20/24 body sizes. Windows uses Segoe UI / `seguisb.ttf`. Linux uses Liberation Sans (then Noto / DejaVu), with Noto Sans Medium for semibold when present
 - Status dot: 10 px on a 32 px avatar with a 3 px cut-out ring; idle is a crescent, offline a ring

@@ -500,7 +500,8 @@ impl App {
 
     fn draw_shell(&mut self, ui: &Ui) {
         let size = ui.io().display_size();
-        let show_members = self.place != Place::Home && self.members_open && !self.voice_selected();
+        let media_stage = self.voice_selected() || self.call_stage_open();
+        let show_members = self.place != Place::Home && self.members_open && !media_stage;
         let columns = discord_shell_columns(size[0], show_members);
         let flags = WindowFlags::NO_DECORATION
             | WindowFlags::NO_MOVE
@@ -523,7 +524,7 @@ impl App {
             .build(|| {
                 // The chat header spans the stage and the member list, as in Discord.
                 let body_h = (size[1] - HEADER_H).max(0.0);
-                let header_bg = if self.voice_selected() { CALL_BG } else { STAGE_BG };
+                let header_bg = if media_stage { CALL_BG } else { STAGE_BG };
                 self.paint_column(ui, "rail", [columns.rail_x, 0.0], [columns.rail_w, size[1]], RAIL_BG);
                 self.paint_column(ui, "sidebar", [columns.sidebar_x, 0.0], [columns.sidebar_w, size[1]], SIDEBAR_BG);
                 let header_w = columns.stage_w + columns.members_w;
@@ -1344,10 +1345,7 @@ impl App {
                 if Some(call.callee) == me {
                     let half = (row_w - 8.0) * 0.5;
                     if skin::button(ui, "accept-call", "Accept", Tone::Green, [origin[0] + 8.0, row_y], [half, 32.0], true, semi) {
-                        if let Some(call) = self.note(self.client.accept_call(call.dm_id)) {
-                            self.call = Some(call);
-                            self.voice_channel = None;
-                        }
+                        self.accept_call(call.dm_id);
                     }
                     if skin::button(ui, "decline-call", "Decline", Tone::Danger, [origin[0] + 16.0 + half, row_y], [half, 32.0], true, semi) {
                         if self.note(self.client.decline_call(call.dm_id)).is_some() {
@@ -1431,6 +1429,21 @@ impl App {
             self.call = Some(call);
             self.voice_channel = None;
             self.voice_members.clear();
+            // Keep (or open) the DM so the center stage can show the 1:1 call view.
+            if !matches!(self.place, Place::Direct(id) if id == dm_id) {
+                self.open_dm(dm_id);
+            }
+        }
+    }
+
+    fn accept_call(&mut self, dm_id: i64) {
+        if let Some(call) = self.note(self.client.accept_call(dm_id)) {
+            self.call = Some(call);
+            self.voice_channel = None;
+            self.voice_members.clear();
+            if !matches!(self.place, Place::Direct(id) if id == dm_id) {
+                self.open_dm(dm_id);
+            }
         }
     }
 
@@ -1472,12 +1485,13 @@ impl App {
             }
         }
         let mut right = origin[0] + width - 16.0;
-        if self.chat_target().is_some() && !self.voice_selected() {
+        let media_stage = self.voice_selected() || self.call_stage_open();
+        if self.chat_target().is_some() && !media_stage {
             right -= SEARCH_W;
             self.draw_header_search(ui, [right, mid - SEARCH_H * 0.5]);
             right -= HEADER_ICON_GAP;
         }
-        if self.place != Place::Home && !self.voice_selected() {
+        if self.place != Place::Home && !media_stage {
             right -= HEADER_ICON;
             let open = self.members_open;
             let tint = if open { TEXT } else { TEXT_SECONDARY };
@@ -1557,7 +1571,9 @@ impl App {
         if !self.status.is_empty() {
             self.draw_notice(ui);
         }
-        if self.voice_selected() {
+        if self.call_stage_open() {
+            self.draw_call_stage(ui);
+        } else if self.voice_selected() {
             self.draw_voice_stage(ui);
         } else if self.place == Place::Home {
             self.draw_people(ui);
@@ -2136,7 +2152,7 @@ impl App {
     }
 
     fn draw_chat(&mut self, ui: &Ui) {
-        if self.voice_selected() {
+        if self.voice_selected() || self.call_stage_open() {
             return;
         }
         let Some(target) = self.chat_target() else {
@@ -2357,6 +2373,99 @@ impl App {
         }
     }
 
+    /// Discord-style 1:1 DM call stage: large avatar while ringing, two tiles when active.
+    fn draw_call_stage(&mut self, ui: &Ui) {
+        let Some(call) = self.call.clone() else { return };
+        let me = self.account.as_ref().map(|account| account.id).unwrap_or(0);
+        let peer = if call.caller == me { call.callee } else { call.caller };
+        let origin = ui.cursor_screen_pos();
+        let width = ui.content_region_avail()[0].max(1.0);
+        let height = ui.content_region_avail()[1].max(1.0);
+        ui.dummy([width, height]);
+        skin::rect(ui, origin, [origin[0] + width, origin[1] + height], CALL_BG, 0.0);
+        let semi = self.semibold_font;
+        match call.phase {
+            CallPhase::Ringing => {
+                let center = call_ring_avatar_center(origin, width, height, CALL_BAR_H);
+                let radius = CALL_RING_AVATAR * 0.5;
+                let name = self.name_of(peer);
+                let avatar = self.avatars.get(&peer).map(|shot| shot.texture);
+                paint_avatar(ui, avatar, center, radius, &initials(&name), None);
+                let status = if call.callee == me { "Incoming Call" } else { "Calling…" };
+                skin::text_centered(ui, semi, FONT_XL, center[0], center[1] + radius + 24.0, TEXT, &name);
+                skin::text_centered(ui, None, FONT_MD, center[0], center[1] + radius + 52.0, TEXT_SECONDARY, status);
+                if call.callee == me {
+                    let y = origin[1] + height - CALL_BAR_H - CALL_BUTTON - 24.0;
+                    let xs = centered_row(width, &[CALL_BUTTON, CALL_BUTTON], CALL_BUTTON_GAP * 2.0);
+                    if self.round_control_colored(
+                        ui,
+                        "call-accept",
+                        "phone",
+                        [origin[0] + xs[0], y],
+                        GREEN_BUTTON,
+                        GREEN_BUTTON_HOVER,
+                        WHITE,
+                    ) {
+                        self.accept_call(call.dm_id);
+                    }
+                    skin::item_tooltip(ui, semi, "Accept");
+                    if self.round_control(ui, "call-decline", "phone-off", [origin[0] + xs[1], y], true, WHITE) {
+                        if self.note(self.client.decline_call(call.dm_id)).is_some() {
+                            self.end_media_place();
+                        }
+                    }
+                    skin::item_tooltip(ui, semi, "Decline");
+                }
+            }
+            CallPhase::Active => {
+                let people = self.dm_call_members(me, peer);
+                let pad = 16.0;
+                let area_w = (width - pad * 2.0).max(80.0);
+                let area_h = (height - CALL_BAR_H - pad).max(80.0);
+                let sharing = self.screen || people.iter().any(|member| member.flags.screen);
+                let featured_h = if sharing { (area_h * 0.62).floor() } else { 0.0 };
+                if sharing {
+                    self.draw_featured_screen_at(ui, [origin[0] + pad, origin[1] + pad], area_w, featured_h);
+                }
+                let tiles_top = origin[1] + pad + if sharing { featured_h + TILE_GAP } else { 0.0 };
+                let tiles_h = (area_h - if sharing { featured_h + TILE_GAP } else { 0.0 }).max(60.0);
+                let count = dm_call_participant_tiles(true);
+                let grid = voice_tile_grid(count, area_w, tiles_h, TILE_GAP);
+                let grid_w = grid.cols as f32 * grid.tile_w + grid.cols.saturating_sub(1) as f32 * TILE_GAP;
+                let grid_h = grid.rows as f32 * grid.tile_h + grid.rows.saturating_sub(1) as f32 * TILE_GAP;
+                let start_x = origin[0] + pad + (area_w - grid_w) * 0.5;
+                let start_y = tiles_top + (tiles_h - grid_h) * 0.5;
+                for (index, member) in people.iter().enumerate().take(count) {
+                    let col = index % grid.cols.max(1);
+                    let row = index / grid.cols.max(1);
+                    let tile_origin = [
+                        (start_x + col as f32 * (grid.tile_w + TILE_GAP)).floor(),
+                        (start_y + row as f32 * (grid.tile_h + TILE_GAP)).floor(),
+                    ];
+                    self.draw_voice_tile_at(ui, member, tile_origin, grid.tile_w.floor(), grid.tile_h.floor());
+                }
+            }
+        }
+        self.draw_stage_controls(ui, [origin[0], origin[1] + height - CALL_BAR_H], width);
+        if self.push_to_talk {
+            let note = format!("Hold {} to talk.", self.voice.ptt_key);
+            skin::text_centered(ui, None, FONT_XS, origin[0] + width * 0.5, origin[1] + height - 18.0, MUTED, &note);
+        }
+    }
+
+    fn dm_call_members(&self, me: i64, peer: i64) -> Vec<VoiceMember> {
+        vec![
+            VoiceMember {
+                user_id: peer,
+                flags: VoiceFlags::default(),
+            },
+            VoiceMember {
+                user_id: me,
+                flags: self.flags,
+            },
+        ]
+    }
+
     /// Centered call controls: camera, screen share with its options chevron, mic, and the red disconnect.
     fn draw_stage_controls(&mut self, ui: &Ui, origin: [f32; 2], width: f32) {
         let semi = self.semibold_font;
@@ -2387,23 +2496,44 @@ impl App {
         }
         skin::item_tooltip(ui, semi, if muted { "Unmute" } else { "Mute" });
         if self.round_control(ui, "stage-disconnect", "phone-off", [origin[0] + xs[3], y], true, WHITE) {
-            self.leave_voice();
+            self.end_voice_or_call();
         }
-        skin::item_tooltip(ui, semi, "Disconnect");
+        let end_tip = match &self.call {
+            Some(call) if call.phase == CallPhase::Ringing && self.account.as_ref().map(|a| a.id) != Some(call.callee) => {
+                "Cancel"
+            }
+            Some(call) if call.phase == CallPhase::Ringing => "Decline",
+            Some(_) => "Disconnect",
+            None => "Disconnect",
+        };
+        skin::item_tooltip(ui, semi, end_tip);
     }
 
     fn round_control(&self, ui: &Ui, id: &str, icon: &str, origin: [f32; 2], danger: bool, tint: [f32; 4]) -> bool {
+        let (fill, hover) = if danger {
+            (DANGER, DANGER_HOVER)
+        } else {
+            (CONTROL_BG, CONTROL_HOVER)
+        };
+        self.round_control_colored(ui, id, icon, origin, fill, hover, tint)
+    }
+
+    fn round_control_colored(
+        &self,
+        ui: &Ui,
+        id: &str,
+        icon: &str,
+        origin: [f32; 2],
+        fill: [f32; 4],
+        hover: [f32; 4],
+        tint: [f32; 4],
+    ) -> bool {
         ui.set_cursor_screen_pos(origin);
         let clicked = ui.invisible_button(id, [CALL_BUTTON, CALL_BUTTON]);
         let hovered = ui.is_item_hovered();
-        let fill = match (danger, hovered) {
-            (true, true) => DANGER_HOVER,
-            (true, false) => DANGER,
-            (false, true) => CONTROL_HOVER,
-            (false, false) => CONTROL_BG,
-        };
+        let color = if hovered { hover } else { fill };
         let max = [origin[0] + CALL_BUTTON, origin[1] + CALL_BUTTON];
-        skin::rect(ui, origin, max, fill, CALL_BUTTON * 0.5);
+        skin::rect(ui, origin, max, color, CALL_BUTTON * 0.5);
         let inset = (CALL_BUTTON - 24.0) * 0.5;
         skin::image(ui, self.icon(icon), [origin[0] + inset, origin[1] + inset], 24.0, tint);
         clicked
@@ -3073,6 +3203,16 @@ impl App {
         self.selected.as_ref().map(|channel| channel.kind) == Some(ChannelKind::Voice)
     }
 
+    /// Center stage shows the Discord-style 1:1 call view for the open DM that owns the call.
+    fn call_stage_open(&self) -> bool {
+        let call_dm = self.call.as_ref().map(|call| call.dm_id);
+        let viewing_dm = match self.place {
+            Place::Direct(id) => Some(id),
+            _ => None,
+        };
+        dm_call_takes_stage(call_dm, viewing_dm)
+    }
+
     fn find_channel(&self, channel_id: i64) -> Option<Channel> {
         self.layout.iter().flat_map(|category| category.channels.iter()).find(|channel| channel.id == channel_id).cloned()
     }
@@ -3122,7 +3262,12 @@ impl App {
                     if call.phase == CallPhase::Active {
                         self.voice_channel = None;
                     }
+                    let dm_id = call.dm_id;
                     self.call = Some(call);
+                    // Open the DM so the one-on-one call stage appears (incoming or accepted).
+                    if !matches!(self.place, Place::Direct(id) if id == dm_id) {
+                        self.open_dm(dm_id);
+                    }
                 }
             }
             ServerEvent::CallEnded { dm_id } => {

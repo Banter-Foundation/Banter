@@ -18,7 +18,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Drop-in voice: mute, deafen, PTT, connection panel | Working (SFU audio forward + open-mic Opus timeline fixed 2026-11-03) |
 | Camera on/off with mirrored local preview (~720p prefer, MJPEG) | Working (device-dependent) |
 | Screen share Go Live + quality / source switching | Working (software JPEG; H.264 not available) |
-| 1:1 DMs + start a call | Working |
+| 1:1 DMs + start a call | Working — phone icon opens a Discord-style call stage (ringing avatar / two tiles when active) |
 | User Settings: My Account, Voice & Video, Developer (Local/Remote API, persisted) | Working |
 | Embedded + standalone server, SQLite data | Working |
 | Containerized `banter-server` (`ghcr.io/snowedinowl/banter`) | Working |

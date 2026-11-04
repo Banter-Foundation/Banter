@@ -2,8 +2,9 @@
 
 use banter::{discord_shell_columns, rasterize_lucide};
 use banter::theme::{
-    self, TooltipSide, centered_row, chat_should_stick, chat_top_pad, hex, rail_corner_radius, rail_pill_height,
-    server_acronym, status_dot, tooltip_rect, voice_tile_grid,
+    self, TooltipSide, call_ring_avatar_center, centered_row, chat_should_stick, chat_top_pad,
+    dm_call_participant_tiles, dm_call_takes_stage, hex, rail_corner_radius, rail_pill_height, server_acronym,
+    status_dot, tooltip_rect, voice_tile_grid,
 };
 
 #[test]
@@ -111,6 +112,36 @@ fn call_controls_are_centered_with_a_fixed_gap() {
     let xs = centered_row(400.0, &[56.0, 56.0, 56.0], 16.0);
     assert_eq!(xs, vec![100.0, 172.0, 244.0]);
     assert!(centered_row(400.0, &[], 16.0).is_empty());
+}
+
+#[test]
+fn a_dm_call_takes_the_stage_only_for_that_conversation() {
+    assert!(dm_call_takes_stage(Some(7), Some(7)));
+    assert!(!dm_call_takes_stage(Some(7), Some(8)));
+    assert!(!dm_call_takes_stage(Some(7), None));
+    assert!(!dm_call_takes_stage(None, Some(7)));
+    assert!(!dm_call_takes_stage(None, None));
+}
+
+#[test]
+fn an_active_one_on_one_call_draws_two_participant_tiles() {
+    assert_eq!(dm_call_participant_tiles(true), 2);
+    assert_eq!(dm_call_participant_tiles(false), 0);
+    let grid = voice_tile_grid(dm_call_participant_tiles(true), 1000.0, 500.0, theme::TILE_GAP);
+    assert_eq!((grid.cols, grid.rows), (2, 1));
+    assert!(close(grid.tile_w / grid.tile_h, 16.0 / 9.0));
+}
+
+#[test]
+fn ringing_call_avatar_sits_above_the_control_bar() {
+    assert_eq!(theme::CALL_RING_AVATAR, 120.0);
+    let center = call_ring_avatar_center([100.0, 50.0], 800.0, 600.0, theme::CALL_BAR_H);
+    assert!(close(center[0], 500.0));
+    // 42% of the area above the 96 px bar: 50 + 0.42 * (600 - 96) = 261.68
+    assert!(close(center[1], 50.0 + 0.42 * (600.0 - theme::CALL_BAR_H)));
+    let tight = call_ring_avatar_center([0.0, 0.0], 400.0, theme::CALL_BAR_H, theme::CALL_BAR_H);
+    assert!(close(tight[0], 200.0));
+    assert!(close(tight[1], 0.0));
 }
 
 #[test]
