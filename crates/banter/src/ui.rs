@@ -46,7 +46,7 @@ use crate::profile::{
 use crate::profile_paint;
 use crate::profiler;
 use crate::realtime::Realtime;
-use crate::session::{load_token, save_token, session_path};
+use crate::session::{clear_token, load_token, persist_login};
 use crate::settings::{
     SettingsState, account_avatar_actions_place, db_to_rms, device_error_text, display_name_dirty,
     display_name_error, meter_fraction, percent_to_volume, rms_to_db, settings_layout, settings_nav_list_w,
@@ -141,6 +141,8 @@ pub(crate) struct App {
     username: String,
     password: String,
     show_password: bool,
+    /// When true, successful sign-in writes `client-session.json` for the next launch.
+    stay_signed_in: bool,
     register_display: String,
     friends: Vec<Friend>,
     incoming: Vec<FriendRequest>,
@@ -317,7 +319,7 @@ impl App {
                 Ok(me) => account = Some(me),
                 Err(_) => {
                     client.set_token(None);
-                    let _ = std::fs::remove_file(session_path(&data_dir));
+                    let _ = clear_token(&data_dir);
                 }
             }
         }
@@ -331,6 +333,7 @@ impl App {
             username: String::new(),
             password: String::new(),
             show_password: false,
+            stay_signed_in: true,
             register_display: String::new(),
             friends: Vec::new(),
             incoming: Vec::new(),
@@ -934,7 +937,8 @@ impl App {
         let field_h = 20.0 + INPUT_H + 20.0;
         let fields = if register { 3.0 } else { 2.0 };
         let subtitle_h = if register { 0.0 } else { 28.0 };
-        let card_h = pad + 30.0 + subtitle_h + 20.0 + fields * field_h + 28.0 + 44.0 + 12.0 + 20.0 + pad;
+        // Two checkboxes: Show password + Stay signed in (28 each) then gap before the button.
+        let card_h = pad + 30.0 + subtitle_h + 20.0 + fields * field_h + 28.0 + 28.0 + 44.0 + 12.0 + 20.0 + pad;
         let min = [((size[0] - card_w) * 0.5).floor(), ((size[1] - card_h) * 0.5).max(16.0).floor()];
         let max = [min[0] + card_w, min[1] + card_h];
         skin::shadow(ui, min, max, 5.0);
@@ -972,6 +976,16 @@ impl App {
         y += 20.0 + INPUT_H + 8.0;
         let check = self.icon("check");
         skin::checkbox(ui, "show-password", "Show password", &mut self.show_password, [inner_x, y], check, None);
+        y += 28.0;
+        skin::checkbox(
+            ui,
+            "stay-signed-in",
+            "Stay signed in",
+            &mut self.stay_signed_in,
+            [inner_x, y],
+            check,
+            None,
+        );
         y += 28.0 + 12.0;
         let label = if register { "Continue" } else { "Log In" };
         if skin::button(ui, "auth-submit", label, Tone::Brand, [inner_x, y], [inner_w, 44.0], true, semi) {
@@ -1005,8 +1019,12 @@ impl App {
         };
         match result {
             Ok(session) => {
-                if let Err(err) = save_token(&self.data_dir, &session.token) {
-                    self.status = format!("could not remember the login: {err}");
+                if let Err(err) = persist_login(&self.data_dir, &session.token, self.stay_signed_in) {
+                    self.status = if self.stay_signed_in {
+                        format!("could not remember the login: {err}")
+                    } else {
+                        format!("could not clear the saved login: {err}")
+                    };
                 }
                 self.display_name = session.account.display_name.clone();
                 self.account = Some(session.account);
@@ -3629,7 +3647,7 @@ impl App {
 
     fn logout(&mut self) {
         let _ = self.client.logout();
-        let _ = std::fs::remove_file(session_path(&self.data_dir));
+        let _ = clear_token(&self.data_dir);
         self.media = None;
         self.realtime = None;
         self.client.set_token(None);
@@ -7134,7 +7152,7 @@ impl App {
                 }
                 Err(_) => {
                     self.client.set_token(None);
-                    let _ = std::fs::remove_file(session_path(&self.data_dir));
+                    let _ = clear_token(&self.data_dir);
                     self.account = None;
                     self.display_name.clear();
                     self.settings.close();

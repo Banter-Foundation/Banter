@@ -33,7 +33,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 
 - **Skin is temporary.** Controls sit where Discord users expect; Banter’s own look comes later. No Discord logos.
 - **Voice / calls / presence** are process-local on the server. Restart clears who is in voice and who is online.
-- **One `client-session.json` per data dir.** Last login wins the next cold start when two clients share a machine and folder.
+- **One `client-session.json` per data dir** when Stay signed in is checked. Last login wins the next cold start when two clients share a machine and folder. Unchecked sign-in does not write (and clears) that file; Log Out always clears it.
 - **Stream encoder** is H.264 Constrained Baseline over WebRTC (OpenH264 software path; Media Foundation / NVENC / VA-API when the probe accepts Constrained Baseline).
 - **Voice-connection subtitle** shows one plain device error (Settings still lists every device error).
 - **Speaker loopback / per-app mix** for streams: Windows only.

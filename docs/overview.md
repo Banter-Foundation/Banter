@@ -34,7 +34,7 @@ Typical files under the data directory:
 
 - PostgreSQL (`BANTER_DATABASE_URL`) — accounts, servers, channels, messages, attachment metadata
 - `avatars/`, `files/` — blobs
-- `client-session.json` — last login token (shared across clients on this machine; last writer wins on next launch)
+- `client-session.json` — last login token when **Stay signed in** was checked (shared across clients on this machine; last writer wins on next launch). Unchecked sign-in leaves no file so relaunch asks for credentials again.
 - `voice.json`, `stream.json` — Voice & Video and Go Live preferences
 - `dev-server.json` — Developer Local vs Remote API target and remote host
 - `banter-dock.ini` — Dear ImGui layout

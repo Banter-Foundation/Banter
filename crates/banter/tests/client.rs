@@ -6,13 +6,13 @@ use std::collections::HashSet;
 
 use banter::{
     CameraChoice, CaptureKind, Client, CommentRow, MixSource, MixSourceGroup, MuteMemory, ScreenShare, SettingsSection,
-    StreamDefaults, StreamFps, StreamResolution, VoicePrefs, camera_preview_mirrored, comment_descendant_count,
+    StreamDefaults, StreamFps, StreamResolution, VoicePrefs, camera_preview_mirrored, clear_token, comment_descendant_count,
     comment_tree_rows, default_stream_fps, default_stream_resolution, discord_shell_columns, either_key_held,
     encode_jpeg_rgba, encode_jpeg_rgba_quality, equal_power_gains, fps_block, grouped_mix_sources, hardware_encoder_block,
     load_json, load_token, mic_opus_frame, mirror_rgba, mix_equal_power, mix_source_group, open_dm_peer_after_friend_add,
-    open_mic_should_send, password_blocks_copy, password_is_masked, push_to_talk_held, rasterize_lucide, remove_message,
-    resample_mono_i16, resolution_block, save_json, save_token, settings_sections, speaking_from_level, stamp_cursor,
-    stream_frame_rates, stream_frame_size, stream_interval_ms, stream_max_edge, stream_resolutions,
+    open_mic_should_send, password_blocks_copy, password_is_masked, persist_login, push_to_talk_held, rasterize_lucide,
+    remove_message, resample_mono_i16, resolution_block, save_json, save_token, settings_sections, speaking_from_level,
+    stamp_cursor, stream_frame_rates, stream_frame_size, stream_interval_ms, stream_max_edge, stream_resolutions,
     toggle_comment_collapsed, upsert_message, websocket_url,
 };
 use banter_server::{
@@ -69,6 +69,36 @@ fn session_token_round_trip() {
     assert!(load_token(&dir).is_none());
     save_token(&dir, "abc123").unwrap();
     assert_eq!(load_token(&dir).as_deref(), Some("abc123"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn stay_signed_in_writes_the_session_file() {
+    let dir = std::env::temp_dir().join(format!("banter-stay-signed-in-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    persist_login(&dir, "keep-me", true).unwrap();
+    assert_eq!(load_token(&dir).as_deref(), Some("keep-me"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn without_stay_signed_in_does_not_leave_a_session_file() {
+    let dir = std::env::temp_dir().join(format!("banter-no-stay-signed-in-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    save_token(&dir, "old-token").unwrap();
+    persist_login(&dir, "session-only", false).unwrap();
+    assert!(load_token(&dir).is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn clear_token_removes_a_saved_session() {
+    let dir = std::env::temp_dir().join(format!("banter-clear-session-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    save_token(&dir, "gone").unwrap();
+    clear_token(&dir).unwrap();
+    assert!(load_token(&dir).is_none());
+    clear_token(&dir).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }
 

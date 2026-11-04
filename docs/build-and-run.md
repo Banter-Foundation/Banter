@@ -87,7 +87,7 @@ Invoke-RestMethod http://127.0.0.1:3970/v1/health
 
 ## Two clients on one machine
 
-Open the client twice to try voice between accounts. They share one server. `client-session.json` stores one token, so the last account to sign in is restored on the next cold start. Both windows can stay signed in during the same run because each keeps its token in memory.
+Open the client twice to try voice between accounts. They share one server. With **Stay signed in** checked, `client-session.json` stores one token, so the last account to sign in is restored on the next cold start. Unchecked, Banter keeps the token only in memory for that run and clears any saved file. Both windows can stay signed in during the same run because each keeps its token in memory. Log Out always clears the saved session.
 
 To force the login screen without logging out another session, point `BANTER_DATA` at an empty folder for that process.
 

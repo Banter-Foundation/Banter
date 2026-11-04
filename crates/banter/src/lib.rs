@@ -33,7 +33,7 @@ pub use media::{
     pick_preferred_camera_mode, preferred_camera_height, preferred_camera_width, CameraModeChoice,
 };
 pub use profile::*;
-pub use session::{load_token, save_token};
+pub use session::{clear_token, load_token, persist_login, save_token};
 pub use settings::*;
 
 pub fn run() -> Result<(), String> {
