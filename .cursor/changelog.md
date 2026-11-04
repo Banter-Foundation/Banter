@@ -463,3 +463,13 @@ Profile view and customization editor were drawing without a dedicated ImGui ove
 - `profile.rs` / `theme.rs`: `profile_view_layout` + `profile_editor_layout` contracts (disjoint identity/board; three editor columns + footer Save/Cancel/close)
 - `ui.rs`: overlay windows for view + customize; clipped scroll children for identity/left/preview/board; cosmetics-first left column; stacked widget kind radios; auto-sized board widget cards; wrapped preview About Me; Cancel left / Save right footer
 - Tests: client `profile_customization` 17 passed (layout contracts included).
+
+## 2026-11-04 12:56:51 -0500 [ubuntu] — Version-1-test-9 pre-release (guild voice)
+
+Guild voice showed the talking glow and passed no media. Camera and screen packets now carry the MID and RID header extensions, so those tracks are accepted in a guild channel and in a direct call. Compose publishes UDP `40000-40049` on `banter-a` and `40100-40149` on `banter-b`. `BANTER_ADVERTISE_IP` rewrites SFU host candidates (Compose default `127.0.0.1`).
+
+Shipped pre-release Version-1-test-9. Older tags stay. Compose default remains `:latest`.
+
+- Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-9
+- Assets: Banter-windows-version-1-test-9.zip, Banter-linux-version-1-test-9.zip, banter-server.exe, banter-server-linux
+- `room::tests::voice_channel_sfu_delivers_audio_camera_and_screen` passed (microphone, camera, and screen RTP).

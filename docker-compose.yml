@@ -10,6 +10,11 @@
 #
 # Point the desktop client at:
 #   User Settings → Developer → Remote → 127.0.0.1:3970
+#
+# Guild voice is UDP. Each app slot publishes its own range (a: 40000-40049,
+# b: 40100-40149). BANTER_ADVERTISE_IP is the address written into host ICE
+# candidates. 127.0.0.1 is right for a desktop on this machine. A client on
+# another machine needs this host's reachable IP, and that UDP range open.
 
 x-banter-app: &banter-app
   build: .
@@ -59,10 +64,30 @@ services:
   banter-a:
     <<: *banter-app
     container_name: banter-a
+    environment:
+      BANTER_BIND: "0.0.0.0"
+      BANTER_PORT: "3970"
+      BANTER_DATA: /data
+      BANTER_DATABASE_URL: ${BANTER_DATABASE_URL:-postgres://banter:banter@postgres:5432/banter}
+      BANTER_ADVERTISE_IP: ${BANTER_ADVERTISE_IP:-127.0.0.1}
+      BANTER_UDP_MIN: "40000"
+      BANTER_UDP_MAX: "40049"
+    ports:
+      - "40000-40049:40000-40049/udp"
 
   banter-b:
     <<: *banter-app
     container_name: banter-b
+    environment:
+      BANTER_BIND: "0.0.0.0"
+      BANTER_PORT: "3970"
+      BANTER_DATA: /data
+      BANTER_DATABASE_URL: ${BANTER_DATABASE_URL:-postgres://banter:banter@postgres:5432/banter}
+      BANTER_ADVERTISE_IP: ${BANTER_ADVERTISE_IP:-127.0.0.1}
+      BANTER_UDP_MIN: "40100"
+      BANTER_UDP_MAX: "40149"
+    ports:
+      - "40100-40149:40100-40149/udp"
 
 volumes:
   banter-data:
