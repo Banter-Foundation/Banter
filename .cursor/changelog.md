@@ -299,3 +299,11 @@ Desktop startup no longer hard-fails when the loopback server is missing. Local 
 ## 2026-11-03 22:02:00 -06:00 [Winter] — Docs retarget Version-1-test-4.1
 
 Retarget published Docker/pre-release defaults to `version-1-test-4.1` / `Version-1-test-4.1` after the BA-54 client startup change. Older tags stay. Compose default remains `:latest`.
+
+## 2026-11-03 22:02:23 -06:00 [Winter] — Version-1-test-4.1 pre-release (BA-54)
+
+Shipped pre-release Version-1-test-4.1 from main `c6163fc` (client startup without forcing local + docs retarget). Built Windows and Linux clients + servers, pushed `ghcr.io/snowedinowl/banter:version-1-test-4.1` (and `:latest`). Cleaned release branches and `target-linux-release`; kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme (PR #2). Never touched E:.
+
+- Release: https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-4.1
+- Assets: Banter-windows-version-1-test-4.1.zip, Banter-linux-version-1-test-4.1.zip, banter-server.exe, banter-server-linux
+- Behavior: local only when logged in on Local or user picks Local; remote config skips local; missing local asks for remote
