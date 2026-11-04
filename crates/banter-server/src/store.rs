@@ -11,6 +11,7 @@ use rand::Rng;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
+use crate::badges::{badge_exists, badge_item, MAX_EQUIPPED_BADGES};
 use crate::cosmetics::{cosmetic_exists, CosmeticKind, DEFAULT_THEME_PRIMARY, DEFAULT_THEME_SECONDARY};
 use crate::error::BanterError;
 use crate::model::*;
@@ -119,6 +120,16 @@ impl Store {
             return Err(BanterError::InvalidCredentials);
         };
         account_by_id(&self.pool, id).await
+    }
+
+    pub async fn custom_status(&self, user_id: i64) -> Result<Option<String>, BanterError> {
+        let status: Option<String> = sqlx::query_scalar("SELECT custom_status FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?
+            .flatten();
+        Ok(status)
     }
 
     pub async fn account(&self, user_id: i64) -> Result<Account, BanterError> {
@@ -255,6 +266,15 @@ impl Store {
         }
         if let Some(connections) = patch.connections {
             replace_connections(&self.pool, user_id, &connections).await?;
+        }
+        if let Some(badge_ids) = patch.badge_ids {
+            replace_badges(&self.pool, user_id, &badge_ids).await?;
+        }
+        if let Some(activity) = patch.activity {
+            replace_activity(&self.pool, user_id, &activity).await?;
+        }
+        if let Some(wishlist) = patch.wishlist {
+            replace_wishlist(&self.pool, user_id, &wishlist).await?;
         }
         load_user_profile(&self.pool, user_id, None, true, false).await
     }
@@ -1307,7 +1327,7 @@ async fn load_user_profile(
                 about_me, pronouns, custom_status, created_at,
                 banner_file, banner_rev, theme_primary, theme_secondary,
                 nameplate_id, avatar_decoration_id, display_name_style_id,
-                profile_effect_id, profile_frame_id
+                profile_effect_id, profile_frame_id, badge_ids
          FROM users WHERE id = $1",
     )
     .bind(user_id)
@@ -1324,6 +1344,8 @@ async fn load_user_profile(
         .get::<Option<i64>, _>("theme_secondary")
         .map(|v| v as u32)
         .unwrap_or(DEFAULT_THEME_SECONDARY);
+    let badge_ids_raw: String = row.try_get("badge_ids").unwrap_or_else(|_| "[]".into());
+    let badges = resolve_badges(&badge_ids_raw)?;
 
     Ok(UserProfile {
         id: row.get("id"),
@@ -1349,6 +1371,9 @@ async fn load_user_profile(
         profile_frame_id: row.get("profile_frame_id"),
         widgets: list_widgets(pool, user_id).await?,
         connections: list_connections(pool, user_id).await?,
+        badges,
+        activity: list_activity(pool, user_id).await?,
+        wishlist: list_wishlist(pool, user_id).await?,
     })
 }
 
@@ -1488,6 +1513,160 @@ async fn list_connections(pool: &PgPool, user_id: i64) -> Result<Vec<ProfileConn
             url: row.get("url"),
         })
         .collect())
+}
+
+fn resolve_badges(raw: &str) -> Result<Vec<ProfileBadge>, BanterError> {
+    let ids: Vec<String> = serde_json::from_str(raw).unwrap_or_default();
+    let mut out = Vec::new();
+    for id in ids {
+        if let Some(item) = badge_item(&id) {
+            out.push(ProfileBadge {
+                id: item.id,
+                label: item.label,
+                color: item.color,
+                shape: item.shape,
+            });
+        }
+    }
+    Ok(out)
+}
+
+async fn replace_badges(pool: &PgPool, user_id: i64, badge_ids: &[String]) -> Result<(), BanterError> {
+    if badge_ids.len() > MAX_EQUIPPED_BADGES {
+        return Err(BanterError::InvalidProfile);
+    }
+    let mut unique = Vec::new();
+    for id in badge_ids {
+        let id = id.trim();
+        if id.is_empty() {
+            continue;
+        }
+        if !badge_exists(id) {
+            return Err(BanterError::InvalidProfile);
+        }
+        if !unique.iter().any(|existing| existing == id) {
+            unique.push(id.to_string());
+        }
+    }
+    let json = serde_json::to_string(&unique).map_err(|err| BanterError::Storage(err.to_string()))?;
+    sqlx::query("UPDATE users SET badge_ids = $1 WHERE id = $2")
+        .bind(json)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    Ok(())
+}
+
+async fn replace_activity(
+    pool: &PgPool,
+    user_id: i64,
+    activity: &[ProfileActivityInput],
+) -> Result<(), BanterError> {
+    if activity.len() > MAX_PROFILE_ACTIVITY {
+        return Err(BanterError::InvalidProfile);
+    }
+    sqlx::query("DELETE FROM profile_activity WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    for (position, entry) in activity.iter().enumerate() {
+        let kind = clean_activity_kind(&entry.kind)?;
+        let title = clean_label(&entry.title)?;
+        let detail = clean_optional_text(&entry.detail, 200)?.unwrap_or_default();
+        sqlx::query(
+            "INSERT INTO profile_activity (user_id, kind, title, detail, position)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(user_id)
+        .bind(&kind)
+        .bind(&title)
+        .bind(&detail)
+        .bind(position as i64)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+async fn replace_wishlist(
+    pool: &PgPool,
+    user_id: i64,
+    wishlist: &[ProfileWishlistInput],
+) -> Result<(), BanterError> {
+    if wishlist.len() > MAX_PROFILE_WISHLIST {
+        return Err(BanterError::InvalidProfile);
+    }
+    sqlx::query("DELETE FROM profile_wishlist WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    for (position, entry) in wishlist.iter().enumerate() {
+        let title = clean_label(&entry.title)?;
+        let tag = clean_optional_text(&entry.tag, 40)?.unwrap_or_default();
+        sqlx::query(
+            "INSERT INTO profile_wishlist (user_id, title, tag, position)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(user_id)
+        .bind(&title)
+        .bind(&tag)
+        .bind(position as i64)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+async fn list_activity(pool: &PgPool, user_id: i64) -> Result<Vec<ProfileActivity>, BanterError> {
+    let rows = sqlx::query(
+        "SELECT id, kind, title, detail FROM profile_activity
+         WHERE user_id = $1 ORDER BY position ASC, id ASC",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows
+        .iter()
+        .map(|row| ProfileActivity {
+            id: row.get("id"),
+            kind: row.get("kind"),
+            title: row.get("title"),
+            detail: row.get("detail"),
+        })
+        .collect())
+}
+
+async fn list_wishlist(pool: &PgPool, user_id: i64) -> Result<Vec<ProfileWishlistItem>, BanterError> {
+    let rows = sqlx::query(
+        "SELECT id, title, tag FROM profile_wishlist
+         WHERE user_id = $1 ORDER BY position ASC, id ASC",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows
+        .iter()
+        .map(|row| ProfileWishlistItem {
+            id: row.get("id"),
+            title: row.get("title"),
+            tag: row.get("tag"),
+        })
+        .collect())
+}
+
+fn clean_activity_kind(raw: &str) -> Result<String, BanterError> {
+    let kind = raw.trim().to_lowercase();
+    match kind.as_str() {
+        "custom" | "playing" | "listening" | "watching" => Ok(kind),
+        _ => Err(BanterError::InvalidProfile),
+    }
 }
 
 fn widget_kind_key(kind: ProfileWidgetKind) -> &'static str {

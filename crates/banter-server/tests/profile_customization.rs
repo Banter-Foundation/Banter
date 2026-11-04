@@ -86,6 +86,18 @@ fn cosmetics_catalog_covers_discord_editor_slots() {
     }
 }
 
+#[test]
+fn badges_catalog_covers_discord_badge_row_shapes() {
+    let catalog = banter_server::badges_catalog();
+    assert!(catalog.len() >= 6);
+    for item in &catalog {
+        assert!(!item.id.is_empty());
+        assert!(!item.label.is_empty());
+    }
+    assert!(banter_server::badge_exists("banter-leaf"));
+    assert!(!banter_server::badge_exists("not-real"));
+}
+
 #[tokio::test]
 async fn new_profile_defaults_match_discord_empty_customization() {
     let (store, _dir) = open_store().await;
@@ -105,6 +117,9 @@ async fn new_profile_defaults_match_discord_empty_customization() {
     assert_eq!(profile.profile_frame_id.as_deref(), None);
     assert!(profile.widgets.is_empty());
     assert!(profile.connections.is_empty());
+    assert!(profile.badges.is_empty());
+    assert!(profile.activity.is_empty());
+    assert!(profile.wishlist.is_empty());
     // Default theme is Banter charcoal / accent, not Discord blurple branding.
     assert_ne!(profile.theme_primary, 0);
     assert_ne!(profile.theme_secondary, 0);
@@ -179,6 +194,16 @@ async fn owner_can_patch_profile_customization_and_friends_see_it() {
                     name: "owl.site".into(),
                     url: "https://example.com/owl".into(),
                 }]),
+                badge_ids: Some(vec!["banter-leaf".into(), "night-eye".into()]),
+                activity: Some(vec![banter_server::ProfileActivityInput {
+                    kind: "playing".into(),
+                    title: "Hytale".into(),
+                    detail: "Building".into(),
+                }]),
+                wishlist: Some(vec![banter_server::ProfileWishlistInput {
+                    title: "Minecraft".into(),
+                    tag: "Soon".into(),
+                }]),
             },
         )
         .await
@@ -199,12 +224,21 @@ async fn owner_can_patch_profile_customization_and_friends_see_it() {
     assert_eq!(updated.widgets[0].kind, ProfileWidgetKind::FavoriteGame);
     assert_eq!(updated.connections.len(), 1);
     assert_eq!(updated.connections[0].name, "owl.site");
+    assert_eq!(updated.badges.len(), 2);
+    assert_eq!(updated.badges[0].id, "banter-leaf");
+    assert_eq!(updated.activity.len(), 1);
+    assert_eq!(updated.activity[0].title, "Hytale");
+    assert_eq!(updated.wishlist.len(), 1);
+    assert_eq!(updated.wishlist[0].title, "Minecraft");
 
     let friend_view = store.user_profile(bob.id, ada.id, None).await.unwrap();
     assert_eq!(friend_view.about_me.as_deref(), Some("Creator code OWL"));
     assert_eq!(friend_view.widgets.len(), 2);
     assert_eq!(friend_view.connections.len(), 1);
     assert_eq!(friend_view.display_name_style_id.as_deref(), Some(style.id.as_str()));
+    assert_eq!(friend_view.badges.len(), 2);
+    assert_eq!(friend_view.activity.len(), 1);
+    assert_eq!(friend_view.wishlist.len(), 1);
 }
 
 #[tokio::test]
@@ -228,6 +262,9 @@ async fn unknown_cosmetic_ids_are_rejected() {
                 profile_frame_id: None,
                 widgets: None,
                 connections: None,
+                badge_ids: None,
+                activity: None,
+                wishlist: None,
             },
         )
         .await
@@ -260,6 +297,9 @@ async fn empty_string_clears_optional_profile_fields() {
                 profile_frame_id: None,
                 widgets: None,
                 connections: None,
+                badge_ids: None,
+                activity: None,
+                wishlist: None,
             },
         )
         .await
@@ -282,6 +322,9 @@ async fn empty_string_clears_optional_profile_fields() {
                 profile_frame_id: None,
                 widgets: Some(vec![]),
                 connections: Some(vec![]),
+                badge_ids: None,
+                activity: None,
+                wishlist: None,
             },
         )
         .await
@@ -337,10 +380,25 @@ async fn profile_text_limits_match_discord_style_caps() {
                     profile_frame_id: None,
                     widgets: None,
                     connections: None,
+                badge_ids: None,
+                activity: None,
+                wishlist: None,
                 },
             )
             .await
             .unwrap_err(),
         BanterError::InvalidProfile
     );
+}
+
+#[test]
+fn presence_snapshot_carries_custom_status() {
+    use banter_server::Live;
+    let live = Live::new();
+    live.connect(7, 0, Some("Favorite NPC companion?".into()));
+    let snap = live.presence_snapshot(7);
+    assert_eq!(snap.state, banter_server::Presence::Online);
+    assert_eq!(snap.custom_status.as_deref(), Some("Favorite NPC companion?"));
+    live.set_custom_status(7, None);
+    assert_eq!(live.presence_snapshot(7).custom_status, None);
 }

@@ -11,10 +11,16 @@ use sqlx::{PgPool, Postgres, Transaction};
 use crate::error::BanterError;
 
 /// Ordered migrations. Version strings are stable keys — do not rename after ship.
-const MIGRATIONS: &[(&str, &str)] = &[(
-    "001_profile_customization",
-    include_str!("migrations/001_profile_customization.sql"),
-)];
+const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "001_profile_customization",
+        include_str!("migrations/001_profile_customization.sql"),
+    ),
+    (
+        "002_profile_badges_board",
+        include_str!("migrations/002_profile_badges_board.sql"),
+    ),
+];
 
 /// Transaction-scoped advisory lock so concurrent boots serialize migrate.
 const MIGRATE_LOCK_KEY: i64 = 0x4A4E_5452_4D47; // "JNTRMG"

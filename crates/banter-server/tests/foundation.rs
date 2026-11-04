@@ -1126,7 +1126,7 @@ async fn presence_goes_idle_and_disconnect_leaves_voice() {
     let live = Live::new();
 
     assert_eq!(live.presence(ada.id), Presence::Offline);
-    live.connect(ada.id, 0);
+    live.connect(ada.id, 0, None);
     assert_eq!(live.presence(ada.id), Presence::Online);
     live.refresh(IDLE_AFTER_MS - 1);
     assert_eq!(live.presence(ada.id), Presence::Online);

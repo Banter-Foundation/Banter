@@ -2,9 +2,11 @@
 //! Written before the profile editor state landed.
 
 use banter::{
-    ProfileAction, ProfileBoardTab, ProfileCard, ProfileKind, ProfileMode, ProfileWidgetKind,
-    display_name_style_color, profile_board_tabs, profile_editor_sections, profile_heading,
-    profile_primary_actions, profile_view_shows_board,
+    ProfileAction, ProfileBoardTab, ProfileCard, ProfileEditScope, ProfileEditorSlot, ProfileKind,
+    ProfileMediaDraft, ProfileMode, ProfileWidgetKind, display_name_style_color, games_from_payload,
+    games_to_payload, games_widget_cap, profile_badge_row_visible_cap, profile_board_tabs,
+    profile_editor_sections, profile_editor_slot_rows, profile_heading, profile_primary_actions,
+    profile_view_shows_board,
 };
 
 #[test]
@@ -135,4 +137,54 @@ fn display_name_style_resolves_known_colors() {
 #[test]
 fn heading_still_prefers_nickname_in_parity_card() {
     assert_eq!(profile_heading("Ada", Some("Night Owl")), "Night Owl");
+}
+
+#[test]
+fn games_widget_payload_round_trips_without_raw_json() {
+    let empty = games_from_payload(&serde_json::json!({}));
+    assert!(empty.is_empty());
+
+    let list = vec![
+        ("Hytale".into(), "Obsessed".into()),
+        ("Minecraft".into(), "Expert".into()),
+    ];
+    let payload = games_to_payload(&list);
+    assert_eq!(games_from_payload(&payload), list);
+
+    // Caps match Discord board card limits used by the editor.
+    assert_eq!(games_widget_cap(ProfileWidgetKind::GamesInRotation), 5);
+    assert_eq!(games_widget_cap(ProfileWidgetKind::GamesILike), 20);
+    assert_eq!(games_widget_cap(ProfileWidgetKind::FavoriteGame), 0);
+}
+
+#[test]
+fn editor_slot_rows_match_discord_customization_ref() {
+    let rows = profile_editor_slot_rows();
+    assert_eq!(rows[0].0, "Nameplate");
+    assert_eq!(rows[0].1, &[ProfileEditorSlot::Nameplate]);
+    assert!(rows.iter().any(|(label, _)| *label == "Theme & Banner"));
+    assert!(rows.iter().any(|(label, _)| *label == "Profile Effect & Frame"));
+    assert!(rows.iter().any(|(label, _)| *label == "Badges"));
+    assert_eq!(profile_editor_sections().len(), 8);
+    assert_eq!(profile_badge_row_visible_cap(), 6);
+    assert!(ProfileMediaDraft::Unchanged.is_unchanged());
+    assert!(!ProfileMediaDraft::Clear.is_unchanged());
+}
+
+#[test]
+fn editor_can_switch_main_and_server_profile_scope() {
+    let mut card = ProfileCard::closed();
+    card.open(1, ProfileKind::SelfAccount);
+    assert!(card.begin_customize());
+    assert!(card.edit_scope().is_main());
+    card.set_edit_scope(ProfileEditScope::Server {
+        id: 9,
+        name: "Owl Nest".into(),
+    });
+    assert_eq!(card.edit_scope().server_id(), Some(9));
+    assert_eq!(card.edit_scope().label(), "Owl Nest");
+    card.set_draft_nickname("Night Owl");
+    assert_eq!(card.draft_nickname(), "Night Owl");
+    card.set_edit_scope(ProfileEditScope::Main);
+    assert!(card.edit_scope().is_main());
 }

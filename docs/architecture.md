@@ -21,7 +21,8 @@ Banter/
 | `theme.rs` | Skin metrics and colors (temporary Discord dark theme) |
 | `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |
 | `settings.rs` | User Settings rules and `SettingsState` (OS-window host desire, layout, mic test, keybinds) — kept drawable-free for unit tests |
-| `profile.rs` | Discord-parity profile card + customization editor state (`ProfileCard`, cosmetics drafts, board tabs) — drawable-free for unit tests |
+| `profile.rs` | Discord-parity profile card + customization editor state (`ProfileCard`, cosmetics drafts, board tabs, media drafts, editor slots) — drawable-free for unit tests |
+| `profile_paint.rs` | Procedural Banter-owned paint for nameplates, decorations, frames, effects, badges, and board game cards |
 | `api.rs` | HTTP client (`ureq`) for `/v1/*` |
 | `realtime.rs` | WebSocket client for presence, chat events, and WebRTC signaling |
 | `session.rs` | Load/save `client-session.json` |
@@ -43,6 +44,7 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 | `http.rs` | Axum router: auth, friends, servers, channels, messages, DMs/calls, voice join/leave/flags, profile customization, `/v1/ws` |
 | `store.rs` | PostgreSQL persistence (`schema.sql` via sqlx), including profile cosmetics and board widgets |
 | `cosmetics.rs` | Banter-owned cosmetics catalog (nameplates, decorations, display-name styles, effects, frames) |
+| `badges.rs` | Banter-owned profile badge catalog (shapes/colors for the Discord-style badge row) |
 | `live.rs` | In-memory presence, voice membership, calls, WebSocket fan-out |
 | `model.rs` | Shared types (accounts, channels, messages, voice flags, profile widgets, …) |
 | `codec.rs` | Shared Opus/H.264 SDP contract (profile, RIDs, STUN/TURN helpers) |
@@ -55,7 +57,8 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 
 ### HTTP surface (high level)
 
-Auth and profile: `/v1/register`, `/v1/login`, `/v1/logout`, `/v1/me`, `/v1/users/{id}` (optional `server_id` for nickname), `/v1/me/profile` (customization patch), `/v1/me/banner`, `/v1/users/{id}/banner`, `/v1/profile/cosmetics`, avatar upload/delete.  
+Auth and profile: `/v1/register`, `/v1/login`, `/v1/logout`, `/v1/me`, `/v1/users/{id}` (optional `server_id` for nickname), `/v1/me/profile` (customization patch including badges/activity/wishlist), `/v1/me/banner`, `/v1/users/{id}/banner`, `/v1/profile/cosmetics`, `/v1/profile/badges`, avatar upload/delete.  
+Presence (`/v1/presence` and WS `presence` events) includes `custom_status` alongside online/idle/offline.  
 Social: friends requests/list, presence, mentions.  
 Servers: create/list, invites, members, nickname, categories, channels, layout.  
 Chat: channel/DM messages, send/edit/delete, attachments.  

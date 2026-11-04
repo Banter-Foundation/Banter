@@ -3,7 +3,7 @@
 ## Foundation
 
 - [*] Unique username, display name, avatar, and password. An avatar can be a PNG, JPG, GIF, or WebP, cropped and zoomed to a circle, and removed back to the letter.
-- [*] User profiles (Discord parity): view banner, themed card, avatar decorations, styled display name, pronouns, custom status, About Me, Member Since, connections, and Board/Activity/Wishlist widgets; edit with a Discord-style customization editor (nameplate, decorations, display-name style, theme & banner, profile effect/frame, widgets). Open from chat, the member list, friends, or the user-bar avatar.
+- [*] User profiles (Discord parity): view banner, themed card, avatar decorations, styled display name, pronouns, custom status, About Me, Member Since, connections, and Board/Activity/Wishlist widgets; edit with a Discord-style customization editor (nameplate, decorations, display-name style, theme & banner, profile effect/frame, widgets). Includes badge row, Activity/Wishlist tabs, Discord slot chrome, board game cards, and Save/Cancel for banner/avatar; custom status on presence; Main vs server profile switch; clickable connections. Open from chat, the member list, friends, or the user-bar avatar.
 - [*] Friend requests and a friends list. Accepting a request (or completing a mutual add) opens that friend's DM.
 - [*] Create a server, join by invite, member list, and server nickname
 - [*] Text and voice channels in categories

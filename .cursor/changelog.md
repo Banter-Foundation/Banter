@@ -314,7 +314,6 @@ Documented Arch server + release hot-swap progress. Workflow on `main` lowercase
 
 - Docs: `docs/docker-setup.md` Status section + troubleshooting; `docs/feature-status.md` container row
 
-
 ## 2026-11-04 00:12:12 -06:00 [Winter] — Fix SFU forward SSRC rewrite (BA-55)
 
 Server voice channels stayed silent and peers never got camera/screen because the SFU cloned publisher RTP into forward tracks unchanged. `RTCRtpSender::write_rtp` drops packets whose SSRC/PT/extensions are not on that sender leg (errors are logged inside the webrtc driver, so `write_rtp` still returned Ok). `rewrite_forward_rtp` now stamps the forward-track SSRC and payload type and clears inbound header extensions before forward.
@@ -338,6 +337,10 @@ Client UI present rate tracks the monitor under the window. With VSync on, GLFW 
 
 Stream Select / stream options list mix sources under **Audio channels** (`mic:` and `loop:` system devices) and **Apps** (`app:` process loopback) instead of one flat checklist. Multi-select mix and per-source volume are unchanged. Helpers: `MixSourceGroup`, `mix_source_group`, `grouped_mix_sources`. Client test `stream_audio_sources_group_by_channel_and_app`.
 
+## 2026-11-04 00:19:33 -06:00 [Winter] — Fix profile games widget editor (BA-60)
+
+Games In Rotation / Games I Like no longer use a raw JSON text field that reset on every incomplete keystroke. The editor uses title + tag rows with add/remove, capped at Discord board limits (5 / 20). Payload helpers live in profile.rs with a unit test.
+
 ## 2026-11-04 00:23:01 -06:00 [Winter] — Reddit-style reply threading (BA-57)
 
 Text channels and DMs render messages as Reddit comment trees. Nested reply-to-reply stays persisted via `reply_to`. Collapse/expand is local. Reply opens an inline composer under the parent; the bottom bar posts top-level only.
@@ -354,6 +357,14 @@ Composer attach no longer opens a file picker or queues upload bytes. The attach
 - `Modal::UploadsUnavailable` + `pick_attachment` / `submit_composer` guards in `crates/banter/src/ui.rs`
 - Docs: `.cursor/features.md`, `docs/feature-status.md`
 
+## 2026-11-04 00:35:16 -06:00 [Winter] — Discord 1:1 profile parity push (BA-62)
+
+Close High gaps from the BA-60 review: Discord-style editor slot chrome, richer Banter-owned cosmetic/badge paint, board game cards, full center preview, banner/avatar deferred to Save/Cancel, badge row, and Activity/Wishlist data model (empty until user-authored).
+
+- Server: badges catalog + `badge_ids`, `profile_activity`, `profile_wishlist`; `GET /v1/profile/badges`; ProfilePatch fields
+- Client: slot thumbnails, procedural cosmetics/badges/game cards, Board/Activity/Wishlist editors, media drafts on Save
+- Tests: client profile_customization 12; server profile_customization 8 (Postgres :5433)
+
 ## 2026-11-04 00:39:16 -06:00 [Winter] — Postgres cutover punch list (BA-63)
 
 Landed the required Postgres cutover audit punch-list items so long-lived volumes and local docs match the Postgres runtime.
@@ -363,6 +374,14 @@ Landed the required Postgres cutover audit punch-list items so long-lived volume
 - Shipped `.env.example` for database URL, PG port, data dir, bind/port.
 - Verified on Compose Postgres `127.0.0.1:5433`: migrations, profile_customization 7/7, foundation 18/18. Do not merge until Owl says so.
 
+## 2026-11-04 00:43:33 -06:00 [Winter] — Profile presence, scope switch, connections, art (BA-62)
+
+Finish the four remaining BA-62 parity items on PR #21: custom status on live presence, Main vs server profile editor switch (nickname), clickable connections, and richer animated cosmetics / procedural box art.
+
+- Server: PresenceSnapshot + custom_status on WS/HTTP presence; load status on connect; broadcast on profile patch
+- Client: PresenceInfo map; friends subtitle; Main/Server combo; open http(s) connections; animated paint + box-art bevels
+- Tests: client 13, server 9
+
 ## 2026-11-04 00:49:40 -06:00 [Winter] — Settings as separate polished window (BA-64)
 
 User Settings opens in its own **Banter Settings** GLFW window (shared OpenGL context) instead of a full-screen overlay, so the main Banter shell stays usable. Closing the window chrome, Escape, or the in-UI X clears recording/mic-test state and returns focus to the main window.
@@ -371,5 +390,3 @@ User Settings opens in its own **Banter Settings** GLFW window (shared OpenGL co
 - `settings.rs`: OS-window desire, focus one-shot, nav list helpers, narrow My Account avatar action stacking
 - Settings chrome: clearer nav section gaps, page subtitles on My Account / Voice / Developer
 - Tests first in `crates/banter/tests/settings.rs` (28 passed including prior refresh-rate cases)
-
-

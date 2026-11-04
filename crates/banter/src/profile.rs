@@ -35,6 +35,61 @@ pub enum ProfileBoardTab {
     Wishlist,
 }
 
+/// Left-column Discord editor slot currently being picked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileEditorSlot {
+    Nameplate,
+    Avatar,
+    AvatarDecoration,
+    DisplayNameStyle,
+    Theme,
+    Banner,
+    ProfileEffect,
+    ProfileFrame,
+    Badges,
+}
+
+/// Deferred banner/avatar change while the customization editor is open.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProfileMediaDraft {
+    Unchanged,
+    Clear,
+    Bytes(Vec<u8>),
+}
+
+impl ProfileMediaDraft {
+    pub fn is_unchanged(&self) -> bool {
+        matches!(self, Self::Unchanged)
+    }
+}
+
+/// Discord "Main Profile" vs a specific server profile in the editor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProfileEditScope {
+    Main,
+    Server { id: i64, name: String },
+}
+
+impl ProfileEditScope {
+    pub fn is_main(&self) -> bool {
+        matches!(self, Self::Main)
+    }
+
+    pub fn server_id(&self) -> Option<i64> {
+        match self {
+            Self::Main => None,
+            Self::Server { id, .. } => Some(*id),
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::Main => "Main Profile".into(),
+            Self::Server { name, .. } => name.clone(),
+        }
+    }
+}
+
 pub use banter_server::ProfileWidgetKind;
 
 /// Floating profile card state. Drawable-free so unit tests own the contract.
@@ -57,6 +112,8 @@ pub struct ProfileCard {
     board_tab: ProfileBoardTab,
     anchor: [f32; 2],
     server_id: Option<i64>,
+    edit_scope: ProfileEditScope,
+    draft_nickname: String,
 }
 
 impl ProfileCard {
@@ -79,6 +136,8 @@ impl ProfileCard {
             board_tab: ProfileBoardTab::Board,
             anchor: [0.0, 0.0],
             server_id: None,
+            edit_scope: ProfileEditScope::Main,
+            draft_nickname: String::new(),
         }
     }
 
@@ -163,6 +222,26 @@ impl ProfileCard {
         self.server_id
     }
 
+    pub fn edit_scope(&self) -> &ProfileEditScope {
+        &self.edit_scope
+    }
+
+    pub fn set_edit_scope(&mut self, scope: ProfileEditScope) {
+        self.edit_scope = scope;
+    }
+
+    pub fn draft_nickname(&self) -> &str {
+        &self.draft_nickname
+    }
+
+    pub fn draft_nickname_mut(&mut self) -> &mut String {
+        &mut self.draft_nickname
+    }
+
+    pub fn set_draft_nickname(&mut self, draft: impl Into<String>) {
+        self.draft_nickname = draft.into();
+    }
+
     pub fn open(&mut self, user_id: i64, kind: ProfileKind) {
         self.user_id = Some(user_id);
         self.kind = Some(kind);
@@ -170,6 +249,7 @@ impl ProfileCard {
         self.clear_drafts();
         self.board_tab = ProfileBoardTab::Board;
         self.server_id = None;
+        self.edit_scope = ProfileEditScope::Main;
     }
 
     pub fn set_anchor(&mut self, anchor: [f32; 2]) {
@@ -209,6 +289,8 @@ impl ProfileCard {
         self.draft_display_name_style = view.display_name_style_id.clone();
         self.draft_profile_effect = view.profile_effect_id.clone();
         self.draft_profile_frame = view.profile_frame_id.clone();
+        self.draft_nickname = view.nickname.clone().unwrap_or_default();
+        self.edit_scope = ProfileEditScope::Main;
         true
     }
 
@@ -308,6 +390,8 @@ impl ProfileCard {
         self.draft_display_name_style = None;
         self.draft_profile_effect = None;
         self.draft_profile_frame = None;
+        self.draft_nickname.clear();
+        self.edit_scope = ProfileEditScope::Main;
     }
 }
 
@@ -349,6 +433,29 @@ pub fn profile_editor_sections() -> &'static [&'static str] {
     ]
 }
 
+/// Slot pairs as laid out in Discord's customization left column.
+pub fn profile_editor_slot_rows() -> &'static [(&'static str, &'static [ProfileEditorSlot])] {
+    &[
+        ("Nameplate", &[ProfileEditorSlot::Nameplate]),
+        (
+            "Avatar",
+            &[ProfileEditorSlot::Avatar, ProfileEditorSlot::AvatarDecoration],
+        ),
+        ("Display Name Style", &[ProfileEditorSlot::DisplayNameStyle]),
+        ("Theme & Banner", &[ProfileEditorSlot::Theme, ProfileEditorSlot::Banner]),
+        (
+            "Profile Effect & Frame",
+            &[ProfileEditorSlot::ProfileEffect, ProfileEditorSlot::ProfileFrame],
+        ),
+        ("Badges", &[ProfileEditorSlot::Badges]),
+    ]
+}
+
+/// How many badges to show before a +N overflow chip (Discord profile row).
+pub fn profile_badge_row_visible_cap() -> usize {
+    6
+}
+
 pub fn profile_board_tabs() -> &'static [ProfileBoardTab] {
     &[
         ProfileBoardTab::Board,
@@ -388,4 +495,42 @@ pub fn cosmetic_color(id: &str) -> Option<u32> {
         .into_iter()
         .find(|item| item.id == id)
         .map(|item| item.color)
+}
+
+/// Max games a board widget may list in the editor (Discord board card caps).
+pub fn games_widget_cap(kind: ProfileWidgetKind) -> usize {
+    match kind {
+        ProfileWidgetKind::GamesInRotation => 5,
+        ProfileWidgetKind::GamesILike => 20,
+        ProfileWidgetKind::FavoriteGame => 0,
+    }
+}
+
+/// Read `(title, tag)` rows from a games widget payload. Missing/invalid entries are skipped.
+pub fn games_from_payload(payload: &serde_json::Value) -> Vec<(String, String)> {
+    let Some(games) = payload.get("games").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    games
+        .iter()
+        .filter_map(|game| {
+            let title = game.get("title").and_then(|v| v.as_str())?.to_string();
+            let tag = game
+                .get("tag")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((title, tag))
+        })
+        .collect()
+}
+
+/// Build a games widget payload from editor rows.
+pub fn games_to_payload(games: &[(String, String)]) -> serde_json::Value {
+    serde_json::json!({
+        "games": games
+            .iter()
+            .map(|(title, tag)| serde_json::json!({ "title": title, "tag": tag }))
+            .collect::<Vec<_>>()
+    })
 }

@@ -17,6 +17,7 @@ struct UserLive {
     connected: bool,
     last_activity: i64,
     presence: Presence,
+    custom_status: Option<String>,
     flags: VoiceFlags,
     voice_channel: Option<i64>,
 }
@@ -46,12 +47,19 @@ impl Live {
         }
     }
 
-    pub fn connect(&self, user_id: i64, now: i64) {
+    pub fn connect(&self, user_id: i64, now: i64, custom_status: Option<String>) {
         let mut inner = self.lock();
         let user = entry(&mut inner, user_id);
         user.connected = true;
         user.last_activity = now;
         user.presence = Presence::Online;
+        user.custom_status = custom_status;
+    }
+
+    pub fn set_custom_status(&self, user_id: i64, custom_status: Option<String>) {
+        let mut inner = self.lock();
+        let user = entry(&mut inner, user_id);
+        user.custom_status = custom_status;
     }
 
     pub fn note_activity(&self, user_id: i64, now: i64) {
@@ -82,11 +90,19 @@ impl Live {
     }
 
     pub fn presence(&self, user_id: i64) -> Presence {
+        self.presence_snapshot(user_id).state
+    }
+
+    pub fn presence_snapshot(&self, user_id: i64) -> PresenceSnapshot {
         self.lock()
             .users
             .get(&user_id)
-            .map(|user| user.presence)
-            .unwrap_or(Presence::Offline)
+            .map(|user| PresenceSnapshot::with_state(user.presence, user.custom_status.clone()))
+            .unwrap_or_else(PresenceSnapshot::offline)
+    }
+
+    pub fn custom_status(&self, user_id: i64) -> Option<String> {
+        self.presence_snapshot(user_id).custom_status
     }
 
     pub fn disconnect(&self, user_id: i64) {
@@ -395,6 +411,7 @@ fn entry(inner: &mut LiveInner, user_id: i64) -> &mut UserLive {
         connected: false,
         last_activity: 0,
         presence: Presence::Offline,
+        custom_status: None,
         flags: VoiceFlags::default(),
         voice_channel: None,
     })
