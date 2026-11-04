@@ -50,6 +50,13 @@ fn slots() -> &'static Mutex<HashMap<i64, Slot>> {
     SLOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// ICE that arrived before `accept_offer` created the slot. Voice channels lost
+/// early trickle candidates and then never completed DTLS to the SFU.
+fn pending_ice() -> &'static Mutex<HashMap<i64, Vec<RTCIceCandidateInit>>> {
+    static PENDING: OnceLock<Mutex<HashMap<i64, Vec<RTCIceCandidateInit>>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Outbound RTP tracks already negotiated (or being negotiated) toward a subscriber.
 fn forwards() -> &'static Mutex<Vec<Forward>> {
     static FORWARDS: OnceLock<Mutex<Vec<Forward>>> = OnceLock::new();
@@ -208,16 +215,11 @@ impl PeerConnectionEventHandler for Handler {
                         layers.insert(init.ssrc, init.rid.unwrap_or_default());
                     }
                     TrackRemoteEvent::OnRtpPacket(packet) => {
-                        let Some(rid) = layers.get(&packet.header.ssrc).cloned() else {
+                        let mapped = layers.get(&packet.header.ssrc).map(String::as_str);
+                        let Some(layer) = inbound_rtp_layer(kind, mapped) else {
                             continue;
                         };
-                        let layer = if kind.is_audio() {
-                            LayerId::Full
-                        } else if let Some(layer) = LayerId::from_rid(&rid) {
-                            layer
-                        } else {
-                            continue;
-                        };
+                        let rid = mapped.unwrap_or("").to_string();
                         live.note_layer(user_id, kind, layer);
                         let subscribers = live.admit_rtp(channel_id, user_id, kind, layer, packet.payload.len(), rtp_is_key(&packet.payload));
                         let targets: Vec<Arc<TrackLocalStaticRTP>> = {
@@ -227,7 +229,7 @@ impl PeerConnectionEventHandler for Handler {
                                 .filter(|row| {
                                     row.publisher == user_id
                                         && row.kind == kind
-                                        && (row.rid == rid || kind.is_audio())
+                                        && (kind.is_audio() || row.rid == rid)
                                         && subscribers.contains(&row.subscriber)
                                 })
                                 .map(|row| Arc::clone(&row.track))
@@ -251,6 +253,11 @@ pub fn accept_offer(live: Arc<Live>, user_id: i64, channel_id: i64, sdp: String)
     close_user(user_id);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     slots().lock().expect("sfu slots").insert(user_id, Slot { tx: tx.clone() });
+    if let Some(early) = pending_ice().lock().expect("pending ice").remove(&user_id) {
+        for candidate in early {
+            let _ = tx.send(Cmd::Ice(candidate));
+        }
+    }
     let peers: Vec<i64> = live
         .voice_channel_members(channel_id)
         .into_iter()
@@ -269,6 +276,7 @@ pub fn accept_offer(live: Arc<Live>, user_id: i64, channel_id: i64, sdp: String)
             eprintln!("voice sfu: {err}");
         }
         slots().lock().expect("sfu slots").remove(&user_id);
+        pending_ice().lock().expect("pending ice").remove(&user_id);
         forwards().lock().expect("forwards").retain(|row| row.subscriber != user_id && row.publisher != user_id);
     });
 }
@@ -280,13 +288,20 @@ pub fn accept_answer(user_id: i64, sdp: String) {
 }
 
 pub fn accept_ice(user_id: i64, candidate: String, sdp_mid: Option<String>, sdp_mline_index: Option<u16>) {
+    let init = RTCIceCandidateInit {
+        candidate,
+        sdp_mid,
+        sdp_mline_index,
+        ..Default::default()
+    };
     if let Some(slot) = slots().lock().expect("sfu slots").get(&user_id) {
-        let _ = slot.tx.send(Cmd::Ice(RTCIceCandidateInit {
-            candidate,
-            sdp_mid,
-            sdp_mline_index,
-            ..Default::default()
-        }));
+        let _ = slot.tx.send(Cmd::Ice(init));
+        return;
+    }
+    let mut pending = pending_ice().lock().expect("pending ice");
+    let list = pending.entry(user_id).or_default();
+    if list.len() < 64 {
+        list.push(init);
     }
 }
 
@@ -300,6 +315,7 @@ pub fn request_pli(publisher: i64, layer: LayerId) {
 }
 
 pub fn close_user(user_id: i64) {
+    pending_ice().lock().expect("pending ice").remove(&user_id);
     if let Some(slot) = slots().lock().expect("sfu slots").remove(&user_id) {
         let _ = slot.tx.send(Cmd::Close);
     }
@@ -424,6 +440,18 @@ fn kind_token(kind: MediaKind) -> &'static str {
         MediaKind::Camera => "camera",
         MediaKind::Screen => "screen",
     }
+}
+
+/// Layer for one inbound RTP packet on a known track.
+///
+/// Audio never waits on an OnOpen SSRC→RID map. That map often missed the mic
+/// SSRC (or arrived late), so voice-channel Opus was dropped while 1:1 P2P still
+/// worked. Video still needs a known RID.
+pub fn inbound_rtp_layer(kind: MediaKind, mapped_rid: Option<&str>) -> Option<LayerId> {
+    if kind.is_audio() {
+        return Some(LayerId::Full);
+    }
+    mapped_rid.and_then(LayerId::from_rid)
 }
 
 async fn attach_forward(pc: &impl PeerConnection, subscriber: i64, publisher: i64) -> bool {

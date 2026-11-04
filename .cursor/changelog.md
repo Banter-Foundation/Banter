@@ -168,3 +168,13 @@ Refreshed the root Dockerfile (adds ca-certificates in the runtime image), docke
 
 Fixed Windows Media Foundation encoder/decoder compile errors after the WebRTC merge (Send for COM-owned MFTs, ProcessOutput sample borrow). Release-built the desktop client and server. Published GitHub pre-release Version-1-test-2 with Banter-windows-version-1-test-2.zip and banter-server.exe. Did not move Version-1-test-1. Never touched E:.
 
+
+## 2026-11-03 18:54:03 -06:00 [Winter] — Fix voice channel SFU audio and Opus quality
+
+Voice channels dropped Opus when the SFU required an OnOpen SSRC→RID map and when the forward table treated unpublished audio as Off. Early trickle ICE before the SFU slot existed was discarded. Open-mic capture skipped quiet frames before Opus, which chopped speech and broke DTX. Playback backlog was trimmed to ~200 ms and the RTC media queue was enlarged.
+
+- SFU: `inbound_rtp_layer` forwards audio without the SSRC map; audio defaults to layer Full; pending ICE is buffered until `accept_offer`
+- Client: `mic_opus_frame` feeds quiet open-mic frames to Opus; mute / PTT-up still stop the track
+- Tests first: foundation voice admit path, SFU unit forward, client `mic_opus_frame`
+- Docs: `docs/streaming.md`, feature-status. Never touched E:.
+

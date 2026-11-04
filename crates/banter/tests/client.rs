@@ -6,7 +6,7 @@ use banter::{
     CameraChoice, CaptureKind, Client, MuteMemory, ScreenShare, SettingsSection, StreamDefaults, StreamFps,
     StreamResolution, VoicePrefs, camera_preview_mirrored, default_stream_fps, default_stream_resolution,
     discord_shell_columns, either_key_held, encode_jpeg_rgba, encode_jpeg_rgba_quality, equal_power_gains, fps_block,
-    hardware_encoder_block, load_json, load_token, mirror_rgba, mix_equal_power, open_mic_should_send,
+    hardware_encoder_block, load_json, load_token, mic_opus_frame, mirror_rgba, mix_equal_power, open_mic_should_send,
     password_blocks_copy, password_is_masked, push_to_talk_held, rasterize_lucide, remove_message, resample_mono_i16,
     resolution_block, save_json, save_token, settings_sections, speaking_from_level, stamp_cursor, stream_frame_rates,
     stream_frame_size, stream_interval_ms, stream_max_edge, stream_resolutions, upsert_message, websocket_url,
@@ -230,6 +230,38 @@ fn push_to_talk_ignores_the_key_while_text_input_is_active() {
 fn open_mic_drops_silence_and_keeps_a_loud_frame() {
     assert!(!open_mic_should_send(&[0; 960]));
     assert!(open_mic_should_send(&[4_000; 960]));
+}
+
+#[test]
+fn mic_opus_keeps_quiet_open_mic_frames_for_a_stable_timeline() {
+    // Speaking glow still uses open_mic_should_send / speaking_from_level.
+    // Feeding Opus must not skip quiet open-mic frames — that chopped words and
+    // broke DTX. Mute / deafen / PTT-up still return None so the track stops.
+    let quiet = [0i16; 960];
+    let loud = [4_000i16; 960];
+    let open = VoiceFlags::default();
+    assert_eq!(mic_opus_frame(&open, &quiet).as_deref(), Some(quiet.as_slice()));
+    assert_eq!(mic_opus_frame(&open, &loud).as_deref(), Some(loud.as_slice()));
+
+    let muted = VoiceFlags {
+        muted: true,
+        ..VoiceFlags::default()
+    };
+    assert!(mic_opus_frame(&muted, &loud).is_none());
+
+    let ptt_up = VoiceFlags {
+        push_to_talk: true,
+        transmitting: false,
+        ..VoiceFlags::default()
+    };
+    assert!(mic_opus_frame(&ptt_up, &loud).is_none());
+
+    let ptt_down = VoiceFlags {
+        push_to_talk: true,
+        transmitting: true,
+        ..VoiceFlags::default()
+    };
+    assert_eq!(mic_opus_frame(&ptt_down, &quiet).as_deref(), Some(quiet.as_slice()));
 }
 
 #[test]

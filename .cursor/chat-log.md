@@ -470,3 +470,14 @@ Agent: Release build failed on mf.rs/rtc Send + ProcessOutput types; fixed with 
 
 Client release build unblocked; Version-1-test-2 pre-release assets prepared for GitHub Releases.
 
+
+## 2026-11-03 18:54:03 -06:00 — Fix voice channel reliability and quality
+
+Owl (via coordinator BA-35): Voice works only sometimes; kinda works in 1:1; does NOT work in voice channels. When it works: poor quality, inconsistent. Fix voice first. Prefer real WebRTC/Opus. Tests first. Root D:\Projects\Project Banter. Never touch E:.
+
+Agent: Root causes — (1) SFU OnRtpPacket required OnOpen SSRC→RID before forwarding, so voice-channel Opus never reached peers while P2P DMs still could; (2) ForwardTable empty publish set made deliverable_layer Off for audio; (3) early trickle ICE dropped before accept_offer; (4) open-mic RMS gate skipped quiet PCM before Opus (choppy + broken DTX). Wrote failing tests, then fixed room/sfu/media/rtc, docs. Branch cursor/voice-channel-reliability-a30a.
+
+## Summary
+
+Voice-channel SFU now forwards Opus without the SSRC map; open-mic keeps an Opus timeline. Report SHA after push.
+

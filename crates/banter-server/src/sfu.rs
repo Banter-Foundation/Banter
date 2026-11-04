@@ -262,7 +262,16 @@ impl ForwardTable {
     }
 
     fn published_set(&self, key: TrackKey) -> Vec<LayerId> {
-        self.publishing.get(&key).map(|set| set.iter().copied().collect()).unwrap_or_default()
+        if let Some(set) = self.publishing.get(&key) {
+            return set.iter().copied().collect();
+        }
+        // Audio has no simulcast RID handshake. An empty publish set used to make
+        // deliverable_layer return Off and drop every Opus packet on the SFU.
+        if key.track.is_audio() {
+            vec![LayerId::Full]
+        } else {
+            Vec::new()
+        }
     }
 
     fn refresh_dynacast(&mut self, key: TrackKey, request_keyframe: bool) {
@@ -422,5 +431,15 @@ mod tests {
         table.subscribe(1, 9, MediaKind::Screen, LayerId::Full);
         let keys = table.take_keyframes();
         assert!(keys.iter().any(|key| key.layer == LayerId::Full));
+    }
+
+    #[test]
+    fn user_audio_forwards_before_any_layer_is_noted() {
+        let mut table = ForwardTable::new();
+        table.subscribe(2, 1, MediaKind::UserAudio, LayerId::Full);
+        let released = table.push(1, MediaKind::UserAudio, LayerId::Full, 80, false);
+        assert_eq!(released.len(), 1);
+        assert_eq!(released[0].subscriber, 2);
+        assert_eq!(table.egress(2), 80);
     }
 }

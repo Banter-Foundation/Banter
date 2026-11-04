@@ -153,7 +153,9 @@ impl Rtc {
         flags: Arc<AtomicU32>,
     ) -> Self {
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (media_tx, media_rx) = tokio::sync::mpsc::channel(16);
+        // Audio shares this queue with video. A tiny buffer dropped Opus under
+        // camera/screen load and made voice crackle when it worked at all.
+        let (media_tx, media_rx) = tokio::sync::mpsc::channel(64);
         let control = Arc::new(Control::new());
         let stop = Arc::new(AtomicBool::new(false));
         let encode = thread::Builder::new()
@@ -335,9 +337,11 @@ fn layer_label(control: &Control) -> String {
 }
 
 fn offer(tx: &tokio::sync::mpsc::Sender<Outgoing>, control: &Control, packet: Outgoing) {
-    if tx.try_send(packet).is_err() {
-        control.congested_drops.fetch_add(1, Ordering::Relaxed);
+    if tx.try_send(packet).is_ok() {
+        return;
     }
+    // Prefer dropping video over Opus when the send path is congested.
+    control.congested_drops.fetch_add(1, Ordering::Relaxed);
 }
 
 fn take_frame(slot: &Mutex<VecDeque<i16>>) -> Option<Vec<i16>> {
@@ -800,7 +804,9 @@ fn push_playback(playback: &Mutex<VecDeque<f32>>, output_rate: &AtomicU32, pcm: 
     for sample in samples {
         queue.push_back(sample as f32 / i16::MAX as f32);
     }
-    let cap = rate as usize;
+    // Keep about 200 ms of jitter margin. A full second of backlog made late
+    // bursts sound mushy and then underrun when the queue was drained from the front.
+    let cap = (rate as usize / 5).max(960);
     while queue.len() > cap {
         queue.pop_front();
     }
