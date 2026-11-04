@@ -661,3 +661,31 @@ Agent: Merged PR #16 (startup) and PR #17 (docs retarget). Tagged Version-1-test
 ## Summary
 
 Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
+
+---
+## 2026-11-04 BA-57 Reddit-style reply threading
+
+Owl wants Banter text replies to work **exactly like Reddit** (1:1 Reddit comment UX as the baseline).
+
+Project: D:\Projects\Project Banter (NEVER touch E:).
+Repo: https://github.com/SnowedInOwl/Banter
+Use a **separate git worktree/branch** under that folder so you do not collide with parallel workers (Server VC media fix, UI display refresh rate).
+
+Context: /cursor/stores/self/docs/project-context.md
+Preferences: /cursor/stores/self/preferences.md
+Preference: plan one feature at a time for Owl unless parallel requested — Owl is OK with parallel agents right now; still keep scope to Reddit replies only.
+
+Implement Reddit-parity reply threading for text channels/DMs as appropriate:
+- Nested comment threads (reply to reply), indentation/tree like Reddit
+- Collapse/expand threads
+- Reply composer scoped to a parent comment
+- Persist parent/child relationships server-side; migrate DB as needed
+- Match Discord message row polish where it still applies for leaf posts, but threading behavior is Reddit-exact
+
+Open a PR with clear commits/docs. Do **not** merge until Owl says so.
+Report: PR URL, UX notes, API/schema changes, how to try it.
+
+Task: Reddit-style reply threading in chat (BA-57)
+
+### Summary (agent)
+Implemented on worktree `D:\Projects\Project Banter\worktrees\Banter-reddit-replies` branch `cursor/reddit-reply-threading-867a`. Reused existing `reply_to` parent pointer; added index; client DFS tree + collapse + inline composer. Did not merge.

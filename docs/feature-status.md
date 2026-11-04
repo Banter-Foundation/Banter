@@ -14,9 +14,10 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Text + voice channels in categories (owner creates) | Working |
 | Drawing board channels (shapes, stickies, images, files, realtime ops) | Working |
 | Send / reply / edit / delete / attach / search messages | Working |
+| Reddit-style reply threading (nested replies, collapse, inline composer) | Working — text channels + DMs; `reply_to` is the parent pointer |
 | Mentions + presence | Working |
 | Discord-like temporary skin (rail, sidebar, chat, members, modals) | Working — **not** final Banter branding |
-| Chat rows (avatar, grouping, hover toolbar, bottom-anchored history) | Working |
+| Chat rows (avatar, hover toolbar, bottom-anchored history; threaded tree layout) | Working |
 | Right-click context menus (messages, members/friends/DMs, channels) | Working — foundation actions only; no kick/ban/profiles |
 | Drop-in voice: mute, deafen, PTT, connection panel | Working (SFU audio forward + open-mic Opus timeline fixed 2026-11-03) |
 | Camera on/off with mirrored local RGBA preview (~720p prefer; device MJPEG OK) | Working (device-dependent); wire is WebRTC H.264; remotes receive after shared RID/SSRC SFU fix |

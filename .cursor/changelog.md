@@ -313,3 +313,12 @@ Shipped pre-release Version-1-test-4.1 from main `c6163fc` (client startup witho
 Documented Arch server + release hot-swap progress. Workflow on `main` lowercases the GHCR owner and logs in with `GHCR_WRITE_TOKEN`. Deploy secrets are set. Releases through `Version-1-test-6` still fail at image push: the write PAT must be a classic token with `write:packages` (current error: token scopes). No GHCR `banter` package exists yet; SSH deploy is untested until push succeeds. Manual path: local `docker build -t banter-server:local` + deploy script (skip-pull for local tags).
 
 - Docs: `docs/docker-setup.md` Status section + troubleshooting; `docs/feature-status.md` container row
+
+## 2026-11-04 00:23:01 -06:00 [Winter] — Reddit-style reply threading (BA-57)
+
+Text channels and DMs render messages as Reddit comment trees. Nested reply-to-reply stays persisted via `reply_to`. Collapse/expand is local. Reply opens an inline composer under the parent; the bottom bar posts top-level only.
+
+- Client: `comment_tree_rows`, `comment_descendant_count`, `toggle_comment_collapsed`; chat UI tree, indent, fold controls, inline reply draft
+- Server: `idx_messages_reply_to`; foundation test for nested channel + DM threads
+- Docs: architecture threading section, feature-status, features list
+- Also fixed a broken client friend-DM integration test that called sync `Store::open` (now HTTP client like the other live tests)
