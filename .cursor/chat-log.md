@@ -680,4 +680,4 @@ Implement:
 
 Task: Disable uploads with unavailable popup (BA-61)
 
-Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-disable-uploads` on `cursor/disable-uploads-unavailable-95f7`. Composer attach opens `Modal::UploadsUnavailable` with message `Currently Unavailable`; submit path never sends file bytes. No drag-drop/paste/context-menu upload entry points existed. Server left alone to keep foundation attachment tests.
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-disable-uploads` on `cursor/disable-uploads-unavailable-95f7`. Composer attach opens `Modal::UploadsUnavailable` with message `Currently Unavailable`; submit path never sends file bytes. No drag-drop/paste/context-menu upload entry points existed. Server left alone to keep foundation attachment tests. PR https://github.com/Banter-Foundation/Banter/pull/24 (not merged).
