@@ -2512,12 +2512,15 @@ impl App {
                 );
             }
             // Reddit thread line + collapse control.
+            // Drop DrawListMut before tool() — it acquires the same window draw list.
             if row.depth > 0 || row.child_count > 0 {
                 let line_x = origin[0] + indent + 8.0;
-                let draw = ui.get_window_draw_list();
-                draw.add_line([line_x, origin[1] + 4.0], [line_x, origin[1] + row_h - 4.0], COMMENT_THREAD_LINE)
-                    .thickness(2.0)
-                    .build();
+                {
+                    let draw = ui.get_window_draw_list();
+                    draw.add_line([line_x, origin[1] + 4.0], [line_x, origin[1] + row_h - 4.0], COMMENT_THREAD_LINE)
+                        .thickness(2.0)
+                        .build();
+                }
                 if row.child_count > 0 {
                     ui.set_cursor_screen_pos([line_x - 8.0, origin[1] + 4.0]);
                     let icon = if row.collapsed { "plus" } else { "minus" };
@@ -4219,21 +4222,23 @@ impl App {
         let size = 32.0;
         let clicked = ui.invisible_button(id, [size, size]);
         let min = ui.item_rect_min();
-        let draw = ui.get_window_draw_list();
-        if active || ui.is_item_hovered() {
-            let fill = if active { [88.0 / 255.0, 101.0 / 255.0, 242.0 / 255.0, 0.45] } else { ROW_HOVER };
-            draw.add_rect(min, [min[0] + size, min[1] + size], fill).rounding(6.0).filled(true).build();
-        }
-        if let Some(texture) = self.icon(name) {
-            let pad = 7.0;
-            draw.add_image(
-                texture,
-                [min[0] + pad, min[1] + pad],
-                [min[0] + size - pad, min[1] + size - pad],
-                [0.0, 0.0],
-                [1.0, 1.0],
-                WHITE,
-            );
+        {
+            let draw = ui.get_window_draw_list();
+            if active || ui.is_item_hovered() {
+                let fill = if active { [88.0 / 255.0, 101.0 / 255.0, 242.0 / 255.0, 0.45] } else { ROW_HOVER };
+                draw.add_rect(min, [min[0] + size, min[1] + size], fill).rounding(6.0).filled(true).build();
+            }
+            if let Some(texture) = self.icon(name) {
+                let pad = 7.0;
+                draw.add_image(
+                    texture,
+                    [min[0] + pad, min[1] + pad],
+                    [min[0] + size - pad, min[1] + size - pad],
+                    [0.0, 0.0],
+                    [1.0, 1.0],
+                    WHITE,
+                );
+            }
         }
         if let Some(tip) = tip {
             if ui.is_item_hovered() {
@@ -4343,8 +4348,11 @@ impl App {
         }
         let max = [min[0] + card_w, min[1] + card_h];
         let identity_max = [min[0] + PROFILE_W, max[1]];
-        let draw = ui.get_window_draw_list();
-        draw.add_rect(min, max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        // Never hold DrawListMut across helpers that also call get_window_draw_list().
+        {
+            let draw = ui.get_window_draw_list();
+            draw.add_rect(min, max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        }
 
         let theme_primary = if self.profile.customizing() {
             self.profile.draft_theme_primary()
@@ -4360,7 +4368,10 @@ impl App {
 
         let heading = profile_heading(&view.display_name, view.nickname.as_deref());
         let avatar_center = [min[0] + PROFILE_PAD + PROFILE_AVATAR, min[1] + PROFILE_BANNER_H];
-        draw.add_circle(avatar_center, PROFILE_AVATAR + 6.0, FLOATING_BG).filled(true).build();
+        {
+            let draw = ui.get_window_draw_list();
+            draw.add_circle(avatar_center, PROFILE_AVATAR + 6.0, FLOATING_BG).filled(true).build();
+        }
         let deco_id = view.avatar_decoration_id.as_deref();
         let frame_id = view.profile_frame_id.as_deref();
         profile_paint::paint_profile_frame_art(ui, avatar_center, PROFILE_AVATAR, frame_id);
@@ -4374,6 +4385,7 @@ impl App {
             let bubble_min = [avatar_center[0] + PROFILE_AVATAR + 10.0, avatar_center[1] - 18.0];
             let size = ui.calc_text_size(status);
             let bubble_max = [bubble_min[0] + size[0] + 16.0, bubble_min[1] + size[1] + 10.0];
+            let draw = ui.get_window_draw_list();
             draw.add_rect(bubble_min, bubble_max, STAGE_BG).rounding(8.0).filled(true).build();
             draw.add_text([bubble_min[0] + 8.0, bubble_min[1] + 5.0], TEXT, status);
         }
@@ -4383,14 +4395,15 @@ impl App {
         let name_color = display_name_style_color(view.display_name_style_id.as_deref());
         {
             let _font = ui.push_font_with_size(self.bold_font, FONT_LG);
-            draw.add_text([text_x, name_y], name_color, &heading);
+            ui.get_window_draw_list().add_text([text_x, name_y], name_color, &heading);
         }
         let mut meta = format!("@{}", view.username);
         if let Some(pronouns) = view.pronouns.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             meta.push_str(" • ");
             meta.push_str(pronouns);
         }
-        draw.add_text([text_x, name_y + 26.0], TEXT_SECONDARY, &meta);
+        ui.get_window_draw_list()
+            .add_text([text_x, name_y + 26.0], TEXT_SECONDARY, &meta);
         let mut y = name_y + 52.0;
         if !view.badges.is_empty() {
             let cap = profile_badge_row_visible_cap();
@@ -4401,11 +4414,13 @@ impl App {
             }
             if view.badges.len() > cap {
                 let extra = view.badges.len() - cap;
-                draw.add_text([bx, y + 4.0], MUTED, &format!("+{extra}"));
+                ui.get_window_draw_list()
+                    .add_text([bx, y + 4.0], MUTED, &format!("+{extra}"));
             }
             y += PROFILE_BADGE * 2.0 + 10.0;
         }
-        draw.add_text([text_x, y], MUTED, presence_label(presence));
+        ui.get_window_draw_list()
+            .add_text([text_x, y], MUTED, presence_label(presence));
         y += 24.0;
 
         let mut close_after = false;
@@ -4597,9 +4612,11 @@ impl App {
         let pad = 24.0;
         let min = [pad, pad];
         let max = [display[0] - pad, display[1] - pad];
-        let draw = ui.get_window_draw_list();
-        draw.add_rect([0.0, 0.0], display, [0.0, 0.0, 0.0, 0.72]).filled(true).build();
-        draw.add_rect(min, max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        {
+            let draw = ui.get_window_draw_list();
+            draw.add_rect([0.0, 0.0], display, [0.0, 0.0, 0.0, 0.72]).filled(true).build();
+            draw.add_rect(min, max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        }
 
         let left_w = PROFILE_EDITOR_W;
         let right_w = PROFILE_BOARD_W;
@@ -4832,11 +4849,13 @@ impl App {
         slot: ProfileEditorSlot,
         view: &UserProfile,
     ) {
-        let draw = ui.get_window_draw_list();
-        draw.add_rect(min, max, STAGE_BG).rounding(6.0).filled(true).build();
-        let selected = self.profile_editor_slot == Some(slot);
-        if selected {
-            draw.add_rect(min, max, BLURPLE).rounding(6.0).thickness(2.0).build();
+        {
+            let draw = ui.get_window_draw_list();
+            draw.add_rect(min, max, STAGE_BG).rounding(6.0).filled(true).build();
+            let selected = self.profile_editor_slot == Some(slot);
+            if selected {
+                draw.add_rect(min, max, BLURPLE).rounding(6.0).thickness(2.0).build();
+            }
         }
         match slot {
             ProfileEditorSlot::Nameplate => {
@@ -4857,17 +4876,20 @@ impl App {
                     self.profile.draft_avatar_decoration().as_deref(),
                 );
                 if self.profile.draft_avatar_decoration().is_none() {
-                    draw.add_text([min[0] + 22.0, min[1] + 22.0], MUTED, "+");
+                    ui.get_window_draw_list()
+                        .add_text([min[0] + 22.0, min[1] + 22.0], MUTED, "+");
                 }
             }
             ProfileEditorSlot::DisplayNameStyle => {
                 let color = display_name_style_color(self.profile.draft_display_name_style().as_deref());
                 let label = truncate_ui(self.profile.draft_display_name(), 10);
-                draw.add_text([min[0] + 8.0, min[1] + 22.0], color, &label);
+                ui.get_window_draw_list()
+                    .add_text([min[0] + 8.0, min[1] + 22.0], color, &label);
             }
             ProfileEditorSlot::Theme => {
                 let primary = rgb_u32_to_rgba(self.profile.draft_theme_primary());
                 let secondary = rgb_u32_to_rgba(self.profile.draft_theme_secondary());
+                let draw = ui.get_window_draw_list();
                 draw.add_rect(min, [(min[0] + max[0]) * 0.5, max[1]], primary)
                     .rounding(6.0)
                     .flags(DrawFlags::ROUND_LEFT)
@@ -4880,6 +4902,7 @@ impl App {
                     .build();
             }
             ProfileEditorSlot::Banner => {
+                let draw = ui.get_window_draw_list();
                 if matches!(self.profile_draft_banner, ProfileMediaDraft::Clear) {
                     draw.add_text([min[0] + 18.0, min[1] + 22.0], MUTED, "+");
                 } else if let Some(shot) = self.banners.get(&view.id) {
@@ -4909,7 +4932,8 @@ impl App {
                     self.profile.draft_profile_effect().as_deref(),
                 );
                 if self.profile.draft_profile_effect().is_none() {
-                    draw.add_text([min[0] + 22.0, min[1] + 22.0], MUTED, "+");
+                    ui.get_window_draw_list()
+                        .add_text([min[0] + 22.0, min[1] + 22.0], MUTED, "+");
                 }
             }
             ProfileEditorSlot::ProfileFrame => {
@@ -4921,7 +4945,8 @@ impl App {
                     self.profile.draft_profile_frame().as_deref(),
                 );
                 if self.profile.draft_profile_frame().is_none() {
-                    draw.add_text([min[0] + 22.0, min[1] + 22.0], MUTED, "+");
+                    ui.get_window_draw_list()
+                        .add_text([min[0] + 22.0, min[1] + 22.0], MUTED, "+");
                 }
             }
             ProfileEditorSlot::Badges => {
@@ -4939,7 +4964,8 @@ impl App {
                     }
                 }
                 if self.profile_badge_drafts.is_empty() {
-                    draw.add_text([min[0] + 22.0, min[1] + 22.0], MUTED, "+");
+                    ui.get_window_draw_list()
+                        .add_text([min[0] + 22.0, min[1] + 22.0], MUTED, "+");
                 }
             }
         }
@@ -5062,8 +5088,10 @@ impl App {
         if max[0] <= min[0] || max[1] <= min[1] {
             return;
         }
-        let draw = ui.get_window_draw_list();
-        draw.add_rect(min, max, STAGE_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        {
+            let draw = ui.get_window_draw_list();
+            draw.add_rect(min, max, STAGE_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        }
         ui.set_cursor_screen_pos([min[0] + 12.0, min[1] + 10.0]);
         for (index, tab) in profile_board_tabs().iter().enumerate() {
             if index > 0 {
@@ -5385,29 +5413,31 @@ impl App {
         theme_primary: u32,
         theme_secondary: u32,
     ) {
-        let draw = ui.get_window_draw_list();
-        let primary = rgb_u32_to_rgba(theme_primary);
-        let secondary = rgb_u32_to_rgba(theme_secondary);
-        draw.add_rect(min, max, secondary)
-            .rounding(PROFILE_RADIUS)
-            .flags(DrawFlags::ROUND_TOP)
-            .filled(true)
-            .build();
-        let mid = [max[0], min[1] + (max[1] - min[1]) * 0.45];
-        draw.add_rect([min[0], mid[1]], max, primary).filled(true).build();
-        let show_banner = view.has_banner && !matches!(self.profile_draft_banner, ProfileMediaDraft::Clear);
-        if show_banner {
-            if let Some(shot) = self.banners.get(&view.id) {
-                draw.add_image_rounded(
-                    shot.texture,
-                    min,
-                    max,
-                    [0.0, 0.0],
-                    [1.0, 1.0],
-                    WHITE,
-                    PROFILE_RADIUS,
-                    DrawFlags::ROUND_TOP,
-                );
+        {
+            let draw = ui.get_window_draw_list();
+            let primary = rgb_u32_to_rgba(theme_primary);
+            let secondary = rgb_u32_to_rgba(theme_secondary);
+            draw.add_rect(min, max, secondary)
+                .rounding(PROFILE_RADIUS)
+                .flags(DrawFlags::ROUND_TOP)
+                .filled(true)
+                .build();
+            let mid = [max[0], min[1] + (max[1] - min[1]) * 0.45];
+            draw.add_rect([min[0], mid[1]], max, primary).filled(true).build();
+            let show_banner = view.has_banner && !matches!(self.profile_draft_banner, ProfileMediaDraft::Clear);
+            if show_banner {
+                if let Some(shot) = self.banners.get(&view.id) {
+                    draw.add_image_rounded(
+                        shot.texture,
+                        min,
+                        max,
+                        [0.0, 0.0],
+                        [1.0, 1.0],
+                        WHITE,
+                        PROFILE_RADIUS,
+                        DrawFlags::ROUND_TOP,
+                    );
+                }
             }
         }
         if let Some(plate) = view.nameplate_id.as_deref() {
@@ -5418,10 +5448,12 @@ impl App {
     }
 
     fn paint_profile_preview_card(&self, ui: &Ui, min: [f32; 2], max: [f32; 2], view: &UserProfile) {
-        let draw = ui.get_window_draw_list();
         let width = (max[0] - min[0]).min(PROFILE_W);
         let card_max = [min[0] + width, max[1]];
-        draw.add_rect(min, card_max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        {
+            let draw = ui.get_window_draw_list();
+            draw.add_rect(min, card_max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        }
         self.paint_profile_banner(
             ui,
             min,
@@ -5438,7 +5470,10 @@ impl App {
         );
         let heading = profile_heading(&view.display_name, view.nickname.as_deref());
         let avatar_center = [min[0] + PROFILE_PAD + PROFILE_AVATAR, min[1] + PROFILE_BANNER_H];
-        draw.add_circle(avatar_center, PROFILE_AVATAR + 6.0, FLOATING_BG).filled(true).build();
+        {
+            let draw = ui.get_window_draw_list();
+            draw.add_circle(avatar_center, PROFILE_AVATAR + 6.0, FLOATING_BG).filled(true).build();
+        }
         profile_paint::paint_profile_frame_art(ui, avatar_center, PROFILE_AVATAR, view.profile_frame_id.as_deref());
         let avatar = self.avatars.get(&view.id).map(|shot| shot.texture);
         paint_avatar(ui, avatar, avatar_center, PROFILE_AVATAR, &initials(&heading), None);
@@ -5453,6 +5488,7 @@ impl App {
             let bubble_min = [avatar_center[0] + PROFILE_AVATAR + 10.0, avatar_center[1] - 18.0];
             let size = ui.calc_text_size(status);
             let bubble_max = [bubble_min[0] + size[0] + 16.0, bubble_min[1] + size[1] + 10.0];
+            let draw = ui.get_window_draw_list();
             draw.add_rect(bubble_min, bubble_max, STAGE_BG).rounding(8.0).filled(true).build();
             draw.add_text([bubble_min[0] + 8.0, bubble_min[1] + 5.0], TEXT, status);
         }
@@ -5461,14 +5497,15 @@ impl App {
         let name_color = display_name_style_color(view.display_name_style_id.as_deref());
         {
             let _font = ui.push_font_with_size(self.bold_font, FONT_LG);
-            draw.add_text([text_x, name_y], name_color, &heading);
+            ui.get_window_draw_list().add_text([text_x, name_y], name_color, &heading);
         }
         let mut meta = format!("@{}", view.username);
         if let Some(pronouns) = view.pronouns.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             meta.push_str(" • ");
             meta.push_str(pronouns);
         }
-        draw.add_text([text_x, name_y + 26.0], TEXT_SECONDARY, &meta);
+        ui.get_window_draw_list()
+            .add_text([text_x, name_y + 26.0], TEXT_SECONDARY, &meta);
         let mut y = name_y + 52.0;
         if !view.badges.is_empty() {
             let cap = profile_badge_row_visible_cap();
@@ -5479,30 +5516,34 @@ impl App {
             }
             if view.badges.len() > cap {
                 let extra = view.badges.len() - cap;
-                draw.add_text([bx, y + 4.0], MUTED, &format!("+{extra}"));
+                ui.get_window_draw_list()
+                    .add_text([bx, y + 4.0], MUTED, &format!("+{extra}"));
             }
             y += PROFILE_BADGE * 2.0 + 8.0;
         }
-        if let Some(about) = view.about_me.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            draw.add_text([text_x, y], MUTED, "ABOUT ME");
-            y += 18.0;
-            draw.add_text([text_x, y], TEXT, about);
-            y += 24.0;
-        }
-        draw.add_text([text_x, y], MUTED, "MEMBER SINCE");
-        y += 18.0;
-        draw.add_text([text_x, y], TEXT, &format_member_since(view.member_since));
-        y += 24.0;
-        if !view.connections.is_empty() {
-            draw.add_text([text_x, y], MUTED, "CONNECTIONS");
-            y += 18.0;
-            for connection in &view.connections {
-                draw.add_text(
-                    [text_x, y],
-                    TEXT_SECONDARY,
-                    &format!("{} — {}", connection.kind, connection.name),
-                );
+        {
+            let draw = ui.get_window_draw_list();
+            if let Some(about) = view.about_me.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                draw.add_text([text_x, y], MUTED, "ABOUT ME");
                 y += 18.0;
+                draw.add_text([text_x, y], TEXT, about);
+                y += 24.0;
+            }
+            draw.add_text([text_x, y], MUTED, "MEMBER SINCE");
+            y += 18.0;
+            draw.add_text([text_x, y], TEXT, &format_member_since(view.member_since));
+            y += 24.0;
+            if !view.connections.is_empty() {
+                draw.add_text([text_x, y], MUTED, "CONNECTIONS");
+                y += 18.0;
+                for connection in &view.connections {
+                    draw.add_text(
+                        [text_x, y],
+                        TEXT_SECONDARY,
+                        &format!("{} — {}", connection.kind, connection.name),
+                    );
+                    y += 18.0;
+                }
             }
         }
     }

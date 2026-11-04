@@ -888,10 +888,12 @@ impl BoardState {
         let style = element.stroke_style;
         match element.kind {
             BoardElementKind::Rect | BoardElementKind::Sticky => {
-                let draw = ui.get_window_draw_list();
-                let color = if element.kind == BoardElementKind::Sticky { BOARD_STICKY } else { fill };
-                if color[3] > 0.05 {
-                    draw.add_rect(min, max, color).rounding(4.0).filled(true).build();
+                {
+                    let draw = ui.get_window_draw_list();
+                    let color = if element.kind == BoardElementKind::Sticky { BOARD_STICKY } else { fill };
+                    if color[3] > 0.05 {
+                        draw.add_rect(min, max, color).rounding(4.0).filled(true).build();
+                    }
                 }
                 draw_rect_stroke(ui, min, max, stroke, width, style);
                 if let Some(text) = &element.text {
@@ -968,20 +970,31 @@ impl BoardState {
                 }
             }
             BoardElementKind::Image => {
-                let draw = ui.get_window_draw_list();
-                if let Some(asset_id) = element.asset_id {
+                let loading = if let Some(asset_id) = element.asset_id {
                     if let Some(shot) = textures.get(&asset_id) {
-                        draw.add_image(shot.texture, min, max, [0.0, 0.0], [1.0, 1.0], WHITE);
+                        ui.get_window_draw_list()
+                            .add_image(shot.texture, min, max, [0.0, 0.0], [1.0, 1.0], WHITE);
+                        false
                     } else {
-                        draw.add_rect(min, max, ROW_HOVER).filled(true).build();
-                        skin::text(ui, None, FONT_SM, [min[0] + 8.0, min[1] + 8.0], MUTED, "Loading…");
+                        ui.get_window_draw_list()
+                            .add_rect(min, max, ROW_HOVER)
+                            .filled(true)
+                            .build();
+                        true
                     }
+                } else {
+                    false
+                };
+                if loading {
+                    skin::text(ui, None, FONT_SM, [min[0] + 8.0, min[1] + 8.0], MUTED, "Loading…");
                 }
             }
             BoardElementKind::FileCard => {
-                let draw = ui.get_window_draw_list();
-                draw.add_rect(min, max, BOARD_FILE_CARD).rounding(6.0).filled(true).build();
-                draw.add_rect(min, max, stroke).rounding(6.0).thickness(width.max(1.0)).build();
+                {
+                    let draw = ui.get_window_draw_list();
+                    draw.add_rect(min, max, BOARD_FILE_CARD).rounding(6.0).filled(true).build();
+                    draw.add_rect(min, max, stroke).rounding(6.0).thickness(width.max(1.0)).build();
+                }
                 let name = element.filename.as_deref().unwrap_or("file");
                 skin::text(ui, bold, FONT_SM, [min[0] + 12.0, min[1] + 12.0], TEXT, name);
                 if let Some(preview) = element.text.as_deref() {
@@ -1443,10 +1456,12 @@ fn paint_poly(
     if (max_x - min_x) < 2.0 || (max_y - min_y) < 2.0 {
         return;
     }
-    let draw = ui.get_window_draw_list();
     if fill[3] > 0.05 {
         // Convex fill via polyline API — safer than fan triangles for diamonds.
-        draw.add_polyline(pts.to_vec(), fill).filled(true).build();
+        ui.get_window_draw_list()
+            .add_polyline(pts.to_vec(), fill)
+            .filled(true)
+            .build();
     }
     for i in 0..pts.len() {
         let a = pts[i];
