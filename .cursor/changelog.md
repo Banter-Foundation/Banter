@@ -390,3 +390,11 @@ User Settings opens in its own **Banter Settings** GLFW window (shared OpenGL co
 - `settings.rs`: OS-window desire, focus one-shot, nav list helpers, narrow My Account avatar action stacking
 - Settings chrome: clearer nav section gaps, page subtitles on My Account / Voice / Developer
 - Tests first in `crates/banter/tests/settings.rs` (28 passed including prior refresh-rate cases)
+
+## 2026-11-04 01:07:30 -06:00 [Winter] — Stay signed in on login (BA-66)
+
+Sign-in and register show a **Stay signed in** checkbox (default on). Checked writes `client-session.json` so relaunch restores the session; unchecked keeps the token in memory only and clears any prior saved file. Log Out still clears the saved session.
+
+- `session.rs`: `clear_token`, `persist_login`
+- Login card checkbox + `persist_login` after auth
+- Docs and client tests for persist / no-persist / clear

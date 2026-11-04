@@ -25,7 +25,7 @@ Banter/
 | `profile_paint.rs` | Procedural Banter-owned paint for nameplates, decorations, frames, effects, badges, and board game cards |
 | `api.rs` | HTTP client (`ureq`) for `/v1/*` |
 | `realtime.rs` | WebSocket client for presence, chat events, and WebRTC signaling |
-| `session.rs` | Load/save `client-session.json` |
+| `session.rs` | Load/save/clear `client-session.json`; `persist_login` honors Stay signed in |
 | `media.rs` (+ `media/encode.rs`, `rtc.rs`, …) | Mic/speakers (cpal), camera (nokhwa), screen share (xcap), I420→H.264 encode, WebRTC publish/subscribe |
 | `logic.rs` | Pure helpers (key held, Dev Server prefs / URL normalize, etc.) |
 | `icons.rs` | Lucide SVG → texture |

@@ -796,3 +796,9 @@ Agent: Expanded cursor/profile-games-widget-fix-21d4 with server badges/activity
 Owl: keep going until Discord 1:1; finish custom status in presence, Main vs server switch, clickable connections, richer animation/box art. Update living review. Same PR stack #21.
 
 Agent: Implemented all four on cursor/profile-games-widget-fix-21d4 and pushing.
+
+## 2026-11-04 01:07:30 -06:00 — Stay signed in option on login (BA-66)
+
+Owl: Stay signed in checkbox on sign-in; persist token when checked; no survive quit when unchecked; Log Out clears; open PR, do not merge; use gh CLI not GitHub MCP.
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-stay-signed-in` on `cursor/stay-signed-in-5eac`. Implementing persist_login + UI checkbox + docs/tests; opening PR with gh.
