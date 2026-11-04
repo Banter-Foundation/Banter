@@ -22,15 +22,16 @@ use dear_imgui_rs::{
 use crate::api::{ApiError, Client, MemberView};
 use crate::icons::rasterize_lucide;
 use crate::logic::{
-    CameraChoice, CaptureKind, DevServerPrefs, MixSource, MuteMemory, ScreenShare, ServerTarget, SettingsSection,
-    StreamDefaults, StreamFps, StreamResolution, VideoPrefs, VoicePrefs, api_base_for, camera_preview_mirrored,
-    clamp_window_size, default_stream_fps, default_stream_resolution, discord_shell_columns, encode_jpeg_rgba,
-    fps_block, fps_from_key, fps_key, hardware_encoder_block, lerp_size, load_json, local_api_base, mirror_rgba,
-    password_blocks_copy, password_is_masked, push_to_talk_held, remove_message, resolution_block,
-    resolution_from_key, resolution_key, save_json, speaking_from_level, stream_fps_label,
-    stream_frame_rates, stream_interval_ms, stream_max_edge, stream_resolution_label, stream_resolutions,
-    upsert_message, chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window,
-    message_is_followup, message_starts_new_day, window_size_label, window_size_presets, OPEN_MIC_RMS,
+    CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry, ContextMenuTone, DevServerPrefs, MixSource,
+    MuteMemory, ScreenShare, ServerTarget, SettingsSection, StreamDefaults, StreamFps, StreamResolution, VideoPrefs,
+    VoicePrefs, api_base_for, camera_preview_mirrored, channel_context_menu, clamp_context_menu_pos, clamp_window_size,
+    context_menu_height, default_stream_fps, default_stream_resolution, discord_shell_columns, encode_jpeg_rgba,
+    fps_block, fps_from_key, fps_key, hardware_encoder_block, insert_mention, lerp_size, load_json, local_api_base,
+    member_context_menu, message_context_menu, mirror_rgba, password_blocks_copy, password_is_masked, push_to_talk_held,
+    remove_message, resolution_block, resolution_from_key, resolution_key, save_json, speaking_from_level,
+    stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge, stream_resolution_label,
+    stream_resolutions, upsert_message, chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba,
+    crop_window, message_is_followup, message_starts_new_day, window_size_label, window_size_presets, OPEN_MIC_RMS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
@@ -100,6 +101,15 @@ enum Modal {
 enum RailTone {
     Server,
     Add,
+}
+
+/// Floating Discord-style context menu opened by right-click (or the message "More" button).
+#[derive(Clone)]
+struct OpenContextMenu {
+    entries: Vec<ContextMenuEntry>,
+    pos: [f32; 2],
+    /// Skips the opening click so the same right-click does not dismiss the menu.
+    frames: u32,
 }
 
 pub(crate) struct App {
@@ -218,13 +228,14 @@ pub(crate) struct App {
     crop_drag: Option<[f32; 2]>,
     crop_preview: Option<Shot>,
     crop_preview_key: [i32; 3],
-    more_for: Option<i64>,
     /// Floating user profile card (view/edit foundation basics).
     profile: ProfileCard,
     /// Last profile payload from `/v1/users/{id}` for the open card.
     profile_view: Option<UserProfile>,
     /// Frames the profile card has been open (skips the opening click for dismiss).
     profile_frames: u32,
+    /// Discord-style right-click menu for messages, members, and channels.
+    context_menu: Option<OpenContextMenu>,
     /// Height of the drawn message history last frame; pads short histories down to the composer.
     history_h: f32,
     /// Set after sending so the list jumps to the newest message even when scrolled up.
@@ -373,10 +384,10 @@ impl App {
             crop_drag: None,
             crop_preview: None,
             crop_preview_key: [0, 0, 0],
-            more_for: None,
             profile: ProfileCard::closed(),
             profile_view: None,
             profile_frames: 0,
+            context_menu: None,
             history_h: 0.0,
             chat_jump: false,
             copy_message: None,
@@ -474,6 +485,7 @@ impl App {
         }
         self.draw_shell(ui);
         self.draw_server_dropdown(ui);
+        self.draw_context_menu(ui);
         self.draw_modal(ui);
         if self.settings.is_open() {
             self.draw_settings(ui);
@@ -495,8 +507,8 @@ impl App {
                 self.modal = None;
             } else if self.server_menu {
                 self.server_menu = false;
-            } else if self.more_for.is_some() {
-                self.more_for = None;
+            } else if self.context_menu.is_some() {
+                self.context_menu = None;
             } else if self.stream_menu {
                 self.stream_menu = false;
             } else if self.share_open {
@@ -1152,6 +1164,184 @@ impl App {
         self.modal_frames = 0;
     }
 
+    fn open_context_menu(&mut self, ui: &Ui, entries: Vec<ContextMenuEntry>, anchor: [f32; 2]) {
+        if entries.is_empty() {
+            self.context_menu = None;
+            return;
+        }
+        let height = context_menu_height(&entries);
+        let pos = clamp_context_menu_pos(anchor, [MENU_W, height], ui.io().display_size());
+        self.context_menu = Some(OpenContextMenu {
+            entries,
+            pos,
+            frames: 0,
+        });
+        self.server_menu = false;
+    }
+
+    fn context_menu_icon(&self, id: &str) -> Option<ManagedTextureId> {
+        let name = match id {
+            "ctx-reply" => "reply",
+            "ctx-edit" => "pencil",
+            "ctx-delete" => "trash-2",
+            "ctx-message" => "message-circle",
+            "ctx-call" => "phone",
+            "ctx-add-friend" | "ctx-invite" => "user-plus",
+            "ctx-copy-channel-id" | "ctx-copy-msg-id" => "hash",
+            _ => return None,
+        };
+        self.icon(name)
+    }
+
+    fn draw_context_menu(&mut self, ui: &Ui) {
+        let Some(menu) = self.context_menu.clone() else {
+            return;
+        };
+        let height = context_menu_height(&menu.entries);
+        let width = MENU_W;
+        let pos = menu.pos;
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _gap = ui.push_style_var(StyleVar::ItemSpacing([0.0, 0.0]));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(MENU_RADIUS));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, FLOATING_BG);
+        let mut chosen: Option<ContextMenuAction> = None;
+        ui.window("##context-menu")
+            .flags(flags)
+            .position(pos, Condition::Always)
+            .size([width, height], Condition::Always)
+            .build(|| {
+                let semi = self.semibold_font;
+                let x = pos[0] + MENU_PAD;
+                let item_w = width - MENU_PAD * 2.0;
+                let mut y = pos[1] + MENU_PAD;
+                for entry in &menu.entries {
+                    match entry {
+                        ContextMenuEntry::Separator => {
+                            skin::menu_separator(ui, [x, y], item_w);
+                            y += 9.0;
+                        }
+                        ContextMenuEntry::Item {
+                            id,
+                            label,
+                            tone,
+                            action,
+                        } => {
+                            let menu_tone = match tone {
+                                ContextMenuTone::Normal => MenuTone::Normal,
+                                ContextMenuTone::Brand => MenuTone::Brand,
+                                ContextMenuTone::Danger => MenuTone::Danger,
+                            };
+                            if skin::menu_item(
+                                ui,
+                                id,
+                                label,
+                                self.context_menu_icon(id),
+                                menu_tone,
+                                [x, y],
+                                item_w,
+                                semi,
+                            ) {
+                                chosen = Some(action.clone());
+                            }
+                            y += MENU_ITEM_H + 2.0;
+                        }
+                    }
+                }
+            });
+        if let Some(action) = chosen {
+            self.context_menu = None;
+            self.apply_context_action(action);
+            return;
+        }
+        let frames = if let Some(open) = self.context_menu.as_mut() {
+            open.frames = open.frames.saturating_add(1);
+            open.frames
+        } else {
+            0
+        };
+        if frames > 1 && (ui.is_mouse_clicked(MouseButton::Left) || ui.is_mouse_clicked(MouseButton::Right)) {
+            let mouse = ui.mouse_pos();
+            let in_menu =
+                mouse[0] >= pos[0] && mouse[0] <= pos[0] + width && mouse[1] >= pos[1] && mouse[1] <= pos[1] + height;
+            if !in_menu {
+                self.context_menu = None;
+            }
+        }
+    }
+
+    fn apply_context_action(&mut self, action: ContextMenuAction) {
+        match action {
+            ContextMenuAction::Reply { message_id } => {
+                self.editing = None;
+                self.reply_to = Some(message_id);
+            }
+            ContextMenuAction::Edit { message_id } => {
+                if let Some(message) = self.messages.iter().find(|message| message.id == message_id) {
+                    self.reply_to = None;
+                    self.editing = Some(message_id);
+                    self.composer = message.body.clone();
+                }
+            }
+            ContextMenuAction::Delete { message_id } => {
+                if self.note(self.client.delete_message(message_id)).is_some() {
+                    remove_message(&mut self.messages, message_id);
+                }
+            }
+            ContextMenuAction::CopyText { text }
+            | ContextMenuAction::CopyUsername { username: text }
+            | ContextMenuAction::CopyChannelName { name: text } => {
+                self.copy_message = Some(text);
+            }
+            ContextMenuAction::CopyMessageId { message_id } => {
+                self.copy_message = Some(message_id.to_string());
+            }
+            ContextMenuAction::CopyChannelId { channel_id } => {
+                self.copy_message = Some(channel_id.to_string());
+            }
+            ContextMenuAction::Mention { username } => {
+                insert_mention(&mut self.composer, &username);
+            }
+            ContextMenuAction::MessageUser { user_id } => {
+                self.open_dm_for_user(user_id);
+            }
+            ContextMenuAction::CallUser { user_id } => {
+                if let Some(dm_id) = self.open_dm_for_user(user_id) {
+                    self.start_call(dm_id);
+                }
+            }
+            ContextMenuAction::AddFriend { username } => {
+                if self.note(self.client.send_friend_request(&username)).is_some() {
+                    self.refresh_shell();
+                }
+            }
+            ContextMenuAction::InvitePeople { server_id } => {
+                self.open_invite(server_id);
+            }
+        }
+    }
+
+    fn open_dm_for_user(&mut self, user_id: i64) -> Option<i64> {
+        if let Some(chat) = self.dms.iter().find(|chat| chat.peer_id == user_id).cloned() {
+            self.open_dm(chat.id);
+            return Some(chat.id);
+        }
+        let chat = self.note(self.client.open_dm(user_id))?;
+        self.refresh_shell();
+        self.open_dm(chat.id);
+        Some(chat.id)
+    }
+
+    fn is_friend(&self, user_id: i64) -> bool {
+        self.friends.iter().any(|friend| friend.id == user_id)
+    }
+
     fn open_invite(&mut self, server_id: i64) {
         self.invite_copied = false;
         self.shown_invite.clear();
@@ -1163,7 +1353,8 @@ impl App {
 
     fn draw_dm_list(&mut self, ui: &Ui) {
         ui.dummy([0.0, 8.0]);
-        if self.dm_row(ui, "friends", None, "Friends", None, self.place == Place::Home) {
+        let (friends_left, _) = self.dm_row(ui, "friends", None, "Friends", None, self.place == Place::Home);
+        if friends_left {
             self.place = Place::Home;
             self.selected = None;
             self.messages.clear();
@@ -1173,8 +1364,25 @@ impl App {
         for chat in dms {
             let selected = self.place == Place::Direct(chat.id);
             let presence = self.presence.get(&chat.peer_id).copied().unwrap_or(Presence::Offline);
-            if self.dm_row(ui, &format!("dm{}", chat.id), Some(chat.peer_id), &chat.peer_display_name, Some(presence), selected) {
+            let (left, right) = self.dm_row(
+                ui,
+                &format!("dm{}", chat.id),
+                Some(chat.peer_id),
+                &chat.peer_display_name,
+                Some(presence),
+                selected,
+            );
+            if left {
                 self.open_dm(chat.id);
+            }
+            if right {
+                let mouse = ui.mouse_pos();
+                let mine = self.account.as_ref().map(|account| account.id);
+                self.open_context_menu(
+                    ui,
+                    member_context_menu(chat.peer_id, &chat.peer_username, mine, self.is_friend(chat.peer_id)),
+                    mouse,
+                );
             }
         }
         if !self.mentions.is_empty() {
@@ -1182,7 +1390,8 @@ impl App {
             let mentions = self.mentions.clone();
             for mention in mentions {
                 let label = format!("{}: {}", mention.from_username, mention.body);
-                if self.channel_row(ui, &format!("men{}", mention.id), None, &label, false) {
+                let (left, _) = self.channel_row(ui, &format!("men{}", mention.id), None, &label, false);
+                if left {
                     self.open_mention(&mention);
                 }
             }
@@ -1190,11 +1399,13 @@ impl App {
     }
 
     /// A 42 px direct-message row. `user` is None for the Friends row, which shows the people icon.
-    fn dm_row(&self, ui: &Ui, id: &str, user: Option<i64>, label: &str, presence: Option<Presence>, selected: bool) -> bool {
+    /// Returns `(left_click, right_click)`.
+    fn dm_row(&self, ui: &Ui, id: &str, user: Option<i64>, label: &str, presence: Option<Presence>, selected: bool) -> (bool, bool) {
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
         let row_h = MEMBER_ROW_H;
         let clicked = ui.invisible_button(id, [width, row_h + CHANNEL_ROW_GAP]);
+        let right = ui.is_item_clicked_with_button(MouseButton::Right);
         let hovered = ui.is_item_hovered();
         let min = [origin[0] + ROW_INSET, origin[1] + 1.0];
         let max = [origin[0] + width - ROW_INSET, min[1] + row_h];
@@ -1229,7 +1440,7 @@ impl App {
         let text_x = min[0] + 8.0 + 32.0 + 12.0;
         let shown = skin::ellipsize(ui, None, FONT_MD, label, max[0] - 8.0 - text_x);
         skin::text_in_row(ui, None, FONT_MD, text_x, min[1], row_h, color, &shown);
-        clicked
+        (clicked, right)
     }
 
     fn draw_user_bar(&mut self, ui: &Ui) {
@@ -1743,10 +1954,14 @@ impl App {
         let mut open_profile = None;
         let mut accept = None;
         let mut decline = None;
+        let mut context_user: Option<(i64, String)> = None;
         for (index, (id, name, username, presence, subtitle, incoming)) in rows.iter().enumerate() {
             let row_min = [left - 10.0, ui.cursor_screen_pos()[1]];
             let row_max = [right + 10.0, row_min[1] + 62.0];
             let hovered = ui.is_window_hovered() && ui.is_mouse_hovering_rect(row_min, row_max);
+            if hovered && !pending_tab && ui.is_mouse_clicked(MouseButton::Right) {
+                context_user = Some((*id, username.clone()));
+            }
             if hovered {
                 skin::rect(ui, row_min, row_max, ROW_HOVER, 8.0);
             } else if index > 0 {
@@ -1824,6 +2039,11 @@ impl App {
                 self.refresh_shell();
             }
         }
+        if let Some((user_id, username)) = context_user {
+            let mouse = ui.mouse_pos();
+            let mine = self.account.as_ref().map(|account| account.id);
+            self.open_context_menu(ui, member_context_menu(user_id, &username, mine, true), mouse);
+        }
     }
 
     /// Round 36 px action button used in the friends list.
@@ -1871,7 +2091,9 @@ impl App {
                     ChannelKind::Text => "hash",
                     ChannelKind::Voice => "volume-2",
                 };
-                if self.channel_row(ui, &format!("ch{}", channel.id), Some(icon_name), &channel.name, selected) {
+                let (left, right) =
+                    self.channel_row(ui, &format!("ch{}", channel.id), Some(icon_name), &channel.name, selected);
+                if left {
                     self.selected = Some(channel.clone());
                     self.search.clear();
                     self.reply_to = None;
@@ -1882,6 +2104,14 @@ impl App {
                     } else if self.voice_channel != Some(channel.id) {
                         self.join_voice_channel(channel.id);
                     }
+                }
+                if right {
+                    let mouse = ui.mouse_pos();
+                    self.open_context_menu(
+                        ui,
+                        channel_context_menu(channel.id, &channel.name, server_id, is_owner),
+                        mouse,
+                    );
                 }
                 if joined {
                     for member in &voice_members {
@@ -1918,10 +2148,12 @@ impl App {
     }
 
     /// A 32 px channel row with 8 px insets, rounded hover and selected fills, icon, then name.
-    fn channel_row(&self, ui: &Ui, id: &str, icon: Option<&str>, label: &str, selected: bool) -> bool {
+    /// Returns `(left_click, right_click)`.
+    fn channel_row(&self, ui: &Ui, id: &str, icon: Option<&str>, label: &str, selected: bool) -> (bool, bool) {
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
         let clicked = ui.invisible_button(id, [width, CHANNEL_ROW_H + CHANNEL_ROW_GAP]);
+        let right = ui.is_item_clicked_with_button(MouseButton::Right);
         let hovered = ui.is_item_hovered();
         let min = [origin[0] + ROW_INSET, origin[1] + CHANNEL_ROW_GAP * 0.5];
         let max = [origin[0] + width - ROW_INSET, min[1] + CHANNEL_ROW_H];
@@ -1942,7 +2174,7 @@ impl App {
         }
         let shown = skin::ellipsize(ui, None, FONT_MD, label, max[0] - 8.0 - text_x);
         skin::text_in_row(ui, None, FONT_MD, text_x, min[1], CHANNEL_ROW_H, color, &shown);
-        clicked
+        (clicked, right)
     }
 
     fn draw_members(&mut self, ui: &Ui) {
@@ -1967,7 +2199,15 @@ impl App {
                 if let Some(chat) = self.dms.iter().find(|chat| chat.id == dm_id).cloned() {
                     let presence = self.presence.get(&chat.peer_id).copied().unwrap_or(Presence::Offline);
                     ui.dummy([0.0, 16.0]);
-                    self.person_row(ui, chat.peer_id, &chat.peer_display_name, &chat.peer_username, presence, false);
+                    if self.person_row(ui, chat.peer_id, &chat.peer_display_name, &chat.peer_username, presence, false) {
+                        let mouse = ui.mouse_pos();
+                        let mine = self.account.as_ref().map(|account| account.id);
+                        self.open_context_menu(
+                            ui,
+                            member_context_menu(chat.peer_id, &chat.peer_username, mine, self.is_friend(chat.peer_id)),
+                            mouse,
+                        );
+                    }
                 }
             }
             Place::Home => {}
@@ -1985,15 +2225,25 @@ impl App {
         skin::text_in_row(ui, self.semibold_font, FONT_XS, origin[0] + 16.0, origin[1] + 24.0, 16.0, MUTED, &label);
         for (member, presence) in members {
             let name = member.nickname.clone().unwrap_or(member.display_name.clone());
-            self.person_row(ui, member.user_id, &name, &member.username, *presence, member.is_owner);
+            if self.person_row(ui, member.user_id, &name, &member.username, *presence, member.is_owner) {
+                let mouse = ui.mouse_pos();
+                let mine = self.account.as_ref().map(|account| account.id);
+                self.open_context_menu(
+                    ui,
+                    member_context_menu(member.user_id, &member.username, mine, self.is_friend(member.user_id)),
+                    mouse,
+                );
+            }
         }
     }
 
     /// 42 px member row: 32 px avatar with status, name, and the owner crown. Offline rows are dimmed.
-    fn person_row(&mut self, ui: &Ui, user_id: i64, name: &str, _username: &str, presence: Presence, owner: bool) {
+    /// Left-click opens the profile card. Returns true when right-clicked for a context menu.
+    fn person_row(&mut self, ui: &Ui, user_id: i64, name: &str, _username: &str, presence: Presence, owner: bool) -> bool {
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
         let clicked = ui.invisible_button(format!("member-{user_id}"), [width, MEMBER_ROW_H]);
+        let right = ui.is_item_clicked_with_button(MouseButton::Right);
         let hovered = ui.is_item_hovered();
         if clicked {
             self.open_profile(user_id, [origin[0] + width, origin[1]]);
@@ -2032,6 +2282,7 @@ impl App {
                 skin::tooltip(ui, self.semibold_font, FONT_SM, "Server Owner", crown_min, [crown_min[0] + 14.0, crown_min[1] + 14.0], TooltipSide::Top);
             }
         }
+        right
     }
 
     fn draw_message_rows(
@@ -2078,12 +2329,20 @@ impl App {
             let origin = ui.cursor_screen_pos();
             ui.dummy([width, row_h + 2.0]);
             let row_max = [origin[0] + width, origin[1] + row_h];
-            let hot = pointer_in(ui, [origin[0], origin[1] - 16.0], row_max) || self.more_for == Some(message.id);
+            let hot = pointer_in(ui, [origin[0], origin[1] - 16.0], row_max);
             if hot {
                 ui.get_window_draw_list()
                     .add_rect([origin[0] + 4.0, origin[1]], [origin[0] + width - 4.0, origin[1] + row_h], ROW_HOVER)
                     .filled(true)
                     .build();
+            }
+            if hot && ui.is_mouse_clicked(MouseButton::Right) {
+                let mouse = ui.mouse_pos();
+                self.open_context_menu(
+                    ui,
+                    message_context_menu(message.id, message.author_id, &message.body, mine),
+                    mouse,
+                );
             }
             if follow {
                 if hot {
@@ -2176,15 +2435,15 @@ impl App {
                             "reply" => *reply = Some(message.id),
                             "pencil" => *edit = Some(message.id),
                             "trash-2" => *delete = Some(message.id),
-                            _ => self.more_for = if self.more_for == Some(message.id) { None } else { Some(message.id) },
+                            _ => {
+                                let anchor = [bar_x, bar_y + 36.0];
+                                self.open_context_menu(
+                                    ui,
+                                    message_context_menu(message.id, message.author_id, &message.body, mine),
+                                    anchor,
+                                );
+                            }
                         }
-                    }
-                }
-                if self.more_for == Some(message.id) {
-                    ui.set_cursor_screen_pos([bar_x, bar_y + 36.0]);
-                    if ui.button(format!("Copy text##{}", message.id)) {
-                        self.copy_message = Some(message.body.clone());
-                        self.more_for = None;
                     }
                 }
             }

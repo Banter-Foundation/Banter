@@ -209,10 +209,13 @@ Camera local preview no longer JPEG-encodes every frame. Capture still feeds I42
 - Docs: streaming, architecture, feature-status, design, memory
 - Never touched E:. Branch merges into test/owl-fixes only.
 
-
 ## 2026-11-03 19:26:23 -06:00 [Winter] — Auto-open DM when adding a friend
 
 When a friendship becomes active (accept an incoming request, or send a username that completes a mutual pending request), the client opens that friend's DM. Pending-only sends stay on Add Friend. Helper `open_dm_peer_after_friend_add` decides the peer after the friends list refreshes. Never touched E:.
+
+## 2026-11-03 19:28:05 -06:00 [Winter] — Discord-style right-click context menus
+
+Owl test item: there were no right-click menus. Added Discord-like floating context menus for messages, members (and friends/DMs), and channels, wired to foundation actions only (reply/edit/delete/copy, mention/message/call/add friend, invite/copy channel). Kick and ban stay deferred. Pure menu builders live in logic.rs with tests written first.
 
 ## 2026-11-03 19:28:50 -06:00 [Winter] — User profiles (view/edit basics)
 

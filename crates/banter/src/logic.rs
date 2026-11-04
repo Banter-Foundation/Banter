@@ -1019,6 +1019,7 @@ pub fn crop_window(width: u32, height: u32, zoom: f32, pan_x: f32, pan_y: f32) -
     Some((slack_x * 0.5 + pan_x * slack_x * 0.5, slack_y * 0.5 + pan_y * slack_y * 0.5, window))
 }
 
+
 /// After a friend-add succeeds and the friends list is refreshed, return the peer
 /// id whose DM should open. Pending-only requests leave the peer off the list.
 pub fn open_dm_peer_after_friend_add<'a>(
@@ -1033,4 +1034,224 @@ pub fn open_dm_peer_after_friend_add<'a>(
         .into_iter()
         .find(|(_, username)| username.eq_ignore_ascii_case(&want))
         .map(|(id, _)| id)
+}
+
+/// Discord-style right-click menu tone. Maps to the floating menu row colors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContextMenuTone {
+    Normal,
+    Brand,
+    Danger,
+}
+
+/// One row or separator in a Discord-style context menu.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContextMenuEntry {
+    Item {
+        id: &'static str,
+        label: &'static str,
+        tone: ContextMenuTone,
+        action: ContextMenuAction,
+    },
+    Separator,
+}
+
+/// Actions the signed-in shell can run from a context menu. Kick, ban, roles, and
+/// profiles stay deferred; these match the foundation slice only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContextMenuAction {
+    Reply { message_id: i64 },
+    Edit { message_id: i64 },
+    Delete { message_id: i64 },
+    CopyText { text: String },
+    CopyMessageId { message_id: i64 },
+    CopyUsername { username: String },
+    Mention { username: String },
+    MessageUser { user_id: i64 },
+    CallUser { user_id: i64 },
+    AddFriend { username: String },
+    InvitePeople { server_id: i64 },
+    CopyChannelName { name: String },
+    CopyChannelId { channel_id: i64 },
+}
+
+fn menu_item(id: &'static str, label: &'static str, tone: ContextMenuTone, action: ContextMenuAction) -> ContextMenuEntry {
+    ContextMenuEntry::Item { id, label, tone, action }
+}
+
+/// Right-click menu for a chat message. Own messages also get edit and delete.
+pub fn message_context_menu(message_id: i64, author_id: i64, body: &str, mine: Option<i64>) -> Vec<ContextMenuEntry> {
+    let mut entries = vec![menu_item(
+        "ctx-reply",
+        "Reply",
+        ContextMenuTone::Normal,
+        ContextMenuAction::Reply { message_id },
+    )];
+    if mine == Some(author_id) {
+        entries.push(ContextMenuEntry::Separator);
+        entries.push(menu_item(
+            "ctx-edit",
+            "Edit Message",
+            ContextMenuTone::Normal,
+            ContextMenuAction::Edit { message_id },
+        ));
+        entries.push(menu_item(
+            "ctx-delete",
+            "Delete Message",
+            ContextMenuTone::Danger,
+            ContextMenuAction::Delete { message_id },
+        ));
+    }
+    entries.push(ContextMenuEntry::Separator);
+    entries.push(menu_item(
+        "ctx-copy-text",
+        "Copy Text",
+        ContextMenuTone::Normal,
+        ContextMenuAction::CopyText { text: body.to_string() },
+    ));
+    entries.push(menu_item(
+        "ctx-copy-msg-id",
+        "Copy Message ID",
+        ContextMenuTone::Normal,
+        ContextMenuAction::CopyMessageId { message_id },
+    ));
+    entries
+}
+
+/// Right-click menu for a member, friend, or DM peer. Self gets mention and copy only.
+pub fn member_context_menu(user_id: i64, username: &str, mine: Option<i64>, is_friend: bool) -> Vec<ContextMenuEntry> {
+    let mut entries = vec![menu_item(
+        "ctx-mention",
+        "Mention",
+        ContextMenuTone::Normal,
+        ContextMenuAction::Mention {
+            username: username.to_string(),
+        },
+    )];
+    if mine != Some(user_id) {
+        entries.push(menu_item(
+            "ctx-message",
+            "Message",
+            ContextMenuTone::Brand,
+            ContextMenuAction::MessageUser { user_id },
+        ));
+        entries.push(menu_item(
+            "ctx-call",
+            "Call",
+            ContextMenuTone::Normal,
+            ContextMenuAction::CallUser { user_id },
+        ));
+        if !is_friend {
+            entries.push(ContextMenuEntry::Separator);
+            entries.push(menu_item(
+                "ctx-add-friend",
+                "Add Friend",
+                ContextMenuTone::Normal,
+                ContextMenuAction::AddFriend {
+                    username: username.to_string(),
+                },
+            ));
+        }
+    }
+    entries.push(ContextMenuEntry::Separator);
+    entries.push(menu_item(
+        "ctx-copy-user",
+        "Copy Username",
+        ContextMenuTone::Normal,
+        ContextMenuAction::CopyUsername {
+            username: username.to_string(),
+        },
+    ));
+    entries
+}
+
+/// Right-click menu for a text or voice channel in the sidebar.
+pub fn channel_context_menu(channel_id: i64, name: &str, server_id: i64, _is_owner: bool) -> Vec<ContextMenuEntry> {
+    vec![
+        menu_item(
+            "ctx-invite",
+            "Invite People",
+            ContextMenuTone::Brand,
+            ContextMenuAction::InvitePeople { server_id },
+        ),
+        ContextMenuEntry::Separator,
+        menu_item(
+            "ctx-copy-channel-name",
+            "Copy Name",
+            ContextMenuTone::Normal,
+            ContextMenuAction::CopyChannelName {
+                name: name.to_string(),
+            },
+        ),
+        menu_item(
+            "ctx-copy-channel-id",
+            "Copy Channel ID",
+            ContextMenuTone::Normal,
+            ContextMenuAction::CopyChannelId { channel_id },
+        ),
+    ]
+}
+
+/// Append `@username ` to the composer, matching Discord's mention insert.
+pub fn insert_mention(composer: &mut String, username: &str) {
+    let mention = format!("@{username}");
+    if !composer.is_empty() && !composer.ends_with(' ') {
+        composer.push(' ');
+    }
+    composer.push_str(&mention);
+    composer.push(' ');
+}
+
+/// Labels only, skipping separators. Used by tests and UI smoke checks.
+pub fn context_menu_labels(entries: &[ContextMenuEntry]) -> Vec<&'static str> {
+    entries
+        .iter()
+        .filter_map(|entry| match entry {
+            ContextMenuEntry::Item { label, .. } => Some(*label),
+            ContextMenuEntry::Separator => None,
+        })
+        .collect()
+}
+
+/// Actions only, skipping separators.
+pub fn context_menu_actions(entries: &[ContextMenuEntry]) -> Vec<ContextMenuAction> {
+    entries
+        .iter()
+        .filter_map(|entry| match entry {
+            ContextMenuEntry::Item { action, .. } => Some(action.clone()),
+            ContextMenuEntry::Separator => None,
+        })
+        .collect()
+}
+
+/// Tone for a labeled item, if present.
+pub fn context_menu_tone(entries: &[ContextMenuEntry], label: &str) -> Option<ContextMenuTone> {
+    entries.iter().find_map(|entry| match entry {
+        ContextMenuEntry::Item {
+            label: item_label,
+            tone,
+            ..
+        } if *item_label == label => Some(*tone),
+        _ => None,
+    })
+}
+
+/// Floating menu height for the Discord skin: pad, item gaps, and 9 px separators.
+pub fn context_menu_height(entries: &[ContextMenuEntry]) -> f32 {
+    use crate::theme::{MENU_ITEM_H, MENU_PAD};
+    let mut height = MENU_PAD * 2.0;
+    for entry in entries {
+        match entry {
+            ContextMenuEntry::Item { .. } => height += MENU_ITEM_H + 2.0,
+            ContextMenuEntry::Separator => height += 9.0,
+        }
+    }
+    height
+}
+
+/// Keep a floating menu inside the display so right-clicks near the edge still work.
+pub fn clamp_context_menu_pos(pos: [f32; 2], size: [f32; 2], display: [f32; 2]) -> [f32; 2] {
+    let x = pos[0].clamp(0.0, (display[0] - size[0]).max(0.0));
+    let y = pos[1].clamp(0.0, (display[1] - size[1]).max(0.0));
+    [x, y]
 }
