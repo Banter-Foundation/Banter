@@ -878,3 +878,28 @@ Agent: Branch cursor/bfmd-chat-formatting-f6a3. Implemented bfmd parser/serializ
 Owl: Banter profile UI is very broken and needs major work (beyond the earlier “credible baseline”). Fix layout/chrome of profile view + customization editor so it is usable and Discord-like again. Reference: /cursor/stores/self/media/discord-profile-customization-ref.png. Living review: /cursor/stores/self/docs/profile-system-review.md. Context: /cursor/stores/self/docs/project-context.md. Preferences: /cursor/stores/self/preferences.md. Focus on UI correctness/clarity (overflow, broken panels, editor columns, preview, Save/Cancel, cosmetics pickers, board cards). Open PR with gh; do not merge until Owl says so. Report PR + what was fixed. Task: Major repair of broken profile UI (BA-73 if that key exists)
 
 Agent: Branch `cursor/profile-ui-repair-c26f`. Overlay windows + clipped columns; layout contracts in profile.rs; cosmetics-first editor; footer Save/Cancel; stacked board widget radios; preview wrap/clip. Client profile_customization 17 passed. Opening PR; do not merge until Owl says so.
+
+## 2026-11-04 BA-79 nested server folders
+
+Owl wants **server folders** on the Banter server rail that:
+1. Support **subfolders** (nested folders)
+2. Allow a **custom hex color** per folder for the folder’s color
+
+Repo: Banter-Foundation/Banter. Use gh, no GitHub MCP.
+
+Implement UX + persistence (Postgres migrate):
+- Create/rename/delete folders; nest servers (and folders) under folders
+- Collapse/expand folders
+- Color picker or hex input for folder color; validate hex
+- Open PR; do not merge until Owl says so
+
+Coordinate with optional channel icons work if needed (separate PR). Prefer own branch from main.
+
+Preferences: /cursor/stores/self/preferences.md
+Context: /cursor/stores/self/docs/project-context.md
+Task: Nested server folders with hex colors (BA-79)
+
+Report PR URL + nesting rules.
+
+### Summary
+Implemented per-user nested server-rail folders with hex colors, Postgres migration 004, API, and rail UX. Opened PR; not merged.

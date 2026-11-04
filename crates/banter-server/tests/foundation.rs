@@ -1599,3 +1599,222 @@ async fn guild_roles_gate_channels_and_stay_below_the_actor() {
     let profile = store.user_profile(owner.id, joiner.id, Some(server_id)).await.unwrap();
     assert!(profile.roles.iter().any(|role| role.name == "Mod"));
 }
+
+#[tokio::test]
+async fn server_folders_nest_hex_color_collapse_and_delete() {
+    use banter_server::{MAX_SERVER_FOLDER_DEPTH, ServerFolderPatch};
+
+    let store = open_store().await.0;
+    let ada = store.register("ada", "Ada", "password1").await.unwrap();
+    let bob = store.register("bob", "Bob", "password1").await.unwrap();
+    let alpha = store.create_server(ada.id, "Alpha").await.unwrap().server;
+    let beta = store.create_server(ada.id, "Beta").await.unwrap().server;
+    let gamma = store.create_server(ada.id, "Gamma").await.unwrap().server;
+
+    let rail = store.server_rail(ada.id).await.unwrap();
+    assert!(rail.folders.is_empty());
+    assert_eq!(rail.servers.len(), 3);
+    assert!(rail.servers.iter().all(|row| row.folder_id.is_none()));
+    assert!(rail.servers.windows(2).all(|pair| pair[0].position <= pair[1].position));
+
+    assert_eq!(
+        store
+            .create_server_folder(ada.id, " ", None, Some(0x5865F2))
+            .await
+            .unwrap_err(),
+        BanterError::InvalidName
+    );
+    assert_eq!(
+        store
+            .create_server_folder(ada.id, "Games", None, Some(0x0100_0000))
+            .await
+            .unwrap_err(),
+        BanterError::InvalidName
+    );
+
+    let games = store
+        .create_server_folder(ada.id, " Games ", None, Some(0x5865F2))
+        .await
+        .unwrap();
+    assert_eq!(games.name, "Games");
+    assert_eq!(games.color, 0x5865F2);
+    assert_eq!(games.parent_id, None);
+    assert!(!games.collapsed);
+
+    store
+        .move_server_to_folder(ada.id, alpha.id, Some(games.id), 0)
+        .await
+        .unwrap();
+    store
+        .move_server_to_folder(ada.id, beta.id, Some(games.id), 1)
+        .await
+        .unwrap();
+
+    let fps = store
+        .create_server_folder(ada.id, "FPS", Some(games.id), Some(0xED4245))
+        .await
+        .unwrap();
+    assert_eq!(fps.parent_id, Some(games.id));
+    assert_eq!(fps.color, 0xED4245);
+    store
+        .move_server_to_folder(ada.id, gamma.id, Some(fps.id), 0)
+        .await
+        .unwrap();
+
+    // Cannot parent a folder under itself or a descendant.
+    assert_eq!(
+        store
+            .update_server_folder(
+                ada.id,
+                games.id,
+                ServerFolderPatch {
+                    parent_id: Some(Some(fps.id)),
+                    ..ServerFolderPatch::default()
+                },
+            )
+            .await
+            .unwrap_err(),
+        BanterError::InvalidName
+    );
+    assert_eq!(
+        store
+            .update_server_folder(
+                ada.id,
+                games.id,
+                ServerFolderPatch {
+                    parent_id: Some(Some(games.id)),
+                    ..ServerFolderPatch::default()
+                },
+            )
+            .await
+            .unwrap_err(),
+        BanterError::InvalidName
+    );
+
+    // Depth limit: a fresh root nested to MAX_SERVER_FOLDER_DEPTH, then one more fails.
+    let deep_root = store
+        .create_server_folder(ada.id, "DeepRoot", None, Some(0))
+        .await
+        .unwrap();
+    let mut parent = deep_root.id;
+    let mut deepest = deep_root.id;
+    for level in 2..=MAX_SERVER_FOLDER_DEPTH {
+        let child = store
+            .create_server_folder(ada.id, &format!("L{level}"), Some(parent), Some(0))
+            .await
+            .unwrap();
+        deepest = child.id;
+        parent = child.id;
+    }
+    assert_eq!(
+        store
+            .create_server_folder(ada.id, "TooDeep", Some(deepest), Some(0))
+            .await
+            .unwrap_err(),
+        BanterError::InvalidName
+    );
+
+    let collapsed = store
+        .update_server_folder(
+            ada.id,
+            games.id,
+            ServerFolderPatch {
+                collapsed: Some(true),
+                name: Some(" Play ".into()),
+                color: Some(0x57F287),
+                ..ServerFolderPatch::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(collapsed.collapsed);
+    assert_eq!(collapsed.name, "Play");
+    assert_eq!(collapsed.color, 0x57F287);
+
+    // Clear color back to default (0).
+    let cleared = store
+        .update_server_folder(
+            ada.id,
+            games.id,
+            ServerFolderPatch {
+                color: Some(0),
+                ..ServerFolderPatch::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared.color, 0);
+
+    let rail = store.server_rail(ada.id).await.unwrap();
+    let games_row = rail.folders.iter().find(|folder| folder.id == games.id).unwrap();
+    assert!(games_row.collapsed);
+    assert_eq!(
+        rail.servers
+            .iter()
+            .find(|row| row.server.id == alpha.id)
+            .unwrap()
+            .folder_id,
+        Some(games.id)
+    );
+    assert_eq!(
+        rail.servers
+            .iter()
+            .find(|row| row.server.id == gamma.id)
+            .unwrap()
+            .folder_id,
+        Some(fps.id)
+    );
+
+    // Delete games: direct child folders/servers promote to top-level; deeper nesting stays.
+    store.delete_server_folder(ada.id, games.id).await.unwrap();
+    let rail = store.server_rail(ada.id).await.unwrap();
+    assert!(!rail.folders.iter().any(|folder| folder.id == games.id));
+    let fps_row = rail.folders.iter().find(|folder| folder.id == fps.id).unwrap();
+    assert_eq!(fps_row.parent_id, None);
+    assert_eq!(
+        rail.servers
+            .iter()
+            .find(|row| row.server.id == alpha.id)
+            .unwrap()
+            .folder_id,
+        None
+    );
+    assert_eq!(
+        rail.servers
+            .iter()
+            .find(|row| row.server.id == beta.id)
+            .unwrap()
+            .folder_id,
+        None
+    );
+    assert_eq!(
+        rail.servers
+            .iter()
+            .find(|row| row.server.id == gamma.id)
+            .unwrap()
+            .folder_id,
+        Some(fps.id)
+    );
+
+    // Folders are private to the signed-in user.
+    assert!(store.server_rail(bob.id).await.unwrap().folders.is_empty());
+    assert_eq!(
+        store
+            .update_server_folder(bob.id, fps.id, ServerFolderPatch::default())
+            .await
+            .unwrap_err(),
+        BanterError::NotFound
+    );
+    assert_eq!(
+        store.delete_server_folder(bob.id, fps.id).await.unwrap_err(),
+        BanterError::NotFound
+    );
+
+    // Joining a server places it on that user's top-level rail.
+    let code = store.create_invite(ada.id, alpha.id).await.unwrap();
+    store.join_invite(bob.id, &code).await.unwrap();
+    let bob_rail = store.server_rail(bob.id).await.unwrap();
+    assert_eq!(bob_rail.servers.len(), 1);
+    assert_eq!(bob_rail.servers[0].server.id, alpha.id);
+    assert_eq!(bob_rail.servers[0].folder_id, None);
+}

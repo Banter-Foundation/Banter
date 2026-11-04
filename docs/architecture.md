@@ -52,7 +52,7 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 
 ### Persistence vs memory
 
-- **Survives restart:** accounts, friend graph, servers, invites, nicknames, categories, channels, messages, attachment metadata, banners, and profile customization in PostgreSQL; file bytes under `BANTER_DATA`.
+- **Survives restart:** accounts, friend graph, servers, invites, nicknames, categories, channels, messages, attachment metadata, banners, profile customization, and per-user server-rail folders in PostgreSQL; file bytes under `BANTER_DATA`.
 - **Resets when the server process stops:** voice channel membership, 1:1 call state, presence, open WebSockets.
 
 ### HTTP surface (high level)
@@ -61,6 +61,7 @@ Auth and profile: `/v1/register`, `/v1/login`, `/v1/logout`, `/v1/me`, `/v1/user
 Presence (`/v1/presence` and WS `presence` events) includes `custom_status` alongside online/idle/offline.  
 Social: friends requests/list, presence, mentions.  
 Servers: create/list, invites, members, nickname, categories, channels, layout.  
+Server rail folders (per user): `/v1/me/server-rail`, `/v1/me/server-folders`, `/v1/me/servers/{id}/folder`.  
 Chat: channel/DM messages, send/edit/delete, attachments. Message `body` is BFMD source (plain text valid); client parses/renders styled runs (`bfmd` / `bfmd_paint`). Spec: [bfmd.md](bfmd.md).  
 Calls: DM call start/accept/decline/end.  
 Voice: join, leave, flags.  

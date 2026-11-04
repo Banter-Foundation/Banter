@@ -139,6 +139,18 @@ async fn store_open_upgrades_early_postgres_users_volume() {
         versions.iter().any(|v| v == "001_profile_customization"),
         "expected 001_profile_customization recorded, got {versions:?}"
     );
+    assert!(
+        versions.iter().any(|v| v == "004_server_folders"),
+        "expected 004_server_folders recorded, got {versions:?}"
+    );
+    assert!(
+        table_exists(&pool, &schema, "server_folders").await,
+        "expected server_folders after migrate"
+    );
+    assert!(
+        table_exists(&pool, &schema, "server_folder_memberships").await,
+        "expected server_folder_memberships after migrate"
+    );
 
     // Profile write must succeed against the upgraded row (proves columns are usable).
     let store = Store::open(&dir, &url)

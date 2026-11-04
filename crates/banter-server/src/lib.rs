@@ -14,6 +14,7 @@ mod codec;
 mod cosmetics;
 mod debuglog;
 mod error;
+mod folders;
 mod http;
 mod live;
 mod migrate;
@@ -30,6 +31,7 @@ pub use cosmetics::{
     DEFAULT_THEME_SECONDARY,
 };
 pub use error::BanterError;
+pub use folders::{folder_color_ok, folder_depth, would_cycle, MAX_SERVER_FOLDERS, MAX_SERVER_FOLDER_DEPTH};
 pub use live::Live;
 pub use model::*;
 pub use roles::{

@@ -14,6 +14,9 @@ use sqlx::{PgPool, Postgres, Row, Transaction};
 use crate::badges::{badge_exists, badge_item, MAX_EQUIPPED_BADGES};
 use crate::cosmetics::{cosmetic_exists, CosmeticKind, DEFAULT_THEME_PRIMARY, DEFAULT_THEME_SECONDARY};
 use crate::error::BanterError;
+use crate::folders::{
+    child_depth, folder_color_ok, would_cycle, MAX_SERVER_FOLDERS, MAX_SERVER_FOLDER_DEPTH,
+};
 use crate::model::*;
 use crate::roles::{
     grants_only_held, has_permission, next_role_position, role_color_ok, EVERYONE_NAME, EVERYONE_PERMISSIONS,
@@ -534,6 +537,7 @@ impl Store {
         let voice_category = insert_category_tx(&mut tx, server_id, "Voice Channels", 1).await?;
         insert_channel_tx(&mut tx, server_id, voice_category, "General", ChannelKind::Voice, 0).await?;
         insert_everyone_role_tx(&mut tx, server_id).await?;
+        place_server_on_rail_tx(&mut tx, owner_id, server_id, None).await?;
         tx.commit().await.map_err(db_err)?;
         self.server_home(owner_id, server_id).await
     }
@@ -573,12 +577,15 @@ impl Store {
         if is_member(&self.pool, user_id, server_id).await? {
             return Err(BanterError::AlreadyMember);
         }
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
         sqlx::query("INSERT INTO memberships (server_id, user_id, nickname) VALUES ($1, $2, NULL)")
             .bind(server_id)
             .bind(user_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(db_err)?;
+        place_server_on_rail_tx(&mut tx, user_id, server_id, None).await?;
+        tx.commit().await.map_err(db_err)?;
         self.server_home(user_id, server_id).await
     }
 
@@ -602,6 +609,314 @@ impl Store {
                 owner_id: row.get("owner_id"),
             })
             .collect())
+    }
+
+    /// Private nested folder + server placement tree for the signed-in user's rail.
+    pub async fn server_rail(&self, user_id: i64) -> Result<ServerRail, BanterError> {
+        self.account(user_id).await?;
+        self.ensure_rail_placements(user_id).await?;
+        let folder_rows = sqlx::query(
+            "SELECT id, parent_id, name, color, position, collapsed
+             FROM server_folders WHERE user_id = $1
+             ORDER BY position ASC, id ASC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        let folders = folder_rows
+            .iter()
+            .map(|row| ServerFolder {
+                id: row.get("id"),
+                parent_id: row.get("parent_id"),
+                name: row.get("name"),
+                color: row.get("color"),
+                position: row.get("position"),
+                collapsed: row.get("collapsed"),
+            })
+            .collect();
+        let server_rows = sqlx::query(
+            "SELECT s.id, s.name, s.owner_id, m.folder_id, m.position
+             FROM server_folder_memberships m
+             JOIN servers s ON s.id = m.server_id
+             JOIN memberships mem ON mem.server_id = s.id AND mem.user_id = m.user_id
+             WHERE m.user_id = $1
+             ORDER BY m.position ASC, s.id ASC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        let servers = server_rows
+            .iter()
+            .map(|row| ServerRailServer {
+                server: ServerSummary {
+                    id: row.get("id"),
+                    name: row.get("name"),
+                    owner_id: row.get("owner_id"),
+                },
+                folder_id: row.get("folder_id"),
+                position: row.get("position"),
+            })
+            .collect();
+        Ok(ServerRail { folders, servers })
+    }
+
+    pub async fn create_server_folder(
+        &self,
+        user_id: i64,
+        name: &str,
+        parent_id: Option<i64>,
+        color: Option<i64>,
+    ) -> Result<ServerFolder, BanterError> {
+        self.account(user_id).await?;
+        let name = clean_label(name)?;
+        let color = clean_folder_color(color.unwrap_or(0))?;
+        let parents = self.folder_parent_map(user_id).await?;
+        if parents.len() as i64 >= MAX_SERVER_FOLDERS {
+            return Err(BanterError::InvalidName);
+        }
+        if let Some(parent) = parent_id {
+            if !parents.contains_key(&parent) {
+                return Err(BanterError::NotFound);
+            }
+        }
+        let depth = child_depth(parent_id, &parents)?;
+        if depth > MAX_SERVER_FOLDER_DEPTH {
+            return Err(BanterError::InvalidName);
+        }
+        let position = next_folder_position(&self.pool, user_id, parent_id).await?;
+        let row = sqlx::query(
+            "INSERT INTO server_folders (user_id, parent_id, name, color, position, collapsed)
+             VALUES ($1, $2, $3, $4, $5, FALSE)
+             RETURNING id, parent_id, name, color, position, collapsed",
+        )
+        .bind(user_id)
+        .bind(parent_id)
+        .bind(&name)
+        .bind(color)
+        .bind(position)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(map_server_folder(&row))
+    }
+
+    pub async fn update_server_folder(
+        &self,
+        user_id: i64,
+        folder_id: i64,
+        patch: ServerFolderPatch,
+    ) -> Result<ServerFolder, BanterError> {
+        let current = self.require_owned_folder(user_id, folder_id).await?;
+        let name = match patch.name {
+            Some(raw) => clean_label(&raw)?,
+            None => current.name.clone(),
+        };
+        let color = match patch.color {
+            Some(value) => clean_folder_color(value)?,
+            None => current.color,
+        };
+        let collapsed = patch.collapsed.unwrap_or(current.collapsed);
+        let parents = self.folder_parent_map(user_id).await?;
+        let parent_id = match patch.parent_id {
+            Some(value) => {
+                if let Some(parent) = value {
+                    if !parents.contains_key(&parent) {
+                        return Err(BanterError::NotFound);
+                    }
+                }
+                if would_cycle(folder_id, value, &parents) {
+                    return Err(BanterError::InvalidName);
+                }
+                // Temporary map as if this folder already moved, then measure depth.
+                let mut trial = parents.clone();
+                trial.insert(folder_id, value);
+                let depth = crate::folders::folder_depth(folder_id, &trial)?;
+                if depth > MAX_SERVER_FOLDER_DEPTH {
+                    return Err(BanterError::InvalidName);
+                }
+                // Also ensure every descendant stays within the depth cap.
+                ensure_subtree_depth_ok(folder_id, &trial)?;
+                value
+            }
+            None => current.parent_id,
+        };
+        let position = match patch.position {
+            Some(value) if value >= 0 => value,
+            Some(_) => return Err(BanterError::InvalidName),
+            None if patch.parent_id.is_some() && parent_id != current.parent_id => {
+                next_folder_position(&self.pool, user_id, parent_id).await?
+            }
+            None => current.position,
+        };
+        let row = sqlx::query(
+            "UPDATE server_folders
+             SET parent_id = $1, name = $2, color = $3, position = $4, collapsed = $5
+             WHERE id = $6 AND user_id = $7
+             RETURNING id, parent_id, name, color, position, collapsed",
+        )
+        .bind(parent_id)
+        .bind(&name)
+        .bind(color)
+        .bind(position)
+        .bind(collapsed)
+        .bind(folder_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(map_server_folder(&row))
+    }
+
+    pub async fn delete_server_folder(&self, user_id: i64, folder_id: i64) -> Result<(), BanterError> {
+        let folder = self.require_owned_folder(user_id, folder_id).await?;
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        // Promote direct child folders and servers to this folder's parent.
+        sqlx::query(
+            "UPDATE server_folders SET parent_id = $1 WHERE user_id = $2 AND parent_id = $3",
+        )
+        .bind(folder.parent_id)
+        .bind(user_id)
+        .bind(folder_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        sqlx::query(
+            "UPDATE server_folder_memberships SET folder_id = $1 WHERE user_id = $2 AND folder_id = $3",
+        )
+        .bind(folder.parent_id)
+        .bind(user_id)
+        .bind(folder_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let deleted = sqlx::query("DELETE FROM server_folders WHERE id = $1 AND user_id = $2")
+            .bind(folder_id)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        if deleted.rows_affected() != 1 {
+            return Err(BanterError::NotFound);
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(())
+    }
+
+    pub async fn move_server_to_folder(
+        &self,
+        user_id: i64,
+        server_id: i64,
+        folder_id: Option<i64>,
+        position: i64,
+    ) -> Result<ServerRailServer, BanterError> {
+        self.require_member(user_id, server_id).await?;
+        if position < 0 {
+            return Err(BanterError::InvalidName);
+        }
+        if let Some(folder) = folder_id {
+            self.require_owned_folder(user_id, folder).await?;
+        }
+        self.ensure_rail_placements(user_id).await?;
+        let updated = sqlx::query(
+            "UPDATE server_folder_memberships
+             SET folder_id = $1, position = $2
+             WHERE user_id = $3 AND server_id = $4",
+        )
+        .bind(folder_id)
+        .bind(position)
+        .bind(user_id)
+        .bind(server_id)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        if updated.rows_affected() != 1 {
+            // Membership exists but rail row missing — place then update.
+            let mut tx = self.pool.begin().await.map_err(db_err)?;
+            place_server_on_rail_tx(&mut tx, user_id, server_id, folder_id).await?;
+            sqlx::query(
+                "UPDATE server_folder_memberships
+                 SET folder_id = $1, position = $2
+                 WHERE user_id = $3 AND server_id = $4",
+            )
+            .bind(folder_id)
+            .bind(position)
+            .bind(user_id)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
+        }
+        let row = sqlx::query(
+            "SELECT s.id, s.name, s.owner_id, m.folder_id, m.position
+             FROM server_folder_memberships m
+             JOIN servers s ON s.id = m.server_id
+             WHERE m.user_id = $1 AND m.server_id = $2",
+        )
+        .bind(user_id)
+        .bind(server_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(ServerRailServer {
+            server: ServerSummary {
+                id: row.get("id"),
+                name: row.get("name"),
+                owner_id: row.get("owner_id"),
+            },
+            folder_id: row.get("folder_id"),
+            position: row.get("position"),
+        })
+    }
+
+    async fn require_owned_folder(&self, user_id: i64, folder_id: i64) -> Result<ServerFolder, BanterError> {
+        let row = sqlx::query(
+            "SELECT id, parent_id, name, color, position, collapsed
+             FROM server_folders WHERE id = $1 AND user_id = $2",
+        )
+        .bind(folder_id)
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?;
+        row.map(|row| map_server_folder(&row)).ok_or(BanterError::NotFound)
+    }
+
+    async fn folder_parent_map(&self, user_id: i64) -> Result<std::collections::HashMap<i64, Option<i64>>, BanterError> {
+        let rows = sqlx::query("SELECT id, parent_id FROM server_folders WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(rows
+            .iter()
+            .map(|row| (row.get::<i64, _>("id"), row.get::<Option<i64>, _>("parent_id")))
+            .collect())
+    }
+
+    async fn ensure_rail_placements(&self, user_id: i64) -> Result<(), BanterError> {
+        let missing: Vec<i64> = sqlx::query_scalar(
+            "SELECT m.server_id FROM memberships m
+             LEFT JOIN server_folder_memberships r
+               ON r.user_id = m.user_id AND r.server_id = m.server_id
+             WHERE m.user_id = $1 AND r.server_id IS NULL
+             ORDER BY m.server_id",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        for server_id in missing {
+            place_server_on_rail_tx(&mut tx, user_id, server_id, None).await?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(())
     }
 
     pub async fn members(&self, user_id: i64, server_id: i64) -> Result<Vec<Member>, BanterError> {
@@ -1966,6 +2281,124 @@ fn clean_role_color(color: i64) -> Result<i64, BanterError> {
     } else {
         Err(BanterError::InvalidName)
     }
+}
+
+fn clean_folder_color(color: i64) -> Result<i64, BanterError> {
+    if folder_color_ok(color) {
+        Ok(color)
+    } else {
+        Err(BanterError::InvalidName)
+    }
+}
+
+fn map_server_folder(row: &sqlx::postgres::PgRow) -> ServerFolder {
+    ServerFolder {
+        id: row.get("id"),
+        parent_id: row.get("parent_id"),
+        name: row.get("name"),
+        color: row.get("color"),
+        position: row.get("position"),
+        collapsed: row.get("collapsed"),
+    }
+}
+
+fn ensure_subtree_depth_ok(
+    root_id: i64,
+    parent_of: &std::collections::HashMap<i64, Option<i64>>,
+) -> Result<(), BanterError> {
+    let mut children: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    for (id, parent) in parent_of {
+        if let Some(parent) = parent {
+            children.entry(*parent).or_default().push(*id);
+        }
+    }
+    let mut stack = vec![root_id];
+    while let Some(id) = stack.pop() {
+        let depth = crate::folders::folder_depth(id, parent_of)?;
+        if depth > MAX_SERVER_FOLDER_DEPTH {
+            return Err(BanterError::InvalidName);
+        }
+        if let Some(kids) = children.get(&id) {
+            stack.extend(kids.iter().copied());
+        }
+    }
+    Ok(())
+}
+
+async fn next_folder_position(
+    pool: &PgPool,
+    user_id: i64,
+    parent_id: Option<i64>,
+) -> Result<i64, BanterError> {
+    let max: Option<i64> = match parent_id {
+        Some(parent) => {
+            sqlx::query_scalar(
+                "SELECT MAX(position) FROM server_folders WHERE user_id = $1 AND parent_id = $2",
+            )
+            .bind(user_id)
+            .bind(parent)
+            .fetch_one(pool)
+            .await
+            .map_err(db_err)?
+        }
+        None => sqlx::query_scalar(
+            "SELECT MAX(position) FROM server_folders WHERE user_id = $1 AND parent_id IS NULL",
+        )
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .map_err(db_err)?,
+    };
+    Ok(max.unwrap_or(-1).saturating_add(1))
+}
+
+async fn next_rail_server_position(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i64,
+    folder_id: Option<i64>,
+) -> Result<i64, BanterError> {
+    let max: Option<i64> = match folder_id {
+        Some(folder) => {
+            sqlx::query_scalar(
+                "SELECT MAX(position) FROM server_folder_memberships WHERE user_id = $1 AND folder_id = $2",
+            )
+            .bind(user_id)
+            .bind(folder)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(db_err)?
+        }
+        None => sqlx::query_scalar(
+            "SELECT MAX(position) FROM server_folder_memberships WHERE user_id = $1 AND folder_id IS NULL",
+        )
+        .bind(user_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_err)?,
+    };
+    Ok(max.unwrap_or(-1).saturating_add(1))
+}
+
+async fn place_server_on_rail_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i64,
+    server_id: i64,
+    folder_id: Option<i64>,
+) -> Result<(), BanterError> {
+    let position = next_rail_server_position(tx, user_id, folder_id).await?;
+    sqlx::query(
+        "INSERT INTO server_folder_memberships (user_id, server_id, folder_id, position)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, server_id) DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(server_id)
+    .bind(folder_id)
+    .bind(position)
+    .execute(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    Ok(())
 }
 
 async fn roles_on_server(pool: &PgPool, server_id: i64) -> Result<Vec<GuildRole>, BanterError> {

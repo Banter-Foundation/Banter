@@ -15,8 +15,8 @@ use banter_server::{
     LayerPreferences, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MediaKind, MediaPlace, Mention, Message,
     PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_CHANNELS, PERM_MANAGE_ROLES, Presence,
     ProfileActivityInput, ProfileConnectionInput, ProfilePatch, ProfileWidgetInput, ProfileWidgetKind,
-    ProfileWishlistInput, ServerDebug, ServerSummary, UserProfile, VoiceFlags, VoiceMember, has_permission,
-    top_hoisted_role, top_role_color,
+    ProfileWishlistInput, ServerDebug, ServerFolderPatch, ServerRail, ServerSummary, UserProfile,
+    VoiceFlags, VoiceMember, has_permission, top_hoisted_role, top_role_color,
 };
 use dear_imgui_rs::{
     ChildFlags, Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData,
@@ -30,15 +30,15 @@ use crate::bfmd_paint;
 use crate::icons::rasterize_lucide;
 use crate::logic::{
     CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry, ContextMenuTone, DevServerPrefs, MixSource,
-    MuteMemory, ScreenShare, ServerTarget, SettingsSection, StreamDefaults, StreamFps, StreamResolution, VideoPrefs,
-    VoicePrefs, api_base_for, camera_preview_mirrored, channel_context_menu, clamp_context_menu_pos, clamp_window_size,
-    comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution, discord_shell_columns,
-    encode_jpeg_rgba, fps_block, fps_from_key, fps_key, grouped_mix_sources, hardware_encoder_block, insert_mention,
-    is_debug_command,
-    lerp_size, load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, password_blocks_copy,
-    plan_member_groups,
-    password_is_masked, push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key,
-    save_json, speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
+    MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection, StreamDefaults, StreamFps, StreamResolution,
+    VideoPrefs, VoicePrefs, api_base_for, camera_preview_mirrored, channel_context_menu, clamp_context_menu_pos,
+    clamp_window_size, comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution,
+    discord_shell_columns, encode_jpeg_rgba, folder_context_menu, fps_block, fps_from_key, fps_key,
+    grouped_mix_sources, hardware_encoder_block, insert_mention, is_debug_command, lerp_size, load_json,
+    local_api_base, member_context_menu, message_context_menu, mirror_rgba, parse_folder_color, password_blocks_copy,
+    plan_member_groups, password_is_masked, push_to_talk_held, rail_tree_rows, remove_message, resolution_block,
+    resolution_from_key, resolution_key, save_json, server_rail_context_menu, server_rail_item_menu,
+    speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
     stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message, chat_date_separator,
     chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day, window_size_label,
     window_size_presets, OPEN_MIC_RMS,
@@ -173,8 +173,17 @@ enum Modal {
     CreateCategory,
     Roles,
     MemberRoles,
+    /// Create or edit a server-rail folder (name + hex color).
+    ServerFolder,
     /// Chat file attach is gated off (BA-61); shows Owl's exact unavailable copy.
     UploadsUnavailable,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FolderModalMode {
+    Create,
+    Rename,
+    Recolor,
 }
 
 /// Exact popup copy Owl specified for disabled chat file uploads (BA-61).
@@ -183,6 +192,7 @@ const UPLOADS_UNAVAILABLE_MESSAGE: &str = "Currently Unavailable";
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RailTone {
     Server,
+    Folder,
     Add,
 }
 
@@ -212,6 +222,14 @@ pub(crate) struct App {
     incoming: Vec<FriendRequest>,
     outgoing: Vec<FriendRequest>,
     servers: Vec<ServerSummary>,
+    /// Per-user nested rail folders + placements (BA-79).
+    server_rail: ServerRail,
+    folder_name: String,
+    folder_color: String,
+    folder_parent: Option<i64>,
+    editing_folder: Option<i64>,
+    folder_mode: FolderModalMode,
+    folder_error: String,
     dms: Vec<DirectChat>,
     mentions: Vec<Mention>,
     presence: HashMap<i64, PresenceInfo>,
@@ -458,6 +476,16 @@ impl App {
             nickname: String::new(),
             about_draft: String::new(),
             status_draft: String::new(),
+            server_rail: ServerRail {
+                folders: Vec::new(),
+                servers: Vec::new(),
+            },
+            folder_name: String::new(),
+            folder_color: String::new(),
+            folder_parent: None,
+            editing_folder: None,
+            folder_mode: FolderModalMode::Create,
+            folder_error: String::new(),
             guild_roles: Vec::new(),
             role_name: String::new(),
             role_color: String::new(),
@@ -1172,54 +1200,149 @@ impl App {
         ui.dummy([RAIL_W, RAIL_TOP]);
         let home = matches!(self.place, Place::Home | Place::Direct(_));
         let mentions = self.mentions.len();
-        if self.rail_icon(ui, "home", "B", None, home, "Direct Messages", RailTone::Server, mentions) {
+        let (home_click, _) =
+            self.rail_icon(ui, "home", "B", None, None, home, "Direct Messages", RailTone::Server, mentions);
+        if home_click {
             self.place = Place::Home;
             self.selected = None;
             self.messages.clear();
             self.server_menu = false;
         }
         self.rail_separator(ui);
-        let servers = self.servers.clone();
-        for server in servers {
-            let selected = self.place == Place::Server(server.id);
-            let mark = server_acronym(&server.name);
-            if self.rail_icon(ui, &format!("sv{}", server.id), &mark, None, selected, &server.name, RailTone::Server, 0) {
-                self.server_menu = false;
-                self.open_server(server.id);
+        let rows = rail_tree_rows(&self.server_rail);
+        let folders: Vec<(String, i64)> = self
+            .server_rail
+            .folders
+            .iter()
+            .map(|folder| (folder.name.clone(), folder.id))
+            .collect();
+        let mut toggle_folder: Option<i64> = None;
+        let mut open_server: Option<i64> = None;
+        let mut folder_menu: Option<(i64, [f32; 2])> = None;
+        let mut server_menu: Option<(i64, Option<i64>, [f32; 2])> = None;
+        let mut rail_menu: Option<[f32; 2]> = None;
+        for row in rows {
+            match row {
+                RailTreeRow::Folder { id, depth } => {
+                    let Some(folder) = self.server_rail.folders.iter().find(|folder| folder.id == id) else {
+                        continue;
+                    };
+                    let tip = if folder.collapsed {
+                        format!("{} (collapsed)", folder.name)
+                    } else {
+                        folder.name.clone()
+                    };
+                    let color = if folder.color > 0 {
+                        Some(rgb_u32_to_rgba(folder.color as u32))
+                    } else {
+                        None
+                    };
+                    let origin = ui.cursor_screen_pos();
+                    let (left, right) = self.rail_icon(
+                        ui,
+                        &format!("folder{id}"),
+                        "",
+                        Some("folder"),
+                        color,
+                        false,
+                        &tip,
+                        RailTone::Folder,
+                        0,
+                    );
+                    let _ = depth;
+                    if left {
+                        toggle_folder = Some(id);
+                    }
+                    if right {
+                        folder_menu = Some((id, [origin[0] + RAIL_W, origin[1]]));
+                    }
+                }
+                RailTreeRow::Server { id, depth } => {
+                    let Some(row) = self.server_rail.servers.iter().find(|row| row.server.id == id) else {
+                        continue;
+                    };
+                    let selected = self.place == Place::Server(id);
+                    let mark = server_acronym(&row.server.name);
+                    let origin = ui.cursor_screen_pos();
+                    let (left, right) = self.rail_icon(
+                        ui,
+                        &format!("sv{id}"),
+                        &mark,
+                        None,
+                        None,
+                        selected,
+                        &row.server.name,
+                        RailTone::Server,
+                        0,
+                    );
+                    let _ = depth;
+                    if left {
+                        open_server = Some(id);
+                    }
+                    if right {
+                        server_menu = Some((id, row.folder_id, [origin[0] + RAIL_W, origin[1]]));
+                    }
+                }
             }
         }
-        if self.rail_icon(ui, "add-server", "", Some("plus"), false, "Add a Server", RailTone::Add, 0) {
+        let add_origin = ui.cursor_screen_pos();
+        let (add_left, add_right) =
+            self.rail_icon(ui, "add-server", "", Some("plus"), None, false, "Add a Server", RailTone::Add, 0);
+        if add_left {
             self.server_name.clear();
             self.invite_code.clear();
             self.open_modal(Modal::AddServer);
         }
+        if add_right {
+            rail_menu = Some([add_origin[0] + RAIL_W, add_origin[1]]);
+        }
+        if let Some(folder_id) = toggle_folder {
+            self.toggle_rail_folder(folder_id);
+        }
+        if let Some(server_id) = open_server {
+            self.server_menu = false;
+            self.open_server(server_id);
+        }
+        if let Some((folder_id, anchor)) = folder_menu {
+            self.open_context_menu(ui, folder_context_menu(folder_id, true), anchor);
+        } else if let Some((server_id, folder_id, anchor)) = server_menu {
+            self.open_context_menu(ui, server_rail_item_menu(server_id, folder_id, &folders), anchor);
+        } else if let Some(anchor) = rail_menu {
+            self.open_context_menu(ui, server_rail_context_menu(), anchor);
+        }
     }
 
     /// One 48 px rail button with its pill, squircle morph, tooltip, and optional mention badge.
+    /// Returns `(left_click, right_click)`.
     fn rail_icon(
         &self,
         ui: &Ui,
         id: &str,
         letters: &str,
         icon: Option<&str>,
+        fill_override: Option<[f32; 4]>,
         selected: bool,
         tip: &str,
         tone: RailTone,
         badge: usize,
-    ) -> bool {
+    ) -> (bool, bool) {
         let origin = ui.cursor_screen_pos();
         let clicked = ui.invisible_button(id, [RAIL_W, RAIL_ICON]);
+        let right = ui.is_item_clicked_with_button(MouseButton::Right);
         let hovered = ui.is_item_hovered();
         let active = selected || hovered;
         let center = [origin[0] + RAIL_W * 0.5, origin[1] + RAIL_ICON * 0.5];
         let half = RAIL_ICON * 0.5;
         let min = [center[0] - half, center[1] - half];
         let max = [center[0] + half, center[1] + half];
-        let (fill, ink) = match tone {
-            RailTone::Server if active => (BLURPLE, WHITE),
-            RailTone::Server => (STAGE_BG, TEXT_NORMAL),
-            RailTone::Add if active => (GREEN, WHITE),
-            RailTone::Add => (STAGE_BG, GREEN),
+        let (fill, ink) = match (tone, fill_override) {
+            (RailTone::Folder, Some(color)) => (color, WHITE),
+            (RailTone::Folder, None) if active => (BLURPLE, WHITE),
+            (RailTone::Folder, None) => (STAGE_BG, TEXT_NORMAL),
+            (RailTone::Server, _) if active => (BLURPLE, WHITE),
+            (RailTone::Server, _) => (STAGE_BG, TEXT_NORMAL),
+            (RailTone::Add, _) if active => (GREEN, WHITE),
+            (RailTone::Add, _) => (STAGE_BG, GREEN),
         };
         skin::rect(ui, min, max, fill, rail_corner_radius(active));
         let pill = rail_pill_height(selected, hovered);
@@ -1265,7 +1388,7 @@ impl App {
             skin::tooltip(ui, self.semibold_font, FONT_MD, tip, min, max, TooltipSide::Right);
         }
         ui.dummy([RAIL_W, RAIL_ICON_GAP]);
-        clicked
+        (clicked, right)
     }
 
     fn rail_separator(&self, ui: &Ui) {
@@ -1456,12 +1579,14 @@ impl App {
     fn context_menu_icon(&self, id: &str) -> Option<ManagedTextureId> {
         let name = match id {
             "ctx-reply" => "reply",
-            "ctx-edit" => "pencil",
-            "ctx-delete" => "trash-2",
+            "ctx-edit" | "ctx-rename-folder" => "pencil",
+            "ctx-delete" | "ctx-delete-folder" => "trash-2",
             "ctx-message" => "message-circle",
             "ctx-call" => "phone",
             "ctx-add-friend" | "ctx-invite" => "user-plus",
             "ctx-copy-channel-id" | "ctx-copy-msg-id" => "hash",
+            "ctx-create-folder" | "ctx-create-subfolder" | "ctx-move-folder" | "ctx-remove-folder" => "folder",
+            "ctx-recolor-folder" => "circle-plus",
             _ => return None,
         };
         self.icon(name)
@@ -1602,6 +1727,111 @@ impl App {
             }
             ContextMenuAction::AssignRoles { user_id } => {
                 self.open_member_roles(user_id);
+            }
+            ContextMenuAction::CreateServerFolder { parent_id } => {
+                self.open_folder_modal(FolderModalMode::Create, None, parent_id);
+            }
+            ContextMenuAction::RenameServerFolder { folder_id } => {
+                self.open_folder_modal(FolderModalMode::Rename, Some(folder_id), None);
+            }
+            ContextMenuAction::RecolorServerFolder { folder_id } => {
+                self.open_folder_modal(FolderModalMode::Recolor, Some(folder_id), None);
+            }
+            ContextMenuAction::DeleteServerFolder { folder_id } => {
+                if self.note(self.client.delete_server_folder(folder_id)).is_some() {
+                    self.refresh_shell();
+                }
+            }
+            ContextMenuAction::MoveServerToFolder { server_id, folder_id } => {
+                if self
+                    .note(self.client.move_server_to_folder(server_id, folder_id, 0))
+                    .is_some()
+                {
+                    self.refresh_shell();
+                }
+            }
+        }
+    }
+
+    fn open_folder_modal(&mut self, mode: FolderModalMode, folder_id: Option<i64>, parent_id: Option<i64>) {
+        self.folder_mode = mode;
+        self.folder_error.clear();
+        self.editing_folder = folder_id;
+        self.folder_parent = parent_id;
+        self.folder_name.clear();
+        self.folder_color.clear();
+        if let Some(id) = folder_id {
+            if let Some(folder) = self.server_rail.folders.iter().find(|folder| folder.id == id) {
+                self.folder_name = folder.name.clone();
+                self.folder_color = if folder.color == 0 {
+                    String::new()
+                } else {
+                    format!("{:06X}", folder.color)
+                };
+                self.folder_parent = folder.parent_id;
+            }
+        }
+        self.open_modal(Modal::ServerFolder);
+    }
+
+    fn toggle_rail_folder(&mut self, folder_id: i64) {
+        let Some(folder) = self.server_rail.folders.iter().find(|folder| folder.id == folder_id) else {
+            return;
+        };
+        let collapsed = !folder.collapsed;
+        let patch = ServerFolderPatch {
+            collapsed: Some(collapsed),
+            ..ServerFolderPatch::default()
+        };
+        if self.note(self.client.update_server_folder(folder_id, patch)).is_some() {
+            self.refresh_shell();
+        }
+    }
+
+    fn submit_server_folder(&mut self) {
+        self.folder_error.clear();
+        let color = match parse_folder_color(&self.folder_color) {
+            Ok(value) => value,
+            Err(err) => {
+                self.folder_error = err;
+                return;
+            }
+        };
+        match self.folder_mode {
+            FolderModalMode::Create => {
+                let name = self.folder_name.clone();
+                if name.trim().is_empty() {
+                    self.folder_error = "name must be 1-100 characters".into();
+                    return;
+                }
+                if self
+                    .note(self.client.create_server_folder(&name, self.folder_parent, color))
+                    .is_some()
+                {
+                    self.modal = None;
+                    self.refresh_shell();
+                }
+            }
+            FolderModalMode::Rename | FolderModalMode::Recolor => {
+                let Some(folder_id) = self.editing_folder else {
+                    return;
+                };
+                let patch = match self.folder_mode {
+                    FolderModalMode::Rename => ServerFolderPatch {
+                        name: Some(self.folder_name.clone()),
+                        color: Some(color),
+                        ..ServerFolderPatch::default()
+                    },
+                    FolderModalMode::Recolor => ServerFolderPatch {
+                        color: Some(color),
+                        ..ServerFolderPatch::default()
+                    },
+                    FolderModalMode::Create => unreachable!(),
+                };
+                if self.note(self.client.update_server_folder(folder_id, patch)).is_some() {
+                    self.modal = None;
+                    self.refresh_shell();
+                }
             }
         }
     }
@@ -3625,6 +3855,7 @@ impl App {
                     Modal::CreateCategory => self.modal_create_category(ui, display),
                     Modal::Roles => self.modal_roles(ui, display),
                     Modal::MemberRoles => self.modal_member_roles(ui, display),
+                    Modal::ServerFolder => self.modal_server_folder(ui, display),
                     Modal::UploadsUnavailable => self.modal_uploads_unavailable(ui, display),
                 };
                 if self.modal_frames > 0 && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
@@ -3841,6 +4072,94 @@ impl App {
         if skin::button(ui, "copy-invite", if copied { "Copied" } else { "Copy" }, tone, button_min, [75.0, 32.0], enabled, self.semibold_font) {
             crate::platform::copy_to_clipboard(&self.shown_invite);
             self.invite_copied = true;
+        }
+        (min, max)
+    }
+
+    fn modal_server_folder(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let title = match self.folder_mode {
+            FolderModalMode::Create => "Create Folder",
+            FolderModalMode::Rename => "Rename Folder",
+            FolderModalMode::Recolor => "Folder Color",
+        };
+        let show_name = self.folder_mode != FolderModalMode::Recolor;
+        let picker_h = 8.0 + 22.0 * 3.0;
+        let body_h = if show_name {
+            20.0 + INPUT_H + 12.0 + 20.0 + INPUT_H + picker_h + 28.0
+        } else {
+            20.0 + INPUT_H + picker_h + 28.0
+        };
+        let (body, min, max) = self.modal_frame(ui, display, title, Some("Hex color like 5865F2"), true, body_h, MODAL_FOOTER_H);
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        let mut y = body[1];
+        if show_name {
+            skin::field_label(ui, self.bold_font, [body[0], y], "Folder name", false, None);
+            y += 20.0;
+            ui.set_cursor_screen_pos([body[0], y]);
+            ui.set_next_item_width(inner_w);
+            ui.input_text("##folder-name", &mut self.folder_name).build();
+            y += INPUT_H + 12.0;
+        }
+        skin::field_label(ui, self.bold_font, [body[0], y], "Color", false, None);
+        y += 20.0;
+        let swatch = match parse_folder_color(&self.folder_color) {
+            Ok(0) => STAGE_BG,
+            Ok(rgb) => rgb_u32_to_rgba(rgb as u32),
+            Err(_) => RED,
+        };
+        skin::rect(ui, [body[0], y], [body[0] + INPUT_H, y + INPUT_H], swatch, 8.0);
+        ui.set_cursor_screen_pos([body[0] + INPUT_H + 8.0, y]);
+        ui.set_next_item_width(inner_w - INPUT_H - 8.0);
+        ui.input_text("##folder-color", &mut self.folder_color).hint("5865F2").build();
+        // Compact RGB sliders act as the color picker; values sync into the hex field.
+        let mut rgb = match parse_folder_color(&self.folder_color) {
+            Ok(value) if value > 0 => {
+                [
+                    ((value >> 16) & 0xFF) as f32 / 255.0,
+                    ((value >> 8) & 0xFF) as f32 / 255.0,
+                    (value & 0xFF) as f32 / 255.0,
+                ]
+            }
+            _ => [0.345, 0.396, 0.949],
+        };
+        y += INPUT_H + 8.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.set_next_item_width(inner_w);
+        let mut changed = false;
+        changed |= ui.slider_f32("##folder-r", &mut rgb[0], 0.0, 1.0);
+        y += 22.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.set_next_item_width(inner_w);
+        changed |= ui.slider_f32("##folder-g", &mut rgb[1], 0.0, 1.0);
+        y += 22.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.set_next_item_width(inner_w);
+        changed |= ui.slider_f32("##folder-b", &mut rgb[2], 0.0, 1.0);
+        if changed {
+            let packed = (((rgb[0].clamp(0.0, 1.0) * 255.0).round() as i64) << 16)
+                | (((rgb[1].clamp(0.0, 1.0) * 255.0).round() as i64) << 8)
+                | ((rgb[2].clamp(0.0, 1.0) * 255.0).round() as i64);
+            self.folder_color = format!("{packed:06X}");
+        }
+        if !self.folder_error.is_empty() {
+            y += 28.0;
+            ui.set_cursor_screen_pos([body[0], y]);
+            ui.text_colored(RED, &self.folder_error);
+        }
+        let primary = match self.folder_mode {
+            FolderModalMode::Create => "Create Folder",
+            FolderModalMode::Rename => "Save",
+            FolderModalMode::Recolor => "Save Color",
+        };
+        let enabled = match self.folder_mode {
+            FolderModalMode::Create | FolderModalMode::Rename => !self.folder_name.trim().is_empty(),
+            FolderModalMode::Recolor => true,
+        };
+        let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", primary, Tone::Brand, enabled);
+        if cancel {
+            self.modal = None;
+        } else if save {
+            self.submit_server_folder();
         }
         (min, max)
     }
@@ -4363,6 +4682,10 @@ impl App {
         self.messages.clear();
         self.friends.clear();
         self.servers.clear();
+        self.server_rail = ServerRail {
+            folders: Vec::new(),
+            servers: Vec::new(),
+        };
         self.status.clear();
         self.settings.close();
         self.share_open = false;
@@ -4394,6 +4717,18 @@ impl App {
         }
         if let Some(servers) = self.note(self.client.servers()) {
             self.servers = servers;
+        }
+        if let Some(rail) = self.note(self.client.server_rail()) {
+            self.server_rail = rail;
+            // Keep the flat membership list aligned with rail order for other UI.
+            if !self.server_rail.servers.is_empty() {
+                self.servers = self
+                    .server_rail
+                    .servers
+                    .iter()
+                    .map(|row| row.server.clone())
+                    .collect();
+            }
         }
         if let Some(dms) = self.note(self.client.direct_messages()) {
             self.dms = dms;
@@ -6867,8 +7202,8 @@ impl App {
         for name in [
             "mic", "mic-off", "headphones", "headphone-off", "video", "video-off", "monitor", "monitor-off",
             "phone-off", "settings", "chevron-down", "chevron-up", "plus", "hash", "volume-2", "users", "search", "paperclip",
-            "x", "user", "log-out", "pencil", "trash-2", "reply", "check", "chevron-right", "circle-plus", "folder-plus",
-            "message-circle", "phone", "user-plus", "signal", "ellipsis", "minus",
+            "x", "user", "log-out", "pencil", "trash-2", "reply", "check", "chevron-right", "circle-plus", "folder",
+            "folder-plus", "message-circle", "phone", "user-plus", "signal", "ellipsis", "minus",
         ] {
             if let Ok(rgba) = rasterize_lucide(name, 32, [255, 255, 255]) {
                 if let Some(shot) = upload_rgba(imgui, 32, 32, &rgba) {

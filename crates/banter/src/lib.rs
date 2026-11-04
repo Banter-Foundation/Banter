@@ -28,6 +28,7 @@ pub mod theme;
 mod ui;
 
 pub use api::{Client, websocket_url};
+pub use banter_server::{ServerFolder, ServerRail, ServerRailServer, ServerSummary};
 pub use bfmd::{parse as parse_bfmd, plain_text as bfmd_plain_text, Flag as BfmdFlag};
 pub use icons::rasterize_lucide;
 pub use logic::*;
