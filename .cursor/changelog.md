@@ -403,9 +403,17 @@ Sign-in and register show a **Stay signed in** checkbox (default on). Checked wr
 
 Retarget published Docker/pre-release defaults to `version-1-test-7` / `Version-1-test-7` after Stay signed in (BA-66) landed on main. Older tags stay. Compose default remains `:latest`.
 
+## 2026-11-04 01:20:28 -06:00 [Winter] — Fix DrawListMut nested borrow panic (BA-69)
+
+dear-imgui-rs panics when two `DrawListMut` wrappers wrap the same window draw list. Banter held a draw list across helpers that acquired another (comment fold tool, profile cosmetics, board stroke/text). Scoped acquires so wrappers drop before nested get_window_draw_list calls.
+
+- `ui.rs`: comment thread line, tool, profile view/customize/preview/banner/board/editor thumbs
+- `board.rs`: rect/sticky, image, file card, paint_poly fill before stroke helpers
+
 ## 2026-11-04 01:21:17 -06:00 [Winter] — Version-1-test-7 pre-release (BA-66)
 
 Shipped pre-release Version-1-test-7 from main `537e1e3` (Stay signed in PR #27 + docs retarget PR #28). Built Win+Linux clients/servers, pushed `ghcr.io/snowedinowl/banter:version-1-test-7` (+ `:latest`). Kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Never touched E:.
 
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-7
 - Assets: Banter-windows-version-1-test-7.zip, Banter-linux-version-1-test-7.zip, banter-server.exe, banter-server-linux
+
