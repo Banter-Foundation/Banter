@@ -1,6 +1,7 @@
 # Session memory
 
-- Project path: `D:\Projects\Project Banter` (exact; space in name). Former path `D:\Projects\Banter` was moved here on 2026-11-03 with git history intact. Git repo on `main`, remote `https://github.com/SnowedInOwl/Banter`. Pushed merge `8ab9c04` (`https://github.com/SnowedInOwl/Banter/commit/8ab9c04`). Do not force-push. Do not commit `auth.json`, `client-session.json`, `voice.json`, `stream.json`, `.env`, or anything under `%LOCALAPPDATA%\Banter`.
+- 2026-11-04 BA-79: Nested server-rail folders with hex colors on branch `cursor/server-folders-hex-48c4` → PR https://github.com/Banter-Foundation/Banter/pull/44 (do not merge until Owl says). Migration `004_server_folders`. Per-user layout; max depth 8; delete promotes children.
+- Project path: `D:\Projects\Project Banter` (exact; space in name). Former path `D:\Projects\Banter` was moved here on 2026-11-03 with git history intact. Git remote for this cloud checkout is `Banter-Foundation/Banter`. Do not force-push. Do not commit `auth.json`, `client-session.json`, `voice.json`, `stream.json`, `.env`, or anything under `%LOCALAPPDATA%\Banter`.
 - Never read, write, build, or delete anything on `E:`. Builds stay in `D:\Projects\Project Banter\target`. Linked worktrees live under `D:\Projects\Project Banter\worktrees\` (ignored by the primary checkout via `/worktrees/` in `.gitignore`).
 - Rust stable 1.99.1. Compile C/C++ with the VS 18 Build Tools `vcvars64.bat` on PATH. `cl.exe` is not on the default PowerShell path.
 - Client UI crate is `dear-imgui-rs` 0.22 (docking branch), renderer `dear-imgui-glow`, window `glfw` 0.63, loader `glow` 0.18. Set `ConfigFlags::DOCKING_ENABLE` before the first frame.
