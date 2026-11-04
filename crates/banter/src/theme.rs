@@ -137,6 +137,21 @@ pub const MODAL_W: f32 = 440.0;
 pub const MODAL_PAD: f32 = 16.0;
 pub const MODAL_RADIUS: f32 = 8.0;
 pub const MODAL_FOOTER_H: f32 = 70.0;
+
+// Screen Share / Go Live picker (Discord Stream Select).
+pub const SHARE_MODAL_W: f32 = 880.0;
+pub const SHARE_MODAL_H: f32 = 660.0;
+pub const SHARE_PAD: f32 = 16.0;
+pub const SHARE_HEADER_H: f32 = 52.0;
+pub const SHARE_TAB_H: f32 = 36.0;
+pub const SHARE_FOOTER_H: f32 = 70.0;
+pub const SHARE_TILE_W: f32 = 248.0;
+pub const SHARE_TILE_H: f32 = 178.0;
+pub const SHARE_TILE_GAP: f32 = 12.0;
+pub const SHARE_THUMB_H: f32 = 132.0;
+pub const SHARE_TILE_RADIUS: f32 = 8.0;
+pub const SHARE_CHECK: f32 = 22.0;
+
 pub const PROFILER_W: f32 = 360.0;
 pub const PROFILER_H: f32 = 420.0;
 pub const PROFILER_PAD: f32 = 12.0;

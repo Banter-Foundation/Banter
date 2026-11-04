@@ -182,3 +182,7 @@ Voice channels dropped Opus when the SFU required an OnOpen SSRC→RID map and w
 ## 2026-11-03 19:16:58 -06:00 [Winter] — Shared integration branch test/owl-fixes
 
 Created branch test/owl-fixes from origin/main (89f41b0) for sibling Owl-fix work. Documented merge protocol in docs/test-branch.md: feature branches rebase onto and merge into test/owl-fixes (not main); clear commits; never touch E:. Worktree at D:\Projects\Project Banter\worktrees\Banter-owl-fixes.
+
+## 2026-11-03 19:23:32 -06:00 [Winter] — Discord-style Stream Select UI
+
+Restyled the Screen Share / Go Live picker to match Discord’s Stream Select: dark overlay card, underline Screens / Applications tabs, larger thumbnail tiles with blurple selection border and check badge, Quality and Stream audio under the grid, Cancel plus green Go Live (and red Stop Streaming when live) in the footer. UI-only; share/select/go-live logic unchanged. Theme constants `SHARE_*` in theme.rs. Worktree Banter-stream-select on cursor/stream-select-discord-d812, merging into test/owl-fixes.
