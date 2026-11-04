@@ -662,6 +662,33 @@ Agent: Merged PR #16 (startup) and PR #17 (docs retarget). Tagged Version-1-test
 
 Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
 
+## 2026-11-04 00:12:12 -06:00 — Fix server VC and peer screen/camera (BA-55)
+
+Owl reports Banter server voice is still broken: no VC audio between users; peers do not receive each others screen shares; peers do not receive each others camera feeds. Project root D:\Projects\Project Banter (NEVER touch E:). Repo https://github.com/SnowedInOwl/Banter. Work from latest main / Version-1-test-4.1 era. Prefer live multi-client repro. Prior voice/media work: WebRTC Opus + H.264 SFU, RID/SSRC mapping, DTX quiet frames, early ICE — but Owl says server path still fails for audio + video receive. Goals: reproduce 2+ clients; fix SFU/client so channel voice audio is heard and screen/camera tracks are received; open PR reviewable; merge only if Owl said (Owl did NOT); clear commits/docs; clean temp; report root cause, PR URL, how verified.
+
+Agent: Prior RID/OnOpen fixes were already on main. Root cause was SFU forwarding publisher SSRCs into forward tracks that negotiate different SSRCs — write_rtp silently drops them. Added rewrite_forward_rtp + tests + docs. PR opened; do not merge.
+
+## Summary
+
+SFU now rewrites outbound SSRC/PT (and strips extensions) so server VC audio + camera + screen can reach peers; PR for Owl review, not merged.
+
+## 2026-11-04 00:12:16 -06:00 — UI follows display refresh rate (BA-56)
+
+Owl wants Banter **UI only** to use a dynamic refresh rate (match the display / VSync to the monitor), not stream FPS and not related to the VC/media fix running in parallel.
+
+Project: D:\Projects\Project Banter (NEVER touch E:).
+Repo: https://github.com/SnowedInOwl/Banter
+Use a separate git worktree/branch under that folder so you do not collide with the Server VC media fix worker if it is also editing the main checkout.
+
+Task: UI follows display refresh rate (BA-56)
+Avoid overlapping uncommitted edits with other workers; own worktree.
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-ui-refresh` on `cursor/ui-display-refresh-bc78`. Tests first for display pick / swap reapply; platform reapplies `Sync(1)` when monitor Hz or VSync changes.
+
+## Summary
+
+BA-56 UI display refresh: GLFW VSync follows the current monitor dynamically; stream FPS untouched.
+
 ---
 ## 2026-11-04 BA-57 Reddit-style reply threading
 
@@ -689,3 +716,4 @@ Task: Reddit-style reply threading in chat (BA-57)
 
 ### Summary (agent)
 Implemented on worktree `D:\Projects\Project Banter\worktrees\Banter-reddit-replies` branch `cursor/reddit-reply-threading-867a`. Reused existing `reply_to` parent pointer; added index; client DFS tree + collapse + inline composer. Did not merge.
+

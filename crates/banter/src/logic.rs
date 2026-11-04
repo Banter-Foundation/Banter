@@ -1018,6 +1018,64 @@ pub fn clamp_window_size(width: i32, height: i32) -> (i32, i32) {
     (width.clamp(640, 7680), height.clamp(480, 4320))
 }
 
+/// Fallback UI refresh when GLFW reports no connected display or a 0 Hz mode.
+pub const DEFAULT_UI_REFRESH_HZ: u32 = 60;
+
+/// One connected display in screen coordinates, used to pick the UI refresh rate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DisplayRefresh {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub refresh_hz: u32,
+}
+
+/// Treat a missing or zero Hz report as [`DEFAULT_UI_REFRESH_HZ`].
+pub fn normalize_refresh_hz(hz: u32) -> u32 {
+    if hz == 0 {
+        DEFAULT_UI_REFRESH_HZ
+    } else {
+        hz
+    }
+}
+
+/// Refresh rate of the display that owns the UI window.
+///
+/// Fullscreen uses `fullscreen_hz` from the window's monitor video mode. Windowed mode
+/// picks the display that contains the window center. If the center misses every display,
+/// the first connected display wins, then [`DEFAULT_UI_REFRESH_HZ`].
+pub fn pick_display_refresh_hz(
+    window_center_x: i32,
+    window_center_y: i32,
+    fullscreen_hz: Option<u32>,
+    displays: &[DisplayRefresh],
+) -> u32 {
+    if let Some(hz) = fullscreen_hz {
+        return normalize_refresh_hz(hz);
+    }
+    for display in displays {
+        let right = display.x.saturating_add(display.width);
+        let bottom = display.y.saturating_add(display.height);
+        if window_center_x >= display.x
+            && window_center_y >= display.y
+            && window_center_x < right
+            && window_center_y < bottom
+        {
+            return normalize_refresh_hz(display.refresh_hz);
+        }
+    }
+    displays
+        .first()
+        .map(|display| normalize_refresh_hz(display.refresh_hz))
+        .unwrap_or(DEFAULT_UI_REFRESH_HZ)
+}
+
+/// True when GLFW swap interval must be reapplied for the current VSync / refresh pair.
+pub fn ui_swap_needs_update(applied: Option<(bool, u32)>, vsync: bool, refresh_hz: u32) -> bool {
+    applied != Some((vsync, refresh_hz))
+}
+
 /// Missing fields fall back to the defaults, so an older `voice.json` keeps the rest of its choices.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
