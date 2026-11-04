@@ -41,9 +41,10 @@ use crate::profiler;
 use crate::realtime::Realtime;
 use crate::session::{load_token, save_token, session_path};
 use crate::settings::{
-    SettingsState, db_to_rms, device_error_text, display_name_dirty, display_name_error, meter_fraction,
-    percent_to_volume, rms_to_db, settings_layout, slider_fraction, slider_track_width,
-    voice_bar_error_lines, volume_to_percent, wrap_rows, SETTINGS_NAV_LIST_W, SETTINGS_TOP_PAD,
+    SettingsState, account_avatar_actions_origin_x, db_to_rms, device_error_text, display_name_dirty,
+    display_name_error, meter_fraction, percent_to_volume, rms_to_db, settings_layout, slider_fraction,
+    slider_track_width, voice_bar_error_lines, volume_to_percent, wrap_rows, SETTINGS_NAV_LIST_W,
+    SETTINGS_TOP_PAD,
 };
 use crate::skin::{self, MenuTone, Tone};
 use crate::theme::*;
@@ -4428,10 +4429,16 @@ impl App {
             draw.add_text([card[0] + 124.0, card[1] + banner_h + 14.0], TEXT, &account.display_name);
         }
         paint_avatar(ui, avatar, avatar_center, 40.0, &initials(&account.display_name), None);
-        let button_label = "Change Avatar";
-        let button_w = ui.calc_text_size(button_label)[0] + 24.0;
-        ui.set_cursor_screen_pos([card[0] + width - 16.0 - button_w, card[1] + banner_h + 14.0]);
-        if ui.button(button_label) {
+        // Right-align Change + Remove as one group so both stay inside the card (Discord-like).
+        let change_label = "Change Avatar";
+        let remove_label = "Remove Avatar";
+        let frame_pad = 24.0;
+        let change_w = ui.calc_text_size(change_label)[0] + frame_pad;
+        let remove_w = ui.calc_text_size(remove_label)[0] + frame_pad;
+        let gap = 8.0;
+        let actions_x = account_avatar_actions_origin_x(card[0], width, 16.0, change_w, remove_w, gap);
+        ui.set_cursor_screen_pos([actions_x, card[1] + banner_h + 14.0]);
+        if ui.button(change_label) {
             self.status.clear();
             self.pick_avatar();
             if !self.status.is_empty() {
@@ -4439,7 +4446,7 @@ impl App {
             }
         }
         ui.same_line();
-        if ui.button("Remove Avatar") {
+        if ui.button(remove_label) {
             self.remove_avatar();
             if !self.status.is_empty() {
                 self.settings_error = std::mem::take(&mut self.status);

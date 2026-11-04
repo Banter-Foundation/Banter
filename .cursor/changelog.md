@@ -233,3 +233,11 @@ Floating profile cards for foundation identity. Avatar upload already existed; t
 - Client: `profile.rs` card state; open from chat avatars/names, member list, friends, and the user-bar avatar; Edit Profile / Message / Add Friend
 - Tests first: foundation `user_profile_visible_*` and `crates/banter/tests/profile.rs` (15 server + 5 profile + existing client suite green)
 - Docs: features, feature-status, architecture, design. Worktree `D:\Projects\Project Banter\worktrees\Banter-profiles` on `cursor/user-profiles-8837`, merging into `test/owl-fixes` only. Never touched E:.
+
+## 2026-11-03 19:34:33 -06:00 [Winter] — Fix My Account avatar button overflow
+
+Change Avatar and Remove Avatar were positioned from Change alone, so Remove clipped past the profile card. Right-align both as one group with card padding, like Discord.
+
+- Helper `account_avatar_actions_origin_x` + settings test first
+- `draw_account_settings` uses the group width for cursor X
+- Worktree `Banter-account-avatar` on `cursor/my-account-avatar-overflow-ec98` → merge into `test/owl-fixes` only. Never touched E:.

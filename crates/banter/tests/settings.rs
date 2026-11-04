@@ -1,10 +1,10 @@
 //! User Settings contracts. Written before the settings fixes and kept as written.
 
 use banter::{
-    SettingsSection, SettingsState, StreamDefaults, VideoPrefs, VoicePrefs, clamp_window_size, db_to_rms,
-    display_name_dirty, display_name_error,
-    load_json, meter_fraction, percent_to_volume, pick_camera, ptt_key, ptt_key_names, rms_to_db, save_json,
-    settings_layout, volume_to_percent, wrap_rows, OPEN_MIC_RMS,
+    SettingsSection, SettingsState, StreamDefaults, VideoPrefs, VoicePrefs, account_avatar_actions_origin_x,
+    clamp_window_size, db_to_rms, display_name_dirty, display_name_error, load_json, meter_fraction,
+    percent_to_volume, pick_camera, ptt_key, ptt_key_names, rms_to_db, save_json, settings_layout,
+    volume_to_percent, wrap_rows, OPEN_MIC_RMS,
 };
 use dear_imgui_rs::Key;
 
@@ -310,4 +310,32 @@ fn display_name_rules_match_the_server() {
     assert!(!display_name_dirty("Owl", "Owl"));
     assert!(!display_name_dirty(" Owl ", "Owl"));
     assert!(display_name_dirty("Snow Owl", "Owl"));
+}
+
+#[test]
+fn account_avatar_actions_stay_inside_the_card() {
+    // Change Avatar + Remove Avatar must right-align as one group inside the card,
+    // like Discord. Positioning only Change left Remove clipped past the right edge.
+    let card_x = 100.0_f32;
+    let card_w = 500.0_f32;
+    let pad = 16.0_f32;
+    let change_w = 130.0_f32;
+    let remove_w = 130.0_f32;
+    let gap = 8.0_f32;
+    let old_x = card_x + card_w - pad - change_w;
+    assert!(
+        old_x + change_w + gap + remove_w > card_x + card_w - pad,
+        "the old single-button origin overflows Remove Avatar"
+    );
+    let x = account_avatar_actions_origin_x(card_x, card_w, pad, change_w, remove_w, gap);
+    let remove_right = x + change_w + gap + remove_w;
+    assert!(
+        (remove_right - (card_x + card_w - pad)).abs() < 0.01,
+        "action group is right-aligned with card padding"
+    );
+    assert!(x >= card_x + pad - 0.01, "actions do not start left of card padding");
+    assert!(
+        remove_right <= card_x + card_w - pad + 0.01,
+        "Remove Avatar stays inside the card"
+    );
 }
