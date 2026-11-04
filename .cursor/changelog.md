@@ -332,3 +332,12 @@ Client UI present rate tracks the monitor under the window. With VSync on, GLFW 
 - `platform`: each frame syncs swap interval to the current display; Wayland falls back to the primary monitor
 - Docs: architecture, features, design, README Display note
 
+## 2026-11-04 00:23:01 -06:00 [Winter] — Reddit-style reply threading (BA-57)
+
+Text channels and DMs render messages as Reddit comment trees. Nested reply-to-reply stays persisted via `reply_to`. Collapse/expand is local. Reply opens an inline composer under the parent; the bottom bar posts top-level only.
+
+- Client: `comment_tree_rows`, `comment_descendant_count`, `toggle_comment_collapsed`; chat UI tree, indent, fold controls, inline reply draft
+- Server: `idx_messages_reply_to`; foundation test for nested channel + DM threads
+- Docs: architecture threading section, feature-status, features list
+- Also fixed a broken client friend-DM integration test that called sync `Store::open` (now HTTP client like the other live tests)
+

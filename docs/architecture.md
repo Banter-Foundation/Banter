@@ -64,7 +64,14 @@ Voice: join, leave, flags.
 Realtime: `/v1/ws`.  
 Health: `/v1/health`.
 
-Contract tests live in `crates/banter-server/tests/foundation.rs`.
+### Message threading (Reddit parity)
+
+- Each message may set `reply_to` to another message in the **same** channel or DM (`messages.reply_to`, indexed). That is the parent pointer for nested comment trees.
+- The API still returns a flat list ordered by id. The client builds a depth-first tree (`comment_tree_rows` in `logic.rs`): roots first, children nested under parents, orphans (missing parent) treated as roots.
+- Collapse/expand is **client-local** (not persisted). Deleting a parent still clears children's `reply_to` (existing contract); those messages become roots.
+- UI: bottom composer posts top-level only; **Reply** opens an inline composer under that comment. Indent and thread lines follow Reddit; leaf rows keep Discord-like avatar / time / hover toolbar polish.
+
+Contract tests live in `crates/banter-server/tests/foundation.rs`. Client tree helpers are covered in `crates/banter/tests/client.rs`.
 
 ## Voice, camera, and stream (high level)
 

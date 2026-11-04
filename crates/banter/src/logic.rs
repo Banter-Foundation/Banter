@@ -1,7 +1,111 @@
 //! Pure client rules: mute memory, push-to-talk, silence, resampling, and message lists.
 
+use std::collections::{HashMap, HashSet};
+
 use banter_server::{Message, VoiceFlags};
 use serde::{Deserialize, Serialize};
+
+/// One visible row in a Reddit-style comment tree (depth-first).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommentRow {
+    pub message_id: i64,
+    pub depth: u32,
+    /// Total nested replies under this node (direct + deeper).
+    pub child_count: usize,
+    pub collapsed: bool,
+}
+
+/// Build children lists keyed by parent message id. Orphans (missing parent) are roots.
+fn comment_children(messages: &[Message]) -> (Vec<i64>, HashMap<i64, Vec<i64>>) {
+    let ids: HashSet<i64> = messages.iter().map(|m| m.id).collect();
+    let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut roots = Vec::new();
+    for message in messages {
+        match message.reply_to {
+            Some(parent) if ids.contains(&parent) => {
+                children.entry(parent).or_default().push(message.id);
+            }
+            _ => roots.push(message.id),
+        }
+    }
+    roots.sort_unstable();
+    for list in children.values_mut() {
+        list.sort_unstable();
+    }
+    (roots, children)
+}
+
+fn comment_descendant_total(children: &HashMap<i64, Vec<i64>>, id: i64, stack: &mut HashSet<i64>) -> usize {
+    if !stack.insert(id) {
+        return 0;
+    }
+    let mut total = 0;
+    if let Some(kids) = children.get(&id) {
+        total += kids.len();
+        for kid in kids {
+            total += comment_descendant_total(children, *kid, stack);
+        }
+    }
+    stack.remove(&id);
+    total
+}
+
+/// Count every nested reply under `root_id` (0 when it has none).
+pub fn comment_descendant_count(messages: &[Message], root_id: i64) -> usize {
+    let (_, children) = comment_children(messages);
+    let mut stack = HashSet::new();
+    comment_descendant_total(&children, root_id, &mut stack)
+}
+
+/// Depth-first Reddit comment rows. Collapsed nodes stay visible; their descendants do not.
+pub fn comment_tree_rows(messages: &[Message], collapsed: &HashSet<i64>) -> Vec<CommentRow> {
+    let (roots, children) = comment_children(messages);
+    let mut rows = Vec::with_capacity(messages.len());
+    let mut stack = HashSet::new();
+    for root in roots {
+        walk_comment_tree(root, 0, &children, collapsed, &mut stack, &mut rows);
+    }
+    rows
+}
+
+fn walk_comment_tree(
+    id: i64,
+    depth: u32,
+    children: &HashMap<i64, Vec<i64>>,
+    collapsed: &HashSet<i64>,
+    stack: &mut HashSet<i64>,
+    rows: &mut Vec<CommentRow>,
+) {
+    if !stack.insert(id) {
+        return;
+    }
+    let child_count = {
+        let mut inner = HashSet::new();
+        comment_descendant_total(children, id, &mut inner)
+    };
+    let is_collapsed = collapsed.contains(&id);
+    rows.push(CommentRow {
+        message_id: id,
+        depth,
+        child_count,
+        collapsed: is_collapsed,
+    });
+    if !is_collapsed {
+        if let Some(kids) = children.get(&id) {
+            for kid in kids {
+                walk_comment_tree(*kid, depth.saturating_add(1), children, collapsed, stack, rows);
+            }
+        }
+    }
+    stack.remove(&id);
+}
+
+/// Collapse or expand a comment thread locally (Reddit client-side fold).
+pub fn toggle_comment_collapsed(collapsed: &mut HashSet<i64>, id: i64) {
+    if !collapsed.remove(&id) {
+        collapsed.insert(id);
+    }
+}
 
 /// Remembers mute across deafen. Deafen forces mute, then restores the earlier choice.
 #[derive(Clone, Debug, PartialEq, Eq)]
