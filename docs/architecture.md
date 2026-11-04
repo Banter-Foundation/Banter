@@ -16,7 +16,7 @@ Banter/
 | Module | Responsibility |
 | --- | --- |
 | `main.rs` | Entry → `banter::run()` |
-| `platform.rs` | GLFW window, OpenGL 3.3 context, Dear ImGui docking + glow renderer, clipboard, input, embedded-server bootstrap |
+| `platform.rs` | GLFW window, OpenGL 3.3 context, Dear ImGui docking + glow renderer, clipboard, input, embedded-server bootstrap; UI present rate follows the current monitor (VSync `Sync(1)`, reapplied when the window moves or the mode Hz changes) |
 | `ui.rs` | Signed-in Discord-like shell, sign-in/register, modals, chat, voice stage, 1:1 DM call stage, friends/DMs |
 | `theme.rs` | Skin metrics and colors (temporary Discord dark theme) |
 | `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |

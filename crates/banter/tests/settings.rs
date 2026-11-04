@@ -3,8 +3,9 @@
 use banter::{
     SettingsSection, SettingsState, StreamDefaults, VideoPrefs, VoicePrefs, account_avatar_actions_origin_x,
     clamp_window_size, db_to_rms, display_name_dirty, display_name_error, load_json, meter_fraction,
-    percent_to_volume, pick_camera, ptt_key, ptt_key_names, rms_to_db, save_json, settings_layout,
-    volume_to_percent, wrap_rows, OPEN_MIC_RMS,
+    normalize_refresh_hz, percent_to_volume, pick_camera, pick_display_refresh_hz, ptt_key, ptt_key_names,
+    rms_to_db, save_json, settings_layout, ui_swap_needs_update, volume_to_percent, wrap_rows, DisplayRefresh,
+    DEFAULT_UI_REFRESH_HZ, OPEN_MIC_RMS,
 };
 use dear_imgui_rs::Key;
 
@@ -242,6 +243,48 @@ fn every_video_setting_survives_a_restart() {
     assert_eq!(loaded, saved);
     assert_eq!(clamp_window_size(100, 50), (640, 480));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ui_refresh_follows_the_display_under_the_window() {
+    let left = DisplayRefresh {
+        x: 0,
+        y: 0,
+        width: 1920,
+        height: 1080,
+        refresh_hz: 60,
+    };
+    let right = DisplayRefresh {
+        x: 1920,
+        y: 0,
+        width: 2560,
+        height: 1440,
+        refresh_hz: 144,
+    };
+    let displays = [left, right];
+    assert_eq!(pick_display_refresh_hz(100, 100, None, &displays), 60);
+    assert_eq!(pick_display_refresh_hz(2000, 100, None, &displays), 144);
+    assert_eq!(
+        pick_display_refresh_hz(100, 100, Some(165), &displays),
+        165,
+        "fullscreen uses the active monitor mode, not the window center"
+    );
+    assert_eq!(normalize_refresh_hz(0), DEFAULT_UI_REFRESH_HZ);
+    assert_eq!(pick_display_refresh_hz(0, 0, None, &[]), DEFAULT_UI_REFRESH_HZ);
+    assert_eq!(
+        pick_display_refresh_hz(-50, -50, None, &displays),
+        60,
+        "off-screen falls back to the first connected display"
+    );
+}
+
+#[test]
+fn ui_swap_interval_reapplies_when_monitor_or_vsync_changes() {
+    assert!(ui_swap_needs_update(None, true, 60));
+    assert!(!ui_swap_needs_update(Some((true, 60)), true, 60));
+    assert!(ui_swap_needs_update(Some((true, 60)), true, 144));
+    assert!(ui_swap_needs_update(Some((true, 144)), false, 144));
+    assert!(!ui_swap_needs_update(Some((false, 144)), false, 144));
 }
 
 #[test]

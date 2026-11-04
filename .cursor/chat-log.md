@@ -672,3 +672,20 @@ Agent: Prior RID/OnOpen fixes were already on main. Root cause was SFU forwardin
 
 SFU now rewrites outbound SSRC/PT (and strips extensions) so server VC audio + camera + screen can reach peers; PR for Owl review, not merged.
 
+## 2026-11-04 00:12:16 -06:00 — UI follows display refresh rate (BA-56)
+
+Owl wants Banter **UI only** to use a dynamic refresh rate (match the display / VSync to the monitor), not stream FPS and not related to the VC/media fix running in parallel.
+
+Project: D:\Projects\Project Banter (NEVER touch E:).
+Repo: https://github.com/SnowedInOwl/Banter
+Use a separate git worktree/branch under that folder so you do not collide with the Server VC media fix worker if it is also editing the main checkout.
+
+Task: UI follows display refresh rate (BA-56)
+Avoid overlapping uncommitted edits with other workers; own worktree.
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-ui-refresh` on `cursor/ui-display-refresh-bc78`. Tests first for display pick / swap reapply; platform reapplies `Sync(1)` when monitor Hz or VSync changes.
+
+## Summary
+
+BA-56 UI display refresh: GLFW VSync follows the current monitor dynamically; stream FPS untouched.
+

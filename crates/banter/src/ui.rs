@@ -6084,7 +6084,7 @@ impl App {
         settings_form_label(ui, self.bold_font, "DISPLAY");
         ui.text_colored(
             MUTED,
-            "Window size and sync. Turning VSync off can raise FPS; tearing may show up.",
+            "Window size and sync. With VSync on, the UI follows the current monitor’s refresh rate. Turning it off can raise FPS; tearing may show up.",
         );
         settings_spacer(ui);
         if settings_toggle_row(ui, "video-vsync", "VSync", &mut self.video.vsync, width) {
