@@ -512,3 +512,14 @@ Agent: Worktree Banter-call-ui on cursor/one-on-one-call-ui-5038 from origin/tes
 
 DM Call phone action now shows a Discord-style 1:1 call stage instead of staying on chat.
 
+
+## 2026-11-03 19:26:23 -06:00 — Auto-open DM when adding a friend
+
+Owl (via coordinator BA-41): When adding a friend it should auto-open a DM with them. Root D:\Projects\Project Banter. Never E:. Branch from test/owl-fixes, merge into test/owl-fixes only. Clear commits. Worktree under Project Banter/worktrees/.
+
+Agent: Worktree Banter-friend-dm on cursor/friend-auto-open-dm-fe6d. Tests first for open_dm_peer_after_friend_add (pending → none, friends → peer id + open_dm). Wired accept + successful mutual send in ui.rs to refresh then open_dm. Pending-only request does not open. Merging into test/owl-fixes only.
+
+## Summary
+
+Adding a friend (accept or mutual complete) auto-opens their DM on test/owl-fixes.
+

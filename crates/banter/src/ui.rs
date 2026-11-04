@@ -1681,6 +1681,7 @@ impl App {
                 if self.note(self.client.send_friend_request(&name)).is_some() {
                     self.friend_name.clear();
                     self.refresh_shell();
+                    self.open_dm_after_adding_friend(&name);
                 }
             }
             skin::line_h(ui, origin[0], origin[0] + width, origin[1] + 156.0, LIST_DIVIDER);
@@ -1781,8 +1782,16 @@ impl App {
             }
         }
         if let Some(id) = accept {
+            let peer_username = self
+                .incoming
+                .iter()
+                .find(|request| request.id == id)
+                .map(|request| request.from_username.clone());
             if self.note(self.client.accept_friend_request(id)).is_some() {
                 self.refresh_shell();
+                if let Some(username) = peer_username {
+                    self.open_dm_after_adding_friend(&username);
+                }
             }
         }
         if let Some(id) = decline {
@@ -3142,6 +3151,20 @@ impl App {
         self.reply_to = None;
         self.editing = None;
         self.reload_messages();
+    }
+
+    /// Opens the DM for a newly added friend when they are on the friends list.
+    fn open_dm_after_adding_friend(&mut self, peer_username: &str) {
+        let Some(peer_id) = crate::open_dm_peer_after_friend_add(
+            self.friends.iter().map(|friend| (friend.id, friend.username.as_str())),
+            peer_username,
+        ) else {
+            return;
+        };
+        if let Some(chat) = self.note(self.client.open_dm(peer_id)) {
+            self.refresh_shell();
+            self.open_dm(chat.id);
+        }
     }
 
     fn open_mention(&mut self, mention: &Mention) {

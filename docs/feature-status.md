@@ -8,7 +8,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | --- | --- |
 | Register / login / logout (local username + password) | Working |
 | Display name + avatar (upload crop/zoom PNG/JPG/GIF/WebP, remove → letter) | Working |
-| Friends list + friend requests | Working |
+| Friends list + friend requests | Working — accepting (or completing a mutual request) opens that friend's DM |
 | Create server, invite join, member list, server nickname | Working |
 | Text + voice channels in categories (owner creates) | Working |
 | Send / reply / edit / delete / attach / search messages | Working |
