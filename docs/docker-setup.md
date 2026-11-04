@@ -87,9 +87,8 @@ If standby health fails, the current active slot is left serving.
 | `DEPLOY_USER` | SSH user |
 | `DEPLOY_SSH_KEY` | Private key for that user |
 | `DEPLOY_PATH` | Absolute path to the Banter checkout on the server |
-| `GHCR_READ_TOKEN` | PAT (or fine-grained token) with `read:packages` so the server can `docker pull` private GHCR images |
-
-Workflow permissions already include `packages: write` for the push job (`GITHUB_TOKEN`).
+| `GHCR_WRITE_TOKEN` | Classic PAT with **`write:packages`** (+ `read:packages`) — Actions uses this to push images to GHCR |
+| `GHCR_READ_TOKEN` | PAT with **`read:packages`** so the server can `docker pull` (can be the same token as `GHCR_WRITE_TOKEN`) |
 
 ### One-time server setup
 

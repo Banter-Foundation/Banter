@@ -34,11 +34,14 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # GITHUB_TOKEN often cannot create first GHCR packages on user accounts.
+      # Use a classic PAT with write:packages (+ read:packages). Same value as
+      # GHCR_READ_TOKEN is fine if that token has write:packages too.
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_WRITE_TOKEN }}
 
       - uses: docker/build-push-action@v6
         with:
