@@ -17,8 +17,9 @@ use banter_server::{
     ProfileWishlistInput, ServerSummary, UserProfile, VoiceFlags, VoiceMember,
 };
 use dear_imgui_rs::{
-    Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData, PopupQueryFlags, Style,
-    StyleColor, StyleVar, TextureFormat, TreeNodeFlags, Ui, WindowFlags, fonts::FontId,
+    ChildFlags, Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData,
+    PopupQueryFlags, Style, StyleColor, StyleVar, TextureFormat, TreeNodeFlags, Ui, WindowFlags,
+    fonts::FontId,
 };
 
 use crate::api::{ApiError, Client, MemberView};
@@ -39,9 +40,10 @@ use crate::logic::{
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
     ProfileAction, ProfileBoardTab, ProfileCard, ProfileEditScope, ProfileEditorSlot, ProfileKind,
-    ProfileMediaDraft, ProfileMode, display_name_style_color, games_from_payload, games_to_payload,
-    games_widget_cap, profile_badge_row_visible_cap, profile_board_tabs, profile_editor_slot_rows,
-    profile_heading, profile_primary_actions, rgb_u32_to_rgba,
+    ProfileMediaDraft, ProfileMode, ProfilePanelRect, display_name_style_color, games_from_payload,
+    games_to_payload, games_widget_cap, profile_badge_row_visible_cap, profile_board_tabs,
+    profile_column_content_width, profile_editor_layout, profile_editor_slot_rows, profile_heading,
+    profile_primary_actions, profile_view_layout, rgb_u32_to_rgba,
 };
 use crate::profile_paint;
 use crate::profiler;
@@ -4335,152 +4337,208 @@ impl App {
     fn draw_profile_view(&mut self, ui: &Ui, view: &UserProfile) {
         let kind = self.profile.kind().unwrap_or(ProfileKind::Friend);
         let display = ui.io().display_size();
-        let board = true;
-        let card_w = PROFILE_W + if board { PROFILE_BOARD_W + 8.0 } else { 0.0 };
-        let card_h = (PROFILE_BANNER_H + PROFILE_BODY_MIN_H).min(display[1] - 24.0);
-        let anchor = self.profile.anchor();
-        let mut min = [anchor[0] + 8.0, anchor[1]];
-        if min[0] + card_w > display[0] - 8.0 {
-            min[0] = (anchor[0] - card_w - 8.0).max(8.0);
-        }
-        if min[1] + card_h > display[1] - 8.0 {
-            min[1] = (display[1] - card_h - 8.0).max(8.0);
-        }
-        let max = [min[0] + card_w, min[1] + card_h];
-        let identity_max = [min[0] + PROFILE_W, max[1]];
-        // Never hold DrawListMut across helpers that also call get_window_draw_list().
-        {
-            let draw = ui.get_window_draw_list();
-            draw.add_rect(min, max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
-        }
-
-        let theme_primary = if self.profile.customizing() {
-            self.profile.draft_theme_primary()
-        } else {
-            view.theme_primary
-        };
-        let theme_secondary = if self.profile.customizing() {
-            self.profile.draft_theme_secondary()
-        } else {
-            view.theme_secondary
-        };
-        self.paint_profile_banner(ui, min, [identity_max[0], min[1] + PROFILE_BANNER_H], view, theme_primary, theme_secondary);
-
-        let heading = profile_heading(&view.display_name, view.nickname.as_deref());
-        let avatar_center = [min[0] + PROFILE_PAD + PROFILE_AVATAR, min[1] + PROFILE_BANNER_H];
-        {
-            let draw = ui.get_window_draw_list();
-            draw.add_circle(avatar_center, PROFILE_AVATAR + 6.0, FLOATING_BG).filled(true).build();
-        }
-        let deco_id = view.avatar_decoration_id.as_deref();
-        let frame_id = view.profile_frame_id.as_deref();
-        profile_paint::paint_profile_frame_art(ui, avatar_center, PROFILE_AVATAR, frame_id);
-        let avatar = self.avatars.get(&view.id).map(|shot| shot.texture);
-        paint_avatar(ui, avatar, avatar_center, PROFILE_AVATAR, &initials(&heading), None);
-        profile_paint::paint_avatar_decoration_art(ui, avatar_center, PROFILE_AVATAR, deco_id);
-        let presence = self.presence.get(&view.id).map(|p| p.state).unwrap_or(Presence::Offline);
-        paint_status_dot(ui, avatar_center, PROFILE_AVATAR, presence, FLOATING_BG);
-
-        if let Some(status) = view.custom_status.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            let bubble_min = [avatar_center[0] + PROFILE_AVATAR + 10.0, avatar_center[1] - 18.0];
-            let size = ui.calc_text_size(status);
-            let bubble_max = [bubble_min[0] + size[0] + 16.0, bubble_min[1] + size[1] + 10.0];
-            let draw = ui.get_window_draw_list();
-            draw.add_rect(bubble_min, bubble_max, STAGE_BG).rounding(8.0).filled(true).build();
-            draw.add_text([bubble_min[0] + 8.0, bubble_min[1] + 5.0], TEXT, status);
-        }
-
-        let text_x = min[0] + PROFILE_PAD;
-        let name_y = min[1] + PROFILE_BANNER_H + PROFILE_AVATAR + 14.0;
-        let name_color = display_name_style_color(view.display_name_style_id.as_deref());
-        {
-            let _font = ui.push_font_with_size(self.bold_font, FONT_LG);
-            ui.get_window_draw_list().add_text([text_x, name_y], name_color, &heading);
-        }
-        let mut meta = format!("@{}", view.username);
-        if let Some(pronouns) = view.pronouns.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            meta.push_str(" • ");
-            meta.push_str(pronouns);
-        }
-        ui.get_window_draw_list()
-            .add_text([text_x, name_y + 26.0], TEXT_SECONDARY, &meta);
-        let mut y = name_y + 52.0;
-        if !view.badges.is_empty() {
-            let cap = profile_badge_row_visible_cap();
-            let mut bx = text_x;
-            for badge in view.badges.iter().take(cap) {
-                profile_paint::paint_badge_icon(ui, [bx + PROFILE_BADGE, y + PROFILE_BADGE], badge);
-                bx += PROFILE_BADGE * 2.0 + 6.0;
-            }
-            if view.badges.len() > cap {
-                let extra = view.badges.len() - cap;
-                ui.get_window_draw_list()
-                    .add_text([bx, y + 4.0], MUTED, &format!("+{extra}"));
-            }
-            y += PROFILE_BADGE * 2.0 + 10.0;
-        }
-        ui.get_window_draw_list()
-            .add_text([text_x, y], MUTED, presence_label(presence));
-        y += 24.0;
-
+        let layout = profile_view_layout(display, self.profile.anchor());
         let mut close_after = false;
         let mut open_settings = false;
         let mut message_user = None;
         let mut add_friend = None;
         let mut begin_customize = false;
 
-        ui.set_cursor_screen_pos([text_x, y]);
-        for action in profile_primary_actions(kind) {
-            let (id, label) = match action {
-                ProfileAction::EditProfile => ("profile-edit", "Edit Profile"),
-                ProfileAction::Message => ("profile-message", "Message"),
-                ProfileAction::AddFriend => ("profile-add-friend", "Add Friend"),
-            };
-            let btn_w = PROFILE_W - PROFILE_PAD * 2.0;
-            if skin::button(ui, id, label, Tone::Brand, [text_x, ui.cursor_screen_pos()[1]], [btn_w, BUTTON_H], true, self.semibold_font) {
-                match action {
-                    ProfileAction::EditProfile => begin_customize = true,
-                    ProfileAction::Message => message_user = Some(view.id),
-                    ProfileAction::AddFriend => add_friend = Some(view.username.clone()),
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR
+            | WindowFlags::NO_SCROLL_WITH_MOUSE;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, skin::CLEAR);
+        ui.window("##profile-view")
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size(display, Condition::Always)
+            .build(|| {
+                {
+                    let draw = ui.get_window_draw_list();
+                    draw.add_rect(layout.card.min, layout.card.max, FLOATING_BG)
+                        .rounding(PROFILE_RADIUS)
+                        .filled(true)
+                        .build();
                 }
-            }
-            ui.dummy([0.0, 8.0]);
-        }
-        y = ui.cursor_screen_pos()[1] + 4.0;
-        skin::line_h(ui, min[0] + PROFILE_PAD, identity_max[0] - PROFILE_PAD, y, LIST_DIVIDER);
-        y += 12.0;
-        ui.set_cursor_screen_pos([text_x, y]);
 
-        if let Some(about) = view.about_me.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            ui.text_colored(MUTED, "ABOUT ME");
-            let _wrap = ui.push_text_wrap_pos(identity_max[0] - PROFILE_PAD);
-            ui.text_colored(TEXT, about);
-            ui.dummy([0.0, 8.0]);
-        }
-        ui.text_colored(MUTED, "MEMBER SINCE");
-        ui.text_colored(TEXT, &format_member_since(view.member_since));
-        ui.dummy([0.0, 8.0]);
-        if !view.connections.is_empty() {
-            ui.text_colored(MUTED, "CONNECTIONS");
-            for connection in &view.connections {
-                self.draw_profile_connection_row(ui, connection);
-            }
-            ui.dummy([0.0, 8.0]);
-        }
-        if kind == ProfileKind::SelfAccount {
-            if ui.small_button("Open My Account") {
-                open_settings = true;
-            }
-        }
+                let theme_primary = view.theme_primary;
+                let theme_secondary = view.theme_secondary;
+                self.paint_profile_banner(
+                    ui,
+                    layout.identity.min,
+                    [layout.identity.max[0], layout.identity.min[1] + PROFILE_BANNER_H],
+                    view,
+                    theme_primary,
+                    theme_secondary,
+                );
 
-        let board_min = [identity_max[0] + 8.0, min[1] + PROFILE_PAD];
-        let board_max = [max[0] - PROFILE_PAD, max[1] - PROFILE_PAD];
-        self.draw_profile_board(ui, board_min, board_max, view, false);
+                let heading = profile_heading(&view.display_name, view.nickname.as_deref());
+                let avatar_center = [
+                    layout.identity.min[0] + PROFILE_PAD + PROFILE_AVATAR,
+                    layout.identity.min[1] + PROFILE_BANNER_H,
+                ];
+                {
+                    let draw = ui.get_window_draw_list();
+                    draw.add_circle(avatar_center, PROFILE_AVATAR + 6.0, FLOATING_BG)
+                        .filled(true)
+                        .build();
+                }
+                profile_paint::paint_profile_frame_art(
+                    ui,
+                    avatar_center,
+                    PROFILE_AVATAR,
+                    view.profile_frame_id.as_deref(),
+                );
+                let avatar = self.avatars.get(&view.id).map(|shot| shot.texture);
+                paint_avatar(ui, avatar, avatar_center, PROFILE_AVATAR, &initials(&heading), None);
+                profile_paint::paint_avatar_decoration_art(
+                    ui,
+                    avatar_center,
+                    PROFILE_AVATAR,
+                    view.avatar_decoration_id.as_deref(),
+                );
+                let presence = self.presence.get(&view.id).map(|p| p.state).unwrap_or(Presence::Offline);
+                paint_status_dot(ui, avatar_center, PROFILE_AVATAR, presence, FLOATING_BG);
 
-        let over_card = ui.is_mouse_hovering_rect(min, max);
-        if self.profile_frames > 0 && ui.is_mouse_clicked(MouseButton::Left) && !over_card {
-            close_after = true;
-        }
+                if let Some(status) = view.custom_status.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    let bubble_min = [avatar_center[0] + PROFILE_AVATAR + 10.0, avatar_center[1] - 18.0];
+                    let size = ui.calc_text_size(status);
+                    let bubble_max = [bubble_min[0] + size[0] + 16.0, bubble_min[1] + size[1] + 10.0];
+                    let draw = ui.get_window_draw_list();
+                    draw.add_rect(bubble_min, bubble_max, STAGE_BG)
+                        .rounding(8.0)
+                        .filled(true)
+                        .build();
+                    draw.add_text([bubble_min[0] + 8.0, bubble_min[1] + 5.0], TEXT, status);
+                }
+
+                let text_x = layout.identity.min[0] + PROFILE_PAD;
+                let name_y = layout.identity.min[1] + PROFILE_BANNER_H + PROFILE_AVATAR + 14.0;
+                let name_color = display_name_style_color(view.display_name_style_id.as_deref());
+                {
+                    let _font = ui.push_font_with_size(self.bold_font, FONT_LG);
+                    ui.get_window_draw_list()
+                        .add_text([text_x, name_y], name_color, &heading);
+                }
+                let mut meta = format!("@{}", view.username);
+                if let Some(pronouns) = view.pronouns.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    meta.push_str(" • ");
+                    meta.push_str(pronouns);
+                }
+                ui.get_window_draw_list()
+                    .add_text([text_x, name_y + 26.0], TEXT_SECONDARY, &meta);
+                let mut y = name_y + 52.0;
+                if !view.badges.is_empty() {
+                    let cap = profile_badge_row_visible_cap();
+                    let mut bx = text_x;
+                    for badge in view.badges.iter().take(cap) {
+                        profile_paint::paint_badge_icon(ui, [bx + PROFILE_BADGE, y + PROFILE_BADGE], badge);
+                        bx += PROFILE_BADGE * 2.0 + 6.0;
+                    }
+                    if view.badges.len() > cap {
+                        let extra = view.badges.len() - cap;
+                        ui.get_window_draw_list()
+                            .add_text([bx, y + 4.0], MUTED, &format!("+{extra}"));
+                    }
+                    y += PROFILE_BADGE * 2.0 + 10.0;
+                }
+                ui.get_window_draw_list()
+                    .add_text([text_x, y], MUTED, presence_label(presence));
+                y += 24.0;
+
+                let body_min = [layout.identity.min[0], y];
+                let body_size = [
+                    layout.identity.width(),
+                    (layout.identity.max[1] - body_min[1]).max(0.0),
+                ];
+                let child_bg = ui.push_style_color(StyleColor::ChildBg, FLOATING_BG);
+                let child_pad = ui.push_style_var(StyleVar::WindowPadding([PROFILE_PAD, 8.0]));
+                let child_gap = ui.push_style_var(StyleVar::ItemSpacing([8.0, 6.0]));
+                ui.set_cursor_screen_pos(body_min);
+                ui.child_window("profile-view-identity")
+                    .size(body_size)
+                    .build(ui, || {
+                        for action in profile_primary_actions(kind) {
+                            let (id, label) = match action {
+                                ProfileAction::EditProfile => ("profile-edit", "Edit Profile"),
+                                ProfileAction::Message => ("profile-message", "Message"),
+                                ProfileAction::AddFriend => ("profile-add-friend", "Add Friend"),
+                            };
+                            let btn_w = (ui.content_region_avail()[0]).max(80.0);
+                            let origin = ui.cursor_screen_pos();
+                            if skin::button(
+                                ui,
+                                id,
+                                label,
+                                Tone::Brand,
+                                origin,
+                                [btn_w, BUTTON_H],
+                                true,
+                                self.semibold_font,
+                            ) {
+                                match action {
+                                    ProfileAction::EditProfile => begin_customize = true,
+                                    ProfileAction::Message => message_user = Some(view.id),
+                                    ProfileAction::AddFriend => add_friend = Some(view.username.clone()),
+                                }
+                            }
+                            ui.dummy([0.0, BUTTON_H + 4.0]);
+                        }
+                        ui.separator();
+                        if let Some(about) =
+                            view.about_me.as_deref().map(str::trim).filter(|s| !s.is_empty())
+                        {
+                            ui.text_colored(MUTED, "ABOUT ME");
+                            let _wrap = ui.push_text_wrap_pos(ui.cursor_screen_pos()[0] + ui.content_region_avail()[0]);
+                            ui.text_colored(TEXT, about);
+                            ui.dummy([0.0, 6.0]);
+                        }
+                        ui.text_colored(MUTED, "MEMBER SINCE");
+                        ui.text_colored(TEXT, &format_member_since(view.member_since));
+                        ui.dummy([0.0, 6.0]);
+                        if !view.connections.is_empty() {
+                            ui.text_colored(MUTED, "CONNECTIONS");
+                            for connection in &view.connections {
+                                self.draw_profile_connection_row(ui, connection);
+                            }
+                        }
+                        if kind == ProfileKind::SelfAccount {
+                            ui.dummy([0.0, 4.0]);
+                            if ui.small_button("Open My Account") {
+                                open_settings = true;
+                            }
+                        }
+                    });
+                drop(child_gap);
+                drop(child_pad);
+                drop(child_bg);
+
+                let board_bg = ui.push_style_color(StyleColor::ChildBg, STAGE_BG);
+                let board_pad =
+                    ui.push_style_var(StyleVar::WindowPadding([PROFILE_BOARD_CARD_PAD, PROFILE_BOARD_CARD_PAD]));
+                let board_gap = ui.push_style_var(StyleVar::ItemSpacing([8.0, 8.0]));
+                ui.set_cursor_screen_pos(layout.board.min);
+                ui.child_window("profile-view-board")
+                    .size(layout.board.size())
+                    .build(ui, || {
+                        self.draw_profile_board_contents(ui, layout.board, view, false);
+                    });
+                drop(board_gap);
+                drop(board_pad);
+                drop(board_bg);
+
+                let over_card = ui.is_mouse_hovering_rect(layout.card.min, layout.card.max);
+                if self.profile_frames > 0 && ui.is_mouse_clicked(MouseButton::Left) && !over_card {
+                    close_after = true;
+                }
+            });
         self.profile_frames = self.profile_frames.saturating_add(1);
 
         if begin_customize {
@@ -4609,96 +4667,159 @@ impl App {
 
     fn draw_profile_customize(&mut self, ui: &Ui, view: &UserProfile) {
         let display = ui.io().display_size();
-        let pad = 24.0;
-        let min = [pad, pad];
-        let max = [display[0] - pad, display[1] - pad];
-        {
-            let draw = ui.get_window_draw_list();
-            draw.add_rect([0.0, 0.0], display, [0.0, 0.0, 0.0, 0.72]).filled(true).build();
-            draw.add_rect(min, max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
-        }
-
-        let left_w = PROFILE_EDITOR_W;
-        let right_w = PROFILE_BOARD_W;
-        let center_w = (max[0] - min[0] - left_w - right_w - PROFILE_PAD * 4.0).max(PROFILE_W);
-        let left_min = [min[0] + PROFILE_PAD, min[1] + PROFILE_PAD];
-        let center_min = [left_min[0] + left_w + PROFILE_PAD, left_min[1]];
-        let right_min = [center_min[0] + center_w + PROFILE_PAD, left_min[1]];
-        let body_max_y = max[1] - 64.0;
-
-        ui.child_window("profile-editor-left")
-            .size([left_w, body_max_y - left_min[1]])
-            .build(ui, || {
-                self.draw_profile_scope_switch(ui, left_w);
-                ui.dummy([0.0, 6.0]);
-                if self.profile.edit_scope().is_main() {
-                    ui.text_colored(MUTED, "DISPLAY NAME");
-                    ui.set_next_item_width(left_w - 8.0);
-                    ui.input_text("##profile-display-name", self.profile.draft_display_name_mut())
-                        .build();
-                    ui.text_colored(MUTED, "PRONOUNS");
-                    ui.set_next_item_width(left_w - 8.0);
-                    ui.input_text("##profile-pronouns", self.profile.draft_pronouns_mut()).build();
-                    ui.text_colored(MUTED, "CUSTOM STATUS");
-                    ui.set_next_item_width(left_w - 8.0);
-                    ui.input_text("##profile-status", self.profile.draft_custom_status_mut()).build();
-                    ui.text_colored(MUTED, "ABOUT ME");
-                    ui.set_next_item_width(left_w - 8.0);
-                    ui.input_text_multiline(
-                        "##profile-about",
-                        self.profile.draft_about_me_mut(),
-                        [left_w - 8.0, 56.0],
-                    )
-                    .build();
-                    ui.separator();
-                    self.draw_profile_editor_slots(ui, view, left_w);
-                } else {
-                    ui.text_colored(MUTED, "SERVER NICKNAME");
-                    ui.set_next_item_width(left_w - 8.0);
-                    ui.input_text("##profile-nickname", self.profile.draft_nickname_mut())
-                        .build();
-                    ui.text_colored(
-                        MUTED,
-                        "Server profiles use a nickname here. Cosmetics stay on Main Profile.",
-                    );
-                }
-            });
-
+        let layout = profile_editor_layout(display);
         let preview = self.profile_preview_from_drafts(view);
-        let preview_max = [center_min[0] + center_w.min(PROFILE_W), body_max_y];
-        ui.set_cursor_screen_pos(center_min);
-        self.paint_profile_preview_card(ui, center_min, preview_max, &preview);
-
-        let board_max = [max[0] - PROFILE_PAD, body_max_y];
-        self.draw_profile_board(ui, right_min, board_max, &preview, true);
-
-        let footer_y = max[1] - 52.0;
         let mut save = false;
         let mut cancel = false;
-        if skin::button(
-            ui,
-            "profile-save",
-            "Save",
-            Tone::Brand,
-            [right_min[0], footer_y],
-            [120.0, BUTTON_H],
-            true,
-            self.semibold_font,
-        ) {
-            save = true;
-        }
-        if skin::button(
-            ui,
-            "profile-cancel",
-            "Cancel",
-            Tone::Secondary,
-            [right_min[0] + 128.0, footer_y],
-            [120.0, BUTTON_H],
-            true,
-            self.semibold_font,
-        ) {
-            cancel = true;
-        }
+
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR
+            | WindowFlags::NO_SCROLL_WITH_MOUSE;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, skin::CLEAR);
+        ui.window("##profile-customize")
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size(display, Condition::Always)
+            .build(|| {
+                {
+                    let draw = ui.get_window_draw_list();
+                    draw.add_rect([0.0, 0.0], display, [0.0, 0.0, 0.0, 0.72])
+                        .filled(true)
+                        .build();
+                    draw.add_rect(layout.frame.min, layout.frame.max, FLOATING_BG)
+                        .rounding(PROFILE_RADIUS)
+                        .filled(true)
+                        .build();
+                    draw.add_rect(layout.footer.min, layout.footer.max, MODAL_FOOTER_BG)
+                        .rounding(PROFILE_RADIUS)
+                        .flags(DrawFlags::ROUND_BOTTOM)
+                        .filled(true)
+                        .build();
+                }
+
+                if skin::icon_button(
+                    ui,
+                    "profile-editor-close",
+                    self.icon("x"),
+                    layout.close.min,
+                    layout.close.size()[0],
+                    18.0,
+                    TEXT_SECONDARY,
+                    TEXT_NORMAL,
+                    Some(ICON_HOVER_BG),
+                ) {
+                    cancel = true;
+                }
+
+                let left_w = layout.left.width();
+                let content_w = profile_column_content_width(left_w);
+                let left_bg = ui.push_style_color(StyleColor::ChildBg, FLOATING_BG);
+                let left_pad = ui.push_style_var(StyleVar::WindowPadding([8.0, 8.0]));
+                let left_gap = ui.push_style_var(StyleVar::ItemSpacing([8.0, 6.0]));
+                ui.set_cursor_screen_pos(layout.left.min);
+                ui.child_window("profile-editor-left")
+                    .size(layout.left.size())
+                    .build(ui, || {
+                        self.draw_profile_scope_switch(ui, content_w);
+                        ui.dummy([0.0, 8.0]);
+                        if self.profile.edit_scope().is_main() {
+                            // Discord-like: cosmetics first, then profile text fields.
+                            self.draw_profile_editor_slots(ui, view, content_w);
+                            ui.separator();
+                            ui.text_colored(MUTED, "DISPLAY NAME");
+                            ui.set_next_item_width(content_w);
+                            ui.input_text("##profile-display-name", self.profile.draft_display_name_mut())
+                                .build();
+                            ui.text_colored(MUTED, "PRONOUNS");
+                            ui.set_next_item_width(content_w);
+                            ui.input_text("##profile-pronouns", self.profile.draft_pronouns_mut())
+                                .build();
+                            ui.text_colored(MUTED, "CUSTOM STATUS");
+                            ui.set_next_item_width(content_w);
+                            ui.input_text("##profile-status", self.profile.draft_custom_status_mut())
+                                .build();
+                            ui.text_colored(MUTED, "ABOUT ME");
+                            ui.input_text_multiline(
+                                "##profile-about",
+                                self.profile.draft_about_me_mut(),
+                                [content_w, 64.0],
+                            )
+                            .build();
+                        } else {
+                            ui.text_colored(MUTED, "SERVER NICKNAME");
+                            ui.set_next_item_width(content_w);
+                            ui.input_text("##profile-nickname", self.profile.draft_nickname_mut())
+                                .build();
+                            let _wrap = ui.push_text_wrap_pos(ui.cursor_screen_pos()[0] + content_w);
+                            ui.text_colored(
+                                MUTED,
+                                "Server profiles use a nickname here. Cosmetics stay on Main Profile.",
+                            );
+                        }
+                    });
+                drop(left_gap);
+                drop(left_pad);
+                drop(left_bg);
+
+                let preview_bg = ui.push_style_color(StyleColor::ChildBg, STAGE_BG);
+                ui.set_cursor_screen_pos(layout.preview.min);
+                ui.child_window("profile-editor-preview")
+                    .size(layout.preview.size())
+                    .flags(WindowFlags::NO_SCROLLBAR)
+                    .build(ui, || {
+                        let origin = ui.cursor_screen_pos();
+                        let avail = ui.content_region_avail();
+                        let preview_max = [origin[0] + avail[0].min(PROFILE_W), origin[1] + avail[1]];
+                        self.paint_profile_preview_card(ui, origin, preview_max, &preview);
+                    });
+                drop(preview_bg);
+
+                let board_bg = ui.push_style_color(StyleColor::ChildBg, STAGE_BG);
+                let board_pad =
+                    ui.push_style_var(StyleVar::WindowPadding([PROFILE_BOARD_CARD_PAD, PROFILE_BOARD_CARD_PAD]));
+                let board_gap = ui.push_style_var(StyleVar::ItemSpacing([8.0, 8.0]));
+                ui.set_cursor_screen_pos(layout.board.min);
+                ui.child_window("profile-editor-board")
+                    .size(layout.board.size())
+                    .build(ui, || {
+                        self.draw_profile_board_contents(ui, layout.board, &preview, true);
+                    });
+                drop(board_gap);
+                drop(board_pad);
+                drop(board_bg);
+
+                if skin::button(
+                    ui,
+                    "profile-cancel",
+                    "Cancel",
+                    Tone::Secondary,
+                    layout.cancel.min,
+                    layout.cancel.size(),
+                    true,
+                    self.semibold_font,
+                ) {
+                    cancel = true;
+                }
+                if skin::button(
+                    ui,
+                    "profile-save",
+                    "Save",
+                    Tone::Brand,
+                    layout.save.min,
+                    layout.save.size(),
+                    true,
+                    self.semibold_font,
+                ) {
+                    save = true;
+                }
+            });
 
         if cancel {
             self.profile.cancel_customize();
@@ -4714,7 +4835,6 @@ impl App {
         if save {
             self.save_profile_customize(view);
         }
-        let _ = preview;
         self.profile_frames = self.profile_frames.saturating_add(1);
     }
 
@@ -5065,8 +5185,14 @@ impl App {
                 CosmeticKind::ProfileFrame => self.profile.set_draft_profile_frame(None),
             }
         }
-        for item in self.profile_cosmetics.iter().filter(|item| item.kind == kind) {
+        let row_w = profile_column_content_width(width);
+        for item in self.profile_cosmetics.iter().filter(|item| item.kind == kind).cloned() {
             let selected = current.as_deref() == Some(item.id.as_str());
+            let swatch = rgb_u32_to_rgba(item.color);
+            let origin = ui.cursor_screen_pos();
+            let _ = ui.color_button(&format!("##swatch-{}-{}", label, item.id), swatch);
+            ui.set_cursor_screen_pos([origin[0] + 28.0, origin[1]]);
+            ui.set_next_item_width((row_w - 28.0).max(60.0));
             if ui.radio_button_bool(&format!("{}##{label}", item.label), selected) && !selected {
                 let id = Some(item.id.clone());
                 match kind {
@@ -5077,22 +5203,20 @@ impl App {
                     CosmeticKind::ProfileFrame => self.profile.set_draft_profile_frame(id),
                 }
             }
-            let swatch = rgb_u32_to_rgba(item.color);
-            ui.same_line();
-            let _ = ui.color_button(&format!("##swatch-{}-{}", label, item.id), swatch);
         }
-        let _ = width;
     }
 
-    fn draw_profile_board(&mut self, ui: &Ui, min: [f32; 2], max: [f32; 2], view: &UserProfile, editing: bool) {
-        if max[0] <= min[0] || max[1] <= min[1] {
+    /// Board / Activity / Wishlist body. Caller supplies a clipped child with padding.
+    fn draw_profile_board_contents(
+        &mut self,
+        ui: &Ui,
+        bounds: ProfilePanelRect,
+        view: &UserProfile,
+        editing: bool,
+    ) {
+        if bounds.width() <= 0.0 || bounds.height() <= 0.0 {
             return;
         }
-        {
-            let draw = ui.get_window_draw_list();
-            draw.add_rect(min, max, STAGE_BG).rounding(PROFILE_RADIUS).filled(true).build();
-        }
-        ui.set_cursor_screen_pos([min[0] + 12.0, min[1] + 10.0]);
         for (index, tab) in profile_board_tabs().iter().enumerate() {
             if index > 0 {
                 ui.same_line();
@@ -5107,117 +5231,135 @@ impl App {
                 self.profile.set_board_tab(*tab);
             }
         }
-        ui.dummy([0.0, 8.0]);
+        ui.dummy([0.0, 4.0]);
         match self.profile.board_tab() {
-            ProfileBoardTab::Board => self.draw_profile_board_tab(ui, min, max, view, editing),
+            ProfileBoardTab::Board => self.draw_profile_board_tab(ui, bounds, view, editing),
             ProfileBoardTab::Activity => self.draw_profile_activity_tab(ui, view, editing),
-            ProfileBoardTab::Wishlist => self.draw_profile_wishlist_tab(ui, min, view, editing),
+            ProfileBoardTab::Wishlist => self.draw_profile_wishlist_tab(ui, bounds, view, editing),
         }
     }
 
     fn draw_profile_board_tab(
         &mut self,
         ui: &Ui,
-        min: [f32; 2],
-        max: [f32; 2],
+        bounds: ProfilePanelRect,
         view: &UserProfile,
         editing: bool,
     ) {
+        let content_w = profile_column_content_width(bounds.width());
         if editing {
-            ui.text_colored(TEXT, "Your Widgets");
-            ui.same_line();
-            if ui.small_button("+ Add Widget") {
-                self.profile_widget_drafts.push(ProfileWidgetInput {
-                    kind: ProfileWidgetKind::FavoriteGame,
-                    title: "Favorite Game".into(),
-                    payload: serde_json::json!({ "title": "", "quote": "" }),
-                });
+            {
+                let header = ui.cursor_screen_pos();
+                ui.text_colored(TEXT, "Your Widgets");
+                ui.set_cursor_screen_pos([header[0] + content_w.max(120.0) - 100.0, header[1]]);
+                if ui.small_button("+ Add Widget") {
+                    self.profile_widget_drafts.push(ProfileWidgetInput {
+                        kind: ProfileWidgetKind::FavoriteGame,
+                        title: "Favorite Game".into(),
+                        payload: serde_json::json!({ "title": "", "quote": "" }),
+                    });
+                }
             }
             let mut remove = None;
             for (index, widget) in self.profile_widget_drafts.iter_mut().enumerate() {
-                ui.separator();
-                ui.text_colored(MUTED, &format!("Widget {}", index + 1));
-                if ui.radio_button_bool(
-                    &format!("Favorite Game##w{index}"),
-                    widget.kind == ProfileWidgetKind::FavoriteGame,
-                ) {
-                    if widget.kind != ProfileWidgetKind::FavoriteGame {
-                        widget.payload = serde_json::json!({ "title": "", "quote": "" });
-                    }
-                    widget.kind = ProfileWidgetKind::FavoriteGame;
-                    widget.title = "Favorite Game".into();
-                }
-                ui.same_line();
-                if ui.radio_button_bool(
-                    &format!("Games in Rotation##w{index}"),
-                    widget.kind == ProfileWidgetKind::GamesInRotation,
-                ) {
-                    if widget.kind != ProfileWidgetKind::GamesInRotation {
-                        widget.payload = games_to_payload(&[]);
-                    }
-                    widget.kind = ProfileWidgetKind::GamesInRotation;
-                    widget.title = "Games in Rotation".into();
-                }
-                ui.same_line();
-                if ui.radio_button_bool(
-                    &format!("Games I Like##w{index}"),
-                    widget.kind == ProfileWidgetKind::GamesILike,
-                ) {
-                    if widget.kind != ProfileWidgetKind::GamesILike {
-                        widget.payload = games_to_payload(&[]);
-                    }
-                    widget.kind = ProfileWidgetKind::GamesILike;
-                    widget.title = "Games I Like".into();
-                }
-                ui.set_next_item_width(180.0);
-                ui.input_text(&format!("##widget-title-{index}"), &mut widget.title).build();
-                match widget.kind {
-                    ProfileWidgetKind::FavoriteGame => {
-                        let mut title = widget
-                            .payload
-                            .get("title")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let mut quote = widget
-                            .payload
-                            .get("quote")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        ui.set_next_item_width(180.0);
-                        ui.input_text(&format!("##fav-title-{index}"), &mut title).build();
-                        ui.set_next_item_width(180.0);
-                        ui.input_text(&format!("##fav-quote-{index}"), &mut quote).build();
-                        widget.payload = serde_json::json!({ "title": title, "quote": quote });
-                    }
-                    ProfileWidgetKind::GamesInRotation | ProfileWidgetKind::GamesILike => {
-                        let cap = games_widget_cap(widget.kind);
-                        let mut games = games_from_payload(&widget.payload);
-                        let mut remove_game = None;
-                        for (game_i, (title, tag)) in games.iter_mut().enumerate() {
-                            ui.set_next_item_width(140.0);
-                            ui.input_text(&format!("##game-title-{index}-{game_i}"), title).build();
-                            ui.same_line();
-                            ui.set_next_item_width(100.0);
-                            ui.input_text(&format!("##game-tag-{index}-{game_i}"), tag).build();
-                            ui.same_line();
-                            if ui.small_button(&format!("x##game-rm-{index}-{game_i}")) {
-                                remove_game = Some(game_i);
+                ui.dummy([0.0, 6.0]);
+                let card_bg = ui.push_style_color(StyleColor::ChildBg, INPUT_BG);
+                let card_pad = ui.push_style_var(StyleVar::WindowPadding([8.0, 8.0]));
+                let card_round = ui.push_style_var(StyleVar::ChildRounding(PROFILE_RADIUS));
+                ui.child_window(format!("profile-widget-card-{index}"))
+                    .size([content_w, 0.0])
+                    .child_flags(ChildFlags::BORDERS | ChildFlags::AUTO_RESIZE_Y)
+                    .build(ui, || {
+                        ui.text_colored(MUTED, &format!("Widget {}", index + 1));
+                        // Stack kind radios — same_line overflow was breaking the board column.
+                        if ui.radio_button_bool(
+                            &format!("Favorite Game##w{index}"),
+                            widget.kind == ProfileWidgetKind::FavoriteGame,
+                        ) {
+                            if widget.kind != ProfileWidgetKind::FavoriteGame {
+                                widget.payload = serde_json::json!({ "title": "", "quote": "" });
+                            }
+                            widget.kind = ProfileWidgetKind::FavoriteGame;
+                            widget.title = "Favorite Game".into();
+                        }
+                        if ui.radio_button_bool(
+                            &format!("Games in Rotation##w{index}"),
+                            widget.kind == ProfileWidgetKind::GamesInRotation,
+                        ) {
+                            if widget.kind != ProfileWidgetKind::GamesInRotation {
+                                widget.payload = games_to_payload(&[]);
+                            }
+                            widget.kind = ProfileWidgetKind::GamesInRotation;
+                            widget.title = "Games in Rotation".into();
+                        }
+                        if ui.radio_button_bool(
+                            &format!("Games I Like##w{index}"),
+                            widget.kind == ProfileWidgetKind::GamesILike,
+                        ) {
+                            if widget.kind != ProfileWidgetKind::GamesILike {
+                                widget.payload = games_to_payload(&[]);
+                            }
+                            widget.kind = ProfileWidgetKind::GamesILike;
+                            widget.title = "Games I Like".into();
+                        }
+                        let field_w = (ui.content_region_avail()[0]).max(80.0);
+                        ui.set_next_item_width(field_w);
+                        ui.input_text(&format!("##widget-title-{index}"), &mut widget.title).build();
+                        match widget.kind {
+                            ProfileWidgetKind::FavoriteGame => {
+                                let mut title = widget
+                                    .payload
+                                    .get("title")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let mut quote = widget
+                                    .payload
+                                    .get("quote")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                ui.set_next_item_width(field_w);
+                                ui.input_text(&format!("##fav-title-{index}"), &mut title).build();
+                                ui.set_next_item_width(field_w);
+                                ui.input_text(&format!("##fav-quote-{index}"), &mut quote).build();
+                                widget.payload = serde_json::json!({ "title": title, "quote": quote });
+                            }
+                            ProfileWidgetKind::GamesInRotation | ProfileWidgetKind::GamesILike => {
+                                let cap = games_widget_cap(widget.kind);
+                                let mut games = games_from_payload(&widget.payload);
+                                let mut remove_game = None;
+                                for (game_i, (title, tag)) in games.iter_mut().enumerate() {
+                                    let half = ((field_w - 8.0) * 0.5).max(70.0);
+                                    ui.set_next_item_width(half);
+                                    ui.input_text(&format!("##game-title-{index}-{game_i}"), title)
+                                        .build();
+                                    ui.same_line();
+                                    ui.set_next_item_width(half);
+                                    ui.input_text(&format!("##game-tag-{index}-{game_i}"), tag)
+                                        .build();
+                                    if ui.small_button(&format!("x##game-rm-{index}-{game_i}")) {
+                                        remove_game = Some(game_i);
+                                    }
+                                }
+                                if let Some(game_i) = remove_game {
+                                    games.remove(game_i);
+                                }
+                                if games.len() < cap
+                                    && ui.small_button(&format!("+ Add Game##w{index}"))
+                                {
+                                    games.push((String::new(), String::new()));
+                                }
+                                widget.payload = games_to_payload(&games);
                             }
                         }
-                        if let Some(game_i) = remove_game {
-                            games.remove(game_i);
+                        if ui.small_button(&format!("Remove##widget-{index}")) {
+                            remove = Some(index);
                         }
-                        if games.len() < cap && ui.small_button(&format!("+ Add Game##w{index}")) {
-                            games.push((String::new(), String::new()));
-                        }
-                        widget.payload = games_to_payload(&games);
-                    }
-                }
-                if ui.small_button(&format!("Remove##widget-{index}")) {
-                    remove = Some(index);
-                }
+                    });
+                drop(card_round);
+                drop(card_pad);
+                drop(card_bg);
             }
             if let Some(index) = remove {
                 self.profile_widget_drafts.remove(index);
@@ -5233,12 +5375,13 @@ impl App {
             }
             let mut remove_conn = None;
             for (index, connection) in self.profile_connection_drafts.iter_mut().enumerate() {
-                ui.set_next_item_width(90.0);
+                let field_w = ((content_w - 16.0) * 0.45).max(70.0);
+                ui.set_next_item_width(field_w);
                 ui.input_text(&format!("##conn-kind-{index}"), &mut connection.kind).build();
                 ui.same_line();
-                ui.set_next_item_width(100.0);
+                ui.set_next_item_width(field_w);
                 ui.input_text(&format!("##conn-name-{index}"), &mut connection.name).build();
-                ui.set_next_item_width((max[0] - min[0] - 40.0).max(120.0));
+                ui.set_next_item_width(content_w - 16.0);
                 ui.input_text(&format!("##conn-url-{index}"), &mut connection.url).build();
                 if ui.small_button(&format!("Remove##conn-{index}")) {
                     remove_conn = Some(index);
@@ -5251,7 +5394,7 @@ impl App {
             ui.text_colored(MUTED, "No widgets yet.");
         } else {
             for widget in &view.widgets {
-                ui.separator();
+                ui.dummy([0.0, 4.0]);
                 ui.text_colored(TEXT, &widget.title);
                 match widget.kind {
                     ProfileWidgetKind::FavoriteGame => {
@@ -5263,44 +5406,48 @@ impl App {
                             ui.dummy([PROFILE_GAME_CARD_W + 8.0, PROFILE_GAME_CARD_H + 4.0]);
                         }
                         if !quote.is_empty() {
+                            let _wrap = ui.push_text_wrap_pos(ui.cursor_screen_pos()[0] + content_w);
                             ui.text_colored(MUTED, quote);
                         }
                     }
                     ProfileWidgetKind::GamesInRotation => {
                         let games = games_from_payload(&widget.payload);
-                        let origin_y = ui.cursor_screen_pos()[1];
                         let mut x = ui.cursor_screen_pos()[0];
+                        let mut y = ui.cursor_screen_pos()[1];
+                        let right = ui.cursor_screen_pos()[0] + content_w;
                         for (title, tag) in &games {
-                            profile_paint::paint_game_card(ui, [x, origin_y], title, tag);
-                            x += PROFILE_GAME_CARD_W + 8.0;
-                            if x + PROFILE_GAME_CARD_W > max[0] - 8.0 {
-                                break;
+                            if x + PROFILE_GAME_CARD_W > right && x > ui.cursor_screen_pos()[0] {
+                                x = ui.cursor_screen_pos()[0];
+                                y += PROFILE_GAME_CARD_H + 8.0;
                             }
+                            profile_paint::paint_game_card(ui, [x, y], title, tag);
+                            x += PROFILE_GAME_CARD_W + 8.0;
                         }
-                        ui.dummy([0.0, PROFILE_GAME_CARD_H + 4.0]);
+                        let rows = ((games.len().max(1) as f32) * (PROFILE_GAME_CARD_W + 8.0) / content_w.max(1.0))
+                            .ceil()
+                            .max(1.0);
+                        ui.dummy([0.0, rows * (PROFILE_GAME_CARD_H + 8.0)]);
                     }
                     ProfileWidgetKind::GamesILike => {
                         let games = games_from_payload(&widget.payload);
-                        let origin_y = ui.cursor_screen_pos()[1];
                         let mut x = ui.cursor_screen_pos()[0];
+                        let mut y = ui.cursor_screen_pos()[1];
+                        let right = ui.cursor_screen_pos()[0] + content_w;
                         for (title, _) in &games {
-                            profile_paint::paint_game_thumb(ui, [x, origin_y], title);
-                            x += PROFILE_GAME_THUMB + 6.0;
-                            if x + PROFILE_GAME_THUMB > max[0] - 8.0 {
-                                break;
+                            if x + PROFILE_GAME_THUMB > right && x > ui.cursor_screen_pos()[0] {
+                                x = ui.cursor_screen_pos()[0];
+                                y += PROFILE_GAME_THUMB + 6.0;
                             }
+                            profile_paint::paint_game_thumb(ui, [x, y], title);
+                            x += PROFILE_GAME_THUMB + 6.0;
                         }
-                        ui.dummy([0.0, PROFILE_GAME_THUMB + 4.0]);
+                        let per_row = (content_w / (PROFILE_GAME_THUMB + 6.0)).floor().max(1.0);
+                        let rows = ((games.len() as f32) / per_row).ceil().max(1.0);
+                        ui.dummy([0.0, rows * (PROFILE_GAME_THUMB + 6.0)]);
                     }
                 }
             }
-            if !view.connections.is_empty() {
-                ui.separator();
-                ui.text_colored(MUTED, "CONNECTIONS");
-                for connection in &view.connections {
-                    self.draw_profile_connection_row(ui, connection);
-                }
-            }
+            // Connections stay on the identity column in view mode; skip duplicate board list.
         }
     }
 
@@ -5315,6 +5462,7 @@ impl App {
     }
 
     fn draw_profile_activity_tab(&mut self, ui: &Ui, view: &UserProfile, editing: bool) {
+        let field_w = (ui.content_region_avail()[0]).max(80.0);
         if editing {
             if ui.small_button("+ Add Activity") {
                 self.profile_activity_drafts.push(ProfileActivityInput {
@@ -5326,11 +5474,11 @@ impl App {
             let mut remove = None;
             for (index, entry) in self.profile_activity_drafts.iter_mut().enumerate() {
                 ui.separator();
-                ui.set_next_item_width(100.0);
+                ui.set_next_item_width(field_w);
                 ui.input_text(&format!("##act-kind-{index}"), &mut entry.kind).build();
-                ui.set_next_item_width(160.0);
+                ui.set_next_item_width(field_w);
                 ui.input_text(&format!("##act-title-{index}"), &mut entry.title).build();
-                ui.set_next_item_width(160.0);
+                ui.set_next_item_width(field_w);
                 ui.input_text(&format!("##act-detail-{index}"), &mut entry.detail).build();
                 if ui.small_button(&format!("Remove##act-{index}")) {
                     remove = Some(index);
@@ -5345,6 +5493,7 @@ impl App {
             for entry in &view.activity {
                 ui.separator();
                 ui.text_colored(TEXT, &entry.title);
+                let _wrap = ui.push_text_wrap_pos(ui.cursor_screen_pos()[0] + field_w);
                 if !entry.detail.is_empty() {
                     ui.text_colored(MUTED, &format!("{} · {}", entry.kind, entry.detail));
                 } else {
@@ -5357,10 +5506,11 @@ impl App {
     fn draw_profile_wishlist_tab(
         &mut self,
         ui: &Ui,
-        min: [f32; 2],
+        bounds: ProfilePanelRect,
         view: &UserProfile,
         editing: bool,
     ) {
+        let content_w = profile_column_content_width(bounds.width());
         if editing {
             if ui.small_button("+ Add Wishlist Game") {
                 self.profile_wishlist_drafts.push(ProfileWishlistInput {
@@ -5370,12 +5520,12 @@ impl App {
             }
             let mut remove = None;
             for (index, entry) in self.profile_wishlist_drafts.iter_mut().enumerate() {
-                ui.set_next_item_width(140.0);
+                let half = ((content_w - 40.0) * 0.5).max(70.0);
+                ui.set_next_item_width(half);
                 ui.input_text(&format!("##wish-title-{index}"), &mut entry.title).build();
                 ui.same_line();
-                ui.set_next_item_width(100.0);
+                ui.set_next_item_width(half);
                 ui.input_text(&format!("##wish-tag-{index}"), &mut entry.tag).build();
-                ui.same_line();
                 if ui.small_button(&format!("x##wish-{index}")) {
                     remove = Some(index);
                 }
@@ -5386,13 +5536,21 @@ impl App {
         } else if view.wishlist.is_empty() {
             ui.text_colored(MUTED, "Wishlist is empty.");
         } else {
-            let origin_y = ui.cursor_screen_pos()[1];
             let mut x = ui.cursor_screen_pos()[0];
+            let mut y = ui.cursor_screen_pos()[1];
+            let left = x;
+            let right = left + content_w;
             for entry in &view.wishlist {
-                profile_paint::paint_game_thumb(ui, [x, origin_y], &entry.title);
+                if x + PROFILE_GAME_THUMB > right && x > left {
+                    x = left;
+                    y += PROFILE_GAME_THUMB + 6.0;
+                }
+                profile_paint::paint_game_thumb(ui, [x, y], &entry.title);
                 x += PROFILE_GAME_THUMB + 6.0;
             }
-            ui.dummy([0.0, PROFILE_GAME_THUMB + 4.0]);
+            let per_row = (content_w / (PROFILE_GAME_THUMB + 6.0)).floor().max(1.0);
+            let rows = ((view.wishlist.len() as f32) / per_row).ceil().max(1.0);
+            ui.dummy([0.0, rows * (PROFILE_GAME_THUMB + 6.0)]);
             for entry in &view.wishlist {
                 if entry.tag.is_empty() {
                     ui.text_colored(TEXT_SECONDARY, &entry.title);
@@ -5400,7 +5558,6 @@ impl App {
                     ui.text_colored(TEXT_SECONDARY, &format!("{} — {}", entry.title, entry.tag));
                 }
             }
-            let _ = min;
         }
     }
 
@@ -5442,7 +5599,7 @@ impl App {
         }
         if let Some(plate) = view.nameplate_id.as_deref() {
             let plate_min = [min[0] + 12.0, max[1] - PROFILE_NAMEPLATE_H - 8.0];
-            let plate_max = [min[0] + PROFILE_W - 12.0, max[1] - 8.0];
+            let plate_max = [max[0] - 12.0, max[1] - 8.0];
             profile_paint::paint_nameplate_art(ui, plate_min, plate_max, Some(plate));
         }
     }
@@ -5521,28 +5678,50 @@ impl App {
             }
             y += PROFILE_BADGE * 2.0 + 8.0;
         }
-        {
-            let draw = ui.get_window_draw_list();
-            if let Some(about) = view.about_me.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                draw.add_text([text_x, y], MUTED, "ABOUT ME");
-                y += 18.0;
-                draw.add_text([text_x, y], TEXT, about);
-                y += 24.0;
-            }
-            draw.add_text([text_x, y], MUTED, "MEMBER SINCE");
-            y += 18.0;
-            draw.add_text([text_x, y], TEXT, &format_member_since(view.member_since));
-            y += 24.0;
-            if !view.connections.is_empty() {
-                draw.add_text([text_x, y], MUTED, "CONNECTIONS");
-                y += 18.0;
-                for connection in &view.connections {
-                    draw.add_text(
-                        [text_x, y],
-                        TEXT_SECONDARY,
-                        &format!("{} — {}", connection.kind, connection.name),
-                    );
+        let wrap_w = (card_max[0] - text_x - 8.0).max(80.0);
+        let about_lines = view
+            .about_me
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|about| skin::wrap_lines(ui, None, FONT_SM, about, wrap_w))
+            .unwrap_or_default();
+        if y < card_max[1] - 8.0 {
+            let _clip = ui.push_clip_rect([min[0], y], card_max, true);
+            {
+                let draw = ui.get_window_draw_list();
+                if !about_lines.is_empty() {
+                    draw.add_text([text_x, y], MUTED, "ABOUT ME");
                     y += 18.0;
+                    for line in about_lines.iter().take(6) {
+                        if y + 16.0 > card_max[1] {
+                            break;
+                        }
+                        draw.add_text([text_x, y], TEXT, line);
+                        y += 16.0;
+                    }
+                    y += 8.0;
+                }
+                if y + 36.0 <= card_max[1] {
+                    draw.add_text([text_x, y], MUTED, "MEMBER SINCE");
+                    y += 18.0;
+                    draw.add_text([text_x, y], TEXT, &format_member_since(view.member_since));
+                    y += 24.0;
+                }
+                if !view.connections.is_empty() && y + 18.0 <= card_max[1] {
+                    draw.add_text([text_x, y], MUTED, "CONNECTIONS");
+                    y += 18.0;
+                    for connection in &view.connections {
+                        if y + 16.0 > card_max[1] {
+                            break;
+                        }
+                        draw.add_text(
+                            [text_x, y],
+                            TEXT_SECONDARY,
+                            &format!("{} — {}", connection.kind, connection.name),
+                        );
+                        y += 18.0;
+                    }
                 }
             }
         }

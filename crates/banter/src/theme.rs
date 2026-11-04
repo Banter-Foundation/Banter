@@ -182,6 +182,16 @@ pub const PROFILE_GAME_CARD_W: f32 = 92.0;
 pub const PROFILE_GAME_CARD_H: f32 = 128.0;
 pub const PROFILE_GAME_THUMB: f32 = 56.0;
 pub const PROFILE_SLOT_GAP: f32 = 8.0;
+/// Outer inset of the customization editor frame from the display edge.
+pub const PROFILE_EDITOR_OUTER_PAD: f32 = 24.0;
+/// Gap between editor left / preview / board columns.
+pub const PROFILE_EDITOR_COL_GAP: f32 = 16.0;
+/// Save / Cancel footer band inside the customization frame.
+pub const PROFILE_EDITOR_FOOTER_H: f32 = 56.0;
+/// Inner pad for board widget cards.
+pub const PROFILE_BOARD_CARD_PAD: f32 = 12.0;
+/// Minimum width kept for the live preview column when the window is narrow.
+pub const PROFILE_PREVIEW_MIN_W: f32 = 280.0;
 pub const BUTTON_H: f32 = 38.0;
 pub const INPUT_H: f32 = 40.0;
 pub const INPUT_RADIUS: f32 = 3.0;

@@ -838,3 +838,9 @@ Agent: Rebased and merged #29 onto main after #31; skipped #2; building Win+Linu
 Owl: merge open fixes (#29); skip UI theme #2; cut Version-1-test-8; Win+Linux; GHCR; docs; gh CLI.
 
 Agent: Merged #29 (`f4c3da8`) after rebase onto #31 tip; skipped #2. Published Version-1-test-8 at https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-8. Image ghcr.io/snowedinowl/banter:version-1-test-8 (+ latest). Tagged tip `80ece87`.
+
+## 2026-11-04 08:06:41 +00:00 — Major repair of broken profile UI (BA-73)
+
+Owl: Banter profile UI is very broken and needs major work (beyond the earlier “credible baseline”). Fix layout/chrome of profile view + customization editor so it is usable and Discord-like again. Reference: /cursor/stores/self/media/discord-profile-customization-ref.png. Living review: /cursor/stores/self/docs/profile-system-review.md. Context: /cursor/stores/self/docs/project-context.md. Preferences: /cursor/stores/self/preferences.md. Focus on UI correctness/clarity (overflow, broken panels, editor columns, preview, Save/Cancel, cosmetics pickers, board cards). Open PR with gh; do not merge until Owl says so. Report PR + what was fixed. Task: Major repair of broken profile UI (BA-73 if that key exists)
+
+Agent: Branch `cursor/profile-ui-repair-c26f`. Overlay windows + clipped columns; layout contracts in profile.rs; cosmetics-first editor; footer Save/Cancel; stacked board widget radios; preview wrap/clip. Client profile_customization 17 passed. Opening PR; do not merge until Owl says so.

@@ -435,3 +435,11 @@ Shipped pre-release Version-1-test-8 from main `80ece87` (DrawListMut PR #31, me
 
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-8
 - Assets: Banter-windows-version-1-test-8.zip, Banter-linux-version-1-test-8.zip, banter-server.exe, banter-server-linux
+
+## 2026-11-04 08:06:41 +00:00 [ubuntu] — Major repair of broken profile UI (BA-73)
+
+Profile view and customization editor were drawing without a dedicated ImGui overlay window and without clipped columns, so panels overflowed, editor columns collided, Save/Cancel sat on top of the board, cosmetics pickers spilled past the left column, and board widget kind radios on one line blew past the board width.
+
+- `profile.rs` / `theme.rs`: `profile_view_layout` + `profile_editor_layout` contracts (disjoint identity/board; three editor columns + footer Save/Cancel/close)
+- `ui.rs`: overlay windows for view + customize; clipped scroll children for identity/left/preview/board; cosmetics-first left column; stacked widget kind radios; auto-sized board widget cards; wrapped preview About Me; Cancel left / Save right footer
+- Tests: client `profile_customization` 17 passed (layout contracts included). Do not merge until Owl says so.

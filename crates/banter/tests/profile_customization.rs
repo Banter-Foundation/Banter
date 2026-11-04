@@ -5,7 +5,8 @@ use banter::{
     ProfileAction, ProfileBoardTab, ProfileCard, ProfileEditScope, ProfileEditorSlot, ProfileKind,
     ProfileMediaDraft, ProfileMode, ProfileWidgetKind, display_name_style_color, games_from_payload,
     games_to_payload, games_widget_cap, profile_badge_row_visible_cap, profile_board_tabs,
-    profile_editor_sections, profile_editor_slot_rows, profile_heading, profile_primary_actions,
+    profile_column_content_width, profile_editor_layout, profile_editor_sections,
+    profile_editor_slot_rows, profile_heading, profile_primary_actions, profile_view_layout,
     profile_view_shows_board,
 };
 
@@ -187,4 +188,62 @@ fn editor_can_switch_main_and_server_profile_scope() {
     assert_eq!(card.draft_nickname(), "Night Owl");
     card.set_edit_scope(ProfileEditScope::Main);
     assert!(card.edit_scope().is_main());
+}
+
+#[test]
+fn profile_view_layout_keeps_identity_and_board_disjoint_on_screen() {
+    let layout = profile_view_layout([1280.0, 720.0], [200.0, 100.0]);
+    assert!(layout.identity.disjoint(layout.board));
+    assert!(layout.card.contains(layout.identity.min));
+    assert!(layout.card.contains([
+        layout.identity.max[0] - 1.0,
+        layout.identity.max[1] - 1.0
+    ]));
+    assert!(layout.card.contains(layout.board.min));
+    assert!(layout.card.contains([layout.board.max[0] - 1.0, layout.board.max[1] - 1.0]));
+    assert!(layout.card.max[0] <= 1280.0);
+    assert!(layout.card.max[1] <= 720.0);
+    assert!(layout.board.width() > 0.0);
+    assert!(layout.board.height() > 0.0);
+}
+
+#[test]
+fn profile_view_layout_flips_when_anchor_is_near_right_edge() {
+    let layout = profile_view_layout([1280.0, 720.0], [1200.0, 80.0]);
+    assert!(layout.card.max[0] <= 1280.0 - 8.0 + 0.1);
+    assert!(layout.card.min[0] < 1200.0);
+}
+
+#[test]
+fn profile_editor_layout_has_three_columns_footer_and_save_cancel() {
+    let layout = profile_editor_layout([1440.0, 900.0]);
+    assert!(layout.left.disjoint(layout.preview));
+    assert!(layout.preview.disjoint(layout.board));
+    assert!(layout.left.disjoint(layout.board));
+    assert!(layout.footer.min[1] >= layout.left.max[1] - 0.1);
+    assert!(layout.footer.contains([
+        (layout.save.min[0] + layout.save.max[0]) * 0.5,
+        (layout.save.min[1] + layout.save.max[1]) * 0.5
+    ]));
+    assert!(layout.footer.contains([
+        (layout.cancel.min[0] + layout.cancel.max[0]) * 0.5,
+        (layout.cancel.min[1] + layout.cancel.max[1]) * 0.5
+    ]));
+    assert!(layout.save.disjoint(layout.cancel));
+    assert!(layout.frame.contains(layout.close.min));
+    assert!(layout.preview.width() >= 280.0);
+    assert!(layout.board.width() > 100.0);
+    assert_eq!(profile_column_content_width(320.0), 304.0);
+}
+
+#[test]
+fn profile_editor_layout_still_fits_narrow_displays() {
+    let layout = profile_editor_layout([1024.0, 700.0]);
+    assert!(layout.frame.max[0] <= 1024.0);
+    assert!(layout.frame.max[1] <= 700.0);
+    assert!(layout.left.width() > 0.0);
+    assert!(layout.preview.width() > 0.0);
+    assert!(layout.board.width() > 0.0);
+    assert!(layout.left.disjoint(layout.preview));
+    assert!(layout.preview.disjoint(layout.board));
 }
