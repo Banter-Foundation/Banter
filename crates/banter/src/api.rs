@@ -8,9 +8,9 @@ use base64::Engine;
 use crate::profiler;
 use base64::engine::general_purpose::STANDARD;
 use banter_server::{
-    Account, CallSnapshot, Category, CategoryLayout, Channel, ChannelKind, ChatTarget, DirectChat,
-    Friend, FriendRequest, Mention, Message, Presence, ServerHome, ServerSummary, Session, UserProfile,
-    VoiceFlags, VoiceMember,
+    Account, CallSnapshot, Category, CategoryLayout, Channel, ChannelKind, ChatTarget, CosmeticItem,
+    DirectChat, Friend, FriendRequest, Mention, Message, Presence, ProfilePatch, ServerHome,
+    ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember,
 };
 use serde::Deserialize;
 
@@ -147,6 +147,15 @@ impl Client {
         )
     }
 
+    pub fn update_profile(&self, patch: &ProfilePatch) -> Result<UserProfile, ApiError> {
+        let body = serde_json::to_value(patch).map_err(|err| ApiError::new(err.to_string()))?;
+        self.send_json(self.auth(http().patch(&self.url("/v1/me/profile"))), body)
+    }
+
+    pub fn profile_cosmetics(&self) -> Result<Vec<CosmeticItem>, ApiError> {
+        self.get_json("/v1/profile/cosmetics")
+    }
+
     pub fn set_avatar(&self, bytes: &[u8]) -> Result<(), ApiError> {
         let start = Instant::now();
         let result = self
@@ -161,8 +170,38 @@ impl Client {
         self.call_empty("DELETE", "/v1/me/avatar", self.auth(http().delete(&self.url("/v1/me/avatar"))))
     }
 
+    pub fn set_banner(&self, bytes: &[u8]) -> Result<(), ApiError> {
+        let start = Instant::now();
+        let result = self
+            .auth(http().post(&self.url("/v1/me/banner")))
+            .set("Content-Type", "application/octet-stream")
+            .send_bytes(bytes);
+        profiler::record_http("POST", "/v1/me/banner", start.elapsed(), bytes.len(), 0);
+        self.finish(result)
+    }
+
+    pub fn clear_banner(&self) -> Result<(), ApiError> {
+        self.call_empty("DELETE", "/v1/me/banner", self.auth(http().delete(&self.url("/v1/me/banner"))))
+    }
+
     pub fn avatar(&self, user_id: i64) -> Result<Vec<u8>, ApiError> {
         let path = format!("/v1/users/{user_id}/avatar");
+        let start = Instant::now();
+        let response = self
+            .auth(http().get(&self.url(&path)))
+            .call()
+            .map_err(|err| self.http_error(err))?;
+        let bytes = response
+            .into_reader()
+            .bytes()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| ApiError::new(err.to_string()))?;
+        profiler::record_http("GET", &path, start.elapsed(), 0, bytes.len());
+        Ok(bytes)
+    }
+
+    pub fn banner(&self, user_id: i64) -> Result<Vec<u8>, ApiError> {
+        let path = format!("/v1/users/{user_id}/banner");
         let start = Instant::now();
         let response = self
             .auth(http().get(&self.url(&path)))

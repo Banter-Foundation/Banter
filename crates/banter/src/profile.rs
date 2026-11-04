@@ -1,7 +1,8 @@
-//! User profile card rules: open/close, edit mode, headings, and primary actions.
+//! User profile card rules: Discord-parity view + customization editor state.
 //!
-//! Kept free of drawing so `tests/profile.rs` can check every rule without a window.
-//! About Me and custom status stay deferred — see `docs/foundation.md`.
+//! Kept free of drawing so `tests/profile*.rs` can check every rule without a window.
+
+use banter_server::cosmetics_catalog;
 
 /// How the viewer relates to the profile being shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,13 +20,41 @@ pub enum ProfileAction {
     AddFriend,
 }
 
+/// View vs Discord-style customization editor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileMode {
+    View,
+    Customize,
+}
+
+/// Board / Activity / Wishlist tabs on the profile panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileBoardTab {
+    Board,
+    Activity,
+    Wishlist,
+}
+
+pub use banter_server::ProfileWidgetKind;
+
 /// Floating profile card state. Drawable-free so unit tests own the contract.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProfileCard {
     user_id: Option<i64>,
     kind: Option<ProfileKind>,
-    editing: bool,
+    mode: ProfileMode,
     draft_display_name: String,
+    draft_about_me: String,
+    draft_pronouns: String,
+    draft_custom_status: String,
+    draft_theme_primary: u32,
+    draft_theme_secondary: u32,
+    draft_nameplate: Option<String>,
+    draft_avatar_decoration: Option<String>,
+    draft_display_name_style: Option<String>,
+    draft_profile_effect: Option<String>,
+    draft_profile_frame: Option<String>,
+    board_tab: ProfileBoardTab,
     anchor: [f32; 2],
     server_id: Option<i64>,
 }
@@ -35,8 +64,19 @@ impl ProfileCard {
         Self {
             user_id: None,
             kind: None,
-            editing: false,
+            mode: ProfileMode::View,
             draft_display_name: String::new(),
+            draft_about_me: String::new(),
+            draft_pronouns: String::new(),
+            draft_custom_status: String::new(),
+            draft_theme_primary: banter_server::DEFAULT_THEME_PRIMARY,
+            draft_theme_secondary: banter_server::DEFAULT_THEME_SECONDARY,
+            draft_nameplate: None,
+            draft_avatar_decoration: None,
+            draft_display_name_style: None,
+            draft_profile_effect: None,
+            draft_profile_frame: None,
+            board_tab: ProfileBoardTab::Board,
             anchor: [0.0, 0.0],
             server_id: None,
         }
@@ -54,12 +94,65 @@ impl ProfileCard {
         self.kind
     }
 
+    pub fn mode(&self) -> ProfileMode {
+        self.mode
+    }
+
+    pub fn customizing(&self) -> bool {
+        self.mode == ProfileMode::Customize
+    }
+
+    /// True while the Discord-style editor (or legacy display-name edit) is open.
     pub fn editing(&self) -> bool {
-        self.editing
+        self.customizing()
     }
 
     pub fn draft_display_name(&self) -> &str {
         &self.draft_display_name
+    }
+
+    pub fn draft_about_me(&self) -> &str {
+        &self.draft_about_me
+    }
+
+    pub fn draft_pronouns(&self) -> &str {
+        &self.draft_pronouns
+    }
+
+    pub fn draft_custom_status(&self) -> &str {
+        &self.draft_custom_status
+    }
+
+    pub fn draft_theme_primary(&self) -> u32 {
+        self.draft_theme_primary
+    }
+
+    pub fn draft_theme_secondary(&self) -> u32 {
+        self.draft_theme_secondary
+    }
+
+    pub fn draft_nameplate(&self) -> &Option<String> {
+        &self.draft_nameplate
+    }
+
+    pub fn draft_avatar_decoration(&self) -> &Option<String> {
+        &self.draft_avatar_decoration
+    }
+
+    pub fn draft_display_name_style(&self) -> &Option<String> {
+        &self.draft_display_name_style
+    }
+
+    pub fn draft_profile_effect(&self) -> &Option<String> {
+        &self.draft_profile_effect
+    }
+
+    pub fn draft_profile_frame(&self) -> &Option<String> {
+        &self.draft_profile_frame
+    }
+
+    pub fn board_tab(&self) -> ProfileBoardTab {
+        self.board_tab
     }
 
     pub fn anchor(&self) -> [f32; 2] {
@@ -73,8 +166,9 @@ impl ProfileCard {
     pub fn open(&mut self, user_id: i64, kind: ProfileKind) {
         self.user_id = Some(user_id);
         self.kind = Some(kind);
-        self.editing = false;
-        self.draft_display_name.clear();
+        self.mode = ProfileMode::View;
+        self.clear_drafts();
+        self.board_tab = ProfileBoardTab::Board;
         self.server_id = None;
     }
 
@@ -86,12 +180,43 @@ impl ProfileCard {
         self.server_id = server_id;
     }
 
-    /// Start editing the display name. Only the viewer's own profile can edit.
-    pub fn begin_edit(&mut self, current_display_name: &str) -> bool {
+    pub fn set_board_tab(&mut self, tab: ProfileBoardTab) {
+        self.board_tab = tab;
+    }
+
+    /// Open the Discord-style customization editor. Only the viewer's own profile.
+    pub fn begin_customize(&mut self) -> bool {
         if self.kind != Some(ProfileKind::SelfAccount) {
             return false;
         }
-        self.editing = true;
+        self.mode = ProfileMode::Customize;
+        true
+    }
+
+    /// Seed drafts from the loaded profile payload, then open the editor.
+    pub fn begin_customize_from(&mut self, view: &banter_server::UserProfile) -> bool {
+        if !self.begin_customize() {
+            return false;
+        }
+        self.draft_display_name = view.display_name.clone();
+        self.draft_about_me = view.about_me.clone().unwrap_or_default();
+        self.draft_pronouns = view.pronouns.clone().unwrap_or_default();
+        self.draft_custom_status = view.custom_status.clone().unwrap_or_default();
+        self.draft_theme_primary = view.theme_primary;
+        self.draft_theme_secondary = view.theme_secondary;
+        self.draft_nameplate = view.nameplate_id.clone();
+        self.draft_avatar_decoration = view.avatar_decoration_id.clone();
+        self.draft_display_name_style = view.display_name_style_id.clone();
+        self.draft_profile_effect = view.profile_effect_id.clone();
+        self.draft_profile_frame = view.profile_frame_id.clone();
+        true
+    }
+
+    /// Start editing (legacy entry used by older tests). Opens customize mode.
+    pub fn begin_edit(&mut self, current_display_name: &str) -> bool {
+        if !self.begin_customize() {
+            return false;
+        }
         self.draft_display_name = current_display_name.to_string();
         true
     }
@@ -104,18 +229,85 @@ impl ProfileCard {
         &mut self.draft_display_name
     }
 
+    pub fn set_draft_about_me(&mut self, draft: impl Into<String>) {
+        self.draft_about_me = draft.into();
+    }
+
+    pub fn draft_about_me_mut(&mut self) -> &mut String {
+        &mut self.draft_about_me
+    }
+
+    pub fn set_draft_pronouns(&mut self, draft: impl Into<String>) {
+        self.draft_pronouns = draft.into();
+    }
+
+    pub fn draft_pronouns_mut(&mut self) -> &mut String {
+        &mut self.draft_pronouns
+    }
+
+    pub fn set_draft_custom_status(&mut self, draft: impl Into<String>) {
+        self.draft_custom_status = draft.into();
+    }
+
+    pub fn draft_custom_status_mut(&mut self) -> &mut String {
+        &mut self.draft_custom_status
+    }
+
+    pub fn set_draft_theme(&mut self, primary: u32, secondary: u32) {
+        self.draft_theme_primary = primary;
+        self.draft_theme_secondary = secondary;
+    }
+
+    pub fn set_draft_nameplate(&mut self, id: Option<String>) {
+        self.draft_nameplate = id;
+    }
+
+    pub fn set_draft_avatar_decoration(&mut self, id: Option<String>) {
+        self.draft_avatar_decoration = id;
+    }
+
+    pub fn set_draft_display_name_style(&mut self, id: Option<String>) {
+        self.draft_display_name_style = id;
+    }
+
+    pub fn set_draft_profile_effect(&mut self, id: Option<String>) {
+        self.draft_profile_effect = id;
+    }
+
+    pub fn set_draft_profile_frame(&mut self, id: Option<String>) {
+        self.draft_profile_frame = id;
+    }
+
     pub fn cancel_edit(&mut self) {
-        self.editing = false;
-        self.draft_display_name.clear();
+        self.cancel_customize();
+    }
+
+    pub fn cancel_customize(&mut self) {
+        self.mode = ProfileMode::View;
+        self.clear_drafts();
     }
 
     pub fn finish_edit(&mut self) {
-        self.editing = false;
-        self.draft_display_name.clear();
+        self.mode = ProfileMode::View;
+        self.clear_drafts();
     }
 
     pub fn close(&mut self) {
         *self = Self::closed();
+    }
+
+    fn clear_drafts(&mut self) {
+        self.draft_display_name.clear();
+        self.draft_about_me.clear();
+        self.draft_pronouns.clear();
+        self.draft_custom_status.clear();
+        self.draft_theme_primary = banter_server::DEFAULT_THEME_PRIMARY;
+        self.draft_theme_secondary = banter_server::DEFAULT_THEME_SECONDARY;
+        self.draft_nameplate = None;
+        self.draft_avatar_decoration = None;
+        self.draft_display_name_style = None;
+        self.draft_profile_effect = None;
+        self.draft_profile_frame = None;
     }
 }
 
@@ -133,7 +325,7 @@ pub fn profile_heading(display_name: &str, nickname: Option<&str>) -> String {
     }
 }
 
-/// Foundation actions for a profile card. About Me / custom status stay deferred.
+/// Foundation actions for a profile card.
 pub fn profile_primary_actions(kind: ProfileKind) -> &'static [ProfileAction] {
     match kind {
         ProfileKind::SelfAccount => &[ProfileAction::EditProfile],
@@ -141,4 +333,59 @@ pub fn profile_primary_actions(kind: ProfileKind) -> &'static [ProfileAction] {
         ProfileKind::ServerMember { is_friend: true } => &[ProfileAction::Message],
         ProfileKind::ServerMember { is_friend: false } => &[ProfileAction::AddFriend],
     }
+}
+
+/// Discord editor left-column slots from the customization reference.
+pub fn profile_editor_sections() -> &'static [&'static str] {
+    &[
+        "Nameplate",
+        "Avatar",
+        "Avatar Decoration",
+        "Display Name Style",
+        "Theme",
+        "Banner",
+        "Profile Effect",
+        "Profile Frame",
+    ]
+}
+
+pub fn profile_board_tabs() -> &'static [ProfileBoardTab] {
+    &[
+        ProfileBoardTab::Board,
+        ProfileBoardTab::Activity,
+        ProfileBoardTab::Wishlist,
+    ]
+}
+
+pub fn profile_view_shows_board(mode: ProfileMode) -> bool {
+    matches!(mode, ProfileMode::View | ProfileMode::Customize)
+}
+
+/// RGBA color for a display-name style id. Falls back to white.
+pub fn display_name_style_color(id: Option<&str>) -> [f32; 4] {
+    match banter_server::display_name_style_color(id) {
+        Some(rgb) => rgb_u32_to_rgba(rgb),
+        None => [1.0, 1.0, 1.0, 1.0],
+    }
+}
+
+pub fn rgb_u32_to_rgba(rgb: u32) -> [f32; 4] {
+    let r = ((rgb >> 16) & 0xff) as f32 / 255.0;
+    let g = ((rgb >> 8) & 0xff) as f32 / 255.0;
+    let b = (rgb & 0xff) as f32 / 255.0;
+    [r, g, b, 1.0]
+}
+
+pub fn cosmetic_label(id: &str) -> Option<String> {
+    cosmetics_catalog()
+        .into_iter()
+        .find(|item| item.id == id)
+        .map(|item| item.label)
+}
+
+pub fn cosmetic_color(id: &str) -> Option<u32> {
+    cosmetics_catalog()
+        .into_iter()
+        .find(|item| item.id == id)
+        .map(|item| item.color)
 }

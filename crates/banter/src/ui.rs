@@ -10,9 +10,11 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use banter_server::{
-    Account, CallPhase, CallSnapshot, CategoryLayout, Channel, ChannelKind, ChatTarget, DirectChat,
-    ClientSignal, Friend, FriendRequest, LayerId, LayerPreferences, MAX_ATTACHMENT_BYTES, MAX_AVATAR_BYTES, MediaKind, MediaPlace, Mention,
-    Message, Presence, ServerSummary, UserProfile, VoiceFlags, VoiceMember,
+    Account, CallPhase, CallSnapshot, CategoryLayout, Channel, ChannelKind, ChatTarget, ClientSignal,
+    CosmeticItem, CosmeticKind, DirectChat, Friend, FriendRequest, LayerId, LayerPreferences,
+    MAX_ATTACHMENT_BYTES, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MediaKind, MediaPlace, Mention, Message,
+    Presence, ProfileConnectionInput, ProfilePatch, ProfileWidgetInput, ProfileWidgetKind, ServerSummary,
+    UserProfile, VoiceFlags, VoiceMember,
 };
 use dear_imgui_rs::{
     Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData, PopupQueryFlags, Style,
@@ -35,7 +37,9 @@ use crate::logic::{
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
-    ProfileAction, ProfileCard, ProfileKind, profile_heading, profile_primary_actions,
+    ProfileAction, ProfileBoardTab, ProfileCard, ProfileKind, ProfileMode, cosmetic_color,
+    display_name_style_color, profile_board_tabs, profile_heading, profile_primary_actions,
+    rgb_u32_to_rgba,
 };
 use crate::profiler;
 use crate::realtime::Realtime;
@@ -221,6 +225,11 @@ pub(crate) struct App {
     avatars: HashMap<i64, Shot>,
     avatar_rev: HashMap<i64, i64>,
     avatar_miss: HashMap<i64, i64>,
+    banners: HashMap<i64, Shot>,
+    banner_rev: HashMap<i64, i64>,
+    banner_miss: HashMap<i64, i64>,
+    /// Banner bytes waiting for a Context upload pass.
+    pending_banner: Option<(i64, i64, Vec<u8>)>,
     crop_open: bool,
     crop_rgba: Vec<u8>,
     crop_size: [u32; 2],
@@ -229,10 +238,16 @@ pub(crate) struct App {
     crop_drag: Option<[f32; 2]>,
     crop_preview: Option<Shot>,
     crop_preview_key: [i32; 3],
-    /// Floating user profile card (view/edit foundation basics).
+    /// Floating Discord-parity profile (view + customization editor).
     profile: ProfileCard,
     /// Last profile payload from `/v1/users/{id}` for the open card.
     profile_view: Option<UserProfile>,
+    /// Banter cosmetics catalog for the editor (fetched once per open).
+    profile_cosmetics: Vec<CosmeticItem>,
+    /// Draft widgets while customizing (real user content only).
+    profile_widget_drafts: Vec<ProfileWidgetInput>,
+    /// Draft connections while customizing.
+    profile_connection_drafts: Vec<ProfileConnectionInput>,
     /// Frames the profile card has been open (skips the opening click for dismiss).
     profile_frames: u32,
     /// Discord-style right-click menu for messages, members, and channels.
@@ -377,6 +392,10 @@ impl App {
             avatars: HashMap::new(),
             avatar_rev: HashMap::new(),
             avatar_miss: HashMap::new(),
+            banners: HashMap::new(),
+            banner_rev: HashMap::new(),
+            banner_miss: HashMap::new(),
+            pending_banner: None,
             crop_open: false,
             crop_rgba: Vec::new(),
             crop_size: [0, 0],
@@ -387,6 +406,9 @@ impl App {
             crop_preview_key: [0, 0, 0],
             profile: ProfileCard::closed(),
             profile_view: None,
+            profile_cosmetics: Vec::new(),
+            profile_widget_drafts: Vec::new(),
+            profile_connection_drafts: Vec::new(),
             profile_frames: 0,
             context_menu: None,
             history_h: 0.0,
@@ -3635,6 +3657,18 @@ impl App {
     }
 
     fn install_avatars(&mut self, imgui: &mut Context) {
+        if let Some((user_id, rev, bytes)) = self.pending_banner.take() {
+            if let Some(shot) = self.banners.remove(&user_id) {
+                self.retired_shots.push(shot);
+            }
+            if let Some(shot) = upload_jpeg(imgui, &bytes).or_else(|| upload_rgba_png(imgui, &bytes)) {
+                self.banners.insert(user_id, shot);
+                self.banner_rev.insert(user_id, rev);
+                self.banner_miss.remove(&user_id);
+            } else {
+                self.banner_miss.insert(user_id, rev);
+            }
+        }
         let mut wanted = Vec::new();
         if let Some(account) = &self.account {
             wanted.push((account.id, account.has_avatar, account.avatar_rev));
@@ -3921,6 +3955,9 @@ impl App {
     fn close_profile(&mut self) {
         self.profile.close();
         self.profile_view = None;
+        self.profile_cosmetics.clear();
+        self.profile_widget_drafts.clear();
+        self.profile_connection_drafts.clear();
         self.profile_frames = 0;
     }
 
@@ -3968,12 +4005,20 @@ impl App {
             self.close_profile();
             return;
         };
+        self.ensure_profile_banner(ui, &view);
+        if self.profile.mode() == ProfileMode::Customize {
+            self.draw_profile_customize(ui, &view);
+        } else {
+            self.draw_profile_view(ui, &view);
+        }
+    }
+
+    fn draw_profile_view(&mut self, ui: &Ui, view: &UserProfile) {
         let kind = self.profile.kind().unwrap_or(ProfileKind::Friend);
-        let editing = self.profile.editing();
         let display = ui.io().display_size();
-        let card_w = PROFILE_W;
-        let body_h = if editing { 260.0 } else { PROFILE_BODY_MIN_H };
-        let card_h = PROFILE_BANNER_H + body_h;
+        let board = true;
+        let card_w = PROFILE_W + if board { PROFILE_BOARD_W + 8.0 } else { 0.0 };
+        let card_h = (PROFILE_BANNER_H + PROFILE_BODY_MIN_H).min(display[1] - 24.0);
         let anchor = self.profile.anchor();
         let mut min = [anchor[0] + 8.0, anchor[1]];
         if min[0] + card_w > display[0] - 8.0 {
@@ -3983,102 +4028,112 @@ impl App {
             min[1] = (display[1] - card_h - 8.0).max(8.0);
         }
         let max = [min[0] + card_w, min[1] + card_h];
+        let identity_max = [min[0] + PROFILE_W, max[1]];
         let draw = ui.get_window_draw_list();
         draw.add_rect(min, max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
-        draw.add_rect(min, [max[0], min[1] + PROFILE_BANNER_H], BLURPLE)
-            .rounding(PROFILE_RADIUS)
-            .flags(DrawFlags::ROUND_TOP)
-            .filled(true)
-            .build();
-        let avatar_center = [min[0] + PROFILE_PAD + PROFILE_AVATAR, min[1] + PROFILE_BANNER_H];
-        draw.add_circle(avatar_center, PROFILE_AVATAR + 4.0, FLOATING_BG).filled(true).build();
+
+        let theme_primary = if self.profile.customizing() {
+            self.profile.draft_theme_primary()
+        } else {
+            view.theme_primary
+        };
+        let theme_secondary = if self.profile.customizing() {
+            self.profile.draft_theme_secondary()
+        } else {
+            view.theme_secondary
+        };
+        self.paint_profile_banner(ui, min, [identity_max[0], min[1] + PROFILE_BANNER_H], view, theme_primary, theme_secondary);
+
         let heading = profile_heading(&view.display_name, view.nickname.as_deref());
+        let avatar_center = [min[0] + PROFILE_PAD + PROFILE_AVATAR, min[1] + PROFILE_BANNER_H];
+        draw.add_circle(avatar_center, PROFILE_AVATAR + 6.0, FLOATING_BG).filled(true).build();
+        let deco_id = view.avatar_decoration_id.as_deref();
+        let frame_id = view.profile_frame_id.as_deref();
+        paint_profile_frame(ui, avatar_center, PROFILE_AVATAR, frame_id);
         let avatar = self.avatars.get(&view.id).map(|shot| shot.texture);
         paint_avatar(ui, avatar, avatar_center, PROFILE_AVATAR, &initials(&heading), None);
+        paint_avatar_decoration(ui, avatar_center, PROFILE_AVATAR, deco_id);
         let presence = self.presence.get(&view.id).copied().unwrap_or(Presence::Offline);
         paint_status_dot(ui, avatar_center, PROFILE_AVATAR, presence, FLOATING_BG);
 
+        if let Some(status) = view.custom_status.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let bubble_min = [avatar_center[0] + PROFILE_AVATAR + 10.0, avatar_center[1] - 18.0];
+            let size = ui.calc_text_size(status);
+            let bubble_max = [bubble_min[0] + size[0] + 16.0, bubble_min[1] + size[1] + 10.0];
+            draw.add_rect(bubble_min, bubble_max, STAGE_BG).rounding(8.0).filled(true).build();
+            draw.add_text([bubble_min[0] + 8.0, bubble_min[1] + 5.0], TEXT, status);
+        }
+
         let text_x = min[0] + PROFILE_PAD;
-        let name_y = min[1] + PROFILE_BANNER_H + PROFILE_AVATAR + 12.0;
+        let name_y = min[1] + PROFILE_BANNER_H + PROFILE_AVATAR + 14.0;
+        let name_color = display_name_style_color(view.display_name_style_id.as_deref());
         {
             let _font = ui.push_font_with_size(self.bold_font, FONT_LG);
-            draw.add_text([text_x, name_y], TEXT, &heading);
+            draw.add_text([text_x, name_y], name_color, &heading);
         }
-        let handle = format!("@{}", view.username);
-        draw.add_text([text_x, name_y + 26.0], TEXT_SECONDARY, &handle);
+        let mut meta = format!("@{}", view.username);
+        if let Some(pronouns) = view.pronouns.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            meta.push_str(" • ");
+            meta.push_str(pronouns);
+        }
+        draw.add_text([text_x, name_y + 26.0], TEXT_SECONDARY, &meta);
         let mut y = name_y + 52.0;
-        if let Some(nick) = view.nickname.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
-            if nick != view.display_name {
-                draw.add_text([text_x, y], MUTED, &format!("Display name: {}", view.display_name));
-                y += 20.0;
-            }
-        }
         draw.add_text([text_x, y], MUTED, presence_label(presence));
-        y += 28.0;
-        skin::line_h(ui, min[0] + PROFILE_PAD, max[0] - PROFILE_PAD, y, LIST_DIVIDER);
-        y += 12.0;
+        y += 24.0;
 
         let mut close_after = false;
         let mut open_settings = false;
         let mut message_user = None;
         let mut add_friend = None;
-        let mut save_name = false;
+        let mut begin_customize = false;
 
         ui.set_cursor_screen_pos([text_x, y]);
-        if editing {
-            ui.text_colored(MUTED, "DISPLAY NAME");
-            ui.set_next_item_width(card_w - PROFILE_PAD * 2.0 - 80.0);
-            let entered = ui
-                .input_text("##profile-display-name", self.profile.draft_display_name_mut())
-                .enter_returns_true(true)
-                .build();
-            let draft = self.profile.draft_display_name().to_string();
-            let dirty = display_name_dirty(&draft, &view.display_name);
-            let problem = display_name_error(&draft);
-            ui.same_line();
-            let save_clicked = {
-                let _disabled = ui.begin_disabled_with_cond(!dirty || problem.is_some());
-                ui.button("Save")
+        for action in profile_primary_actions(kind) {
+            let (id, label) = match action {
+                ProfileAction::EditProfile => ("profile-edit", "Edit Profile"),
+                ProfileAction::Message => ("profile-message", "Message"),
+                ProfileAction::AddFriend => ("profile-add-friend", "Add Friend"),
             };
-            if (save_clicked || entered) && dirty && problem.is_none() {
-                save_name = true;
-            }
-            if let Some(problem) = problem.filter(|_| dirty) {
-                ui.text_colored(RED, problem);
-            }
-            if ui.button("Change Avatar") {
-                self.status.clear();
-                self.pick_avatar();
-            }
-            ui.same_line();
-            if ui.button("Cancel") {
-                self.profile.cancel_edit();
-            }
-        } else {
-            for action in profile_primary_actions(kind) {
-                let (id, label) = match action {
-                    ProfileAction::EditProfile => ("profile-edit", "Edit Profile"),
-                    ProfileAction::Message => ("profile-message", "Message"),
-                    ProfileAction::AddFriend => ("profile-add-friend", "Add Friend"),
-                };
-                let btn_w = card_w - PROFILE_PAD * 2.0;
-                if skin::button(ui, id, label, Tone::Brand, [text_x, ui.cursor_screen_pos()[1]], [btn_w, BUTTON_H], true, self.semibold_font) {
-                    match action {
-                        ProfileAction::EditProfile => {
-                            self.profile.begin_edit(&view.display_name);
-                        }
-                        ProfileAction::Message => message_user = Some(view.id),
-                        ProfileAction::AddFriend => add_friend = Some(view.username.clone()),
-                    }
+            let btn_w = PROFILE_W - PROFILE_PAD * 2.0;
+            if skin::button(ui, id, label, Tone::Brand, [text_x, ui.cursor_screen_pos()[1]], [btn_w, BUTTON_H], true, self.semibold_font) {
+                match action {
+                    ProfileAction::EditProfile => begin_customize = true,
+                    ProfileAction::Message => message_user = Some(view.id),
+                    ProfileAction::AddFriend => add_friend = Some(view.username.clone()),
                 }
-                ui.dummy([0.0, 8.0]);
             }
-            if kind == ProfileKind::SelfAccount {
-                if ui.small_button("Open My Account") {
-                    open_settings = true;
-                }
+            ui.dummy([0.0, 8.0]);
+        }
+        y = ui.cursor_screen_pos()[1] + 4.0;
+        skin::line_h(ui, min[0] + PROFILE_PAD, identity_max[0] - PROFILE_PAD, y, LIST_DIVIDER);
+        y += 12.0;
+        ui.set_cursor_screen_pos([text_x, y]);
+
+        if let Some(about) = view.about_me.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            ui.text_colored(MUTED, "ABOUT ME");
+            let _wrap = ui.push_text_wrap_pos(identity_max[0] - PROFILE_PAD);
+            ui.text_colored(TEXT, about);
+            ui.dummy([0.0, 8.0]);
+        }
+        ui.text_colored(MUTED, "MEMBER SINCE");
+        ui.text_colored(TEXT, &format_member_since(view.member_since));
+        ui.dummy([0.0, 8.0]);
+        if !view.connections.is_empty() {
+            ui.text_colored(MUTED, "CONNECTIONS");
+            for connection in &view.connections {
+                ui.text_colored(TEXT_SECONDARY, &format!("{} — {}", connection.kind, connection.name));
+            }
+            ui.dummy([0.0, 8.0]);
+        }
+        if kind == ProfileKind::SelfAccount {
+            if ui.small_button("Open My Account") {
+                open_settings = true;
             }
         }
+
+        let board_min = [identity_max[0] + 8.0, min[1] + PROFILE_PAD];
+        let board_max = [max[0] - PROFILE_PAD, max[1] - PROFILE_PAD];
+        self.draw_profile_board(ui, board_min, board_max, view, false);
 
         let over_card = ui.is_mouse_hovering_rect(min, max);
         if self.profile_frames > 0 && ui.is_mouse_clicked(MouseButton::Left) && !over_card {
@@ -4086,19 +4141,30 @@ impl App {
         }
         self.profile_frames = self.profile_frames.saturating_add(1);
 
-        if save_name {
-            let name = self.profile.draft_display_name().trim().to_string();
-            match self.client.set_display_name(&name) {
-                Ok(saved) => {
-                    self.display_name = saved.display_name.clone();
-                    if let Some(view) = self.profile_view.as_mut() {
-                        view.display_name = saved.display_name.clone();
-                    }
-                    self.account = Some(saved);
-                    self.profile.finish_edit();
-                    self.settings_error.clear();
+        if begin_customize {
+            self.profile.begin_customize_from(view);
+            self.profile_widget_drafts = view
+                .widgets
+                .iter()
+                .map(|widget| ProfileWidgetInput {
+                    kind: widget.kind,
+                    title: widget.title.clone(),
+                    payload: widget.payload.clone(),
+                })
+                .collect();
+            self.profile_connection_drafts = view
+                .connections
+                .iter()
+                .map(|connection| ProfileConnectionInput {
+                    kind: connection.kind.clone(),
+                    name: connection.name.clone(),
+                    url: connection.url.clone(),
+                })
+                .collect();
+            if self.profile_cosmetics.is_empty() {
+                if let Ok(items) = self.client.profile_cosmetics() {
+                    self.profile_cosmetics = items;
                 }
-                Err(err) => self.status = err.to_string(),
             }
         }
         if open_settings {
@@ -4122,6 +4188,543 @@ impl App {
         }
         if close_after {
             self.close_profile();
+        }
+    }
+
+    fn draw_profile_customize(&mut self, ui: &Ui, view: &UserProfile) {
+        let display = ui.io().display_size();
+        let pad = 24.0;
+        let min = [pad, pad];
+        let max = [display[0] - pad, display[1] - pad];
+        let draw = ui.get_window_draw_list();
+        draw.add_rect([0.0, 0.0], display, [0.0, 0.0, 0.0, 0.72]).filled(true).build();
+        draw.add_rect(min, max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
+
+        let left_w = PROFILE_EDITOR_W;
+        let right_w = PROFILE_BOARD_W;
+        let center_w = (max[0] - min[0] - left_w - right_w - PROFILE_PAD * 4.0).max(PROFILE_W);
+        let left_min = [min[0] + PROFILE_PAD, min[1] + PROFILE_PAD];
+        let center_min = [left_min[0] + left_w + PROFILE_PAD, left_min[1]];
+        let right_min = [center_min[0] + center_w + PROFILE_PAD, left_min[1]];
+
+        ui.set_cursor_screen_pos(left_min);
+        ui.text_colored(TEXT, "Main Profile");
+        ui.dummy([0.0, 8.0]);
+
+        ui.text_colored(MUTED, "DISPLAY NAME");
+        ui.set_next_item_width(left_w - 8.0);
+        ui.input_text("##profile-display-name", self.profile.draft_display_name_mut()).build();
+        ui.text_colored(MUTED, "PRONOUNS");
+        ui.set_next_item_width(left_w - 8.0);
+        ui.input_text("##profile-pronouns", self.profile.draft_pronouns_mut()).build();
+        ui.text_colored(MUTED, "CUSTOM STATUS");
+        ui.set_next_item_width(left_w - 8.0);
+        ui.input_text("##profile-status", self.profile.draft_custom_status_mut()).build();
+        ui.text_colored(MUTED, "ABOUT ME");
+        ui.set_next_item_width(left_w - 8.0);
+        ui.input_text_multiline("##profile-about", self.profile.draft_about_me_mut(), [left_w - 8.0, 64.0])
+            .build();
+
+        self.draw_cosmetic_picker(ui, "Nameplate", CosmeticKind::Nameplate, left_w);
+        if ui.button("Change Avatar") {
+            self.pick_avatar();
+        }
+        self.draw_cosmetic_picker(ui, "Avatar Decoration", CosmeticKind::AvatarDecoration, left_w);
+        self.draw_cosmetic_picker(ui, "Display Name Style", CosmeticKind::DisplayNameStyle, left_w);
+
+        ui.text_colored(MUTED, "THEME");
+        let themes = [
+            (0x2d4a3e_u32, 0x111214_u32),
+            (0x3a2218, 0x1a1210),
+            (0x1a3344, 0x0e151c),
+            (0x4a2d5e, 0x141018),
+        ];
+        for (i, (primary, secondary)) in themes.iter().enumerate() {
+            if i > 0 {
+                ui.same_line();
+            }
+            let color = rgb_u32_to_rgba(*primary);
+            if ui.color_button(&format!("##theme{i}"), color) {
+                self.profile.set_draft_theme(*primary, *secondary);
+            }
+        }
+        if ui.button("Change Banner") {
+            self.pick_banner();
+        }
+        ui.same_line();
+        if ui.button("Remove Banner") {
+            let _ = self.client.clear_banner();
+            if let Some(view) = self.profile_view.as_mut() {
+                view.has_banner = false;
+                view.banner_rev = 0;
+            }
+            if let Some(shot) = self.banners.remove(&view.id) {
+                self.retired_shots.push(shot);
+            }
+        }
+        self.draw_cosmetic_picker(ui, "Profile Effect", CosmeticKind::ProfileEffect, left_w);
+        self.draw_cosmetic_picker(ui, "Profile Frame", CosmeticKind::ProfileFrame, left_w);
+
+        // Live preview in the center column using draft values overlaid on view.
+        let mut preview = view.clone();
+        preview.display_name = self.profile.draft_display_name().to_string();
+        preview.about_me = non_empty_opt(self.profile.draft_about_me());
+        preview.pronouns = non_empty_opt(self.profile.draft_pronouns());
+        preview.custom_status = non_empty_opt(self.profile.draft_custom_status());
+        preview.theme_primary = self.profile.draft_theme_primary();
+        preview.theme_secondary = self.profile.draft_theme_secondary();
+        preview.nameplate_id = self.profile.draft_nameplate().clone();
+        preview.avatar_decoration_id = self.profile.draft_avatar_decoration().clone();
+        preview.display_name_style_id = self.profile.draft_display_name_style().clone();
+        preview.profile_effect_id = self.profile.draft_profile_effect().clone();
+        preview.profile_frame_id = self.profile.draft_profile_frame().clone();
+        preview.widgets = self
+            .profile_widget_drafts
+            .iter()
+            .enumerate()
+            .map(|(index, widget)| banter_server::ProfileWidget {
+                id: index as i64 + 1,
+                kind: widget.kind,
+                title: widget.title.clone(),
+                payload: widget.payload.clone(),
+            })
+            .collect();
+        preview.connections = self
+            .profile_connection_drafts
+            .iter()
+            .enumerate()
+            .map(|(index, connection)| banter_server::ProfileConnection {
+                id: index as i64 + 1,
+                kind: connection.kind.clone(),
+                name: connection.name.clone(),
+                url: connection.url.clone(),
+            })
+            .collect();
+
+        let preview_max = [center_min[0] + center_w.min(PROFILE_W), max[1] - 64.0];
+        self.paint_profile_preview_card(ui, center_min, preview_max, &preview);
+
+        let board_max = [max[0] - PROFILE_PAD, max[1] - 64.0];
+        self.draw_profile_board(ui, right_min, board_max, &preview, true);
+
+        let footer_y = max[1] - 52.0;
+        ui.set_cursor_screen_pos([right_min[0], footer_y]);
+        let mut save = false;
+        let mut cancel = false;
+        if skin::button(ui, "profile-save", "Save", Tone::Brand, [right_min[0], footer_y], [120.0, BUTTON_H], true, self.semibold_font) {
+            save = true;
+        }
+        if skin::button(
+            ui,
+            "profile-cancel",
+            "Cancel",
+            Tone::Secondary,
+            [right_min[0] + 128.0, footer_y],
+            [120.0, BUTTON_H],
+            true,
+            self.semibold_font,
+        ) {
+            cancel = true;
+        }
+
+        if cancel {
+            self.profile.cancel_customize();
+            self.profile_widget_drafts.clear();
+            self.profile_connection_drafts.clear();
+        }
+        if save {
+            self.save_profile_customize(view);
+        }
+        self.profile_frames = self.profile_frames.saturating_add(1);
+    }
+
+    fn draw_cosmetic_picker(&mut self, ui: &Ui, label: &str, kind: CosmeticKind, width: f32) {
+        ui.text_colored(MUTED, label);
+        let current = match kind {
+            CosmeticKind::Nameplate => self.profile.draft_nameplate().clone(),
+            CosmeticKind::AvatarDecoration => self.profile.draft_avatar_decoration().clone(),
+            CosmeticKind::DisplayNameStyle => self.profile.draft_display_name_style().clone(),
+            CosmeticKind::ProfileEffect => self.profile.draft_profile_effect().clone(),
+            CosmeticKind::ProfileFrame => self.profile.draft_profile_frame().clone(),
+        };
+        let none_selected = current.is_none();
+        if ui.radio_button_bool(&format!("None##{label}"), none_selected) && !none_selected {
+            match kind {
+                CosmeticKind::Nameplate => self.profile.set_draft_nameplate(None),
+                CosmeticKind::AvatarDecoration => self.profile.set_draft_avatar_decoration(None),
+                CosmeticKind::DisplayNameStyle => self.profile.set_draft_display_name_style(None),
+                CosmeticKind::ProfileEffect => self.profile.set_draft_profile_effect(None),
+                CosmeticKind::ProfileFrame => self.profile.set_draft_profile_frame(None),
+            }
+        }
+        for item in self.profile_cosmetics.iter().filter(|item| item.kind == kind) {
+            let selected = current.as_deref() == Some(item.id.as_str());
+            if ui.radio_button_bool(&format!("{}##{label}", item.label), selected) && !selected {
+                let id = Some(item.id.clone());
+                match kind {
+                    CosmeticKind::Nameplate => self.profile.set_draft_nameplate(id),
+                    CosmeticKind::AvatarDecoration => self.profile.set_draft_avatar_decoration(id),
+                    CosmeticKind::DisplayNameStyle => self.profile.set_draft_display_name_style(id),
+                    CosmeticKind::ProfileEffect => self.profile.set_draft_profile_effect(id),
+                    CosmeticKind::ProfileFrame => self.profile.set_draft_profile_frame(id),
+                }
+            }
+            let swatch = rgb_u32_to_rgba(item.color);
+            ui.same_line();
+            let _ = ui.color_button(&format!("##swatch-{}-{}", label, item.id), swatch);
+        }
+        let _ = width;
+    }
+
+    fn draw_profile_board(&mut self, ui: &Ui, min: [f32; 2], max: [f32; 2], view: &UserProfile, editing: bool) {
+        if max[0] <= min[0] || max[1] <= min[1] {
+            return;
+        }
+        let draw = ui.get_window_draw_list();
+        draw.add_rect(min, max, STAGE_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        ui.set_cursor_screen_pos([min[0] + 12.0, min[1] + 10.0]);
+        for (index, tab) in profile_board_tabs().iter().enumerate() {
+            if index > 0 {
+                ui.same_line();
+            }
+            let label = match tab {
+                ProfileBoardTab::Board => "Board",
+                ProfileBoardTab::Activity => "Activity",
+                ProfileBoardTab::Wishlist => "Wishlist",
+            };
+            let active = self.profile.board_tab() == *tab;
+            if ui.radio_button_bool(label, active) {
+                self.profile.set_board_tab(*tab);
+            }
+        }
+        ui.dummy([0.0, 8.0]);
+        match self.profile.board_tab() {
+            ProfileBoardTab::Board => {
+                if editing {
+                    ui.text_colored(TEXT, "Your Widgets");
+                    ui.same_line();
+                    if ui.small_button("+ Add Widget") {
+                        self.profile_widget_drafts.push(ProfileWidgetInput {
+                            kind: ProfileWidgetKind::FavoriteGame,
+                            title: "Favorite Game".into(),
+                            payload: serde_json::json!({
+                                "title": "",
+                                "quote": ""
+                            }),
+                        });
+                    }
+                    let mut remove = None;
+                    for (index, widget) in self.profile_widget_drafts.iter_mut().enumerate() {
+                        ui.separator();
+                        ui.text_colored(MUTED, &format!("Widget {}", index + 1));
+                        if ui.radio_button_bool(
+                            &format!("Favorite Game##w{index}"),
+                            widget.kind == ProfileWidgetKind::FavoriteGame,
+                        ) {
+                            widget.kind = ProfileWidgetKind::FavoriteGame;
+                            widget.title = "Favorite Game".into();
+                        }
+                        ui.same_line();
+                        if ui.radio_button_bool(
+                            &format!("Games in Rotation##w{index}"),
+                            widget.kind == ProfileWidgetKind::GamesInRotation,
+                        ) {
+                            widget.kind = ProfileWidgetKind::GamesInRotation;
+                            widget.title = "Games in Rotation".into();
+                        }
+                        ui.same_line();
+                        if ui.radio_button_bool(
+                            &format!("Games I Like##w{index}"),
+                            widget.kind == ProfileWidgetKind::GamesILike,
+                        ) {
+                            widget.kind = ProfileWidgetKind::GamesILike;
+                            widget.title = "Games I Like".into();
+                        }
+                        ui.set_next_item_width(180.0);
+                        ui.input_text(&format!("##widget-title-{index}"), &mut widget.title).build();
+                        match widget.kind {
+                            ProfileWidgetKind::FavoriteGame => {
+                                let mut title = widget
+                                    .payload
+                                    .get("title")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let mut quote = widget
+                                    .payload
+                                    .get("quote")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                ui.set_next_item_width(180.0);
+                                ui.input_text(&format!("##fav-title-{index}"), &mut title).build();
+                                ui.set_next_item_width(180.0);
+                                ui.input_text(&format!("##fav-quote-{index}"), &mut quote).build();
+                                widget.payload = serde_json::json!({ "title": title, "quote": quote });
+                            }
+                            ProfileWidgetKind::GamesInRotation | ProfileWidgetKind::GamesILike => {
+                                let mut blob = widget.payload.to_string();
+                                ui.set_next_item_width((max[0] - min[0] - 40.0).max(120.0));
+                                ui.input_text(&format!("##games-json-{index}"), &mut blob).build();
+                                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&blob) {
+                                    widget.payload = value;
+                                }
+                            }
+                        }
+                        if ui.small_button(&format!("Remove##widget-{index}")) {
+                            remove = Some(index);
+                        }
+                    }
+                    if let Some(index) = remove {
+                        self.profile_widget_drafts.remove(index);
+                    }
+                    ui.separator();
+                    ui.text_colored(TEXT, "Connections");
+                    if ui.small_button("+ Add Connection") {
+                        self.profile_connection_drafts.push(ProfileConnectionInput {
+                            kind: "website".into(),
+                            name: String::new(),
+                            url: "https://".into(),
+                        });
+                    }
+                    let mut remove_conn = None;
+                    for (index, connection) in self.profile_connection_drafts.iter_mut().enumerate() {
+                        ui.set_next_item_width(90.0);
+                        ui.input_text(&format!("##conn-kind-{index}"), &mut connection.kind).build();
+                        ui.same_line();
+                        ui.set_next_item_width(100.0);
+                        ui.input_text(&format!("##conn-name-{index}"), &mut connection.name).build();
+                        ui.set_next_item_width((max[0] - min[0] - 40.0).max(120.0));
+                        ui.input_text(&format!("##conn-url-{index}"), &mut connection.url).build();
+                        if ui.small_button(&format!("Remove##conn-{index}")) {
+                            remove_conn = Some(index);
+                        }
+                    }
+                    if let Some(index) = remove_conn {
+                        self.profile_connection_drafts.remove(index);
+                    }
+                } else if view.widgets.is_empty() {
+                    ui.text_colored(MUTED, "No widgets yet.");
+                } else {
+                    for widget in &view.widgets {
+                        ui.separator();
+                        ui.text_colored(TEXT, &widget.title);
+                        match widget.kind {
+                            ProfileWidgetKind::FavoriteGame => {
+                                let title = widget.payload.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                                let quote = widget.payload.get("quote").and_then(|v| v.as_str()).unwrap_or("");
+                                if !title.is_empty() {
+                                    ui.text_colored(TEXT_SECONDARY, title);
+                                }
+                                if !quote.is_empty() {
+                                    ui.text_colored(MUTED, quote);
+                                }
+                            }
+                            ProfileWidgetKind::GamesInRotation | ProfileWidgetKind::GamesILike => {
+                                if let Some(games) = widget.payload.get("games").and_then(|v| v.as_array()) {
+                                    for game in games {
+                                        let title = game.get("title").and_then(|v| v.as_str()).unwrap_or("Game");
+                                        let tag = game.get("tag").and_then(|v| v.as_str()).unwrap_or("");
+                                        if tag.is_empty() {
+                                            ui.text_colored(TEXT_SECONDARY, title);
+                                        } else {
+                                            ui.text_colored(TEXT_SECONDARY, &format!("{title} — {tag}"));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ProfileBoardTab::Activity => ui.text_colored(MUTED, "No recent activity."),
+            ProfileBoardTab::Wishlist => ui.text_colored(MUTED, "Wishlist is empty."),
+        }
+    }
+
+    fn paint_profile_banner(
+        &self,
+        ui: &Ui,
+        min: [f32; 2],
+        max: [f32; 2],
+        view: &UserProfile,
+        theme_primary: u32,
+        theme_secondary: u32,
+    ) {
+        let draw = ui.get_window_draw_list();
+        let primary = rgb_u32_to_rgba(theme_primary);
+        let secondary = rgb_u32_to_rgba(theme_secondary);
+        draw.add_rect(min, max, secondary)
+            .rounding(PROFILE_RADIUS)
+            .flags(DrawFlags::ROUND_TOP)
+            .filled(true)
+            .build();
+        // Gradient strip using primary over the lower half of the banner.
+        let mid = [max[0], min[1] + (max[1] - min[1]) * 0.45];
+        draw.add_rect([min[0], mid[1]], max, primary).filled(true).build();
+        if let Some(shot) = self.banners.get(&view.id) {
+            draw.add_image_rounded(
+                shot.texture,
+                min,
+                max,
+                [0.0, 0.0],
+                [1.0, 1.0],
+                WHITE,
+                PROFILE_RADIUS,
+                DrawFlags::ROUND_TOP,
+            );
+        }
+        if let Some(plate) = view.nameplate_id.as_deref() {
+            if let Some(color) = cosmetic_color(plate) {
+                let plate_min = [min[0] + 12.0, max[1] - PROFILE_NAMEPLATE_H - 8.0];
+                let plate_max = [min[0] + PROFILE_W - 12.0, max[1] - 8.0];
+                draw.add_rect(plate_min, plate_max, rgb_u32_to_rgba(color))
+                    .rounding(6.0)
+                    .filled(true)
+                    .build();
+            }
+        }
+    }
+
+    fn paint_profile_preview_card(&self, ui: &Ui, min: [f32; 2], max: [f32; 2], view: &UserProfile) {
+        let draw = ui.get_window_draw_list();
+        let width = (max[0] - min[0]).min(PROFILE_W);
+        let card_max = [min[0] + width, max[1]];
+        draw.add_rect(min, card_max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        self.paint_profile_banner(
+            ui,
+            min,
+            [card_max[0], min[1] + PROFILE_BANNER_H],
+            view,
+            view.theme_primary,
+            view.theme_secondary,
+        );
+        let heading = profile_heading(&view.display_name, view.nickname.as_deref());
+        let avatar_center = [min[0] + PROFILE_PAD + PROFILE_AVATAR, min[1] + PROFILE_BANNER_H];
+        draw.add_circle(avatar_center, PROFILE_AVATAR + 6.0, FLOATING_BG).filled(true).build();
+        paint_profile_frame(ui, avatar_center, PROFILE_AVATAR, view.profile_frame_id.as_deref());
+        let avatar = self.avatars.get(&view.id).map(|shot| shot.texture);
+        paint_avatar(ui, avatar, avatar_center, PROFILE_AVATAR, &initials(&heading), None);
+        paint_avatar_decoration(ui, avatar_center, PROFILE_AVATAR, view.avatar_decoration_id.as_deref());
+        paint_status_dot(ui, avatar_center, PROFILE_AVATAR, Presence::Online, FLOATING_BG);
+        let text_x = min[0] + PROFILE_PAD;
+        let name_y = min[1] + PROFILE_BANNER_H + PROFILE_AVATAR + 14.0;
+        let name_color = display_name_style_color(view.display_name_style_id.as_deref());
+        {
+            let _font = ui.push_font_with_size(self.bold_font, FONT_LG);
+            draw.add_text([text_x, name_y], name_color, &heading);
+        }
+        draw.add_text([text_x, name_y + 26.0], TEXT_SECONDARY, &format!("@{}", view.username));
+        if let Some(about) = view.about_me.as_deref() {
+            draw.add_text([text_x, name_y + 54.0], MUTED, about);
+        }
+        if view.profile_effect_id.is_some() {
+            // Soft effect wash behind the name area.
+            draw.add_rect(
+                [min[0] + 8.0, name_y - 4.0],
+                [card_max[0] - 8.0, name_y + 80.0],
+                [name_color[0], name_color[1], name_color[2], 0.08],
+            )
+            .rounding(8.0)
+            .filled(true)
+            .build();
+        }
+    }
+
+    fn save_profile_customize(&mut self, previous: &UserProfile) {
+        let draft_name = self.profile.draft_display_name().trim().to_string();
+        if let Some(problem) = display_name_error(&draft_name) {
+            self.status = problem.to_string();
+            return;
+        }
+        let patch = ProfilePatch {
+            display_name: Some(draft_name),
+            about_me: Some(self.profile.draft_about_me().to_string()),
+            pronouns: Some(self.profile.draft_pronouns().to_string()),
+            custom_status: Some(self.profile.draft_custom_status().to_string()),
+            theme_primary: Some(self.profile.draft_theme_primary()),
+            theme_secondary: Some(self.profile.draft_theme_secondary()),
+            nameplate_id: Some(self.profile.draft_nameplate().clone().unwrap_or_default()),
+            avatar_decoration_id: Some(self.profile.draft_avatar_decoration().clone().unwrap_or_default()),
+            display_name_style_id: Some(self.profile.draft_display_name_style().clone().unwrap_or_default()),
+            profile_effect_id: Some(self.profile.draft_profile_effect().clone().unwrap_or_default()),
+            profile_frame_id: Some(self.profile.draft_profile_frame().clone().unwrap_or_default()),
+            widgets: Some(self.profile_widget_drafts.clone()),
+            connections: Some(self.profile_connection_drafts.clone()),
+        };
+        match self.client.update_profile(&patch) {
+            Ok(updated) => {
+                self.display_name = updated.display_name.clone();
+                if let Some(account) = self.account.as_mut() {
+                    account.display_name = updated.display_name.clone();
+                }
+                self.profile_view = Some(updated);
+                self.profile.finish_edit();
+                self.profile_widget_drafts.clear();
+                self.profile_connection_drafts.clear();
+                self.status.clear();
+            }
+            Err(err) => {
+                self.status = err.to_string();
+                let _ = previous;
+            }
+        }
+    }
+
+    fn ensure_profile_banner(&mut self, imgui: &Ui, view: &UserProfile) {
+        let _ = imgui;
+        if !view.has_banner {
+            if let Some(shot) = self.banners.remove(&view.id) {
+                self.retired_shots.push(shot);
+            }
+            self.banner_rev.remove(&view.id);
+            return;
+        }
+        if self.banner_rev.get(&view.id) == Some(&view.banner_rev) && self.banners.contains_key(&view.id) {
+            return;
+        }
+        if self.banner_miss.get(&view.id) == Some(&view.banner_rev) {
+            return;
+        }
+        // Texture upload needs Context; fetch bytes here and upload on next sync_avatars pass.
+        match self.client.banner(view.id) {
+            Ok(bytes) => {
+                self.pending_banner = Some((view.id, view.banner_rev, bytes));
+            }
+            Err(_) => {
+                self.banner_miss.insert(view.id, view.banner_rev);
+            }
+        }
+    }
+
+    fn pick_banner(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Image", &["png", "jpg", "jpeg", "gif", "webp"])
+            .pick_file()
+        else {
+            return;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            self.status = "could not read that banner".into();
+            return;
+        };
+        if bytes.len() > MAX_BANNER_BYTES {
+            self.status = "banner is too large".into();
+            return;
+        }
+        match self.client.set_banner(&bytes) {
+            Ok(()) => {
+                if let Ok(profile) = self.client.me().and_then(|account| self.client.user_profile(account.id, None)) {
+                    if let Some(view) = self.profile_view.as_mut() {
+                        view.has_banner = profile.has_banner;
+                        view.banner_rev = profile.banner_rev;
+                    }
+                    self.banner_rev.remove(&profile.id);
+                    self.banner_miss.remove(&profile.id);
+                }
+                self.status.clear();
+            }
+            Err(err) => self.status = err.to_string(),
         }
     }
 
@@ -6352,6 +6955,47 @@ fn list_label(ui: &Ui, text: &str, font: Option<FontId>) {
     let _font = ui.push_font_with_size(font, FONT_XS);
     let height = ui.calc_text_size(&label)[1];
     ui.get_window_draw_list().add_text([origin[0] + 18.0, origin[1] + CATEGORY_H - height - 6.0], MUTED, &label);
+}
+
+fn non_empty_opt(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn format_member_since(ms: i64) -> String {
+    let Some(dt) = chrono::DateTime::from_timestamp_millis(ms) else {
+        return "Unknown".into();
+    };
+    let month = dt.format("%b").to_string();
+    let day = dt.format("%d").to_string().trim_start_matches('0').to_string();
+    let year = dt.format("%Y").to_string();
+    format!("{month} {day}, {year}")
+}
+
+fn paint_avatar_decoration(ui: &Ui, center: [f32; 2], radius: f32, decoration_id: Option<&str>) {
+    let Some(id) = decoration_id else { return };
+    let Some(color) = cosmetic_color(id) else { return };
+    let draw = ui.get_window_draw_list();
+    let rgba = rgb_u32_to_rgba(color);
+    draw.add_circle(center, radius + 8.0, rgba).thickness(3.0).build();
+    // Soft leaf / spark accents around the ring.
+    for (dx, dy) in [(-1.0, -0.2), (1.0, -0.15), (0.1, 1.05), (-0.2, 0.95)] {
+        let tip = [center[0] + radius * dx * 1.35, center[1] + radius * dy * 1.35];
+        draw.add_circle(tip, 4.0, rgba).filled(true).build();
+    }
+}
+
+fn paint_profile_frame(ui: &Ui, center: [f32; 2], radius: f32, frame_id: Option<&str>) {
+    let Some(id) = frame_id else { return };
+    let Some(color) = cosmetic_color(id) else { return };
+    let draw = ui.get_window_draw_list();
+    let rgba = rgb_u32_to_rgba(color);
+    let thickness = if id.contains("thick") { 5.0 } else { 2.0 };
+    draw.add_circle(center, radius + 11.0, rgba).thickness(thickness).build();
 }
 
 fn paint_avatar(ui: &Ui, texture: Option<ManagedTextureId>, center: [f32; 2], radius: f32, letters: &str, ring: Option<[f32; 4]>) {

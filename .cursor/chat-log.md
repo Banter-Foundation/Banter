@@ -624,3 +624,14 @@ Agent: Primary checkout was on local-only branch cursor/channel-type-templates-a
 ## Summary
 
 Canceled BA-50 channel-type branch and scratch removed; main clean; ui-theme untouched.
+
+## 2026-11-03 20:51:10 -06:00 — Discord profile parity (BA-52)
+
+Owl: start Discord profile parity NOW. Match Discord profiles 1:1 as baseline + customization like Discord's editor (nameplate, avatar decorations, display-name style, theme & banner, profile effect/frame, board/activity widgets). Ref image in store media. Replace/upgrade the basic Banter profile card — do not leave a basic-only card as done. Root D:\Projects\Project Banter. Never E:. Clear commits/docs; cleanup temp branches when done. Branch + PR to main or ask Owl.
+
+Agent: Worktree Banter-profiles-parity on cursor/discord-profile-parity-5c8b. Wrote failing contracts first, then server cosmetics/store/API and client Discord-parity view + editor. Tests green (server foundation + profile_customization; client profile + profile_customization + client suite).
+
+## Summary
+
+Discord-parity profiles implemented with customization editor; PR to main next.
+

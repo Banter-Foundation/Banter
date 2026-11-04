@@ -7,6 +7,12 @@ use crate::error::BanterError;
 pub const MAX_MESSAGE_CHARS: usize = 2000;
 pub const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 pub const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_BANNER_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_ABOUT_ME_CHARS: usize = 190;
+pub const MAX_PRONOUNS_CHARS: usize = 40;
+pub const MAX_CUSTOM_STATUS_CHARS: usize = 128;
+pub const MAX_PROFILE_WIDGETS: usize = 8;
+pub const MAX_PROFILE_CONNECTIONS: usize = 10;
 pub const IDLE_AFTER_MS: i64 = 5 * 60 * 1000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,11 +24,76 @@ pub struct Account {
     pub avatar_rev: i64,
 }
 
+/// Board widget kinds matching Discord's profile Board cards.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileWidgetKind {
+    GamesInRotation,
+    FavoriteGame,
+    GamesILike,
+}
+
+/// One user-authored board widget on a profile.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProfileWidget {
+    pub id: i64,
+    pub kind: ProfileWidgetKind,
+    pub title: String,
+    pub payload: serde_json::Value,
+}
+
+/// Input used when replacing the widget list on a profile patch.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProfileWidgetInput {
+    pub kind: ProfileWidgetKind,
+    pub title: String,
+    pub payload: serde_json::Value,
+}
+
+/// Linked account / website row under Connections.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileConnection {
+    pub id: i64,
+    pub kind: String,
+    pub name: String,
+    pub url: String,
+}
+
+/// Input used when replacing the connections list on a profile patch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileConnectionInput {
+    pub kind: String,
+    pub name: String,
+    pub url: String,
+}
+
+/// Partial update for Discord-parity profile customization.
+///
+/// Omitted fields stay unchanged. Empty strings clear optional text / cosmetic
+/// ids. When `widgets` or `connections` is present, the full list is replaced.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProfilePatch {
+    pub display_name: Option<String>,
+    pub about_me: Option<String>,
+    pub pronouns: Option<String>,
+    pub custom_status: Option<String>,
+    pub theme_primary: Option<u32>,
+    pub theme_secondary: Option<u32>,
+    pub nameplate_id: Option<String>,
+    pub avatar_decoration_id: Option<String>,
+    pub display_name_style_id: Option<String>,
+    pub profile_effect_id: Option<String>,
+    pub profile_frame_id: Option<String>,
+    pub widgets: Option<Vec<ProfileWidgetInput>>,
+    pub connections: Option<Vec<ProfileConnectionInput>>,
+}
+
 /// Public profile a signed-in viewer is allowed to see.
 ///
 /// Visible for self, friends, or anyone who shares a server. `nickname` is
 /// filled only when the viewer asks with a `server_id` they belong to.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Customization fields match Discord's profile editor baseline.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UserProfile {
     pub id: i64,
     pub username: String,
@@ -32,6 +103,21 @@ pub struct UserProfile {
     pub nickname: Option<String>,
     pub is_self: bool,
     pub is_friend: bool,
+    pub about_me: Option<String>,
+    pub pronouns: Option<String>,
+    pub custom_status: Option<String>,
+    pub member_since: i64,
+    pub has_banner: bool,
+    pub banner_rev: i64,
+    pub theme_primary: u32,
+    pub theme_secondary: u32,
+    pub nameplate_id: Option<String>,
+    pub avatar_decoration_id: Option<String>,
+    pub display_name_style_id: Option<String>,
+    pub profile_effect_id: Option<String>,
+    pub profile_frame_id: Option<String>,
+    pub widgets: Vec<ProfileWidget>,
+    pub connections: Vec<ProfileConnection>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
