@@ -1877,6 +1877,7 @@ impl App {
                 return Some(match channel.kind {
                     ChannelKind::Text => "hash",
                     ChannelKind::Voice => "volume-2",
+                    ChannelKind::Board => "pencil",
                 });
             }
         }
@@ -2113,6 +2114,7 @@ impl App {
                 let icon_name = match channel.kind {
                     ChannelKind::Text => "hash",
                     ChannelKind::Voice => "volume-2",
+                    ChannelKind::Board => "pencil",
                 };
                 let (left, right) =
                     self.channel_row(ui, &format!("ch{}", channel.id), Some(icon_name), &channel.name, selected);
@@ -2124,7 +2126,9 @@ impl App {
                     self.messages.clear();
                     if channel.kind == ChannelKind::Text {
                         self.reload_messages();
-                    } else if self.voice_channel != Some(channel.id) {
+                    } else if channel.kind == ChannelKind::Voice
+                        && self.voice_channel != Some(channel.id)
+                    {
                         self.join_voice_channel(channel.id);
                     }
                 }
@@ -3620,7 +3624,8 @@ impl App {
             | ServerEvent::RtcAnswer { .. }
             | ServerEvent::RtcIce { .. }
             | ServerEvent::SubscribeLayer { .. }
-            | ServerEvent::WantedLayers { .. } => {}
+            | ServerEvent::WantedLayers { .. }
+            | ServerEvent::BoardChanged { .. } => {}
         }
     }
 
