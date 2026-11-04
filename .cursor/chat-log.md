@@ -491,3 +491,14 @@ Agent: Branched test/owl-fixes from origin/main @ 89f41b0 via worktree Banter-ow
 ## Summary
 
 Shared integration branch ready; sibling agents merge into test/owl-fixes, not main.
+
+
+## 2026-11-03 19:23:32 -06:00 — Stream Select UI like Discord (BA-39)
+
+Owl (via coordinator): Stream Select UI still sucks — make it look like Discord. D:\Projects\Project Banter. Never E:. Branch from test/owl-fixes, merge into test/owl-fixes only. UI-only if possible. Clear commits. Worktree under Project Banter/worktrees/.
+
+Agent: Rewrote draw_share to a Discord-style overlay card (underline tabs, thumbnail grid with blurple/check selection, skin footer with green Go Live). Added SHARE_* theme metrics. design.md updated. Client lib builds; 24/26 client tests pass (2 live-server network timeouts unrelated). Branch cursor/stream-select-discord-d812 → merge test/owl-fixes.
+
+## Summary
+
+Stream Select picker now matches Discord’s Go Live chrome; landed on test/owl-fixes only.
