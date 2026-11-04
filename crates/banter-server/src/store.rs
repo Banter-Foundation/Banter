@@ -11,6 +11,7 @@ use rand::Rng;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
+use crate::cosmetics::{cosmetic_exists, CosmeticKind, DEFAULT_THEME_PRIMARY, DEFAULT_THEME_SECONDARY};
 use crate::error::BanterError;
 use crate::model::*;
 
@@ -25,6 +26,7 @@ impl Store {
         fs::create_dir_all(root.join("files")).map_err(|err| BanterError::Storage(err.to_string()))?;
         fs::create_dir_all(root.join("files").join("board")).map_err(|err| BanterError::Storage(err.to_string()))?;
         fs::create_dir_all(root.join("avatars")).map_err(|err| BanterError::Storage(err.to_string()))?;
+        fs::create_dir_all(root.join("banners")).map_err(|err| BanterError::Storage(err.to_string()))?;
         let pool = PgPoolOptions::new()
             .max_connections(10)
             .connect(database_url)
@@ -143,21 +145,167 @@ impl Store {
         if !can_view {
             return Err(BanterError::NotFound);
         }
-        let account = account_by_id(&self.pool, target_id).await?;
         let nickname = match server_id {
             Some(server_id) => member_nickname(&self.pool, server_id, target_id).await?,
             None => None,
         };
-        Ok(UserProfile {
-            id: account.id,
-            username: account.username,
-            display_name: account.display_name,
-            has_avatar: account.has_avatar,
-            avatar_rev: account.avatar_rev,
-            nickname,
-            is_self,
-            is_friend,
-        })
+        load_user_profile(&self.pool, target_id, nickname, is_self, is_friend).await
+    }
+
+    /// Apply a Discord-parity profile customization patch for the owner.
+    pub async fn update_profile(&self, user_id: i64, patch: ProfilePatch) -> Result<UserProfile, BanterError> {
+        let _ = account_by_id(&self.pool, user_id).await?;
+        if let Some(ref name) = patch.display_name {
+            let display_name = clean_display(name)?;
+            sqlx::query("UPDATE users SET display_name = $1 WHERE id = $2")
+                .bind(&display_name)
+                .bind(user_id)
+                .execute(&self.pool)
+                .await
+                .map_err(db_err)?;
+        }
+        if let Some(ref about) = patch.about_me {
+            let about_me = clean_optional_text(about, MAX_ABOUT_ME_CHARS)?;
+            sqlx::query("UPDATE users SET about_me = $1 WHERE id = $2")
+                .bind(about_me)
+                .bind(user_id)
+                .execute(&self.pool)
+                .await
+                .map_err(db_err)?;
+        }
+        if let Some(ref pronouns) = patch.pronouns {
+            let pronouns = clean_optional_text(pronouns, MAX_PRONOUNS_CHARS)?;
+            sqlx::query("UPDATE users SET pronouns = $1 WHERE id = $2")
+                .bind(pronouns)
+                .bind(user_id)
+                .execute(&self.pool)
+                .await
+                .map_err(db_err)?;
+        }
+        if let Some(ref status) = patch.custom_status {
+            let custom_status = clean_optional_text(status, MAX_CUSTOM_STATUS_CHARS)?;
+            sqlx::query("UPDATE users SET custom_status = $1 WHERE id = $2")
+                .bind(custom_status)
+                .bind(user_id)
+                .execute(&self.pool)
+                .await
+                .map_err(db_err)?;
+        }
+        if let Some(primary) = patch.theme_primary {
+            sqlx::query("UPDATE users SET theme_primary = $1 WHERE id = $2")
+                .bind(primary as i64)
+                .bind(user_id)
+                .execute(&self.pool)
+                .await
+                .map_err(db_err)?;
+        }
+        if let Some(secondary) = patch.theme_secondary {
+            sqlx::query("UPDATE users SET theme_secondary = $1 WHERE id = $2")
+                .bind(secondary as i64)
+                .bind(user_id)
+                .execute(&self.pool)
+                .await
+                .map_err(db_err)?;
+        }
+        apply_cosmetic(
+            &self.pool,
+            user_id,
+            "nameplate_id",
+            patch.nameplate_id.as_deref(),
+            CosmeticKind::Nameplate,
+        )
+        .await?;
+        apply_cosmetic(
+            &self.pool,
+            user_id,
+            "avatar_decoration_id",
+            patch.avatar_decoration_id.as_deref(),
+            CosmeticKind::AvatarDecoration,
+        )
+        .await?;
+        apply_cosmetic(
+            &self.pool,
+            user_id,
+            "display_name_style_id",
+            patch.display_name_style_id.as_deref(),
+            CosmeticKind::DisplayNameStyle,
+        )
+        .await?;
+        apply_cosmetic(
+            &self.pool,
+            user_id,
+            "profile_effect_id",
+            patch.profile_effect_id.as_deref(),
+            CosmeticKind::ProfileEffect,
+        )
+        .await?;
+        apply_cosmetic(
+            &self.pool,
+            user_id,
+            "profile_frame_id",
+            patch.profile_frame_id.as_deref(),
+            CosmeticKind::ProfileFrame,
+        )
+        .await?;
+        if let Some(widgets) = patch.widgets {
+            replace_widgets(&self.pool, user_id, &widgets).await?;
+        }
+        if let Some(connections) = patch.connections {
+            replace_connections(&self.pool, user_id, &connections).await?;
+        }
+        load_user_profile(&self.pool, user_id, None, true, false).await
+    }
+
+    pub async fn set_banner(&self, user_id: i64, bytes: &[u8]) -> Result<(), BanterError> {
+        if bytes.is_empty() || bytes.len() > MAX_BANNER_BYTES {
+            return Err(BanterError::InvalidBanner);
+        }
+        let decoded = image::load_from_memory(bytes).map_err(|_| BanterError::InvalidBanner)?;
+        let scaled = if decoded.width() > 1920 || decoded.height() > 1080 {
+            decoded.thumbnail(1920, 1080)
+        } else {
+            decoded
+        };
+        let mut png = Vec::new();
+        scaled
+            .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|err| BanterError::Storage(err.to_string()))?;
+        self.account(user_id).await?;
+        let path = self.root.join("banners").join(format!("{user_id}.png"));
+        fs::write(&path, &png).map_err(|err| BanterError::Storage(err.to_string()))?;
+        sqlx::query("UPDATE users SET banner_file = $1, banner_rev = banner_rev + 1 WHERE id = $2")
+            .bind(format!("{user_id}.png"))
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    pub async fn clear_banner(&self, user_id: i64) -> Result<(), BanterError> {
+        self.account(user_id).await?;
+        let path = self.root.join("banners").join(format!("{user_id}.png"));
+        if path.exists() {
+            fs::remove_file(&path).map_err(|err| BanterError::Storage(err.to_string()))?;
+        }
+        sqlx::query("UPDATE users SET banner_file = NULL, banner_rev = 0 WHERE id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    pub async fn banner_bytes(&self, user_id: i64) -> Result<Vec<u8>, BanterError> {
+        let file: Option<String> = sqlx::query_scalar("SELECT banner_file FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?
+            .ok_or(BanterError::NotFound)?;
+        let name = file.ok_or(BanterError::NotFound)?;
+        let path = self.root.join("banners").join(name);
+        fs::read(&path).map_err(|_| BanterError::NotFound)
     }
 
     pub async fn set_display_name(&self, user_id: i64, display_name: &str) -> Result<Account, BanterError> {
@@ -1144,6 +1292,248 @@ async fn member_nickname(pool: &PgPool, server_id: i64, user_id: i64) -> Result<
     Ok(row.flatten())
 }
 
+async fn load_user_profile(
+    pool: &PgPool,
+    user_id: i64,
+    nickname: Option<String>,
+    is_self: bool,
+    is_friend: bool,
+) -> Result<UserProfile, BanterError> {
+    let row = sqlx::query(
+        "SELECT id, username, display_name, avatar_file, avatar_rev,
+                about_me, pronouns, custom_status, created_at,
+                banner_file, banner_rev, theme_primary, theme_secondary,
+                nameplate_id, avatar_decoration_id, display_name_style_id,
+                profile_effect_id, profile_frame_id
+         FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_err)?
+    .ok_or(BanterError::NotFound)?;
+
+    let theme_primary = row
+        .get::<Option<i64>, _>("theme_primary")
+        .map(|v| v as u32)
+        .unwrap_or(DEFAULT_THEME_PRIMARY);
+    let theme_secondary = row
+        .get::<Option<i64>, _>("theme_secondary")
+        .map(|v| v as u32)
+        .unwrap_or(DEFAULT_THEME_SECONDARY);
+
+    Ok(UserProfile {
+        id: row.get("id"),
+        username: row.get("username"),
+        display_name: row.get("display_name"),
+        has_avatar: row.get::<Option<String>, _>("avatar_file").is_some(),
+        avatar_rev: row.get("avatar_rev"),
+        nickname,
+        is_self,
+        is_friend,
+        about_me: row.get("about_me"),
+        pronouns: row.get("pronouns"),
+        custom_status: row.get("custom_status"),
+        member_since: row.get("created_at"),
+        has_banner: row.get::<Option<String>, _>("banner_file").is_some(),
+        banner_rev: row.get("banner_rev"),
+        theme_primary,
+        theme_secondary,
+        nameplate_id: row.get("nameplate_id"),
+        avatar_decoration_id: row.get("avatar_decoration_id"),
+        display_name_style_id: row.get("display_name_style_id"),
+        profile_effect_id: row.get("profile_effect_id"),
+        profile_frame_id: row.get("profile_frame_id"),
+        widgets: list_widgets(pool, user_id).await?,
+        connections: list_connections(pool, user_id).await?,
+    })
+}
+
+async fn apply_cosmetic(
+    pool: &PgPool,
+    user_id: i64,
+    column: &str,
+    value: Option<&str>,
+    kind: CosmeticKind,
+) -> Result<(), BanterError> {
+    let Some(raw) = value else {
+        return Ok(());
+    };
+    let stored = if raw.trim().is_empty() {
+        None
+    } else if cosmetic_exists(kind, raw.trim()) {
+        Some(raw.trim().to_string())
+    } else {
+        return Err(BanterError::InvalidProfile);
+    };
+    // Columns are fixed call-site literals; never pass untrusted names here.
+    let sql = format!("UPDATE users SET {column} = $1 WHERE id = $2");
+    sqlx::query(&sql)
+        .bind(stored)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    Ok(())
+}
+
+async fn replace_widgets(pool: &PgPool, user_id: i64, widgets: &[ProfileWidgetInput]) -> Result<(), BanterError> {
+    if widgets.len() > MAX_PROFILE_WIDGETS {
+        return Err(BanterError::InvalidProfile);
+    }
+    sqlx::query("DELETE FROM profile_widgets WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    for (position, widget) in widgets.iter().enumerate() {
+        let title = clean_label(&widget.title)?;
+        let payload = serde_json::to_string(&widget.payload)
+            .map_err(|err| BanterError::Storage(err.to_string()))?;
+        if payload.len() > 8 * 1024 {
+            return Err(BanterError::InvalidProfile);
+        }
+        let kind = widget_kind_key(widget.kind);
+        sqlx::query(
+            "INSERT INTO profile_widgets (user_id, kind, title, payload, position)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(user_id)
+        .bind(kind)
+        .bind(&title)
+        .bind(&payload)
+        .bind(position as i64)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+async fn replace_connections(
+    pool: &PgPool,
+    user_id: i64,
+    connections: &[ProfileConnectionInput],
+) -> Result<(), BanterError> {
+    if connections.len() > MAX_PROFILE_CONNECTIONS {
+        return Err(BanterError::InvalidProfile);
+    }
+    sqlx::query("DELETE FROM profile_connections WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    for (position, connection) in connections.iter().enumerate() {
+        let kind = clean_connection_kind(&connection.kind)?;
+        let name = clean_label(&connection.name)?;
+        let url = clean_connection_url(&connection.url)?;
+        sqlx::query(
+            "INSERT INTO profile_connections (user_id, kind, name, url, position)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(user_id)
+        .bind(&kind)
+        .bind(&name)
+        .bind(&url)
+        .bind(position as i64)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+async fn list_widgets(pool: &PgPool, user_id: i64) -> Result<Vec<ProfileWidget>, BanterError> {
+    let rows = sqlx::query(
+        "SELECT id, kind, title, payload FROM profile_widgets
+         WHERE user_id = $1 ORDER BY position ASC, id ASC",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let kind = parse_widget_kind(&row.get::<String, _>("kind")).ok_or(BanterError::InvalidProfile)?;
+        let payload: serde_json::Value = serde_json::from_str(&row.get::<String, _>("payload"))
+            .map_err(|err| BanterError::Storage(err.to_string()))?;
+        out.push(ProfileWidget {
+            id: row.get("id"),
+            kind,
+            title: row.get("title"),
+            payload,
+        });
+    }
+    Ok(out)
+}
+
+async fn list_connections(pool: &PgPool, user_id: i64) -> Result<Vec<ProfileConnection>, BanterError> {
+    let rows = sqlx::query(
+        "SELECT id, kind, name, url FROM profile_connections
+         WHERE user_id = $1 ORDER BY position ASC, id ASC",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows
+        .iter()
+        .map(|row| ProfileConnection {
+            id: row.get("id"),
+            kind: row.get("kind"),
+            name: row.get("name"),
+            url: row.get("url"),
+        })
+        .collect())
+}
+
+fn widget_kind_key(kind: ProfileWidgetKind) -> &'static str {
+    match kind {
+        ProfileWidgetKind::GamesInRotation => "games_in_rotation",
+        ProfileWidgetKind::FavoriteGame => "favorite_game",
+        ProfileWidgetKind::GamesILike => "games_i_like",
+    }
+}
+
+fn parse_widget_kind(raw: &str) -> Option<ProfileWidgetKind> {
+    match raw {
+        "games_in_rotation" => Some(ProfileWidgetKind::GamesInRotation),
+        "favorite_game" => Some(ProfileWidgetKind::FavoriteGame),
+        "games_i_like" => Some(ProfileWidgetKind::GamesILike),
+        _ => None,
+    }
+}
+
+fn clean_optional_text(raw: &str, max_chars: usize) -> Result<Option<String>, BanterError> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if text.chars().count() > max_chars || text.chars().any(|c| c.is_control()) {
+        return Err(BanterError::InvalidProfile);
+    }
+    Ok(Some(text.to_string()))
+}
+
+fn clean_connection_kind(raw: &str) -> Result<String, BanterError> {
+    let kind = raw.trim().to_lowercase();
+    match kind.as_str() {
+        "website" | "github" | "steam" | "twitch" | "youtube" | "twitter" | "other" => Ok(kind),
+        _ => Err(BanterError::InvalidProfile),
+    }
+}
+
+fn clean_connection_url(raw: &str) -> Result<String, BanterError> {
+    let url = raw.trim();
+    let count = url.chars().count();
+    if !(1..=500).contains(&count) || url.chars().any(|c| c.is_control()) {
+        return Err(BanterError::InvalidProfile);
+    }
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(BanterError::InvalidProfile);
+    }
+    Ok(url.to_string())
+}
 
 fn ordered_pair(a: i64, b: i64) -> (i64, i64) {
     if a < b { (a, b) } else { (b, a) }

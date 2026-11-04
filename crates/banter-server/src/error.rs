@@ -17,6 +17,10 @@ pub enum BanterError {
     InvalidName,
     #[error("avatar must be a png, jpeg, gif, or webp image")]
     InvalidAvatar,
+    #[error("banner must be a png, jpeg, gif, or webp image")]
+    InvalidBanner,
+    #[error("that profile customization is invalid")]
+    InvalidProfile,
     #[error("not found")]
     NotFound,
     #[error("you are already friends")]
@@ -73,6 +77,8 @@ impl BanterError {
             Self::InvalidCredentials => "invalid_credentials",
             Self::InvalidName => "invalid_name",
             Self::InvalidAvatar => "invalid_avatar",
+            Self::InvalidBanner => "invalid_banner",
+            Self::InvalidProfile => "invalid_profile",
             Self::NotFound => "not_found",
             Self::AlreadyFriends => "already_friends",
             Self::RequestExists => "request_exists",

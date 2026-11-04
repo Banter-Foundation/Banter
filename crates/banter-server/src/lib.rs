@@ -5,11 +5,13 @@
 //! after the process exits. Voice membership, calls, and presence live in
 //! memory and reset when the server stops.
 //!
-//! Deferred, and not implemented here: About Me, custom status, reactions,
-//! bold and italic, text chat inside a voice channel, group chats, roles,
-//! kick, and ban. See `docs/foundation.md`.
+//! Deferred, and not implemented here: reactions, bold and italic, text chat
+//! inside a voice channel, group chats, roles, kick, and ban.
+//! Profile About Me / custom status / cosmetics are implemented for Discord
+//! profile parity. See `docs/foundation.md`.
 
 mod codec;
+mod cosmetics;
 mod error;
 mod http;
 mod live;
@@ -19,6 +21,10 @@ mod sfu;
 mod store;
 
 pub use codec::{sdp_fixture, sdp_matches_contract, stun_url, turn_server, H264_FMTP, H264_PROFILE_LEVEL_ID};
+pub use cosmetics::{
+    cosmetics_catalog, display_name_style_color, CosmeticItem, CosmeticKind, DEFAULT_THEME_PRIMARY,
+    DEFAULT_THEME_SECONDARY,
+};
 pub use error::BanterError;
 pub use live::Live;
 pub use model::*;
