@@ -13,7 +13,7 @@ Base revision originally documented: **`aa61044`** (`origin/main` — “Run Ban
 | Accounts, servers, channels, messages, profile rows | PostgreSQL via `BANTER_DATABASE_URL` (default `postgres://banter:banter@127.0.0.1:5432/banter`) |
 | Compose DB volume | `banter-pg` (host port `BANTER_PG_PORT`, default 5432) |
 | File bytes (avatars, banners, attachments, board assets) | `BANTER_DATA` or `%LOCALAPPDATA%\Banter` / `$XDG_DATA_HOME/Banter` — under `avatars/`, `banners/`, `files/` |
-| Client prefs | Same data dir: `client-session.json`, `voice.json`, `stream.json`, `dev-server.json`, `banter-dock.ini` |
+| Client prefs | Same data dir: `client-session.json`, `voice.json`, `stream.json`, `home.json`, `dev-server.json`, `banter-dock.ini` |
 
 There is **no** live `banter.db`. Leftover SQLite files under the data dir (if any) are ignored; Banter does not import them. Schema boot runs `schema.sql` then versioned migrations so existing Postgres volumes gain new columns/tables without a wipe. See [build-and-run.md](build-and-run.md) for the local port conflict (`BANTER_PG_PORT` + matching `BANTER_DATABASE_URL`).
 
