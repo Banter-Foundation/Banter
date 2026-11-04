@@ -53,7 +53,7 @@ An optional listen address can be passed as the first argument, and that argumen
 
 ## Server container
 
-Setup guide: **[docs/docker-setup.md](docs/docker-setup.md)**. Podman and Docker both run this image (the `version-1-test-8` publish was built with Podman).
+Setup guide: **[docs/docker-setup.md](docs/docker-setup.md)**. Podman and Docker both run this image (the `version-1-test-9` publish follows the same manual image path as `version-1-test-8`).
 
 ```
 cd "D:\Projects\Project Banter"
@@ -63,7 +63,7 @@ podman compose up -d
 
 Inside the container the server binds `0.0.0.0` on port `3970` (`BANTER_BIND` / `BANTER_PORT`). Account data stays on the named volume `banter-data`. Point the desktop client at a published port with **User Settings → Developer → Remote**.
 
-Image: `ghcr.io/snowedinowl/banter:version-1-test-8` (compose default also accepts `:latest` from release auto-deploy).
+Image: `ghcr.io/snowedinowl/banter:version-1-test-9` (compose default also accepts `:latest` from release auto-deploy).
 
 Open the client twice to try voice between two accounts. They share one server. With **Stay signed in** checked, `client-session.json` stores one login for the next cold start; unchecked keeps the token in memory only for that run. Both clients can stay signed in during the same run because each keeps its token in memory.
 
