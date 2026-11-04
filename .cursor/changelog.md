@@ -474,6 +474,13 @@ Shipped pre-release Version-1-test-9. Older tags stay. Compose default remains `
 - Assets: Banter-windows-version-1-test-9.zip, Banter-linux-version-1-test-9.zip, banter-server.exe, banter-server-linux
 - `room::tests::voice_channel_sfu_delivers_audio_camera_and_screen` passed (microphone, camera, and screen RTP).
 
+## 2026-11-04 15:57:00 -0500 [ubuntu] — About Me, custom status, and guild roles
+
+My Account saves About Me and a custom status. The status shows under your name and on member rows. Servers get an @everyone role plus extra roles with a color, an optional hoist, and permission bits. The server menu edits roles. A member's context menu assigns them. Kick and ban stay deferred.
+
+- Migration `003_guild_roles`. Creating a channel or category requires Manage Channels. Creating an invite requires Create Invite. The owner has every permission.
+- Tests: `roles::` 3 passed, `member_group` passed, `member_context_menu` passed, `guild_roles_gate_channels_and_stay_below_the_actor` and `server_invite_members_nickname_and_channels` passed against Postgres.
+
 ## 2026-11-04 16:03:09 -0500 [ubuntu] — Hidden /debugnow server debug window
 
 Typing `/debugnow` in a text channel or DM opens a server debug window instead of sending a message. The window shows live stats and the server's recent log. It is not listed in any menu.
@@ -481,3 +488,10 @@ Typing `/debugnow` in a text channel or DM opens a server debug window instead o
 - `GET /v1/debug` (signed-in) returns uptime, RSS, presence, voice, calls, SFU slots, database counts, pool usage, and a 300-line ring
 - Log lines also go to stderr: listen, login, logout, websocket, voice, calls, and server errors
 - Tests: `is_debug_command`, debug log ring, live counts, and `debug_table_counts_include_new_rows` against Postgres
+
+## 2026-11-04 16:12:33 -0500 [ubuntu] — Version-1-test-10 pre-release
+
+Shipped pre-release Version-1-test-10 from main after About Me, custom status, guild roles, and the hidden `/debugnow` window. Older tags stay. Compose default remains `:latest`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
+- Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-10
+- Assets: Banter-windows-version-1-test-10.zip, Banter-linux-version-1-test-10.zip, Banter-macos-arm-version-1-test-10.zip, banter-server.exe, banter-server-linux, banter-server-macos-arm

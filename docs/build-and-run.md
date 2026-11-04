@@ -119,7 +119,7 @@ Server foundation tests in `crates/banter-server/tests/foundation.rs` are the AP
 
 Full walkthrough: **[docker-setup.md](docker-setup.md)**.
 
-Image: **`ghcr.io/snowedinowl/banter`** (`version-1-test-9` for the current pre-release; older `version-1-test-1` … `version-1-test-8` tags stay). Server only — not the desktop app.
+Image: **`ghcr.io/snowedinowl/banter`**. The last tag that landed is `version-1-test-8`. `version-1-test-9` did not push. Older tags stay. Server only — not the desktop app.
 
 ```powershell
 cd "D:\Projects\Project Banter"
@@ -132,4 +132,4 @@ If host port `3970` is taken, publish another (see the setup guide) and point **
 
 Guild voice also needs the slot’s UDP range (`40000-40049` on `banter-a`, `40100-40149` on `banter-b`). `BANTER_ADVERTISE_IP` defaults to `127.0.0.1` for a desktop on this machine. Set it to the host’s reachable address when the client is elsewhere, and open that UDP range. Direct calls do not use it.
 
-Pre-release artifacts: [Version-1-test-9](https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-9). Do not move older release tags for later UI-only commits.
+Pre-release artifacts: [Version-1-test-10](https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-10). Do not move older release tags.

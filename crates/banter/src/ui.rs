@@ -11,10 +11,12 @@ use std::time::{Duration, Instant};
 
 use banter_server::{
     Account, BadgeItem, CallPhase, CallSnapshot, CategoryLayout, Channel, ChannelKind, ChatTarget,
-    ClientSignal, CosmeticItem, CosmeticKind, DirectChat, Friend, FriendRequest, LayerId, LayerPreferences,
-    MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MediaKind, MediaPlace, Mention, Message, Presence,
+    ClientSignal, CosmeticItem, CosmeticKind, DirectChat, Friend, FriendRequest, GuildRole, LayerId,
+    LayerPreferences, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MediaKind, MediaPlace, Mention, Message,
+    PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_CHANNELS, PERM_MANAGE_ROLES, Presence,
     ProfileActivityInput, ProfileConnectionInput, ProfilePatch, ProfileWidgetInput, ProfileWidgetKind,
-    ProfileWishlistInput, ServerDebug, ServerSummary, UserProfile, VoiceFlags, VoiceMember,
+    ProfileWishlistInput, ServerDebug, ServerSummary, UserProfile, VoiceFlags, VoiceMember, has_permission,
+    top_hoisted_role, top_role_color,
 };
 use dear_imgui_rs::{
     ChildFlags, Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData,
@@ -34,6 +36,7 @@ use crate::logic::{
     encode_jpeg_rgba, fps_block, fps_from_key, fps_key, grouped_mix_sources, hardware_encoder_block, insert_mention,
     is_debug_command,
     lerp_size, load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, password_blocks_copy,
+    plan_member_groups,
     password_is_masked, push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key,
     save_json, speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
     stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message, chat_date_separator,
@@ -168,6 +171,8 @@ enum Modal {
     Nickname,
     CreateChannel,
     CreateCategory,
+    Roles,
+    MemberRoles,
     /// Chat file attach is gated off (BA-61); shows Owl's exact unavailable copy.
     UploadsUnavailable,
 }
@@ -235,6 +240,20 @@ pub(crate) struct App {
     channel_name: String,
     channel_is_voice: bool,
     nickname: String,
+    about_draft: String,
+    status_draft: String,
+    guild_roles: Vec<GuildRole>,
+    role_name: String,
+    role_color: String,
+    role_hoist: bool,
+    role_admin: bool,
+    role_channels: bool,
+    role_manage: bool,
+    role_invite: bool,
+    editing_role: Option<i64>,
+    role_error: String,
+    assign_user: Option<i64>,
+    assign_role_ids: Vec<i64>,
     display_name: String,
     composer: String,
     search: String,
@@ -437,6 +456,20 @@ impl App {
             channel_name: String::new(),
             channel_is_voice: false,
             nickname: String::new(),
+            about_draft: String::new(),
+            status_draft: String::new(),
+            guild_roles: Vec::new(),
+            role_name: String::new(),
+            role_color: String::new(),
+            role_hoist: false,
+            role_admin: false,
+            role_channels: false,
+            role_manage: false,
+            role_invite: false,
+            editing_role: None,
+            role_error: String::new(),
+            assign_user: None,
+            assign_role_ids: Vec::new(),
             display_name: String::new(),
             composer: String::new(),
             search: String::new(),
@@ -1299,10 +1332,19 @@ impl App {
             self.server_menu = false;
             return;
         };
-        let owner = self.servers.iter().find(|server| server.id == server_id).map(|server| server.owner_id);
-        let mine = self.account.as_ref().map(|account| account.id);
-        let is_owner = owner.is_some() && owner == mine;
-        let items: usize = if is_owner { 4 } else { 2 };
+        let can_invite = self.can_permission(PERM_CREATE_INVITE);
+        let can_channels = self.can_permission(PERM_MANAGE_CHANNELS);
+        let can_roles = self.can_permission(PERM_MANAGE_ROLES);
+        let mut items = 1usize;
+        if can_invite {
+            items += 1;
+        }
+        if can_channels {
+            items += 2;
+        }
+        if can_roles {
+            items += 1;
+        }
         let separators = 1.0;
         let height = MENU_PAD * 2.0 + items as f32 * (MENU_ITEM_H + 2.0) + separators * 9.0;
         let pos = [RAIL_W + 10.0, HEADER_H + 4.0];
@@ -1328,17 +1370,25 @@ impl App {
                 let x = pos[0] + MENU_PAD;
                 let item_w = width - MENU_PAD * 2.0;
                 let mut y = pos[1] + MENU_PAD;
-                if skin::menu_item(ui, "menu-invite", "Invite People", self.icon("user-plus"), MenuTone::Brand, [x, y], item_w, semi) {
-                    action = Some(Modal::Invite);
+                if can_invite {
+                    if skin::menu_item(ui, "menu-invite", "Invite People", self.icon("user-plus"), MenuTone::Brand, [x, y], item_w, semi) {
+                        action = Some(Modal::Invite);
+                    }
+                    y += MENU_ITEM_H + 2.0;
                 }
-                y += MENU_ITEM_H + 2.0;
-                if is_owner {
+                if can_channels {
                     if skin::menu_item(ui, "menu-channel", "Create Channel", self.icon("circle-plus"), MenuTone::Normal, [x, y], item_w, semi) {
                         action = Some(Modal::CreateChannel);
                     }
                     y += MENU_ITEM_H + 2.0;
                     if skin::menu_item(ui, "menu-category", "Create Category", self.icon("folder-plus"), MenuTone::Normal, [x, y], item_w, semi) {
                         action = Some(Modal::CreateCategory);
+                    }
+                    y += MENU_ITEM_H + 2.0;
+                }
+                if can_roles {
+                    if skin::menu_item(ui, "menu-roles", "Server Roles", self.icon("users"), MenuTone::Normal, [x, y], item_w, semi) {
+                        action = Some(Modal::Roles);
                     }
                     y += MENU_ITEM_H + 2.0;
                 }
@@ -1368,6 +1418,7 @@ impl App {
                     }
                     self.open_modal(Modal::Nickname);
                 }
+                Modal::Roles => self.open_roles(),
                 _ => {}
             }
             return;
@@ -1549,6 +1600,9 @@ impl App {
             ContextMenuAction::InvitePeople { server_id } => {
                 self.open_invite(server_id);
             }
+            ContextMenuAction::AssignRoles { user_id } => {
+                self.open_member_roles(user_id);
+            }
         }
     }
 
@@ -1605,7 +1659,7 @@ impl App {
                 let mine = self.account.as_ref().map(|account| account.id);
                 self.open_context_menu(
                     ui,
-                    member_context_menu(chat.peer_id, &chat.peer_username, mine, self.is_friend(chat.peer_id)),
+                    member_context_menu(chat.peer_id, &chat.peer_username, mine, self.is_friend(chat.peer_id), false),
                     mouse,
                 );
             }
@@ -1691,8 +1745,17 @@ impl App {
         let name_w = (buttons_x - 4.0 - name_x).max(16.0);
         let name = skin::ellipsize(ui, self.semibold_font, FONT_SM, &self.display_name, name_w);
         skin::text(ui, self.semibold_font, FONT_SM, [name_x, origin[1] + 8.0], TEXT, &name);
-        let handle = skin::ellipsize(ui, None, FONT_XS, &username, name_w);
-        skin::text(ui, None, FONT_XS, [name_x, origin[1] + 27.0], TEXT_SECONDARY, &handle);
+        let custom = account_id.and_then(|id| {
+            self.presence.get(&id).and_then(|info| {
+                info.custom_status.as_deref().map(str::trim).filter(|text| !text.is_empty()).map(str::to_string)
+            })
+        });
+        let (second, second_color) = match custom {
+            Some(status) => (status, TEXT),
+            None => (username, TEXT_SECONDARY),
+        };
+        let handle = skin::ellipsize(ui, None, FONT_XS, &second, name_w);
+        skin::text(ui, None, FONT_XS, [name_x, origin[1] + 27.0], second_color, &handle);
         let y = origin[1] + (USER_PANEL_H - 32.0) * 0.5;
         let muted = self.mute.muted();
         let (mic_tint, mic_icon) = if muted { (RED, "mic-off") } else { (TEXT_SECONDARY, "mic") };
@@ -2274,7 +2337,7 @@ impl App {
         if let Some((user_id, username)) = context_user {
             let mouse = ui.mouse_pos();
             let mine = self.account.as_ref().map(|account| account.id);
-            self.open_context_menu(ui, member_context_menu(user_id, &username, mine, true), mouse);
+            self.open_context_menu(ui, member_context_menu(user_id, &username, mine, true, false), mouse);
         }
     }
 
@@ -2292,14 +2355,13 @@ impl App {
     fn draw_channels(&mut self, ui: &Ui, server_id: i64) {
         let layout = self.layout.clone();
         let voice_members = self.voice_members.clone();
-        let owner = self.servers.iter().find(|server| server.id == server_id).map(|server| server.owner_id);
-        let is_owner = owner.is_some() && owner == self.account.as_ref().map(|account| account.id);
+        let can_manage = self.can_permission(PERM_MANAGE_CHANNELS);
         let selected_id = self.selected.as_ref().map(|channel| channel.id);
         ui.dummy([0.0, 4.0]);
         for category in layout {
             let category_id = category.category.id;
             let collapsed = self.collapsed.contains(&category_id);
-            let (toggle, create) = self.category_row(ui, category_id, &category.category.name, collapsed, is_owner);
+            let (toggle, create) = self.category_row(ui, category_id, &category.category.name, collapsed, can_manage);
             if toggle {
                 if collapsed {
                     self.collapsed.remove(&category_id);
@@ -2346,7 +2408,7 @@ impl App {
                     let mouse = ui.mouse_pos();
                     self.open_context_menu(
                         ui,
-                        channel_context_menu(channel.id, &channel.name, server_id, is_owner),
+                        channel_context_menu(channel.id, &channel.name, server_id, can_manage),
                         mouse,
                     );
                 }
@@ -2418,30 +2480,42 @@ impl App {
         match self.place {
             Place::Server(_) => {
                 let members = self.members.clone();
-                let mut online = Vec::new();
-                let mut offline = Vec::new();
-                for member in members {
-                    let presence = self.presence.get(&member.user_id).map(|p| p.state).unwrap_or(member.presence);
-                    if presence == Presence::Offline {
-                        offline.push((member, presence));
-                    } else {
-                        online.push((member, presence));
-                    }
+                let rows: Vec<(bool, Option<(i64, String)>)> = members
+                    .iter()
+                    .map(|member| {
+                        let presence = self.presence.get(&member.user_id).map(|info| info.state).unwrap_or(member.presence);
+                        let online = presence != Presence::Offline;
+                        let hoist = top_hoisted_role(&member.roles).map(|role| (role.position, role.name.clone()));
+                        (online, hoist)
+                    })
+                    .collect();
+                for (title, indexes) in plan_member_groups(&rows) {
+                    let grouped: Vec<_> = indexes
+                        .into_iter()
+                        .filter_map(|index| {
+                            let member = members.get(index)?.clone();
+                            let presence = self.presence.get(&member.user_id).map(|info| info.state).unwrap_or(member.presence);
+                            Some((member, presence))
+                        })
+                        .collect();
+                    self.member_group(ui, &title, &grouped);
                 }
-                self.member_group(ui, "ONLINE", &online);
-                self.member_group(ui, "OFFLINE", &offline);
                 ui.dummy([0.0, 20.0]);
             }
             Place::Direct(dm_id) => {
                 if let Some(chat) = self.dms.iter().find(|chat| chat.id == dm_id).cloned() {
                     let presence = self.presence.get(&chat.peer_id).map(|p| p.state).unwrap_or(Presence::Offline);
+                    let status = self
+                        .presence
+                        .get(&chat.peer_id)
+                        .and_then(|info| info.custom_status.as_deref().map(str::trim).filter(|text| !text.is_empty()).map(str::to_string));
                     ui.dummy([0.0, 16.0]);
-                    if self.person_row(ui, chat.peer_id, &chat.peer_display_name, &chat.peer_username, presence, false) {
+                    if self.person_row(ui, chat.peer_id, &chat.peer_display_name, presence, false, status.as_deref(), None) {
                         let mouse = ui.mouse_pos();
                         let mine = self.account.as_ref().map(|account| account.id);
                         self.open_context_menu(
                             ui,
-                            member_context_menu(chat.peer_id, &chat.peer_username, mine, self.is_friend(chat.peer_id)),
+                            member_context_menu(chat.peer_id, &chat.peer_username, mine, self.is_friend(chat.peer_id), false),
                             mouse,
                         );
                     }
@@ -2462,36 +2536,60 @@ impl App {
         skin::text_in_row(ui, self.semibold_font, FONT_XS, origin[0] + 16.0, origin[1] + 24.0, 16.0, MUTED, &label);
         for (member, presence) in members {
             let name = member.nickname.clone().unwrap_or(member.display_name.clone());
-            if self.person_row(ui, member.user_id, &name, &member.username, *presence, member.is_owner) {
+            let live_status = self.presence.get(&member.user_id).and_then(|info| info.custom_status.clone());
+            let status = live_status
+                .or_else(|| member.custom_status.clone())
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string);
+            let color = top_role_color(&member.roles).map(|rgb| rgb_u32_to_rgba(rgb as u32));
+            if self.person_row(ui, member.user_id, &name, *presence, member.is_owner, status.as_deref(), color) {
                 let mouse = ui.mouse_pos();
                 let mine = self.account.as_ref().map(|account| account.id);
                 self.open_context_menu(
                     ui,
-                    member_context_menu(member.user_id, &member.username, mine, self.is_friend(member.user_id)),
+                    member_context_menu(
+                        member.user_id,
+                        &member.username,
+                        mine,
+                        self.is_friend(member.user_id),
+                        self.can_permission(PERM_MANAGE_ROLES),
+                    ),
                     mouse,
                 );
             }
         }
     }
 
-    /// 42 px member row: 32 px avatar with status, name, and the owner crown. Offline rows are dimmed.
+    /// Member row: avatar, name (role color when set), optional custom status, and the owner crown.
     /// Left-click opens the profile card. Returns true when right-clicked for a context menu.
-    fn person_row(&mut self, ui: &Ui, user_id: i64, name: &str, _username: &str, presence: Presence, owner: bool) -> bool {
+    fn person_row(
+        &mut self,
+        ui: &Ui,
+        user_id: i64,
+        name: &str,
+        presence: Presence,
+        owner: bool,
+        custom_status: Option<&str>,
+        role_color: Option<[f32; 4]>,
+    ) -> bool {
+        let row_h = if custom_status.is_some() { MEMBER_ROW_H + 14.0 } else { MEMBER_ROW_H };
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
-        let clicked = ui.invisible_button(format!("member-{user_id}"), [width, MEMBER_ROW_H]);
+        let clicked = ui.invisible_button(format!("member-{user_id}"), [width, row_h]);
         let right = ui.is_item_clicked_with_button(MouseButton::Right);
         let hovered = ui.is_item_hovered();
         if clicked {
             self.open_profile(user_id, [origin[0] + width, origin[1]]);
         }
         let min = [origin[0] + ROW_INSET, origin[1] + 1.0];
-        let max = [origin[0] + width - ROW_INSET, origin[1] + MEMBER_ROW_H - 1.0];
+        let max = [origin[0] + width - ROW_INSET, origin[1] + row_h - 1.0];
         if hovered {
             skin::rect(ui, min, max, ROW_HOVER, ROW_RADIUS);
         }
         let backdrop = if hovered { ROW_HOVER } else { SIDEBAR_BG };
-        let center = [min[0] + 8.0 + 16.0, origin[1] + MEMBER_ROW_H * 0.5];
+        let center = [min[0] + 8.0 + 16.0, origin[1] + row_h * 0.5];
         let avatar = self.avatars.get(&user_id).map(|shot| shot.texture);
         paint_avatar(ui, avatar, center, 16.0, &initials(name), None);
         let offline = presence == Presence::Offline;
@@ -2501,19 +2599,26 @@ impl App {
             paint_status_dot(ui, center, 16.0, presence, backdrop);
         }
         let text_x = min[0] + 8.0 + 32.0 + 12.0;
-        let color = if offline {
+        let fallback = if offline {
             with_alpha(MUTED, 0.5)
         } else if hovered {
             TEXT_NORMAL
         } else {
             MUTED
         };
+        let color = if offline { fallback } else { role_color.unwrap_or(fallback) };
         let crown_w = if owner { 18.0 } else { 0.0 };
         let shown = skin::ellipsize(ui, None, FONT_MD, name, max[0] - 8.0 - crown_w - text_x);
-        skin::text_in_row(ui, None, FONT_MD, text_x, origin[1], MEMBER_ROW_H, color, &shown);
+        let name_y = if custom_status.is_some() { origin[1] + 4.0 } else { origin[1] };
+        let name_h = if custom_status.is_some() { 20.0 } else { row_h };
+        skin::text_in_row(ui, None, FONT_MD, text_x, name_y, name_h, color, &shown);
+        if let Some(status) = custom_status {
+            let status = skin::ellipsize(ui, None, FONT_XS, status, max[0] - 8.0 - text_x);
+            skin::text(ui, None, FONT_XS, [text_x, origin[1] + 24.0], if offline { with_alpha(MUTED, 0.5) } else { TEXT_SECONDARY }, &status);
+        }
         if owner {
             let name_w = skin::text_size(ui, None, FONT_MD, &shown)[0];
-            let crown_min = [text_x + name_w + 4.0, center[1] - 7.0];
+            let crown_min = [text_x + name_w + 4.0, name_y + name_h * 0.5 - 7.0];
             skin::image(ui, self.icon("crown"), crown_min, 14.0, WHITE);
             if ui.is_mouse_hovering_rect(crown_min, [crown_min[0] + 14.0, crown_min[1] + 14.0]) {
                 skin::tooltip(ui, self.semibold_font, FONT_SM, "Server Owner", crown_min, [crown_min[0] + 14.0, crown_min[1] + 14.0], TooltipSide::Top);
@@ -3518,6 +3623,8 @@ impl App {
                     Modal::Nickname => self.modal_nickname(ui, display),
                     Modal::CreateChannel => self.modal_create_channel(ui, display),
                     Modal::CreateCategory => self.modal_create_category(ui, display),
+                    Modal::Roles => self.modal_roles(ui, display),
+                    Modal::MemberRoles => self.modal_member_roles(ui, display),
                     Modal::UploadsUnavailable => self.modal_uploads_unavailable(ui, display),
                 };
                 if self.modal_frames > 0 && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
@@ -3752,6 +3859,134 @@ impl App {
         let (dismiss, ok) = self.modal_footer(ui, max, min[0], "Dismiss", "OK", Tone::Brand, true);
         if dismiss || ok {
             self.modal = None;
+        }
+        (min, max)
+    }
+
+    fn modal_roles(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let body_h = 112.0 + 20.0 + INPUT_H + 12.0 + 20.0 + INPUT_H + 12.0 + 22.0 * 4.0 + 72.0;
+        let (body, min, max) = self.modal_frame(ui, display, "Server Roles", Some("Color, hoist, and permissions"), true, body_h, MODAL_FOOTER_H);
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        let roles = self.guild_roles.clone();
+        let list_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
+        ui.set_cursor_screen_pos(body);
+        ui.child_window("role-list")
+            .size([inner_w, 104.0])
+            .build(ui, || {
+                if ui.selectable_config("New role").selected(self.editing_role.is_none()).build() {
+                    self.clear_role_form();
+                }
+                for role in &roles {
+                    let label = format!("{}##role-{}", role.name, role.id);
+                    let selected = self.editing_role == Some(role.id);
+                    if ui.selectable_config(&label).selected(selected).build() {
+                        self.load_role_form(role);
+                    }
+                }
+            });
+        drop(list_bg);
+        let mut y = body[1] + 112.0;
+        skin::field_label(ui, self.bold_font, [body[0], y], "Role name", false, None);
+        y += 20.0;
+        let everyone = self.editing_role.and_then(|id| self.guild_roles.iter().find(|role| role.id == id).map(|role| role.everyone)).unwrap_or(false);
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.set_next_item_width(inner_w);
+        let _disabled = ui.begin_disabled_with_cond(everyone);
+        ui.input_text("##role-name", &mut self.role_name).build();
+        drop(_disabled);
+        y += INPUT_H + 12.0;
+        skin::field_label(ui, self.bold_font, [body[0], y], "Color", false, None);
+        y += 20.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.set_next_item_width(inner_w);
+        ui.input_text("##role-color", &mut self.role_color).hint("5865F2").build();
+        y += INPUT_H + 8.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        let _disabled = ui.begin_disabled_with_cond(everyone);
+        ui.checkbox("Show separately in the member list", &mut self.role_hoist);
+        drop(_disabled);
+        y += 22.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.checkbox("Create invite", &mut self.role_invite);
+        y += 22.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.checkbox("Manage channels", &mut self.role_channels);
+        y += 22.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.checkbox("Manage roles", &mut self.role_manage);
+        y += 22.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.checkbox("Administrator", &mut self.role_admin);
+        y += 24.0;
+        if self.editing_role.is_some() && !everyone {
+            ui.set_cursor_screen_pos([body[0], y]);
+            if ui.small_button("Delete role") {
+                self.delete_editing_role();
+            }
+            y += 22.0;
+        }
+        if !self.role_error.is_empty() {
+            ui.set_cursor_screen_pos([body[0], y]);
+            ui.text_colored(RED, &self.role_error);
+        }
+        let primary = if self.editing_role.is_some() { "Save Role" } else { "Create Role" };
+        let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", primary, Tone::Brand, !self.role_name.trim().is_empty() || everyone);
+        if cancel {
+            self.modal = None;
+        } else if save {
+            self.submit_role(everyone);
+        }
+        (min, max)
+    }
+
+    fn modal_member_roles(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let user_id = self.assign_user;
+        let name = user_id
+            .and_then(|id| self.members.iter().find(|member| member.user_id == id))
+            .map(|member| member.nickname.clone().unwrap_or_else(|| member.display_name.clone()))
+            .unwrap_or_else(|| "Member".into());
+        let roles: Vec<GuildRole> = self.guild_roles.iter().filter(|role| !role.everyone).cloned().collect();
+        let body_h = 24.0 + (roles.len().max(1) as f32 * 24.0) + 16.0;
+        let (body, min, max) = self.modal_frame(ui, display, "Roles", Some(&name), true, body_h, MODAL_FOOTER_H);
+        let mut y = body[1];
+        if roles.is_empty() {
+            ui.set_cursor_screen_pos([body[0], y]);
+            ui.text_colored(MUTED, "No roles yet. Create one from Server Roles.");
+        }
+        for role in &roles {
+            ui.set_cursor_screen_pos([body[0], y]);
+            let mut on = self.assign_role_ids.contains(&role.id);
+            let label = format!("{}##assign-{}", role.name, role.id);
+            if ui.checkbox(&label, &mut on) {
+                if on {
+                    if !self.assign_role_ids.contains(&role.id) {
+                        self.assign_role_ids.push(role.id);
+                    }
+                } else {
+                    self.assign_role_ids.retain(|id| *id != role.id);
+                }
+            }
+            y += 24.0;
+        }
+        if !self.role_error.is_empty() {
+            ui.set_cursor_screen_pos([body[0], y]);
+            ui.text_colored(RED, &self.role_error);
+        }
+        let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", "Save", Tone::Brand, user_id.is_some());
+        if cancel {
+            self.modal = None;
+        } else if save {
+            if let (Place::Server(server_id), Some(user_id)) = (self.place, user_id) {
+                let ids = self.assign_role_ids.clone();
+                match self.client.set_member_roles(server_id, user_id, &ids) {
+                    Ok(()) => {
+                        self.role_error.clear();
+                        self.reload_members();
+                        self.modal = None;
+                    }
+                    Err(err) => self.role_error = err.to_string(),
+                }
+            }
         }
         (min, max)
     }
@@ -4287,6 +4522,130 @@ impl App {
         }
     }
 
+    fn can_permission(&self, flag: i64) -> bool {
+        let Place::Server(server_id) = self.place else { return false };
+        let Some(me) = self.account.as_ref().map(|account| account.id) else { return false };
+        if self.servers.iter().any(|server| server.id == server_id && server.owner_id == me) {
+            return true;
+        }
+        let Some(member) = self.members.iter().find(|member| member.user_id == me) else { return false };
+        let bits = member.roles.iter().fold(0, |acc, role| acc | role.permissions);
+        has_permission(bits, flag)
+    }
+
+    fn reload_role_list(&mut self) {
+        let Place::Server(server_id) = self.place else { return };
+        if let Ok(roles) = self.client.roles(server_id) {
+            self.guild_roles = roles;
+        }
+    }
+
+    fn open_roles(&mut self) {
+        self.role_error.clear();
+        self.reload_role_list();
+        self.clear_role_form();
+        self.open_modal(Modal::Roles);
+    }
+
+    fn open_member_roles(&mut self, user_id: i64) {
+        self.reload_role_list();
+        self.assign_user = Some(user_id);
+        self.assign_role_ids = self
+            .members
+            .iter()
+            .find(|member| member.user_id == user_id)
+            .map(|member| member.roles.iter().filter(|role| !role.everyone).map(|role| role.id).collect())
+            .unwrap_or_default();
+        self.role_error.clear();
+        self.open_modal(Modal::MemberRoles);
+    }
+
+    fn clear_role_form(&mut self) {
+        self.editing_role = None;
+        self.role_name.clear();
+        self.role_color.clear();
+        self.role_hoist = false;
+        self.role_admin = false;
+        self.role_channels = false;
+        self.role_manage = false;
+        self.role_invite = false;
+        self.role_error.clear();
+    }
+
+    fn load_role_form(&mut self, role: &GuildRole) {
+        self.editing_role = Some(role.id);
+        self.role_name = role.name.clone();
+        self.role_color = if role.color == 0 { String::new() } else { format!("{:06X}", role.color) };
+        self.role_hoist = role.hoist;
+        self.role_admin = role.permissions & PERM_ADMINISTRATOR != 0;
+        self.role_channels = role.permissions & PERM_MANAGE_CHANNELS != 0;
+        self.role_manage = role.permissions & PERM_MANAGE_ROLES != 0;
+        self.role_invite = role.permissions & PERM_CREATE_INVITE != 0;
+        self.role_error.clear();
+    }
+
+    fn role_form_bits(&self) -> i64 {
+        let mut bits = 0;
+        if self.role_invite {
+            bits |= PERM_CREATE_INVITE;
+        }
+        if self.role_channels {
+            bits |= PERM_MANAGE_CHANNELS;
+        }
+        if self.role_manage {
+            bits |= PERM_MANAGE_ROLES;
+        }
+        if self.role_admin {
+            bits |= PERM_ADMINISTRATOR;
+        }
+        bits
+    }
+
+    fn submit_role(&mut self, everyone: bool) {
+        let Place::Server(server_id) = self.place else { return };
+        let color = match parse_role_color(&self.role_color) {
+            Ok(color) => color,
+            Err(err) => {
+                self.role_error = err;
+                return;
+            }
+        };
+        let name = if everyone { "@everyone".to_string() } else { self.role_name.trim().to_string() };
+        if name.is_empty() {
+            self.role_error = "name is required".into();
+            return;
+        }
+        let bits = self.role_form_bits();
+        let hoist = self.role_hoist && !everyone;
+        let result = if let Some(role_id) = self.editing_role {
+            self.client.update_role(server_id, role_id, &name, color, hoist, bits)
+        } else {
+            self.client.create_role(server_id, &name, color, hoist, bits)
+        };
+        match result {
+            Ok(role) => {
+                self.role_error.clear();
+                self.reload_role_list();
+                self.reload_members();
+                self.load_role_form(&role);
+            }
+            Err(err) => self.role_error = err.to_string(),
+        }
+    }
+
+    fn delete_editing_role(&mut self) {
+        let Place::Server(server_id) = self.place else { return };
+        let Some(role_id) = self.editing_role else { return };
+        match self.client.delete_role(server_id, role_id) {
+            Ok(()) => {
+                self.clear_role_form();
+                self.reload_role_list();
+                self.reload_members();
+            }
+            Err(err) => self.role_error = err.to_string(),
+        }
+    }
+
     fn reload_messages(&mut self) {
         let Some(target) = self.chat_target() else { return };
         let query = {
@@ -4763,6 +5122,14 @@ impl App {
         self.settings.open_section(section);
         self.settings_error.clear();
         self.display_name = self.account.as_ref().map(|account| account.display_name.clone()).unwrap_or_default();
+        if section == SettingsSection::Account {
+            if let Some(id) = self.account.as_ref().map(|account| account.id) {
+                if let Ok(profile) = self.client.user_profile(id, None) {
+                    self.about_draft = profile.about_me.unwrap_or_default();
+                    self.status_draft = profile.custom_status.unwrap_or_default();
+                }
+            }
+        }
         if section == SettingsSection::Voice {
             self.devices_ready = false;
         }
@@ -5008,6 +5375,14 @@ impl App {
                         ui.text_colored(MUTED, "MEMBER SINCE");
                         ui.text_colored(TEXT, &format_member_since(view.member_since));
                         ui.dummy([0.0, 6.0]);
+                        if !view.roles.is_empty() {
+                            ui.text_colored(MUTED, "ROLES");
+                            for role in &view.roles {
+                                let color = if role.color > 0 { rgb_u32_to_rgba(role.color as u32) } else { MUTED };
+                                ui.text_colored(color, &format!("● {}", role.name));
+                            }
+                            ui.dummy([0.0, 6.0]);
+                        }
                         if !view.connections.is_empty() {
                             ui.text_colored(MUTED, "CONNECTIONS");
                             for connection in &view.connections {
@@ -6213,6 +6588,19 @@ impl App {
                     draw.add_text([text_x, y], TEXT, &format_member_since(view.member_since));
                     y += 24.0;
                 }
+                if !view.roles.is_empty() && y + 18.0 <= card_max[1] {
+                    draw.add_text([text_x, y], MUTED, "ROLES");
+                    y += 18.0;
+                    for role in view.roles.iter().take(6) {
+                        if y + 16.0 > card_max[1] {
+                            break;
+                        }
+                        let color = if role.color > 0 { rgb_u32_to_rgba(role.color as u32) } else { TEXT };
+                        draw.add_text([text_x, y], color, &role.name);
+                        y += 16.0;
+                    }
+                    y += 8.0;
+                }
                 if !view.connections.is_empty() && y + 18.0 <= card_max[1] {
                     draw.add_text([text_x, y], MUTED, "CONNECTIONS");
                     y += 18.0;
@@ -6834,6 +7222,35 @@ impl App {
         ui.text(format!("@{}", account.username));
 
         ui.set_cursor_screen_pos([card[0], card[1] + card_h + 16.0]);
+        settings_form_label(ui, self.bold_font, "CUSTOM STATUS");
+        ui.set_next_item_width(width);
+        ui.input_text("##account-status", &mut self.status_draft).hint("What are you up to?").build();
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "ABOUT ME");
+        ui.input_text_multiline("##account-about", &mut self.about_draft, [width, 72.0]).build();
+        ui.text_colored(MUTED, "Shown on your profile. Custom status also sits under your name.");
+        settings_spacer(ui);
+        if ui.button("Save Profile") {
+            let patch = ProfilePatch {
+                about_me: Some(self.about_draft.clone()),
+                custom_status: Some(self.status_draft.clone()),
+                ..ProfilePatch::default()
+            };
+            match self.client.update_profile(&patch) {
+                Ok(profile) => {
+                    self.about_draft = profile.about_me.clone().unwrap_or_default();
+                    self.status_draft = profile.custom_status.clone().unwrap_or_default();
+                    if let Some(id) = self.account.as_ref().map(|account| account.id) {
+                        let state = self.presence.get(&id).map(|info| info.state).unwrap_or(Presence::Online);
+                        let custom_status = profile.custom_status.clone().filter(|text| !text.trim().is_empty());
+                        self.presence.insert(id, PresenceInfo { state, custom_status });
+                    }
+                    self.settings_error.clear();
+                }
+                Err(err) => self.settings_error = err.to_string(),
+            }
+        }
+        settings_spacer(ui);
         if !self.settings_error.is_empty() {
             ui.text_colored(RED, &self.settings_error);
         }
@@ -8308,6 +8725,17 @@ fn format_log_clock(at_ms: i64) -> String {
     let minutes = (secs % 3600) / 60;
     let seconds = secs % 60;
     format!("{hours:02}:{minutes:02}:{seconds:02} UTC")
+}
+
+fn parse_role_color(raw: &str) -> Result<i64, String> {
+    let text = raw.trim().trim_start_matches('#');
+    if text.is_empty() {
+        return Ok(0);
+    }
+    if text.len() != 6 || !text.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("color is a 6 digit hex value".into());
+    }
+    i64::from_str_radix(text, 16).map_err(|_| "color is a 6 digit hex value".into())
 }
 
 fn mirrored_camera_rgba(imgui: &mut Context, width: u32, height: u32, rgba: &[u8]) -> Option<Shot> {

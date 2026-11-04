@@ -14,7 +14,8 @@
 - [*] 1:1 direct messages that can start a call. Starting or accepting a call opens a Discord-style call stage in that DM (large avatar while ringing, two tiles when active, shared call controls).
 - [*] Presence and mentions
 - [*] GLFW + OpenGL window with Dear ImGui docking
-- [*] User Settings in a dedicated Banter Settings GLFW window (My Account, Voice & Video, Developer); main shell stays usable; Escape / close returns focus cleanly
+- [*] User Settings in a dedicated Banter Settings GLFW window (My Account, Voice & Video, Developer); main shell stays usable; Escape / close returns focus cleanly. My Account edits display name, About Me, and custom status. Custom status shows under your name and on member rows.
+- [*] Guild roles: @everyone plus extra roles with a color, optional hoist, and permission bits (administrator, manage channels, manage roles, create invite). Server menu edits roles. Member context menu assigns them. Owner has every permission. Kick and ban stay deferred.
 - [*] Developer settings: Local (`127.0.0.1:3970`) or Remote host, persisted in `dev-server.json`. Client startup does not require local unless logged in on Local or the user picks Local; missing local asks for remote instead of hard-failing.
 - [*] F3 profiler: FPS, RSS, HTTP/WebSocket bytes, frame sections, expensive ops
 - [*] Hidden composer command `/debugnow` (text channels and DMs) opens a server debug window with logs and live stats. It is not listed in the UI and is not sent as a message.
@@ -27,6 +28,5 @@ Owl will decide later. Do not delete these.
 - Reactions
 - Text chat inside a voice channel
 - Group chats
-- Roles
 - Kick
 - Ban
