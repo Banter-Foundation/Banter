@@ -308,3 +308,20 @@ pub fn display_name_error(draft: &str) -> Option<&'static str> {
 pub fn display_name_dirty(draft: &str, saved: &str) -> bool {
     draft.trim() != saved
 }
+
+/// Screen X for Change Avatar so Change + Remove stay inside the My Account card.
+///
+/// Both buttons are right-aligned as one group with `right_pad` from the card edge,
+/// matching Discord. Do not position from Change alone — that clips Remove past the card.
+pub fn account_avatar_actions_origin_x(
+    card_x: f32,
+    card_w: f32,
+    right_pad: f32,
+    change_w: f32,
+    remove_w: f32,
+    gap: f32,
+) -> f32 {
+    let actions_w = change_w + gap + remove_w;
+    let right_edge = card_x + card_w - right_pad;
+    (right_edge - actions_w).max(card_x + right_pad)
+}

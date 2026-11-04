@@ -575,3 +575,13 @@ Agent: Worktree Banter-profiles on cursor/user-profiles-8837 from test/owl-fixes
 ## Summary
 
 User profiles land on test/owl-fixes: view basics + edit own display name/avatar; About Me still deferred.
+
+## 2026-11-03 19:34:33 -06:00 — Fix My Account avatar button overflow
+
+Owl (via coordinator BA-48): Owl added a UI bug to the test/owl-fixes batch: My Account settings — Change Avatar / Remove Avatar overflow past the card (Remove Avatar clipped off the right). Fix layout so avatar actions stay inside the card like Discord. Reference media/my-account-overflow.png. Branch from test/owl-fixes, merge into test/owl-fixes only (not main). D:\Projects\Project Banter\worktrees\. Never E:. Clear commits.
+
+Agent: Worktree Banter-account-avatar on cursor/my-account-avatar-overflow-ec98 from origin/test/owl-fixes. Wrote account_avatar_actions_stay_inside_the_card test first, then account_avatar_actions_origin_x and wired draw_account_settings to right-align Change + Remove as one group. Settings test passed. Merging into test/owl-fixes only.
+
+## Summary
+
+My Account Change/Remove Avatar buttons stay inside the profile card on test/owl-fixes.
