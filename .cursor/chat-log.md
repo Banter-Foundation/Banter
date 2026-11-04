@@ -661,3 +661,26 @@ Agent: Merged PR #16 (startup) and PR #17 (docs retarget). Tagged Version-1-test
 ## Summary
 
 Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
+
+## 2026-11-04 00:18:19 -06:00 — Group stream audio by channel and app (BA-59)
+
+Owl wants Banter stream audio sources organized into groups like audio channels and apps (or similar clear categories) in the Stream Select / stream options UI — not one flat checklist.
+
+Project: D:\Projects\Project Banter (NEVER touch E:). Repo: Banter. Use a separate git worktree/branch so you do not collide with parallel workers (VC media, UI refresh, Reddit replies, Postgres audit).
+
+Streaming rules: audio is checkable sources that can mix; settings live in the upward arrow next to stream.
+
+Implement:
+- Group enumerated capture/mix sources under sensible headers (e.g. Audio channels / system devices vs Apps / process loopback). Match Windows WASAPI realities.
+- Keep multi-select mix behavior.
+- Open PR; do not merge until Owl says so.
+- Report PR URL and how groups are labeled.
+
+Task: Group stream audio by channel and app (BA-59)
+
+Agent: Worktree D:\Projects\Project Banter\worktrees\Banter-stream-audio-groups on branch cursor/stream-audio-groups-19d2. Wrote failing client test first, then MixSourceGroup helpers in logic.rs and grouped draw_audio_sources in ui.rs. Labels: "Audio channels" and "Apps".
+
+## Summary
+
+Stream audio checklist grouped under Audio channels and Apps; PR opened, not merged.
+

@@ -72,7 +72,7 @@ Contract tests live in `crates/banter-server/tests/foundation.rs`.
 - **Mute / deafen / push-to-talk** are client flags also pushed to the server; PTT defaults to **V** (ignored while a text field is focused) plus a Talk button. F1–F12 are available as keybinds.
 - **Camera:** local preview is mirrored RGBA; outbound is I420 → H.264 over WebRTC (not JPEG spray). Open prefers ~`1280x720` (or nearest available), FPS near 30, device MJPEG on ties — not the device’s absolute highest mode. Device MJPEG is only the webcam capture format.
 - **Screen share:** choose Screens or Applications, set resolution and FPS independently (default **720p / 30**), then **Go Live**. Nothing is sent until then. Encoder is **H.264 Constrained Baseline** (hardware when probed, else OpenH264).
-- Mid-stream changes (source, size, FPS, bitrate) **pre-warm** on a side path and cut over on a frame boundary after an encoded keyframe; viewers resize without tearing the stream identity. Stream audio can mix mic, speaker loopback, and (on Windows) per-app sources with volumes.
+- Mid-stream changes (source, size, FPS, bitrate) **pre-warm** on a side path and cut over on a frame boundary after an encoded keyframe; viewers resize without tearing the stream identity. Stream audio can mix mic, speaker loopback, and (on Windows) per-app sources with volumes. The Stream Select checklist groups them under **Audio channels** (system devices) and **Apps** (process loopback).
 - Voice & stream prefs restore from `voice.json` / `stream.json`. Developer Local/Remote restores from `dev-server.json`.
 - Text chat **inside** a voice channel is deferred; the server rejects that path until Owl says otherwise.
 

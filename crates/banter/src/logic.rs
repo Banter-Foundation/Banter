@@ -793,6 +793,110 @@ pub struct MixSource {
     pub volume: f32,
 }
 
+/// Stream Select / stream-options grouping for checkable mix sources.
+///
+/// Windows WASAPI (and the Linux `loop:` / `app:` mirrors) split into system
+/// devices versus per-process loopback. Several sources stay checkable so they
+/// can mix into one stream-audio track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MixSourceGroup {
+    /// System capture and render devices (`mic:` microphones, `loop:` speaker loopback).
+    AudioChannels,
+    /// Per-process loopback (`app:` PID), e.g. WASAPI process loopback.
+    Apps,
+}
+
+impl MixSourceGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AudioChannels => "Audio channels",
+            Self::Apps => "Apps",
+        }
+    }
+}
+
+/// Classify a mix source id into its Stream Select group.
+pub fn mix_source_group(id: &str) -> MixSourceGroup {
+    if id.starts_with("app:") {
+        MixSourceGroup::Apps
+    } else {
+        MixSourceGroup::AudioChannels
+    }
+}
+
+/// Group indices for the UI: Audio channels first, then Apps. Empty groups are omitted.
+/// Relative order inside each group matches `sources`. Multi-select is unchanged.
+pub fn grouped_mix_sources(sources: &[MixSource]) -> Vec<(MixSourceGroup, Vec<usize>)> {
+    [
+        MixSourceGroup::AudioChannels,
+        MixSourceGroup::Apps,
+    ]
+    .into_iter()
+    .filter_map(|group| {
+        let indices: Vec<usize> = sources
+            .iter()
+            .enumerate()
+            .filter(|(_, source)| mix_source_group(&source.id) == group)
+            .map(|(index, _)| index)
+            .collect();
+        if indices.is_empty() {
+            None
+        } else {
+            Some((group, indices))
+        }
+    })
+    .collect()
+}
+
+#[cfg(test)]
+mod mix_source_group_tests {
+    use super::{MixSource, MixSourceGroup, grouped_mix_sources, mix_source_group};
+
+    #[test]
+    fn classifies_and_groups_channel_and_app_sources() {
+        assert_eq!(mix_source_group("mic:Headset"), MixSourceGroup::AudioChannels);
+        assert_eq!(mix_source_group("loop:Speakers"), MixSourceGroup::AudioChannels);
+        assert_eq!(mix_source_group("app:4242"), MixSourceGroup::Apps);
+        assert_eq!(MixSourceGroup::AudioChannels.label(), "Audio channels");
+        assert_eq!(MixSourceGroup::Apps.label(), "Apps");
+
+        let sources = vec![
+            MixSource {
+                id: "mic:Mic".into(),
+                name: "Mic".into(),
+                enabled: true,
+                volume: 1.0,
+            },
+            MixSource {
+                id: "app:100".into(),
+                name: "Game".into(),
+                enabled: false,
+                volume: 0.8,
+            },
+            MixSource {
+                id: "loop:Speakers".into(),
+                name: "Speakers (speakers)".into(),
+                enabled: true,
+                volume: 0.5,
+            },
+            MixSource {
+                id: "app:200".into(),
+                name: "Browser".into(),
+                enabled: true,
+                volume: 1.0,
+            },
+        ];
+        let groups = grouped_mix_sources(&sources);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].0, MixSourceGroup::AudioChannels);
+        assert_eq!(groups[0].1, vec![0, 2]);
+        assert_eq!(groups[1].0, MixSourceGroup::Apps);
+        assert_eq!(groups[1].1, vec![1, 3]);
+        assert!(sources.iter().filter(|source| source.enabled).count() >= 2);
+        assert!(grouped_mix_sources(&[]).is_empty());
+    }
+}
+
 pub fn fade_gain(current: f32, target: f32, step: f32) -> f32 {
     if (target - current).abs() <= step {
         target

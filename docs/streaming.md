@@ -34,6 +34,8 @@ If nobody wants a layer, the publisher is told to pause it (dynacast). The first
 
 Microphones and speakers stay on the operating system’s normal devices. Desktop and application audio are a separate Opus track, not mixed into the microphone. Windows uses WASAPI loopback. Linux uses the PulseAudio sink monitor (`parec`) and, for one application, the PipeWire node for that process (`pw-cat`). The same `loop:` and `app:` source ids are used on both.
 
+In Stream Select / stream options, checkable mix sources are grouped: **Audio channels** (`mic:` and `loop:` system devices) and **Apps** (`app:` process loopback). Several can stay on and mix into one stream-audio track; each keeps its own volume.
+
 Camera and screen frames are I420, then H.264. Local previews are RGBA (mirrored for the local camera). Stream-select thumbnails may still be JPEG stills. The resolution and frame-rate pickers are caps. A prewarm cutover reconfigures the encoder on the next keyframe.
 
 Hardware encode is probed and used when the bitstream is Constrained Baseline:

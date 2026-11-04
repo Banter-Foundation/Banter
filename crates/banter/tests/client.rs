@@ -3,14 +3,14 @@
 use std::time::Duration;
 
 use banter::{
-    CameraChoice, CaptureKind, Client, MuteMemory, ScreenShare, SettingsSection, StreamDefaults, StreamFps,
-    StreamResolution, VoicePrefs, camera_preview_mirrored, default_stream_fps, default_stream_resolution,
+    CameraChoice, CaptureKind, Client, MixSource, MixSourceGroup, MuteMemory, ScreenShare, SettingsSection, StreamDefaults,
+    StreamFps, StreamResolution, VoicePrefs, camera_preview_mirrored, default_stream_fps, default_stream_resolution,
     discord_shell_columns, either_key_held, encode_jpeg_rgba, encode_jpeg_rgba_quality, equal_power_gains, fps_block,
-    hardware_encoder_block, load_json, load_token, mic_opus_frame, mirror_rgba, mix_equal_power, open_dm_peer_after_friend_add,
-    open_mic_should_send, password_blocks_copy, password_is_masked, push_to_talk_held, rasterize_lucide, remove_message,
-    resample_mono_i16, resolution_block, save_json, save_token, settings_sections, speaking_from_level, stamp_cursor,
-    stream_frame_rates, stream_frame_size, stream_interval_ms, stream_max_edge, stream_resolutions, upsert_message,
-    websocket_url,
+    grouped_mix_sources, hardware_encoder_block, load_json, load_token, mic_opus_frame, mirror_rgba, mix_equal_power,
+    mix_source_group, open_dm_peer_after_friend_add, open_mic_should_send, password_blocks_copy, password_is_masked,
+    push_to_talk_held, rasterize_lucide, remove_message, resample_mono_i16, resolution_block, save_json, save_token,
+    settings_sections, speaking_from_level, stamp_cursor, stream_frame_rates, stream_frame_size, stream_interval_ms,
+    stream_max_edge, stream_resolutions, upsert_message, websocket_url,
 };
 use banter_server::{
     ChannelKind, ChatTarget, ClientSignal, LayerId, MediaKind, MediaPlace, Message, ServerEvent, VoiceFlags, sdp_fixture,
@@ -438,6 +438,54 @@ fn equal_power_mix_and_stream_prefs_round_trip() {
 }
 
 #[test]
+fn stream_audio_sources_group_by_channel_and_app() {
+    assert_eq!(mix_source_group("mic:Headset"), MixSourceGroup::AudioChannels);
+    assert_eq!(mix_source_group("loop:Speakers"), MixSourceGroup::AudioChannels);
+    assert_eq!(mix_source_group("app:4242"), MixSourceGroup::Apps);
+    assert_eq!(MixSourceGroup::AudioChannels.label(), "Audio channels");
+    assert_eq!(MixSourceGroup::Apps.label(), "Apps");
+
+    let sources = vec![
+        MixSource {
+            id: "mic:Mic".into(),
+            name: "Mic".into(),
+            enabled: true,
+            volume: 1.0,
+        },
+        MixSource {
+            id: "app:100".into(),
+            name: "Game".into(),
+            enabled: false,
+            volume: 0.8,
+        },
+        MixSource {
+            id: "loop:Speakers".into(),
+            name: "Speakers (speakers)".into(),
+            enabled: true,
+            volume: 0.5,
+        },
+        MixSource {
+            id: "app:200".into(),
+            name: "Browser".into(),
+            enabled: true,
+            volume: 1.0,
+        },
+    ];
+    let groups = grouped_mix_sources(&sources);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].0, MixSourceGroup::AudioChannels);
+    assert_eq!(groups[0].1, vec![0, 2]);
+    assert_eq!(groups[1].0, MixSourceGroup::Apps);
+    assert_eq!(groups[1].1, vec![1, 3]);
+    assert!(sources.iter().filter(|source| source.enabled).count() >= 2);
+
+    let apps_only = grouped_mix_sources(&[sources[1].clone()]);
+    assert_eq!(apps_only.len(), 1);
+    assert_eq!(apps_only[0].0, MixSourceGroup::Apps);
+    assert!(grouped_mix_sources(&[]).is_empty());
+}
+
+#[test]
 fn second_client_receives_voice_and_a_live_quality_switch() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -606,32 +654,41 @@ fn accepting_a_friend_then_opening_their_dm_works() {
             .as_nanos()
     ));
     let _ = std::fs::remove_dir_all(&dir);
-    let store = banter_server::Store::open(&dir).unwrap();
-    let ada = store.register("ada", "Ada", "password1").unwrap();
-    let bob = store.register("bob", "Bob", "password1").unwrap();
-    let request = store.send_friend_request(ada.id, "bob").unwrap();
-    assert_eq!(
-        open_dm_peer_after_friend_add(
-            store
-                .friends(bob.id)
-                .unwrap()
-                .iter()
-                .map(|friend| (friend.id, friend.username.as_str())),
+    std::fs::create_dir_all(&dir).unwrap();
+    let db_url = test_db_url();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let store = banter_server::Store::open(&dir, &db_url).await.unwrap();
+        let ada = store.register("ada", "Ada", "password1").await.unwrap();
+        let bob = store.register("bob", "Bob", "password1").await.unwrap();
+        let request = store.send_friend_request(ada.id, "bob").await.unwrap();
+        assert_eq!(
+            open_dm_peer_after_friend_add(
+                store
+                    .friends(bob.id)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|friend| (friend.id, friend.username.as_str())),
+                &request.from_username,
+            ),
+            None,
+            "pending requests must not open a DM"
+        );
+        store.accept_friend_request(bob.id, request.id).await.unwrap();
+        let friends = store.friends(bob.id).await.unwrap();
+        let peer = open_dm_peer_after_friend_add(
+            friends.iter().map(|friend| (friend.id, friend.username.as_str())),
             &request.from_username,
-        ),
-        None,
-        "pending requests must not open a DM"
-    );
-    store.accept_friend_request(bob.id, request.id).unwrap();
-    let friends = store.friends(bob.id).unwrap();
-    let peer = open_dm_peer_after_friend_add(
-        friends.iter().map(|friend| (friend.id, friend.username.as_str())),
-        &request.from_username,
-    )
-    .expect("accepting a friend should yield a DM peer");
-    let chat = store.open_dm(bob.id, peer).unwrap();
-    assert_eq!(chat.peer_id, ada.id);
-    assert_eq!(chat.peer_username, "ada");
+        )
+        .expect("accepting a friend should yield a DM peer");
+        let chat = store.open_dm(bob.id, peer).await.unwrap();
+        assert_eq!(chat.peer_id, ada.id);
+        assert_eq!(chat.peer_username, "ada");
+    });
     let _ = std::fs::remove_dir_all(&dir);
 }
 
