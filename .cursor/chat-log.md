@@ -832,3 +832,9 @@ Agent: Published Version-1-test-7 at https://github.com/Banter-Foundation/Banter
 Owl: merge remaining open Banter feature/fix PRs into main (especially #29 media warnings; skip drafts / UI theme #2); clean merged branches/worktrees; cut pre-release Version-1-test-8; Win+Linux zips, server binaries, ghcr + latest; update docs; gh CLI not MCP; report merged PRs/SHAs, release URL, main tip.
 
 Agent: Rebased and merged #29 onto main after #31; skipped #2; building Win+Linux+Podman on cursor/release-version-1-test-8-fa53 for Version-1-test-8.
+
+## 2026-11-04 01:35:30 -06:00 — Version-1-test-8 ship done (BA-70)
+
+Owl: merge open fixes (#29); skip UI theme #2; cut Version-1-test-8; Win+Linux; GHCR; docs; gh CLI.
+
+Agent: Merged #29 (`f4c3da8`) after rebase onto #31 tip; skipped #2. Published Version-1-test-8 at https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-8. Image ghcr.io/snowedinowl/banter:version-1-test-8 (+ latest). Tagged tip `80ece87`.

@@ -428,3 +428,10 @@ Shipped pre-release Version-1-test-7 from main `537e1e3` (Stay signed in PR #27 
 ## 2026-11-04 01:29:50 -06:00 [Winter] — Docs retarget Version-1-test-8
 
 Retarget published Docker/pre-release defaults to `version-1-test-8` / `Version-1-test-8` after DrawListMut panic fix (BA-69 / PR #31) and media unused-code warnings (BA-68 / PR #29) landed on main. Older tags stay. Compose default remains `:latest`.
+
+## 2026-11-04 01:35:30 -06:00 [Winter] — Version-1-test-8 pre-release (BA-70)
+
+Shipped pre-release Version-1-test-8 from main `80ece87` (DrawListMut PR #31, media warnings PR #29, docs retarget PR #32; Stay signed in from test-7). Built Win+Linux clients/servers, pushed `ghcr.io/snowedinowl/banter:version-1-test-8` (+ `:latest`). Kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Never touched E:.
+
+- Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-8
+- Assets: Banter-windows-version-1-test-8.zip, Banter-linux-version-1-test-8.zip, banter-server.exe, banter-server-linux
