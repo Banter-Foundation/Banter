@@ -808,3 +808,9 @@ Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-stay-signed-in` on 
 Owl: merge #27 done; cut pre-release from tip of main (next after 4.1 — use Version-1-test-7 since 5 and 6 exist); Win+Linux zips, server binaries, ghcr lowercase + latest; update docs; gh not MCP; report URL+tag.
 
 Agent: Docs retarget on cursor/release-version-1-test-7-5eac; building Win+Linux+Podman image; publishing pre-release Version-1-test-7.
+
+## 2026-11-04 01:21:17 -06:00 — Version-1-test-7 ship done
+
+Owl: pre-release from tip of main; Win+Linux; GHCR; docs; gh CLI.
+
+Agent: Published Version-1-test-7 at https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-7. Image ghcr.io/snowedinowl/banter:version-1-test-7 (+ latest). Merge #27 SHA 83d5588; tagged tip 537e1e3.
