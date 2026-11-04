@@ -662,6 +662,7 @@ Agent: Merged PR #16 (startup) and PR #17 (docs retarget). Tagged Version-1-test
 
 Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
 
+
 ## 2026-11-04 00:12:12 -06:00 — Fix server VC and peer screen/camera (BA-55)
 
 Owl reports Banter server voice is still broken: no VC audio between users; peers do not receive each others screen shares; peers do not receive each others camera feeds. Project root D:\Projects\Project Banter (NEVER touch E:). Repo https://github.com/SnowedInOwl/Banter. Work from latest main / Version-1-test-4.1 era. Prefer live multi-client repro. Prior voice/media work: WebRTC Opus + H.264 SFU, RID/SSRC mapping, DTX quiet frames, early ICE — but Owl says server path still fails for audio + video receive. Goals: reproduce 2+ clients; fix SFU/client so channel voice audio is heard and screen/camera tracks are received; open PR reviewable; merge only if Owl said (Owl did NOT); clear commits/docs; clean temp; report root cause, PR URL, how verified.
@@ -739,4 +740,23 @@ Task: Reddit-style reply threading in chat (BA-57)
 ### Summary (agent)
 Implemented on worktree `D:\Projects\Project Banter\worktrees\Banter-reddit-replies` branch `cursor/reddit-reply-threading-867a`. Reused existing `reply_to` parent pointer; added index; client DFS tree + collapse + inline composer. Did not merge.
 
+## 2026-11-04 00:24:59 -06:00 — Disable uploads with unavailable popup (BA-61)
+
+Owl: disable file uploads in Banter and replace the upload action with a popup that says exactly:
+
+Currently Unavailable
+
+Project: D:\Projects\Project Banter (NEVER touch E:).
+Separate worktree/branch; do not collide with other Banter workers.
+Repo: Banter.
+
+Implement:
+- All client entry points that attach/upload files (composer paperclip, drag-drop, paste-as-file if any, context menus) should not upload; show a modal/popup with that exact title/body text as Owl wrote (use that string as the message; keep UI consistent with existing Banter dialogs).
+- Prefer disabling client UX now; server can reject uploads too if trivial, but client popup is required.
+- Open PR; do not merge until Owl says so.
+- Report PR URL.
+
+Task: Disable uploads with unavailable popup (BA-61)
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-disable-uploads` on `cursor/disable-uploads-unavailable-95f7`. Composer attach opens `Modal::UploadsUnavailable` with message `Currently Unavailable`; submit path never sends file bytes. No drag-drop/paste/context-menu upload entry points existed. Server left alone to keep foundation attachment tests. PR https://github.com/Banter-Foundation/Banter/pull/24 (not merged).
 

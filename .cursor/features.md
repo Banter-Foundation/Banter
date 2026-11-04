@@ -7,7 +7,8 @@
 - [*] Friend requests and a friends list. Accepting a request (or completing a mutual add) opens that friend's DM.
 - [*] Create a server, join by invite, member list, and server nickname
 - [*] Text and voice channels in categories
-- [*] Send, reply, edit, delete, attach a file, and search. Text channels and DMs use Reddit-style nested reply threads (indent, collapse/expand, inline reply composer). Leaf rows keep Discord-like avatar, time, and hover toolbar polish.
+- [*] Send, reply, edit, delete, and search. Text channels and DMs use Reddit-style nested reply threads (indent, collapse/expand, inline reply composer). Leaf rows keep Discord-like avatar, time, and hover toolbar polish.
+- [*] Attach a file from the composer is temporarily disabled (BA-61): the attach control opens a Banter dialog that says exactly `Currently Unavailable` instead of uploading.
 - [*] Discord-style right-click menus on messages, members/friends/DMs, and channels (foundation actions only; kick/ban stay deferred)
 - [*] Drop-in voice with mute, deafen, push-to-talk, camera, and screen share. Voice & Video settings and stream quality drive the engine and are saved on this PC. Stream audio mix sources are grouped under Audio channels and Apps.
 - [*] 1:1 direct messages that can start a call. Starting or accepting a call opens a Discord-style call stage in that DM (large avatar while ringing, two tiles when active, shared call controls).

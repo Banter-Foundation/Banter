@@ -314,6 +314,7 @@ Documented Arch server + release hot-swap progress. Workflow on `main` lowercase
 
 - Docs: `docs/docker-setup.md` Status section + troubleshooting; `docs/feature-status.md` container row
 
+
 ## 2026-11-04 00:12:12 -06:00 [Winter] — Fix SFU forward SSRC rewrite (BA-55)
 
 Server voice channels stayed silent and peers never got camera/screen because the SFU cloned publisher RTP into forward tracks unchanged. `RTCRtpSender::write_rtp` drops packets whose SSRC/PT/extensions are not on that sender leg (errors are logged inside the webrtc driver, so `write_rtp` still returned Ok). `rewrite_forward_rtp` now stamps the forward-track SSRC and payload type and clears inbound header extensions before forward.
@@ -345,4 +346,10 @@ Text channels and DMs render messages as Reddit comment trees. Nested reply-to-r
 - Docs: architecture threading section, feature-status, features list
 - Also fixed a broken client friend-DM integration test that called sync `Store::open` (now HTTP client like the other live tests)
 
+## 2026-11-04 00:24:59 -06:00 [Winter] — Disable chat file uploads (BA-61)
+
+Composer attach no longer opens a file picker or queues upload bytes. The attach control (and any leftover pending-file send path) opens the existing Banter modal shell with the exact message `Currently Unavailable`. Saving/downloading attachments already on a message still works. Server attachment API left unchanged so foundation tests stay intact. Client-only UX gate until Owl re-enables uploads.
+
+- `Modal::UploadsUnavailable` + `pick_attachment` / `submit_composer` guards in `crates/banter/src/ui.rs`
+- Docs: `.cursor/features.md`, `docs/feature-status.md`
 
