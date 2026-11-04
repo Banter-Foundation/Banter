@@ -953,6 +953,20 @@ pub fn grouped_mix_sources(sources: &[MixSource]) -> Vec<(MixSourceGroup, Vec<us
 }
 
 #[cfg(test)]
+mod debug_command_tests {
+    use super::is_debug_command;
+
+    #[test]
+    fn matches_only_the_whole_command() {
+        assert!(is_debug_command("/debugnow"));
+        assert!(is_debug_command("  /DEBUGNOW  "));
+        assert!(!is_debug_command("/debugnow hello"));
+        assert!(!is_debug_command("say /debugnow"));
+        assert!(!is_debug_command(""));
+    }
+}
+
+#[cfg(test)]
 mod mix_source_group_tests {
     use super::{MixSource, MixSourceGroup, grouped_mix_sources, mix_source_group};
 
@@ -1560,6 +1574,11 @@ pub fn context_menu_height(entries: &[ContextMenuEntry]) -> f32 {
         }
     }
     height
+}
+
+/// Hidden composer command. Not advertised in the UI. Case-insensitive, whole message only.
+pub fn is_debug_command(plain: &str) -> bool {
+    plain.trim().eq_ignore_ascii_case("/debugnow")
 }
 
 /// Keep a floating menu inside the display so right-clicks near the edge still work.

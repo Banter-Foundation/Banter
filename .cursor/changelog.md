@@ -473,3 +473,11 @@ Shipped pre-release Version-1-test-9. Older tags stay. Compose default remains `
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-9
 - Assets: Banter-windows-version-1-test-9.zip, Banter-linux-version-1-test-9.zip, banter-server.exe, banter-server-linux
 - `room::tests::voice_channel_sfu_delivers_audio_camera_and_screen` passed (microphone, camera, and screen RTP).
+
+## 2026-11-04 16:03:09 -0500 [ubuntu] — Hidden /debugnow server debug window
+
+Typing `/debugnow` in a text channel or DM opens a server debug window instead of sending a message. The window shows live stats and the server's recent log. It is not listed in any menu.
+
+- `GET /v1/debug` (signed-in) returns uptime, RSS, presence, voice, calls, SFU slots, database counts, pool usage, and a 300-line ring
+- Log lines also go to stderr: listen, login, logout, websocket, voice, calls, and server errors
+- Tests: `is_debug_command`, debug log ring, live counts, and `debug_table_counts_include_new_rows` against Postgres

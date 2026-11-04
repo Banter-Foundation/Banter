@@ -14,7 +14,7 @@ use banter_server::{
     ClientSignal, CosmeticItem, CosmeticKind, DirectChat, Friend, FriendRequest, LayerId, LayerPreferences,
     MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MediaKind, MediaPlace, Mention, Message, Presence,
     ProfileActivityInput, ProfileConnectionInput, ProfilePatch, ProfileWidgetInput, ProfileWidgetKind,
-    ProfileWishlistInput, ServerSummary, UserProfile, VoiceFlags, VoiceMember,
+    ProfileWishlistInput, ServerDebug, ServerSummary, UserProfile, VoiceFlags, VoiceMember,
 };
 use dear_imgui_rs::{
     ChildFlags, Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData,
@@ -32,6 +32,7 @@ use crate::logic::{
     VoicePrefs, api_base_for, camera_preview_mirrored, channel_context_menu, clamp_context_menu_pos, clamp_window_size,
     comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution, discord_shell_columns,
     encode_jpeg_rgba, fps_block, fps_from_key, fps_key, grouped_mix_sources, hardware_encoder_block, insert_mention,
+    is_debug_command,
     lerp_size, load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, password_blocks_copy,
     password_is_masked, push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key,
     save_json, speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
@@ -366,6 +367,11 @@ pub(crate) struct App {
     styled: bool,
     profiler_metrics: bool,
     profiler_demo: bool,
+    /// Hidden `/debugnow` window. Not listed in any menu.
+    debug_open: bool,
+    debug_view: Option<ServerDebug>,
+    debug_error: String,
+    debug_fetched: Instant,
     layers: LayerPreferences,
     delivered: HashMap<(i64, MediaKind), LayerId>,
     quality_for: Option<(i64, MediaKind)>,
@@ -537,6 +543,10 @@ impl App {
             styled: false,
             profiler_metrics: false,
             profiler_demo: false,
+            debug_open: false,
+            debug_view: None,
+            debug_error: String::new(),
+            debug_fetched: Instant::now(),
             layers: LayerPreferences::new(),
             delivered: HashMap::new(),
             quality_for: None,
@@ -675,8 +685,11 @@ impl App {
         }
         self.draw_profile_card(ui);
         self.draw_profiler(ui);
+        self.draw_server_debug(ui);
         if ui.is_key_pressed(Key::Escape) {
-            if self.crop_open && !self.settings.is_open() {
+            if self.debug_open {
+                self.debug_open = false;
+            } else if self.crop_open && !self.settings.is_open() {
                 self.crop_open = false;
             } else if self.profile.is_open() {
                 self.close_profile();
@@ -3924,6 +3937,9 @@ impl App {
     fn submit_composer(&mut self, target: ChatTarget) {
         self.flush_composer_pending();
         let body = self.composer.clone();
+        if self.consume_debug_command(&body) {
+            return;
+        }
         if let Some(id) = self.editing {
             if let Some(message) = self.note(self.client.edit_message(id, &body)) {
                 upsert_message(&mut self.messages, message);
@@ -3957,6 +3973,9 @@ impl App {
         };
         self.flush_reply_pending();
         let body = self.reply_draft.clone();
+        if self.consume_debug_command(&body) {
+            return;
+        }
         // Chat attachments are disabled (BA-61); never send pending file bytes.
         if self.pending_file.take().is_some() {
             self.open_modal(Modal::UploadsUnavailable);
@@ -3974,6 +3993,121 @@ impl App {
             // Expand the parent so the new reply is visible.
             self.collapsed_comments.remove(&parent);
         }
+    }
+
+    /// `/debugnow` opens the server debug window and is never stored as a message.
+    fn consume_debug_command(&mut self, body: &str) -> bool {
+        if !is_debug_command(&bfmd::plain_text(body)) {
+            return false;
+        }
+        self.composer.clear();
+        self.composer_pending = BfmdPending::default();
+        self.reply_draft.clear();
+        self.reply_pending = BfmdPending::default();
+        self.editing = None;
+        self.reply_to = None;
+        self.pending_file = None;
+        self.debug_open = true;
+        self.debug_error.clear();
+        self.refresh_server_debug();
+        true
+    }
+
+    fn refresh_server_debug(&mut self) {
+        match self.client.server_debug() {
+            Ok(view) => {
+                self.debug_view = Some(view);
+                self.debug_error.clear();
+            }
+            Err(err) => self.debug_error = err.to_string(),
+        }
+        self.debug_fetched = Instant::now();
+    }
+
+    fn draw_server_debug(&mut self, ui: &Ui) {
+        if !self.debug_open {
+            return;
+        }
+        if self.debug_fetched.elapsed() >= Duration::from_secs(1) {
+            self.refresh_server_debug();
+        }
+        let display = ui.io().display_size();
+        let width = 720.0_f32.min(display[0] - 48.0).max(320.0);
+        let height = 520.0_f32.min(display[1] - 48.0).max(240.0);
+        let pos = [(display[0] - width) * 0.5, (display[1] - height) * 0.5];
+        let _bg = ui.push_style_color(StyleColor::WindowBg, FLOATING_BG);
+        let _border = ui.push_style_color(StyleColor::Border, DIVIDER);
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([16.0, 12.0]));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(MENU_RADIUS));
+        let mut open = self.debug_open;
+        ui.window("Server Debug")
+            .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SAVED_SETTINGS | WindowFlags::NO_DOCKING)
+            .position(pos, Condition::FirstUseEver)
+            .size([width, height], Condition::FirstUseEver)
+            .opened(&mut open)
+            .build(|| {
+                ui.text_colored(TEXT, "Server Debug");
+                ui.same_line();
+                if ui.small_button("Refresh") {
+                    self.refresh_server_debug();
+                }
+                ui.same_line();
+                if ui.small_button("Close") {
+                    self.debug_open = false;
+                }
+                if !self.debug_error.is_empty() {
+                    ui.text_colored(RED, &self.debug_error);
+                }
+                if let Some(view) = self.debug_view.clone() {
+                    ui.separator();
+                    ui.text_colored(TEXT_SECONDARY, "Stats");
+                    ui.text(format!(
+                        "uptime {}    rss {}",
+                        format_uptime(view.uptime_ms),
+                        crate::profiler::format_bytes(view.rss_bytes)
+                    ));
+                    ui.text(format!(
+                        "online {}    idle {}    sockets {}",
+                        view.online, view.idle, view.sockets
+                    ));
+                    ui.text(format!(
+                        "voice members {}    voice channels {}    calls {}",
+                        view.voice_members, view.voice_channels, view.calls
+                    ));
+                    ui.text(format!(
+                        "media slots {}    forwards {}",
+                        view.media_slots, view.media_forwards
+                    ));
+                    ui.text(format!(
+                        "users {}    servers {}    channels {}    messages {}",
+                        view.users, view.servers, view.channels, view.messages
+                    ));
+                    ui.text(format!("db pool size {}    idle {}", view.pool_size, view.pool_idle));
+                    ui.separator();
+                    ui.text_colored(TEXT_SECONDARY, "Logs");
+                    let _log_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
+                    ui.child_window("server-debug-logs").size([0.0, 0.0]).build(ui, || {
+                        let stick = ui.scroll_max_y() <= 1.0 || ui.scroll_y() >= ui.scroll_max_y() - 8.0;
+                        if view.logs.is_empty() {
+                            ui.text_colored(MUTED, "No log lines yet.");
+                        }
+                        for line in &view.logs {
+                            let color = match line.level.as_str() {
+                                "error" => RED,
+                                "warn" => YELLOW,
+                                _ => TEXT_SECONDARY,
+                            };
+                            ui.text_colored(color, format!("{}  {}", format_log_clock(line.at_ms), line.message));
+                        }
+                        if stick {
+                            ui.set_scroll_here_y(1.0);
+                        }
+                    });
+                } else if self.debug_error.is_empty() {
+                    ui.text_colored(MUTED, "Loading...");
+                }
+            });
+        self.debug_open = open;
     }
 
     fn connect_live(&mut self) {
@@ -8152,6 +8286,28 @@ impl App {
             }
         }
     }
+}
+
+fn format_uptime(ms: i64) -> String {
+    let total = (ms.max(0) / 1000) as u64;
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    let seconds = total % 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn format_log_clock(at_ms: i64) -> String {
+    let secs = at_ms.div_euclid(1000).rem_euclid(86_400);
+    let hours = secs / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02} UTC")
 }
 
 fn mirrored_camera_rgba(imgui: &mut Context, width: u32, height: u32, rgba: &[u8]) -> Option<Shot> {

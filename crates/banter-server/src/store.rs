@@ -1178,6 +1178,30 @@ impl Store {
             Err(BanterError::NotOwner)
         }
     }
+
+    pub async fn table_counts(&self) -> Result<(i64, i64, i64, i64), BanterError> {
+        let users: i64 = sqlx::query_scalar("SELECT COUNT(*)::BIGINT FROM users")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_err)?;
+        let servers: i64 = sqlx::query_scalar("SELECT COUNT(*)::BIGINT FROM servers")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_err)?;
+        let channels: i64 = sqlx::query_scalar("SELECT COUNT(*)::BIGINT FROM channels")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_err)?;
+        let messages: i64 = sqlx::query_scalar("SELECT COUNT(*)::BIGINT FROM messages")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok((users, servers, channels, messages))
+    }
+
+    pub fn pool_usage(&self) -> (i64, i64) {
+        (self.pool.size() as i64, self.pool.num_idle() as i64)
+    }
 }
 
 async fn account_by_id(pool: &PgPool, id: i64) -> Result<Account, BanterError> {

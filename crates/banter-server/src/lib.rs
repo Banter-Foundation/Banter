@@ -13,6 +13,7 @@
 mod badges;
 mod codec;
 mod cosmetics;
+mod debuglog;
 mod error;
 mod http;
 mod live;

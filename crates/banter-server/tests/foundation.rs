@@ -1483,3 +1483,19 @@ async fn user_profile_visible_to_self_friends_and_shared_server() {
         BanterError::NotMember
     );
 }
+
+#[tokio::test]
+async fn debug_table_counts_include_new_rows() {
+    let (store, _dir) = open_store().await;
+    let before = store.table_counts().await.unwrap();
+    let ada = store.register("dbgada", "Ada", "password1").await.unwrap();
+    store.create_server(ada.id, "Debug").await.unwrap();
+    let (users, servers, channels, messages) = store.table_counts().await.unwrap();
+    assert_eq!(users, before.0 + 1);
+    assert_eq!(servers, before.1 + 1);
+    assert!(channels >= before.2 + 2);
+    assert_eq!(messages, before.3);
+    let (size, idle) = store.pool_usage();
+    assert!(size >= 1);
+    assert!(idle <= size);
+}
