@@ -740,6 +740,37 @@ async fn voice_channel_is_drop_in_and_routes_media() {
     assert!(live.voice_channel_members(lounge.id).is_empty());
 }
 
+#[test]
+fn sfu_forward_rtp_rewrites_publisher_ssrc_for_write_rtp() {
+    // Forward tracks negotiate their own SSRCs. Cloning the publisher packet into
+    // write_rtp left the publisher SSRC in place; the sender rejected every packet
+    // (ErrSenderWithNoSSRCs / extension mismatch), so channel peers heard silence
+    // and never got camera or screen tiles. rewrite_forward_rtp stamps the outbound
+    // SSRC/PT and strips inbound header extensions before write_rtp.
+    let mut packet = rtc::rtp::Packet::default();
+    packet.header.ssrc = banter_server::USER_AUDIO_SSRC;
+    packet.header.payload_type = 42;
+    packet.header.extension = true;
+    packet.header.extensions = vec![rtc::rtp::header::Extension {
+        id: 1,
+        payload: bytes::Bytes::from_static(&[9]),
+    }];
+    packet.payload = bytes::Bytes::from_static(&[0xaa]);
+
+    let out = banter_server::rewrite_forward_rtp(packet, 0x8100_0100, banter_server::OPUS_PT);
+    assert_eq!(out.header.ssrc, 0x8100_0100);
+    assert_eq!(out.header.payload_type, banter_server::OPUS_PT);
+    assert!(out.header.extensions.is_empty());
+    assert!(!out.header.extension);
+
+    let mut video = rtc::rtp::Packet::default();
+    video.header.ssrc = banter_server::CAMERA_SSRC_Q + 2;
+    video.header.payload_type = banter_server::H264_PT;
+    let out_v = banter_server::rewrite_forward_rtp(video, 0x8100_0200, banter_server::H264_PT);
+    assert_eq!(out_v.header.ssrc, 0x8100_0200);
+    assert_ne!(out_v.header.ssrc, banter_server::CAMERA_SSRC_Q + 2);
+}
+
 #[tokio::test]
 async fn voice_channel_audio_forwards_after_pair_subscribe_without_prior_layer_note() {
     // Voice-channel SFU used to require note_layer before admit_rtp; the first
