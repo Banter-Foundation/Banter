@@ -333,6 +333,7 @@ Client UI present rate tracks the monitor under the window. With VSync on, GLFW 
 - `platform`: each frame syncs swap interval to the current display; Wayland falls back to the primary monitor
 - Docs: architecture, features, design, README Display note
 
+
 ## 2026-11-04 00:18:19 -06:00 [Winter] — Group stream audio by channel and app
 
 Stream Select / stream options list mix sources under **Audio channels** (`mic:` and `loop:` system devices) and **Apps** (`app:` process loopback) instead of one flat checklist. Multi-select mix and per-source volume are unchanged. Helpers: `MixSourceGroup`, `mix_source_group`, `grouped_mix_sources`. Client test `stream_audio_sources_group_by_channel_and_app`.
@@ -352,4 +353,14 @@ Composer attach no longer opens a file picker or queues upload bytes. The attach
 
 - `Modal::UploadsUnavailable` + `pick_attachment` / `submit_composer` guards in `crates/banter/src/ui.rs`
 - Docs: `.cursor/features.md`, `docs/feature-status.md`
+
+## 2026-11-04 00:39:16 -06:00 [Winter] — Postgres cutover punch list (BA-63)
+
+Landed the required Postgres cutover audit punch-list items so long-lived volumes and local docs match the Postgres runtime.
+
+- Versioned boot migrations: `schema.sql` then `migrate::apply` with `schema_migrations` + `001_profile_customization` (`ALTER TABLE … ADD COLUMN IF NOT EXISTS` / profile tables). Contract test upgrades a 46917ad-era `users` table.
+- Docs: `docs/build-and-run.md` Local Postgres port (`BANTER_PG_PORT` + matching `BANTER_DATABASE_URL`); Windows CI noted as `--lib` only; `docs/current-build.md` data layout is Postgres URL + `BANTER_DATA` (no live `banter.db`).
+- Shipped `.env.example` for database URL, PG port, data dir, bind/port.
+- Verified on Compose Postgres `127.0.0.1:5433`: migrations, profile_customization 7/7, foundation 18/18. Do not merge until Owl says so.
+
 

@@ -7,7 +7,7 @@
 - Server crate `banter-server`. Tests in `crates/banter-server/tests/foundation.rs` are the API contract. Do not weaken them.
 - Client tests in `crates/banter/tests/client.rs` cover session, mute/deafen, push-to-talk, resample, jpeg, and one live register/send against the server.
 - Default listen address `127.0.0.1:3970`. The desktop embedded server always uses `DEFAULT_ADDR`. The `banter-server` binary uses `listen_addr`: a non-empty argv address wins, otherwise `BANTER_BIND` / `BANTER_PORT` (missing bind is `0.0.0.0`, missing port is `3970`), otherwise `127.0.0.1:3970`. Data directory `%LOCALAPPDATA%\Banter` or `BANTER_DATA`.
-- Voice, calls, and presence are in memory. Messages and accounts are in `banter.db`.
+- Voice, calls, and presence are in memory. Messages and accounts are in PostgreSQL (`BANTER_DATABASE_URL`); file bytes under `BANTER_DATA`. Boot runs `schema.sql` then versioned migrations.
 - Deferred features stay in `docs/foundation.md`. Do not implement them until Owl says so.
 - Sign-in password is masked with `*` until the Show password checkbox is on. Do not use Dear ImGui's password flag; it blocks copy. The system clipboard is installed on the ImGui context. Ctrl+C and Ctrl+V also need `Key::ModCtrl` each frame; the physical Ctrl key alone is not a shortcut.
 - Sign-in returns do not use IP addresses. Discord redirect is `discord-APPLICATION_ID:/authorize/callback` with PKCE. Google redirect is `com.googleusercontent.apps.CLIENT_PREFIX:/oauth2redirect` with PKCE. Steam OpenID only accepts an http or https hostname; Owl still needs to name that host. The Banter server still listens on `127.0.0.1:3970`.
