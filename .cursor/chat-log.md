@@ -802,3 +802,9 @@ Agent: Implemented all four on cursor/profile-games-widget-fix-21d4 and pushing.
 Owl: Stay signed in checkbox on sign-in; persist token when checked; no survive quit when unchecked; Log Out clears; open PR, do not merge; use gh CLI not GitHub MCP.
 
 Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-stay-signed-in` on `cursor/stay-signed-in-5eac`. Implementing persist_login + UI checkbox + docs/tests; opening PR with gh.
+
+## 2026-11-04 01:13:47 -06:00 — Ship Version-1-test-7 pre-release
+
+Owl: merge #27 done; cut pre-release from tip of main (next after 4.1 — use Version-1-test-7 since 5 and 6 exist); Win+Linux zips, server binaries, ghcr lowercase + latest; update docs; gh not MCP; report URL+tag.
+
+Agent: Docs retarget on cursor/release-version-1-test-7-5eac; building Win+Linux+Podman image; publishing pre-release Version-1-test-7.
