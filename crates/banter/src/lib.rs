@@ -3,8 +3,9 @@
 //! The window is GLFW and OpenGL. Dear ImGui is the docking branch (dear-imgui-rs).
 //! If nothing is listening on 127.0.0.1:3970, the client starts the local server.
 //!
-//! Deferred, and not implemented: About Me, custom status, reactions, bold and italic,
-//! text chat inside a voice channel, group chats, roles, kick, and ban.
+//! Deferred, and not implemented: reactions, bold and italic, text chat inside a
+//! voice channel, group chats, roles, kick, and ban. Profile About Me / custom
+//! status / cosmetics are implemented for Discord profile parity.
 //! See `docs/foundation.md`.
 
 mod api;

@@ -11,6 +11,7 @@ use argon2::{
 use rand::Rng;
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::cosmetics::{cosmetic_exists, CosmeticKind, DEFAULT_THEME_PRIMARY, DEFAULT_THEME_SECONDARY};
 use crate::error::BanterError;
 use crate::model::*;
 
@@ -24,16 +25,12 @@ impl Store {
         fs::create_dir_all(root).map_err(|err| BanterError::Storage(err.to_string()))?;
         fs::create_dir_all(root.join("files")).map_err(|err| BanterError::Storage(err.to_string()))?;
         fs::create_dir_all(root.join("avatars")).map_err(|err| BanterError::Storage(err.to_string()))?;
+        fs::create_dir_all(root.join("banners")).map_err(|err| BanterError::Storage(err.to_string()))?;
         let conn = Connection::open(root.join("banter.db")).map_err(db_err)?;
         conn.pragma_update(None, "foreign_keys", "ON").map_err(db_err)?;
         conn.pragma_update(None, "journal_mode", "WAL").map_err(db_err)?;
         conn.execute_batch(include_str!("schema.sql")).map_err(db_err)?;
-        if let Err(err) = conn.execute("ALTER TABLE users ADD COLUMN avatar_rev INTEGER NOT NULL DEFAULT 0", []) {
-            let text = err.to_string().to_lowercase();
-            if !text.contains("duplicate column") {
-                return Err(db_err(err));
-            }
-        }
+        migrate_users_profile_columns(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
             root: root.to_path_buf(),
@@ -142,22 +139,157 @@ impl Store {
             if !can_view {
                 return Err(BanterError::NotFound);
             }
-            let account = account_by_id(conn, target_id)?;
             let nickname = match server_id {
                 Some(server_id) => member_nickname(conn, server_id, target_id)?,
                 None => None,
             };
-            Ok(UserProfile {
-                id: account.id,
-                username: account.username,
-                display_name: account.display_name,
-                has_avatar: account.has_avatar,
-                avatar_rev: account.avatar_rev,
-                nickname,
-                is_self,
-                is_friend,
-            })
+            load_user_profile(conn, target_id, nickname, is_self, is_friend)
         })
+    }
+
+    /// Apply a Discord-parity profile customization patch for the owner.
+    pub fn update_profile(&self, user_id: i64, patch: ProfilePatch) -> Result<UserProfile, BanterError> {
+        self.with_mut(|conn| {
+            let _ = account_by_id(conn, user_id)?;
+            if let Some(ref name) = patch.display_name {
+                let display_name = clean_display(name)?;
+                conn.execute(
+                    "UPDATE users SET display_name = ?1 WHERE id = ?2",
+                    params![display_name, user_id],
+                )
+                .map_err(db_err)?;
+            }
+            if let Some(ref about) = patch.about_me {
+                let about_me = clean_optional_text(about, MAX_ABOUT_ME_CHARS)?;
+                conn.execute(
+                    "UPDATE users SET about_me = ?1 WHERE id = ?2",
+                    params![about_me, user_id],
+                )
+                .map_err(db_err)?;
+            }
+            if let Some(ref pronouns) = patch.pronouns {
+                let pronouns = clean_optional_text(pronouns, MAX_PRONOUNS_CHARS)?;
+                conn.execute(
+                    "UPDATE users SET pronouns = ?1 WHERE id = ?2",
+                    params![pronouns, user_id],
+                )
+                .map_err(db_err)?;
+            }
+            if let Some(ref status) = patch.custom_status {
+                let custom_status = clean_optional_text(status, MAX_CUSTOM_STATUS_CHARS)?;
+                conn.execute(
+                    "UPDATE users SET custom_status = ?1 WHERE id = ?2",
+                    params![custom_status, user_id],
+                )
+                .map_err(db_err)?;
+            }
+            if let Some(primary) = patch.theme_primary {
+                conn.execute(
+                    "UPDATE users SET theme_primary = ?1 WHERE id = ?2",
+                    params![primary as i64, user_id],
+                )
+                .map_err(db_err)?;
+            }
+            if let Some(secondary) = patch.theme_secondary {
+                conn.execute(
+                    "UPDATE users SET theme_secondary = ?1 WHERE id = ?2",
+                    params![secondary as i64, user_id],
+                )
+                .map_err(db_err)?;
+            }
+            apply_cosmetic(conn, user_id, "nameplate_id", patch.nameplate_id.as_deref(), CosmeticKind::Nameplate)?;
+            apply_cosmetic(
+                conn,
+                user_id,
+                "avatar_decoration_id",
+                patch.avatar_decoration_id.as_deref(),
+                CosmeticKind::AvatarDecoration,
+            )?;
+            apply_cosmetic(
+                conn,
+                user_id,
+                "display_name_style_id",
+                patch.display_name_style_id.as_deref(),
+                CosmeticKind::DisplayNameStyle,
+            )?;
+            apply_cosmetic(
+                conn,
+                user_id,
+                "profile_effect_id",
+                patch.profile_effect_id.as_deref(),
+                CosmeticKind::ProfileEffect,
+            )?;
+            apply_cosmetic(
+                conn,
+                user_id,
+                "profile_frame_id",
+                patch.profile_frame_id.as_deref(),
+                CosmeticKind::ProfileFrame,
+            )?;
+            if let Some(widgets) = patch.widgets {
+                replace_widgets(conn, user_id, &widgets)?;
+            }
+            if let Some(connections) = patch.connections {
+                replace_connections(conn, user_id, &connections)?;
+            }
+            load_user_profile(conn, user_id, None, true, false)
+        })
+    }
+
+    pub fn set_banner(&self, user_id: i64, bytes: &[u8]) -> Result<(), BanterError> {
+        if bytes.is_empty() || bytes.len() > MAX_BANNER_BYTES {
+            return Err(BanterError::InvalidBanner);
+        }
+        let decoded = image::load_from_memory(bytes).map_err(|_| BanterError::InvalidBanner)?;
+        let scaled = if decoded.width() > 1920 || decoded.height() > 1080 {
+            decoded.thumbnail(1920, 1080)
+        } else {
+            decoded
+        };
+        let mut png = Vec::new();
+        scaled
+            .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|err| BanterError::Storage(err.to_string()))?;
+        self.account(user_id)?;
+        let path = self.root.join("banners").join(format!("{user_id}.png"));
+        fs::write(&path, &png).map_err(|err| BanterError::Storage(err.to_string()))?;
+        self.with_mut(|conn| {
+            conn.execute(
+                "UPDATE users SET banner_file = ?1, banner_rev = banner_rev + 1 WHERE id = ?2",
+                params![format!("{user_id}.png"), user_id],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    pub fn clear_banner(&self, user_id: i64) -> Result<(), BanterError> {
+        self.account(user_id)?;
+        let path = self.root.join("banners").join(format!("{user_id}.png"));
+        if path.exists() {
+            fs::remove_file(&path).map_err(|err| BanterError::Storage(err.to_string()))?;
+        }
+        self.with_mut(|conn| {
+            conn.execute(
+                "UPDATE users SET banner_file = NULL, banner_rev = 0 WHERE id = ?1",
+                [user_id],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    pub fn banner_bytes(&self, user_id: i64) -> Result<Vec<u8>, BanterError> {
+        let name = self.with(|conn| {
+            let file: Option<String> = conn
+                .query_row("SELECT banner_file FROM users WHERE id = ?1", [user_id], |row| row.get(0))
+                .optional()
+                .map_err(db_err)?
+                .ok_or(BanterError::NotFound)?;
+            file.ok_or(BanterError::NotFound)
+        })?;
+        let path = self.root.join("banners").join(name);
+        fs::read(&path).map_err(|_| BanterError::NotFound)
     }
 
     pub fn set_display_name(&self, user_id: i64, display_name: &str) -> Result<Account, BanterError> {
@@ -916,6 +1048,301 @@ impl Store {
         let mut conn = self.conn.lock().expect("sqlite lock");
         f(&mut conn)
     }
+}
+
+fn migrate_users_profile_columns(conn: &Connection) -> Result<(), BanterError> {
+    let theme_primary = format!(
+        "ALTER TABLE users ADD COLUMN theme_primary INTEGER NOT NULL DEFAULT {DEFAULT_THEME_PRIMARY}"
+    );
+    let theme_secondary = format!(
+        "ALTER TABLE users ADD COLUMN theme_secondary INTEGER NOT NULL DEFAULT {DEFAULT_THEME_SECONDARY}"
+    );
+    let alters = [
+        "ALTER TABLE users ADD COLUMN avatar_rev INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN about_me TEXT",
+        "ALTER TABLE users ADD COLUMN pronouns TEXT",
+        "ALTER TABLE users ADD COLUMN custom_status TEXT",
+        "ALTER TABLE users ADD COLUMN banner_file TEXT",
+        "ALTER TABLE users ADD COLUMN banner_rev INTEGER NOT NULL DEFAULT 0",
+        theme_primary.as_str(),
+        theme_secondary.as_str(),
+        "ALTER TABLE users ADD COLUMN nameplate_id TEXT",
+        "ALTER TABLE users ADD COLUMN avatar_decoration_id TEXT",
+        "ALTER TABLE users ADD COLUMN display_name_style_id TEXT",
+        "ALTER TABLE users ADD COLUMN profile_effect_id TEXT",
+        "ALTER TABLE users ADD COLUMN profile_frame_id TEXT",
+    ];
+    for sql in alters {
+        if let Err(err) = conn.execute(sql, []) {
+            let text = err.to_string().to_lowercase();
+            if !text.contains("duplicate column") {
+                return Err(db_err(err));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn load_user_profile(
+    conn: &Connection,
+    user_id: i64,
+    nickname: Option<String>,
+    is_self: bool,
+    is_friend: bool,
+) -> Result<UserProfile, BanterError> {
+    let row = conn
+        .query_row(
+            "SELECT id, username, display_name, avatar_file, avatar_rev,
+                    about_me, pronouns, custom_status, created_at,
+                    banner_file, banner_rev, theme_primary, theme_secondary,
+                    nameplate_id, avatar_decoration_id, display_name_style_id,
+                    profile_effect_id, profile_frame_id
+             FROM users WHERE id = ?1",
+            [user_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, i64>(10)?,
+                    row.get::<_, i64>(11)?,
+                    row.get::<_, i64>(12)?,
+                    row.get::<_, Option<String>>(13)?,
+                    row.get::<_, Option<String>>(14)?,
+                    row.get::<_, Option<String>>(15)?,
+                    row.get::<_, Option<String>>(16)?,
+                    row.get::<_, Option<String>>(17)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(db_err)?
+        .ok_or(BanterError::NotFound)?;
+
+    let (
+        id,
+        username,
+        display_name,
+        avatar_file,
+        avatar_rev,
+        about_me,
+        pronouns,
+        custom_status,
+        member_since,
+        banner_file,
+        banner_rev,
+        theme_primary,
+        theme_secondary,
+        nameplate_id,
+        avatar_decoration_id,
+        display_name_style_id,
+        profile_effect_id,
+        profile_frame_id,
+    ) = row;
+
+    Ok(UserProfile {
+        id,
+        username,
+        display_name,
+        has_avatar: avatar_file.is_some(),
+        avatar_rev,
+        nickname,
+        is_self,
+        is_friend,
+        about_me,
+        pronouns,
+        custom_status,
+        member_since,
+        has_banner: banner_file.is_some(),
+        banner_rev,
+        theme_primary: theme_primary as u32,
+        theme_secondary: theme_secondary as u32,
+        nameplate_id,
+        avatar_decoration_id,
+        display_name_style_id,
+        profile_effect_id,
+        profile_frame_id,
+        widgets: list_widgets(conn, user_id)?,
+        connections: list_connections(conn, user_id)?,
+    })
+}
+
+fn apply_cosmetic(
+    conn: &Connection,
+    user_id: i64,
+    column: &str,
+    value: Option<&str>,
+    kind: CosmeticKind,
+) -> Result<(), BanterError> {
+    let Some(raw) = value else {
+        return Ok(());
+    };
+    let stored = if raw.trim().is_empty() {
+        None
+    } else if cosmetic_exists(kind, raw.trim()) {
+        Some(raw.trim().to_string())
+    } else {
+        return Err(BanterError::InvalidProfile);
+    };
+    let sql = format!("UPDATE users SET {column} = ?1 WHERE id = ?2");
+    conn.execute(&sql, params![stored, user_id]).map_err(db_err)?;
+    Ok(())
+}
+
+fn replace_widgets(conn: &Connection, user_id: i64, widgets: &[ProfileWidgetInput]) -> Result<(), BanterError> {
+    if widgets.len() > MAX_PROFILE_WIDGETS {
+        return Err(BanterError::InvalidProfile);
+    }
+    conn.execute("DELETE FROM profile_widgets WHERE user_id = ?1", [user_id])
+        .map_err(db_err)?;
+    for (position, widget) in widgets.iter().enumerate() {
+        let title = clean_label(&widget.title)?;
+        let payload = serde_json::to_string(&widget.payload)
+            .map_err(|err| BanterError::Storage(err.to_string()))?;
+        if payload.len() > 8 * 1024 {
+            return Err(BanterError::InvalidProfile);
+        }
+        let kind = widget_kind_key(widget.kind);
+        conn.execute(
+            "INSERT INTO profile_widgets (user_id, kind, title, payload, position)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![user_id, kind, title, payload, position as i64],
+        )
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+fn replace_connections(
+    conn: &Connection,
+    user_id: i64,
+    connections: &[ProfileConnectionInput],
+) -> Result<(), BanterError> {
+    if connections.len() > MAX_PROFILE_CONNECTIONS {
+        return Err(BanterError::InvalidProfile);
+    }
+    conn.execute("DELETE FROM profile_connections WHERE user_id = ?1", [user_id])
+        .map_err(db_err)?;
+    for (position, connection) in connections.iter().enumerate() {
+        let kind = clean_connection_kind(&connection.kind)?;
+        let name = clean_label(&connection.name)?;
+        let url = clean_connection_url(&connection.url)?;
+        conn.execute(
+            "INSERT INTO profile_connections (user_id, kind, name, url, position)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![user_id, kind, name, url, position as i64],
+        )
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+fn list_widgets(conn: &Connection, user_id: i64) -> Result<Vec<ProfileWidget>, BanterError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, kind, title, payload FROM profile_widgets
+             WHERE user_id = ?1 ORDER BY position ASC, id ASC",
+        )
+        .map_err(db_err)?;
+    let rows = stmt
+        .query_map([user_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(db_err)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, kind, title, payload) = row.map_err(db_err)?;
+        let kind = parse_widget_kind(&kind).ok_or(BanterError::InvalidProfile)?;
+        let payload: serde_json::Value =
+            serde_json::from_str(&payload).map_err(|err| BanterError::Storage(err.to_string()))?;
+        out.push(ProfileWidget {
+            id,
+            kind,
+            title,
+            payload,
+        });
+    }
+    Ok(out)
+}
+
+fn list_connections(conn: &Connection, user_id: i64) -> Result<Vec<ProfileConnection>, BanterError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, kind, name, url FROM profile_connections
+             WHERE user_id = ?1 ORDER BY position ASC, id ASC",
+        )
+        .map_err(db_err)?;
+    let rows = stmt
+        .query_map([user_id], |row| {
+            Ok(ProfileConnection {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                name: row.get(2)?,
+                url: row.get(3)?,
+            })
+        })
+        .map_err(db_err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(db_err)
+}
+
+fn widget_kind_key(kind: ProfileWidgetKind) -> &'static str {
+    match kind {
+        ProfileWidgetKind::GamesInRotation => "games_in_rotation",
+        ProfileWidgetKind::FavoriteGame => "favorite_game",
+        ProfileWidgetKind::GamesILike => "games_i_like",
+    }
+}
+
+fn parse_widget_kind(raw: &str) -> Option<ProfileWidgetKind> {
+    match raw {
+        "games_in_rotation" => Some(ProfileWidgetKind::GamesInRotation),
+        "favorite_game" => Some(ProfileWidgetKind::FavoriteGame),
+        "games_i_like" => Some(ProfileWidgetKind::GamesILike),
+        _ => None,
+    }
+}
+
+fn clean_optional_text(raw: &str, max_chars: usize) -> Result<Option<String>, BanterError> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if text.chars().count() > max_chars || text.chars().any(|c| c.is_control()) {
+        return Err(BanterError::InvalidProfile);
+    }
+    Ok(Some(text.to_string()))
+}
+
+fn clean_connection_kind(raw: &str) -> Result<String, BanterError> {
+    let kind = raw.trim().to_lowercase();
+    match kind.as_str() {
+        "website" | "github" | "steam" | "twitch" | "youtube" | "twitter" | "other" => Ok(kind),
+        _ => Err(BanterError::InvalidProfile),
+    }
+}
+
+fn clean_connection_url(raw: &str) -> Result<String, BanterError> {
+    let url = raw.trim();
+    let count = url.chars().count();
+    if !(1..=500).contains(&count) || url.chars().any(|c| c.is_control()) {
+        return Err(BanterError::InvalidProfile);
+    }
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(BanterError::InvalidProfile);
+    }
+    Ok(url.to_string())
 }
 
 fn account_by_id(conn: &Connection, id: i64) -> Result<Account, BanterError> {

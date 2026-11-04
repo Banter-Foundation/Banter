@@ -115,8 +115,12 @@ fn router(state: HttpState) -> Router {
         .route("/v1/logout", post(logout))
         .route("/v1/me", get(me).patch(patch_me))
         .route("/v1/me/avatar", post(upload_avatar).delete(delete_avatar))
+        .route("/v1/me/profile", axum::routing::patch(patch_profile))
+        .route("/v1/me/banner", post(upload_banner).delete(delete_banner))
+        .route("/v1/profile/cosmetics", get(list_cosmetics))
         .route("/v1/users/{id}", get(user_profile))
         .route("/v1/users/{id}/avatar", get(avatar))
+        .route("/v1/users/{id}/banner", get(banner))
         .route("/v1/friends/requests", get(list_requests).post(create_request))
         .route("/v1/friends/requests/{id}/accept", post(accept_request))
         .route("/v1/friends/requests/{id}/decline", post(decline_request))
@@ -228,8 +232,39 @@ async fn user_profile(
     Ok(Json(state.store.user_profile(account.id, id, query.server_id)?))
 }
 
+async fn patch_profile(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Json(body): Json<ProfilePatch>,
+) -> Result<Json<UserProfile>, BanterError> {
+    Ok(Json(state.store.update_profile(account.id, body)?))
+}
+
+async fn list_cosmetics() -> Json<Vec<crate::CosmeticItem>> {
+    Json(crate::cosmetics_catalog())
+}
+
+async fn upload_banner(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    body: Bytes,
+) -> Result<StatusCode, BanterError> {
+    state.store.set_banner(account.id, &body)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_banner(State(state): State<HttpState>, Auth(account): Auth) -> Result<StatusCode, BanterError> {
+    state.store.clear_banner(account.id)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn avatar(State(state): State<HttpState>, Path(id): Path<i64>) -> Result<Response, BanterError> {
     let bytes = state.store.avatar_bytes(id)?;
+    Ok(([(header::CONTENT_TYPE, "image/png")], bytes).into_response())
+}
+
+async fn banner(State(state): State<HttpState>, Path(id): Path<i64>) -> Result<Response, BanterError> {
+    let bytes = state.store.banner_bytes(id)?;
     Ok(([(header::CONTENT_TYPE, "image/png")], bytes).into_response())
 }
 

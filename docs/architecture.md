@@ -21,7 +21,7 @@ Banter/
 | `theme.rs` | Skin metrics and colors (temporary Discord dark theme) |
 | `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |
 | `settings.rs` | User Settings rules and `SettingsState` (layout, mic test, keybinds) — kept drawable-free for unit tests |
-| `profile.rs` | Profile card rules (`ProfileCard`, headings, primary actions) — drawable-free for unit tests |
+| `profile.rs` | Discord-parity profile card + customization editor state (`ProfileCard`, cosmetics drafts, board tabs) — drawable-free for unit tests |
 | `api.rs` | HTTP client (`ureq`) for `/v1/*` |
 | `realtime.rs` | WebSocket client for presence, chat events, and WebRTC signaling |
 | `session.rs` | Load/save `client-session.json` |
@@ -40,21 +40,22 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 | --- | --- |
 | `main.rs` | Resolve `listen_addr`, print data dir, `serve` |
 | `lib.rs` | `DEFAULT_ADDR`, `listen_addr`, `default_data_dir` / `resolve_data_dir`, re-exports |
-| `http.rs` | Axum router: auth, friends, servers, channels, messages, DMs/calls, voice join/leave/flags, `/v1/ws` |
-| `store.rs` | SQLite persistence (`schema.sql`) |
+| `http.rs` | Axum router: auth, friends, servers, channels, messages, DMs/calls, voice join/leave/flags, profile customization, `/v1/ws` |
+| `store.rs` | SQLite persistence (`schema.sql`), including profile cosmetics and board widgets |
+| `cosmetics.rs` | Banter-owned cosmetics catalog (nameplates, decorations, display-name styles, effects, frames) |
 | `live.rs` | In-memory presence, voice membership, calls, WebSocket fan-out |
-| `model.rs` | Shared types (accounts, channels, messages, voice flags, …) |
+| `model.rs` | Shared types (accounts, channels, messages, voice flags, profile widgets, …) |
 | `codec.rs` | Shared Opus/H.264 SDP contract (profile, RIDs, STUN/TURN helpers) |
 | `error.rs` | `BanterError` → HTTP responses |
 
 ### Persistence vs memory
 
-- **Survives restart:** accounts, friend graph, servers, invites, nicknames, categories, channels, messages, attachments, avatars (`banter.db` + files).
+- **Survives restart:** accounts, friend graph, servers, invites, nicknames, categories, channels, messages, attachments, avatars, banners, profile customization and widgets (`banter.db` + files).
 - **Resets when the server process stops:** voice channel membership, 1:1 call state, presence, open WebSockets.
 
 ### HTTP surface (high level)
 
-Auth and profile: `/v1/register`, `/v1/login`, `/v1/logout`, `/v1/me`, `/v1/users/{id}` (optional `server_id` for nickname), avatar upload/delete.  
+Auth and profile: `/v1/register`, `/v1/login`, `/v1/logout`, `/v1/me`, `/v1/users/{id}` (optional `server_id` for nickname), `/v1/me/profile` (customization patch), `/v1/me/banner`, `/v1/users/{id}/banner`, `/v1/profile/cosmetics`, avatar upload/delete.  
 Social: friends requests/list, presence, mentions.  
 Servers: create/list, invites, members, nickname, categories, channels, layout.  
 Chat: channel/DM messages, send/edit/delete, attachments.  

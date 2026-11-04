@@ -7,8 +7,41 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     avatar_file TEXT,
     avatar_rev INTEGER NOT NULL DEFAULT 0,
+    about_me TEXT,
+    pronouns TEXT,
+    custom_status TEXT,
+    banner_file TEXT,
+    banner_rev INTEGER NOT NULL DEFAULT 0,
+    theme_primary INTEGER NOT NULL DEFAULT 2968126,
+    theme_secondary INTEGER NOT NULL DEFAULT 1118740,
+    nameplate_id TEXT,
+    avatar_decoration_id TEXT,
+    display_name_style_id TEXT,
+    profile_effect_id TEXT,
+    profile_frame_id TEXT,
     created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS profile_widgets (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    position INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS profile_connections (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    position INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_profile_widgets_user ON profile_widgets(user_id, position);
+CREATE INDEX IF NOT EXISTS idx_profile_connections_user ON profile_connections(user_id, position);
 
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,

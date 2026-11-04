@@ -259,3 +259,11 @@ Shipped pre-release Version-1-test-3 from main `0d08c40` after owl-fixes merge (
 - Release: https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-3
 - Assets: Banter-windows-version-1-test-3.zip, Banter-linux-version-1-test-3.zip, banter-server.exe, banter-server-linux
 - Local Owl try: release banter-server + banter on 127.0.0.1:3970
+
+## 2026-11-03 20:51:10 -06:00 [Winter] — Discord profile parity
+
+Replace the basic Banter profile card with Discord-parity view + customization editor (nameplate, avatar decorations, display-name style, theme & banner, profile effect/frame, Board/Activity/Wishlist widgets). Banter-owned cosmetics catalog; no Discord assets. About Me / pronouns / custom status ship with profiles.
+
+- Server: profile columns + widgets/connections tables, PATCH /v1/me/profile, banner upload, /v1/profile/cosmetics
+- Client: Discord-style view card + full customization editor; contracts in profile_customization tests
+- Docs: foundation, feature-status, architecture, design, features. Branch cursor/discord-profile-parity-5c8b. Never touched E:.
