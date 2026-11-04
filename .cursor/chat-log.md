@@ -585,3 +585,13 @@ Agent: Worktree Banter-account-avatar on cursor/my-account-avatar-overflow-ec98 
 ## Summary
 
 My Account Change/Remove Avatar buttons stay inside the profile card on test/owl-fixes.
+
+## 2026-11-03 19:48:29 -06:00 - Merge test/owl-fixes into main and rebuild
+
+Owl: merge test/owl-fixes into main and rebuild so they can test. Root D:\Projects\Project Banter. Never E:. Fetch; merge origin/test/owl-fixes into main (resolve conflicts carefully); push main. Build client+server; restart one server + one client on :3970; report SHA/PIDs. Leave #2 ui-theme alone unless already merged. Clear commit messages.
+
+Agent: Discarded uncommitted local PR #5 merge notes on .cursor/changelog.md and chat-log.md before merge. Fast-forward main 89f41b0..cf6d4e9 from origin/test/owl-fixes (no conflicts). Pushed main. cargo build -p banter -p banter-server with VS 18 BuildTools. Stopped old stream-select client PID 27184. Started banter-server PID 40936 on 127.0.0.1:3970 and banter PID 44832. Health {ok:true}. PR #2 left OPEN.
+
+## Summary
+
+test/owl-fixes is on main at cf6d4e9; one server + one client running for Owl try. PR #2 untouched.

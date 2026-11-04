@@ -241,3 +241,7 @@ Change Avatar and Remove Avatar were positioned from Change alone, so Remove cli
 - Helper `account_avatar_actions_origin_x` + settings test first
 - `draw_account_settings` uses the group width for cursor X
 - Worktree `Banter-account-avatar` on `cursor/my-account-avatar-overflow-ec98` → merge into `test/owl-fixes` only. Never touched E:.
+
+## 2026-11-03 19:48:29 -06:00 [Winter] — Merge test/owl-fixes into main and rebuild for Owl try
+
+Fast-forwarded main from 89f41b0 to cf6d4e994d6098b3ab9fe712ce57696b737c6a7e (origin/test/owl-fixes tip, includes merged PRs #6 #8 #10 and owl-fixes feature merges). No conflicts. Pushed origin/main. Rebuilt debug banter + banter-server under D:\Projects\Project Banter\target\, restarted one banter-server on 127.0.0.1:3970 and one Owl client. Health ok. Left PR #2 (UI theme/layout) open. Never touched E:.
