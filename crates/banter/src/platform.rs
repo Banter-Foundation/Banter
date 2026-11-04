@@ -8,7 +8,10 @@ use dear_imgui_glow::GlowRenderer;
 use dear_imgui_rs::{ClipboardBackend, ConfigFlags, Context, Key, MouseButton};
 use glow::HasContext;
 
-use crate::logic::{VideoPrefs, clamp_window_size, either_key_held, load_json};
+use crate::logic::{
+    DisplayRefresh, VideoPrefs, clamp_window_size, either_key_held, load_json, pick_display_refresh_hz,
+    ui_swap_needs_update,
+};
 use crate::ui::App;
 
 pub(crate) fn run() -> Result<(), String> {
@@ -74,12 +77,20 @@ pub(crate) fn run() -> Result<(), String> {
     app.set_bold_font(bold_font);
     app.set_semibold_font(semibold_font);
     let mut last_time = glfw.get_time();
+    // (vsync, refresh_hz) last pushed to GLFW. Reapplied when the window moves
+    // to another monitor or the active mode's Hz changes.
+    let mut applied_swap: Option<(bool, u32)> = None;
+    let mut vsync_on = startup_video.vsync;
 
     while !window.should_close() {
         glfw.poll_events();
         if let Some(video) = app.take_video_apply() {
+            vsync_on = video.vsync;
             apply_video(&mut glfw, &mut window, &video, &mut windowed);
+            // Force a refresh-aware swap pass after Display settings change.
+            applied_swap = None;
         }
+        sync_ui_swap_interval(&mut glfw, &mut window, vsync_on, &mut applied_swap);
         let (width, height) = window.get_size();
         let (framebuffer_width, framebuffer_height) = window.get_framebuffer_size();
         if width <= 0 || height <= 0 {
@@ -209,11 +220,81 @@ fn apply_video(
         windowed.width = width;
         windowed.height = height;
     }
-    glfw.set_swap_interval(if video.vsync {
+    // Swap interval is owned by `sync_ui_swap_interval`, which follows the
+    // current display's refresh rate after this apply (and when the window moves).
+}
+
+/// Match the UI present rate to the monitor that owns the window.
+///
+/// With VSync on, GLFW `Sync(1)` waits for that monitor's vertical blank. The interval is
+/// reapplied whenever the detected refresh rate changes (moving between monitors, or the
+/// OS changing the active mode). With VSync off, presents stay uncapped.
+fn sync_ui_swap_interval(
+    glfw: &mut glfw::Glfw,
+    window: &mut glfw::Window,
+    vsync: bool,
+    applied: &mut Option<(bool, u32)>,
+) {
+    let refresh_hz = query_ui_refresh_hz(glfw, window);
+    if !ui_swap_needs_update(*applied, vsync, refresh_hz) {
+        return;
+    }
+    glfw.set_swap_interval(if vsync {
         glfw::SwapInterval::Sync(1)
     } else {
         glfw::SwapInterval::None
     });
+    *applied = Some((vsync, refresh_hz));
+}
+
+fn query_ui_refresh_hz(glfw: &mut glfw::Glfw, window: &mut glfw::Window) -> u32 {
+    let fullscreen_hz = glfw.with_window_monitor(window, |_, monitor| {
+        monitor
+            .and_then(|monitor| monitor.get_video_mode())
+            .map(|mode| mode.refresh_rate)
+    });
+    let displays = connected_display_refreshes(glfw);
+    let (center_x, center_y) = window_center_for_refresh(glfw, window);
+    pick_display_refresh_hz(center_x, center_y, fullscreen_hz, &displays)
+}
+
+fn connected_display_refreshes(glfw: &mut glfw::Glfw) -> Vec<DisplayRefresh> {
+    glfw.with_connected_monitors(|_, monitors| {
+        monitors
+            .iter()
+            .filter_map(|monitor| {
+                let mode = monitor.get_video_mode()?;
+                let (x, y) = monitor.get_pos();
+                Some(DisplayRefresh {
+                    x,
+                    y,
+                    width: mode.width as i32,
+                    height: mode.height as i32,
+                    refresh_hz: mode.refresh_rate,
+                })
+            })
+            .collect()
+    })
+}
+
+/// Window center in screen coordinates. Wayland does not expose position, so use the
+/// primary monitor center and let [`pick_display_refresh_hz`] fall through to that display.
+fn window_center_for_refresh(glfw: &mut glfw::Glfw, window: &glfw::Window) -> (i32, i32) {
+    if glfw.get_platform() == glfw::Platform::Wayland {
+        return glfw.with_primary_monitor(|_, monitor| {
+            let Some(monitor) = monitor else {
+                return (0, 0);
+            };
+            let Some(mode) = monitor.get_video_mode() else {
+                return (0, 0);
+            };
+            let (x, y) = monitor.get_pos();
+            (x + mode.width as i32 / 2, y + mode.height as i32 / 2)
+        });
+    }
+    let (x, y) = window.get_pos();
+    let (width, height) = window.get_size();
+    (x + width / 2, y + height / 2)
 }
 
 /// Wayland compositors place windows themselves. `glfwGetWindowPos` reports that as an error,
