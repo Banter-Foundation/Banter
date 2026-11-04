@@ -33,3 +33,5 @@
 - 2026-11-03 20:03 America/Chicago: Pre-release Version-1-test-3 from main `0d08c40` (docs tip later `c8b7a60`). Image `ghcr.io/snowedinowl/banter:version-1-test-3`. Assets Win+Linux client zips + `banter-server.exe` + `banter-server-linux`. Merged owl-fixes branches/worktrees cleaned; keep `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Owl rule: clean temp after ship. Never E:.
 
 - 2026-11-03 20:33 America/Chicago: BA-50 channel type templates canceled. Cleaned agent bc-31605c6f leftover: deleted local `cursor/channel-type-templates-adb6`, discarded uncommitted channel_types WIP on primary checkout, returned to `main`. No channel-type worktree. Kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Never E:.
+
+- 2026-11-03 21:36 America/Chicago: Pre-release Version-1-test-4 from main `b110a9f`. Image `ghcr.io/snowedinowl/banter:version-1-test-4` (+ `:latest`). Assets Win+Linux client zips + `banter-server.exe` + `banter-server-linux`. Includes Discord profile parity (PR #12) and Postgres/hot-swap. Kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Never E:.

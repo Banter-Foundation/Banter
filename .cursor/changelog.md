@@ -278,3 +278,11 @@ Replace the basic Banter profile card with Discord-parity view + customization e
 - Client: Discord-style view card + full customization editor; contracts in profile_customization tests
 - Docs: foundation, feature-status, architecture, design, features. Branch cursor/discord-profile-parity-5c8b. Never touched E:.
 
+
+## 2026-11-03 21:36:10 -06:00 [Winter] — Version-1-test-4 pre-release (Win+Linux+GHCR)
+
+Shipped pre-release Version-1-test-4 from main `b110a9f` (profile parity PR #12 + Postgres/hot-swap + Board exhaustiveness fix PR #14). Built Windows and Linux clients + servers, pushed `ghcr.io/snowedinowl/banter:version-1-test-4` (and `:latest`), retargeted docs. Cleaned release/fix branches and agent-scratch + target-linux-release; kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme (PR #2). Never touched E:.
+
+- Release: https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-4
+- Assets: Banter-windows-version-1-test-4.zip, Banter-linux-version-1-test-4.zip, banter-server.exe, banter-server-linux
+- Docs retarget: README, docs/build-and-run.md, docs/docker-setup.md published tag → version-1-test-4 (compose default stays `:latest`)
