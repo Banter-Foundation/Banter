@@ -635,3 +635,13 @@ Agent: Worktree Banter-profiles-parity on cursor/discord-profile-parity-5c8b. Wr
 
 Discord-parity profiles implemented with customization editor; PR to main next.
 
+
+## 2026-11-03 21:36:10 -06:00 — Ship Version-1-test-4 pre-release (BA-53)
+
+Owl asked: push a pre-release from main for Banter. Repo https://github.com/SnowedInOwl/Banter. Project root D:\Projects\Project Banter (NEVER touch E:). Previous tags Version-1-test-1..3; use next (Version-1-test-4) unless docs say otherwise. ghcr.io/snowedinowl/banter for Docker. Confirm latest main (profile merge SHA 93827cf or newer). Build/publish Windows + Linux client artifacts and Docker server image as before. Create GitHub pre-release (not latest) with clear notes: what changed since Version-1-test-3, especially Discord 1:1 profile parity/customization from PR #12. Update server setup guide if needed. Clean temp branches/worktrees/scratch. Report tag, release URL, artifacts, image tag, guide changes.
+
+Agent: main at b110a9f (93827cf + dust Postgres/hot-swap + docs retarget PR #13 + Board exhaustiveness PR #14). Built Win+Linux, Podman pushed version-1-test-4 + latest. Published pre-release Version-1-test-4. Updated README/build-and-run/docker-setup published tag to version-1-test-4. Cleaned release/fix branches and scratch; kept ui-theme PR #2.
+
+## Summary
+
+Version-1-test-4 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
