@@ -13,7 +13,8 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Create server, invite join, member list, server nickname | Working |
 | Text + voice channels in categories (owner creates) | Working |
 | Drawing board channels (shapes, stickies, images, files, realtime ops) | Working |
-| Send / reply / edit / delete / attach / search messages | Working |
+| Send / reply / edit / delete / search messages | Working |
+| Attach a file to a message (composer upload) | Disabled — popup **Currently Unavailable** (BA-61); existing attachments still downloadable |
 | Mentions + presence | Working |
 | Discord-like temporary skin (rail, sidebar, chat, members, modals) | Working — **not** final Banter branding |
 | Chat rows (avatar, grouping, hover toolbar, bottom-anchored history) | Working |

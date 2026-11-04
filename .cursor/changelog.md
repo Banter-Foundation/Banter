@@ -313,3 +313,10 @@ Shipped pre-release Version-1-test-4.1 from main `c6163fc` (client startup witho
 Documented Arch server + release hot-swap progress. Workflow on `main` lowercases the GHCR owner and logs in with `GHCR_WRITE_TOKEN`. Deploy secrets are set. Releases through `Version-1-test-6` still fail at image push: the write PAT must be a classic token with `write:packages` (current error: token scopes). No GHCR `banter` package exists yet; SSH deploy is untested until push succeeds. Manual path: local `docker build -t banter-server:local` + deploy script (skip-pull for local tags).
 
 - Docs: `docs/docker-setup.md` Status section + troubleshooting; `docs/feature-status.md` container row
+
+## 2026-11-04 00:24:59 -06:00 [Winter] — Disable chat file uploads (BA-61)
+
+Composer attach no longer opens a file picker or queues upload bytes. The attach control (and any leftover pending-file send path) opens the existing Banter modal shell with the exact message `Currently Unavailable`. Saving/downloading attachments already on a message still works. Server attachment API left unchanged so foundation tests stay intact. Client-only UX gate until Owl re-enables uploads.
+
+- `Modal::UploadsUnavailable` + `pick_attachment` / `submit_composer` guards in `crates/banter/src/ui.rs`
+- Docs: `.cursor/features.md`, `docs/feature-status.md`

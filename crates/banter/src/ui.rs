@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use banter_server::{
     Account, CallPhase, CallSnapshot, CategoryLayout, Channel, ChannelKind, ChatTarget, ClientSignal,
     CosmeticItem, CosmeticKind, DirectChat, Friend, FriendRequest, LayerId, LayerPreferences,
-    MAX_ATTACHMENT_BYTES, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MediaKind, MediaPlace, Mention, Message,
+    MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MediaKind, MediaPlace, Mention, Message,
     Presence, ProfileConnectionInput, ProfilePatch, ProfileWidgetInput, ProfileWidgetKind, ServerSummary,
     UserProfile, VoiceFlags, VoiceMember,
 };
@@ -100,7 +100,12 @@ enum Modal {
     Nickname,
     CreateChannel,
     CreateCategory,
+    /// Chat file attach is gated off (BA-61); shows Owl's exact unavailable copy.
+    UploadsUnavailable,
 }
+
+/// Exact popup copy Owl specified for disabled chat file uploads (BA-61).
+const UPLOADS_UNAVAILABLE_MESSAGE: &str = "Currently Unavailable";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RailTone {
@@ -2960,6 +2965,7 @@ impl App {
                     Modal::Nickname => self.modal_nickname(ui, display),
                     Modal::CreateChannel => self.modal_create_channel(ui, display),
                     Modal::CreateCategory => self.modal_create_category(ui, display),
+                    Modal::UploadsUnavailable => self.modal_uploads_unavailable(ui, display),
                 };
                 if self.modal_frames > 0 && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
                     let mouse = ui.mouse_pos();
@@ -3179,6 +3185,24 @@ impl App {
         (min, max)
     }
 
+    /// Notice when the composer attach control (or any other chat upload path) is used.
+    fn modal_uploads_unavailable(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let (_body, min, max) = self.modal_frame(
+            ui,
+            display,
+            UPLOADS_UNAVAILABLE_MESSAGE,
+            None,
+            false,
+            16.0,
+            MODAL_FOOTER_H,
+        );
+        let (dismiss, ok) = self.modal_footer(ui, max, min[0], "Dismiss", "OK", Tone::Brand, true);
+        if dismiss || ok {
+            self.modal = None;
+        }
+        (min, max)
+    }
+
     fn modal_nickname(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
         let (body, min, max) = self.modal_frame(ui, display, "Change Nickname", None, false, 20.0 + INPUT_H + 8.0 + 20.0 + 16.0, MODAL_FOOTER_H);
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
@@ -3367,15 +3391,18 @@ impl App {
             }
             return;
         }
-        let files = self.pending_file.as_ref().map(|(name, bytes)| vec![(name.as_str(), bytes.as_slice())]).unwrap_or_default();
-        if let Some(message) = self.note(self.client.send_message(target, &body, self.reply_to, &files)) {
+        // Chat attachments are disabled (BA-61); never send pending file bytes.
+        if self.pending_file.take().is_some() {
+            self.open_modal(Modal::UploadsUnavailable);
+            return;
+        }
+        if let Some(message) = self.note(self.client.send_message(target, &body, self.reply_to, &[])) {
             if self.search.trim().is_empty() {
                 upsert_message(&mut self.messages, message);
             }
             self.chat_jump = true;
             self.composer.clear();
             self.reply_to = None;
-            self.pending_file = None;
         }
     }
 
@@ -3885,18 +3912,10 @@ impl App {
         }
     }
 
+    /// Composer paperclip / attach entry point. Chat uploads are gated off (BA-61).
     fn pick_attachment(&mut self) {
-        let Some(path) = rfd::FileDialog::new().pick_file() else { return };
-        let Ok(bytes) = std::fs::read(&path) else {
-            self.status = "could not read that file".into();
-            return;
-        };
-        if bytes.is_empty() || bytes.len() > MAX_ATTACHMENT_BYTES {
-            self.status = "file is empty or larger than 10 MB".into();
-            return;
-        }
-        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("file").to_string();
-        self.pending_file = Some((name, bytes));
+        self.pending_file = None;
+        self.open_modal(Modal::UploadsUnavailable);
     }
 
     fn save_attachment(&mut self, id: i64, filename: &str) {
@@ -7112,5 +7131,15 @@ fn clock_short(ms: i64, offset: i32) -> String {
 fn pointer_in(ui: &Ui, min: [f32; 2], max: [f32; 2]) -> bool {
     let mouse = ui.io().mouse_pos();
     mouse[0] >= min[0] && mouse[0] <= max[0] && mouse[1] >= min[1] && mouse[1] <= max[1]
+}
+
+#[cfg(test)]
+mod uploads_unavailable_tests {
+    use super::UPLOADS_UNAVAILABLE_MESSAGE;
+
+    #[test]
+    fn unavailable_popup_copy_matches_owl() {
+        assert_eq!(UPLOADS_UNAVAILABLE_MESSAGE, "Currently Unavailable");
+    }
 }
 

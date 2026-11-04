@@ -661,3 +661,23 @@ Agent: Merged PR #16 (startup) and PR #17 (docs retarget). Tagged Version-1-test
 ## Summary
 
 Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
+
+## 2026-11-04 00:24:59 -06:00 — Disable uploads with unavailable popup (BA-61)
+
+Owl: disable file uploads in Banter and replace the upload action with a popup that says exactly:
+
+Currently Unavailable
+
+Project: D:\Projects\Project Banter (NEVER touch E:).
+Separate worktree/branch; do not collide with other Banter workers.
+Repo: Banter.
+
+Implement:
+- All client entry points that attach/upload files (composer paperclip, drag-drop, paste-as-file if any, context menus) should not upload; show a modal/popup with that exact title/body text as Owl wrote (use that string as the message; keep UI consistent with existing Banter dialogs).
+- Prefer disabling client UX now; server can reject uploads too if trivial, but client popup is required.
+- Open PR; do not merge until Owl says so.
+- Report PR URL.
+
+Task: Disable uploads with unavailable popup (BA-61)
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-disable-uploads` on `cursor/disable-uploads-unavailable-95f7`. Composer attach opens `Modal::UploadsUnavailable` with message `Currently Unavailable`; submit path never sends file bytes. No drag-drop/paste/context-menu upload entry points existed. Server left alone to keep foundation attachment tests.
