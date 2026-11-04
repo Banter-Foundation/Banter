@@ -65,6 +65,9 @@ impl IntoResponse for BanterError {
             BanterError::Storage(_) | BanterError::Bind(_) => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::BAD_REQUEST,
         };
+        if matches!(status, StatusCode::INTERNAL_SERVER_ERROR) {
+            crate::debuglog::record("error", format!("{}: {self}", self.code()));
+        }
         let body = Json(json!({"error": self.to_string(), "code": self.code()}));
         (status, body).into_response()
     }
@@ -83,9 +86,11 @@ pub fn serve(addr: &str, data_dir: &std::path::Path, database_url: &str) -> Resu
             live: Arc::clone(&live),
         };
         let app = router(state.clone()).layer(RequestBodyLimitLayer::new(20 * 1024 * 1024));
-        let listener = tokio::net::TcpListener::bind(addr)
-            .await
-            .map_err(|err| BanterError::Bind(err.to_string()))?;
+        let listener = tokio::net::TcpListener::bind(addr).await.map_err(|err| {
+            crate::debuglog::record("error", format!("bind failed on {addr}: {err}"));
+            BanterError::Bind(err.to_string())
+        })?;
+        crate::debuglog::record("info", format!("listening on {addr}"));
         let idle_store = Arc::clone(&store);
         let idle_live = Arc::clone(&live);
         tokio::spawn(async move {
@@ -114,6 +119,7 @@ pub fn serve(addr: &str, data_dir: &std::path::Path, database_url: &str) -> Resu
 fn router(state: HttpState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/debug", get(server_debug))
         .route("/v1/register", post(register))
         .route("/v1/login", post(login))
         .route("/v1/logout", post(logout))
@@ -172,6 +178,32 @@ async fn health() -> Json<serde_json::Value> {
     Json(json!({"ok": true}))
 }
 
+async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> Result<Json<ServerDebug>, BanterError> {
+    let counts = state.live.counts();
+    let (users, servers, channels, messages) = state.store.table_counts().await?;
+    let (pool_size, pool_idle) = state.store.pool_usage();
+    let (media_slots, media_forwards) = crate::room::media_snapshot();
+    Ok(Json(ServerDebug {
+        uptime_ms: crate::debuglog::uptime_ms(),
+        rss_bytes: crate::debuglog::rss_bytes(),
+        online: counts.online,
+        idle: counts.idle,
+        sockets: counts.sockets,
+        voice_members: counts.voice_members,
+        voice_channels: counts.voice_channels,
+        calls: counts.calls,
+        media_slots,
+        media_forwards,
+        users,
+        servers,
+        channels,
+        messages,
+        pool_size,
+        pool_idle,
+        logs: crate::debuglog::recent(),
+    }))
+}
+
 #[derive(Deserialize)]
 struct RegisterBody {
     username: String,
@@ -182,6 +214,7 @@ struct RegisterBody {
 async fn register(State(state): State<HttpState>, Json(body): Json<RegisterBody>) -> Result<Json<Session>, BanterError> {
     let account = state.store.register(&body.username, &body.display_name, &body.password).await?;
     let session = state.store.login(&account.username, &body.password).await?;
+    crate::debuglog::record("info", format!("registered {}", account.username));
     Ok(Json(session))
 }
 
@@ -192,12 +225,22 @@ struct LoginBody {
 }
 
 async fn login(State(state): State<HttpState>, Json(body): Json<LoginBody>) -> Result<Json<Session>, BanterError> {
-    Ok(Json(state.store.login(&body.username, &body.password).await?))
+    match state.store.login(&body.username, &body.password).await {
+        Ok(session) => {
+            crate::debuglog::record("info", format!("login {}", session.account.username));
+            Ok(Json(session))
+        }
+        Err(err) => {
+            crate::debuglog::record("warn", format!("login failed for {}", body.username.trim()));
+            Err(err)
+        }
+    }
 }
 
 async fn logout(State(state): State<HttpState>, headers: HeaderMap) -> Result<StatusCode, BanterError> {
     if let Some(token) = bearer(&headers) {
         state.store.logout(token).await?;
+        crate::debuglog::record("info", "logout");
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -865,11 +908,13 @@ async fn join_voice(
     Json(body): Json<VoiceJoinBody>,
 ) -> Result<Json<Vec<VoiceMember>>, BanterError> {
     state.live.join_server_voice(&state.store, account.id, body.channel_id).await?;
+    crate::debuglog::record("info", format!("voice join user {} channel {}", account.id, body.channel_id));
     Ok(Json(state.live.voice_channel_members(body.channel_id)))
 }
 
 async fn leave_voice(State(state): State<HttpState>, Auth(account): Auth) -> StatusCode {
     state.live.leave_voice(account.id);
+    crate::debuglog::record("info", format!("voice leave user {}", account.id));
     StatusCode::NO_CONTENT
 }
 
@@ -887,7 +932,9 @@ async fn start_call(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<Json<CallSnapshot>, BanterError> {
-    Ok(Json(state.live.start_dm_call(&state.store, account.id, id).await?))
+    let call = state.live.start_dm_call(&state.store, account.id, id).await?;
+    crate::debuglog::record("info", format!("call start user {} dm {id}", account.id));
+    Ok(Json(call))
 }
 
 async fn accept_call(
@@ -895,7 +942,9 @@ async fn accept_call(
     Auth(account): Auth,
     Path(id): Path<i64>,
 ) -> Result<Json<CallSnapshot>, BanterError> {
-    Ok(Json(state.live.accept_dm_call(&state.store, account.id, id).await?))
+    let call = state.live.accept_dm_call(&state.store, account.id, id).await?;
+    crate::debuglog::record("info", format!("call accept user {} dm {id}", account.id));
+    Ok(Json(call))
 }
 
 async fn decline_call(
@@ -904,6 +953,7 @@ async fn decline_call(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, BanterError> {
     state.live.decline_dm_call(account.id, id)?;
+    crate::debuglog::record("info", format!("call decline user {} dm {id}", account.id));
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -913,6 +963,7 @@ async fn end_call(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, BanterError> {
     state.live.end_dm_call(account.id, id)?;
+    crate::debuglog::record("info", format!("call end user {} dm {id}", account.id));
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -927,6 +978,7 @@ async fn ws(
     upgrade: WebSocketUpgrade,
 ) -> Result<Response, BanterError> {
     let account = state.store.session_account(&query.token).await?;
+    crate::debuglog::record("info", format!("websocket connected user {}", account.id));
     Ok(upgrade.on_upgrade(move |socket| handle_socket(state, account.id, socket)))
 }
 
@@ -984,6 +1036,7 @@ async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
     writer.abort();
     state.live.unregister_socket(user_id, socket_id);
     state.live.disconnect(user_id);
+    crate::debuglog::record("info", format!("websocket disconnected user {user_id}"));
     if let Ok(audience) = state.store.related_user_ids(user_id).await {
         state.live.send_event(
             &audience,

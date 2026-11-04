@@ -9,7 +9,8 @@ use crate::profiler;
 use base64::engine::general_purpose::STANDARD;
 use banter_server::{
     Account, CallSnapshot, Category, CategoryLayout, Channel, ChannelKind, ChatTarget, CosmeticItem,
-    DirectChat, Friend, FriendRequest, GuildRole, Mention, Message, Presence, ProfilePatch, ServerHome,
+    DirectChat, Friend, FriendRequest, GuildRole, Mention, Message, Presence, ProfilePatch, ServerDebug,
+    ServerHome,
     ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember,
 };
 use serde::Deserialize;
@@ -130,6 +131,10 @@ impl Client {
 
     pub fn logout(&self) -> Result<(), ApiError> {
         self.call_empty("POST", "/v1/logout", self.auth(http().post(&self.url("/v1/logout"))))
+    }
+
+    pub fn server_debug(&self) -> Result<ServerDebug, ApiError> {
+        self.get_json("/v1/debug")
     }
 
     pub fn me(&self) -> Result<Account, ApiError> {

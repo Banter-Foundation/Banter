@@ -45,6 +45,13 @@ struct Slot {
     tx: tokio::sync::mpsc::UnboundedSender<Cmd>,
 }
 
+/// Active SFU sessions and outbound forward tracks. Used by the debug window.
+pub fn media_snapshot() -> (i64, i64) {
+    let slot_count = slots().lock().map(|guard| guard.len() as i64).unwrap_or(0);
+    let forward_count = forwards().lock().map(|guard| guard.len() as i64).unwrap_or(0);
+    (slot_count, forward_count)
+}
+
 fn slots() -> &'static Mutex<HashMap<i64, Slot>> {
     static SLOTS: OnceLock<Mutex<HashMap<i64, Slot>>> = OnceLock::new();
     SLOTS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -206,7 +213,7 @@ fn sfu_udp_bind() -> (Vec<String>, Option<u16>) {
         claimed.insert(port);
         return (vec![format!("0.0.0.0:{port}")], Some(port));
     }
-    eprintln!("voice sfu: no free UDP port in {min}-{max}");
+    crate::debuglog::record("error", format!("voice sfu: no free UDP port in {min}-{max}"));
     (vec!["0.0.0.0:0".to_string()], None)
 }
 
@@ -418,7 +425,7 @@ pub fn accept_offer(live: Arc<Live>, user_id: i64, channel_id: i64, sdp: String)
     }
     tokio::spawn(async move {
         if let Err(err) = run_session(live, user_id, channel_id, sdp, rx).await {
-            eprintln!("voice sfu: {err}");
+            crate::debuglog::record("error", format!("voice sfu: {err}"));
         }
         slots().lock().expect("sfu slots").remove(&user_id);
         pending_ice().lock().expect("pending ice").remove(&user_id);

@@ -407,6 +407,35 @@ impl Live {
     fn lock(&self) -> std::sync::MutexGuard<'_, LiveInner> {
         self.inner.lock().expect("live lock")
     }
+
+    pub(crate) fn counts(&self) -> LiveCounts {
+        let inner = self.lock();
+        let mut online = 0;
+        let mut idle = 0;
+        let mut voice_members = 0;
+        let mut channels = std::collections::HashSet::new();
+        for user in inner.users.values() {
+            if user.connected && user.presence == Presence::Online {
+                online += 1;
+            }
+            if user.connected && user.presence == Presence::Idle {
+                idle += 1;
+            }
+            if let Some(channel_id) = user.voice_channel {
+                voice_members += 1;
+                channels.insert(channel_id);
+            }
+        }
+        let sockets = inner.sockets.values().map(|list| list.len() as i64).sum();
+        LiveCounts {
+            online,
+            idle,
+            sockets,
+            voice_members,
+            voice_channels: channels.len() as i64,
+            calls: inner.calls.len() as i64,
+        }
+    }
 }
 
 impl Default for Live {
@@ -556,6 +585,15 @@ fn prepare_signal(inner: &mut LiveInner, user_id: i64, signal: ClientSignal) -> 
     }
 }
 
+pub(crate) struct LiveCounts {
+    pub online: i64,
+    pub idle: i64,
+    pub sockets: i64,
+    pub voice_members: i64,
+    pub voice_channels: i64,
+    pub calls: i64,
+}
+
 /// Voice signaling stops at the SFU. Direct calls are relayed and the server does not terminate media.
 fn relay_p2p(inner: &LiveInner, user_id: i64, place: MediaPlace, event: ServerEvent) -> Result<Vec<(Vec<i64>, ServerEvent)>, BanterError> {
     ensure_in_place(inner, user_id, place)?;
@@ -595,6 +633,26 @@ fn other_party(inner: &LiveInner, user_id: i64, place: MediaPlace) -> Result<i64
                 Err(BanterError::NotInCall)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod counts_tests {
+    use super::*;
+
+    #[test]
+    fn counts_online_members_and_voice_channels() {
+        let live = Live::new();
+        live.connect(1, 0, None);
+        live.seed_voice_member(1, 9);
+        live.connect(2, 0, None);
+        let counts = live.counts();
+        assert_eq!(counts.online, 2);
+        assert_eq!(counts.idle, 0);
+        assert_eq!(counts.voice_members, 1);
+        assert_eq!(counts.voice_channels, 1);
+        assert_eq!(counts.calls, 0);
+        assert_eq!(counts.sockets, 0);
     }
 }
 

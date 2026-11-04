@@ -1005,3 +1005,33 @@ pub struct BoardAsset {
     pub byte_size: i64,
     pub content_type: String,
 }
+
+/// One line from the in-memory server log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DebugLogLine {
+    pub at_ms: i64,
+    pub level: String,
+    pub message: String,
+}
+
+/// Snapshot for the hidden server debug window. Any signed-in client can read it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerDebug {
+    pub uptime_ms: i64,
+    pub rss_bytes: u64,
+    pub online: i64,
+    pub idle: i64,
+    pub sockets: i64,
+    pub voice_members: i64,
+    pub voice_channels: i64,
+    pub calls: i64,
+    pub media_slots: i64,
+    pub media_forwards: i64,
+    pub users: i64,
+    pub servers: i64,
+    pub channels: i64,
+    pub messages: i64,
+    pub pool_size: i64,
+    pub pool_idle: i64,
+    pub logs: Vec<DebugLogLine>,
+}

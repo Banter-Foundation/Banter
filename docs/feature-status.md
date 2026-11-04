@@ -29,6 +29,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Embedded + standalone server, PostgreSQL data | Working |
 | Containerized `banter-server` (`ghcr.io/snowedinowl/banter`) | Image/Dockerfile ready; **GHCR publish + release auto-deploy blocked** until classic PAT has `write:packages` (see [docker-setup.md](docker-setup.md) Status) |
 | Linux native client (XDG paths, PipeWire-ready capture) | Working; loopback/app audio still Windows-only |
+| Hidden `/debugnow` composer command | Working — opens a server debug window (logs and live stats). Not listed in the UI and not stored as a message. Text channels and DMs. |
 
 ## Partial / caveats
 

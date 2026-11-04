@@ -18,6 +18,7 @@
 - [*] Guild roles: @everyone plus extra roles with a color, optional hoist, and permission bits (administrator, manage channels, manage roles, create invite). Server menu edits roles. Member context menu assigns them. Owner has every permission. Kick and ban stay deferred.
 - [*] Developer settings: Local (`127.0.0.1:3970`) or Remote host, persisted in `dev-server.json`. Client startup does not require local unless logged in on Local or the user picks Local; missing local asks for remote instead of hard-failing.
 - [*] F3 profiler: FPS, RSS, HTTP/WebSocket bytes, frame sections, expensive ops
+- [*] Hidden composer command `/debugnow` (text channels and DMs) opens a server debug window with logs and live stats. It is not listed in the UI and is not sent as a message.
 - [*] Display settings: VSync, fullscreen, window resolution (saved in video.json). With VSync on, the client UI matches the current monitor’s refresh rate and reapplies when the window moves or the display mode changes (not stream capture FPS).
 
 ## Deferred
