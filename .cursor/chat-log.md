@@ -595,3 +595,12 @@ Agent: Discarded uncommitted local PR #5 merge notes on .cursor/changelog.md and
 ## Summary
 
 test/owl-fixes is on main at cf6d4e9; one server + one client running for Owl try. PR #2 untouched.
+## 2026-11-03 19:50:11 -06:00 — Ship Version-1-test-3 pre-release (Win+Linux+GHCR)
+
+Owl: merge test/owl-fixes into main (coordinate with merge agent — already done at 791b2c2), then ship pre-release as usual. Refresh Docker/GHCR as version-1-test-3, Win+Linux clients, banter-server binaries, update docker setup docs. Never E:.
+
+Agent: Confirmed origin/test/owl-fixes contained in origin/main (no double-merge). Branch cursor/release-version-1-test-3-0626 updates compose/docs/README to version-1-test-3. Building Windows + Linux clients, Podman GHCR image, publishing pre-release Version-1-test-3.
+
+## Summary
+
+Docs retargeted to version-1-test-3; builds and pre-release in progress.

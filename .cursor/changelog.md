@@ -245,3 +245,9 @@ Change Avatar and Remove Avatar were positioned from Change alone, so Remove cli
 ## 2026-11-03 19:48:29 -06:00 [Winter] — Merge test/owl-fixes into main and rebuild for Owl try
 
 Fast-forwarded main from 89f41b0 to cf6d4e994d6098b3ab9fe712ce57696b737c6a7e (origin/test/owl-fixes tip, includes merged PRs #6 #8 #10 and owl-fixes feature merges). No conflicts. Pushed origin/main. Rebuilt debug banter + banter-server under D:\Projects\Project Banter\target\, restarted one banter-server on 127.0.0.1:3970 and one Owl client. Health ok. Left PR #2 (UI theme/layout) open. Never touched E:.
+## 2026-11-03 19:50:11 -06:00 [Winter] — Point Docker defaults at version-1-test-3
+
+Retarget the published server image docs and compose default from `version-1-test-1` to `version-1-test-3` for the owl-fixes main ship pre-release. Older `version-1-test-1` / `Version-1-test-2` tags stay. Never touched E:.
+
+- `docker-compose.yml` default `BANTER_IMAGE` → `ghcr.io/snowedinowl/banter:version-1-test-3`
+- `docs/docker-setup.md`, `docs/build-and-run.md`, `README.md` image/tag references updated

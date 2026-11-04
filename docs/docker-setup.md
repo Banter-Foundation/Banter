@@ -3,7 +3,7 @@
 Run **`banter-server`** in a container. The desktop Banter app is **not** in the image; build and run that on the host (see [build-and-run.md](build-and-run.md)).
 
 Image name: **`ghcr.io/snowedinowl/banter`**  
-Published pre-release tag: **`version-1-test-1`** (GitHub release `Version-1-test-1`).
+Published pre-release tag: **`version-1-test-3`** (GitHub release `Version-1-test-3`). Earlier tags `version-1-test-1` and `version-1-test-2` remain on GHCR / Releases and are not moved.
 
 Podman and Docker both work. On Black-Birb, prefer **Podman** when Docker Desktop’s engine is not running.
 
@@ -39,7 +39,7 @@ podman compose up -d
 docker compose up -d
 ```
 
-Compose pulls/builds image `ghcr.io/snowedinowl/banter:version-1-test-1` by default (`BANTER_IMAGE` overrides).
+Compose pulls/builds image `ghcr.io/snowedinowl/banter:version-1-test-3` by default (`BANTER_IMAGE` overrides).
 
 Health check:
 
@@ -86,7 +86,7 @@ If `3970` is taken (desktop Banter or another server):
 
 ```powershell
 # Publish host 3971 → container 3970
-podman run --rm -p 3971:3970 -e BANTER_BIND=0.0.0.0 ghcr.io/snowedinowl/banter:version-1-test-1
+podman run --rm -p 3971:3970 -e BANTER_BIND=0.0.0.0 ghcr.io/snowedinowl/banter:version-1-test-3
 
 # Or with compose: set BANTER_PORT so both sides match (compose maps host:container to that port)
 $env:BANTER_PORT = "3971"
@@ -111,7 +111,7 @@ Then check `http://127.0.0.1:3971/v1/health`.
 | `BANTER_BIND` | `0.0.0.0` | Listen address inside the container |
 | `BANTER_PORT` | `3970` | Listen port (and compose publish mapping) |
 | `BANTER_DATA` | `/data` | Directory for SQLite and files |
-| `BANTER_IMAGE` | `ghcr.io/snowedinowl/banter:version-1-test-1` | Compose image name (local builds override) |
+| `BANTER_IMAGE` | `ghcr.io/snowedinowl/banter:version-1-test-3` | Compose image name (local builds override) |
 
 A non-empty CLI address on the binary still wins over env (same rules as a host `banter-server`).
 

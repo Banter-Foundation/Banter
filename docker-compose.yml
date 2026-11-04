@@ -10,7 +10,7 @@
 services:
   banter-server:
     build: .
-    image: ${BANTER_IMAGE:-ghcr.io/snowedinowl/banter:version-1-test-1}
+    image: ${BANTER_IMAGE:-ghcr.io/snowedinowl/banter:version-1-test-3}
     ports:
       - "${BANTER_PORT:-3970}:${BANTER_PORT:-3970}"
     environment:
