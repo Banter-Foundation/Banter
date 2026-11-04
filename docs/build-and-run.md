@@ -26,13 +26,18 @@ cargo run -p banter
 
 Or launch `target\debug\banter.exe` after a build. Data goes to `%LOCALAPPDATA%\Banter` unless `BANTER_DATA` is set.
 
-If Developer is set to Local (the default) and port `3970` is free, the client starts an embedded server. If another Banter or `banter-server` already holds `127.0.0.1:3970`, the client uses that instance.
+Startup never blocks the window on a missing local server. Behavior:
+
+- **Already logged in on Local** — Banter tries to start the embedded server (or reuse whatever already holds `127.0.0.1:3970`). If that fails, the UI opens and asks for a remote instead of exiting.
+- **Fresh / not logged in on Local** — if something is already listening on `3970`, the client uses it; otherwise it opens and asks for a remote (it does not force-start local).
+- **Remote already selected** — connect to that host; local is not started.
+- **User picks Local** in Developer / Server options — then Banter tries to start the embedded server.
 
 ### Developer: Local vs Remote
 
-Open **User Settings → Developer**:
+Open **User Settings → Developer** (or the gear on the sign-in screen):
 
-- **Local** — `http://127.0.0.1:3970` (`banter_server::DEFAULT_ADDR`). Starts the embedded server when nothing is listening.
+- **Local** — `http://127.0.0.1:3970` (`banter_server::DEFAULT_ADDR`). Starts the embedded server when you select Local (or when restoring a logged-in Local session).
 - **Remote** — enter a host, `host:port`, or full `http://` / `https://` URL, then **Apply** (or Enter). Invalid input stays on the previous base and shows an error.
 - Choice persists in `%LOCALAPPDATA%\Banter\dev-server.json` (or the `BANTER_DATA` folder). Switching reconnects the HTTP client and WebSocket; if the session token is invalid on the new host, Banter clears the local session and asks you to sign in again.
 

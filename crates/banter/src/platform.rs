@@ -14,10 +14,14 @@ use crate::ui::App;
 pub(crate) fn run() -> Result<(), String> {
     let data_dir = banter_server::default_data_dir();
     let prefs = crate::load_json::<crate::DevServerPrefs>(&data_dir.join("dev-server.json")).unwrap_or_default();
-    let base = crate::api_base_for(&prefs).unwrap_or_else(|_| crate::local_api_base());
-    if prefs.target == crate::ServerTarget::Local {
-        ensure_local_server()?;
-    }
+    let has_saved_session = crate::load_token(&data_dir).is_some();
+    let base = crate::startup_api_base(&prefs);
+    let local_available = match crate::startup_local_policy(&prefs, has_saved_session) {
+        crate::StartupLocalPolicy::SkipLocalUseRemote => false,
+        crate::StartupLocalPolicy::StartLocal => ensure_local_server().is_ok(),
+        crate::StartupLocalPolicy::PreferRunningLocalElseAskRemote => local_server_listening(),
+    };
+    let ask_remote = crate::startup_should_prompt_remote(&prefs, local_available, has_saved_session);
     let startup_video = load_video_prefs(&data_dir);
     let (start_w, start_h) = clamp_window_size(startup_video.width, startup_video.height);
 
@@ -62,6 +66,11 @@ pub(crate) fn run() -> Result<(), String> {
     let mut renderer = GlowRenderer::with_shared_context(Rc::clone(&gl), &mut imgui).map_err(|err| err.to_string())?;
 
     let mut app = App::open(base, data_dir);
+    if ask_remote {
+        app.prompt_remote_server(
+            "Local server is not available. Enter a remote host, or start the local server and choose Local.",
+        );
+    }
     app.set_bold_font(bold_font);
     app.set_semibold_font(semibold_font);
     let mut last_time = glfw.get_time();
@@ -228,15 +237,19 @@ fn wayland_position_unavailable(description: &str) -> bool {
     description.contains("does not provide the window position")
 }
 
+/// True when something already accepts TCP on the loopback Banter address.
+pub(crate) fn local_server_listening() -> bool {
+    let Ok(addr) = banter_server::DEFAULT_ADDR.parse() else {
+        return false;
+    };
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
+}
+
 /// Start the loopback server when nothing is listening on `DEFAULT_ADDR`.
+/// Used when the user is already logged in on Local, or when they select Local in settings.
 pub(crate) fn ensure_local_server() -> Result<(), String> {
     let addr = banter_server::DEFAULT_ADDR;
-    if std::net::TcpStream::connect_timeout(
-        &addr.parse().map_err(|err: std::net::AddrParseError| err.to_string())?,
-        Duration::from_millis(200),
-    )
-    .is_ok()
-    {
+    if local_server_listening() {
         return Ok(());
     }
     let data = banter_server::default_data_dir();

@@ -30,7 +30,7 @@ Banter/
 | `icons.rs` | Lucide SVG → texture |
 | `session` / prefs | Voice, stream, and `dev-server.json` live under the data dir, not in git |
 
-Flow: `platform::run` loads `dev-server.json`, ensures a local server only when the target is Local, opens the window, builds `ui::App` against the chosen API base, then frames ImGui each tick. Developer settings can reconnect the client mid-session.
+Flow: `platform::run` loads `dev-server.json` and the saved session token, applies `startup_local_policy` (skip local for Remote; start local only when logged in on Local; otherwise reuse a running loopback or ask for remote), opens the window, builds `ui::App` against the chosen API base, then frames ImGui each tick. Developer settings (and the sign-in Server options overlay) can reconnect the client mid-session and start local when the user picks Local.
 
 The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, members). Panels are not treated as free-floating docks for day-to-day use even though docking is enabled and `banter-dock.ini` is written.
 

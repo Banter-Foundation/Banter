@@ -286,3 +286,12 @@ Shipped pre-release Version-1-test-4 from main `b110a9f` (profile parity PR #12 
 - Release: https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-4
 - Assets: Banter-windows-version-1-test-4.zip, Banter-linux-version-1-test-4.zip, banter-server.exe, banter-server-linux
 - Docs retarget: README, docs/build-and-run.md, docs/docker-setup.md published tag → version-1-test-4 (compose default stays `:latest`)
+
+## 2026-11-03 21:56:19 -06:00 [Winter] — Client starts without forcing local server (BA-54)
+
+Desktop startup no longer hard-fails when the loopback server is missing. Local is started only for a logged-in Local session or when the user selects Local; a saved Remote is used as-is; fresh Local with nothing listening opens the UI and asks for a remote host.
+
+- logic: `StartupLocalPolicy`, `startup_local_policy`, `startup_should_prompt_remote`, `startup_api_base` (tests first in `dev_server.rs`)
+- platform: never `?` on ensure_local at process start; reuse listening local or prompt
+- ui: `prompt_remote_server` opens sign-in Server options toward Remote
+- docs: overview, architecture, build-and-run; features list updated
