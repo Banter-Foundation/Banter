@@ -693,6 +693,53 @@ fn voice_channel_is_drop_in_and_routes_media() {
 }
 
 #[test]
+fn voice_channel_audio_forwards_after_pair_subscribe_without_prior_layer_note() {
+    // Voice-channel SFU used to require note_layer before admit_rtp; the first
+    // (and often every) Opus packet then had an empty publish set and was dropped.
+    let store = Store::open(&scratch()).unwrap();
+    let ada = store.register("ada", "Ada", "password1").unwrap();
+    let bob = store.register("bob", "Bob", "password1").unwrap();
+    let home = store.create_server(ada.id, "VoiceFwd").unwrap();
+    let voice_id = home.categories[1].channels[0].id;
+    let code = store.create_invite(ada.id, home.server.id).unwrap();
+    store.join_invite(bob.id, &code).unwrap();
+
+    let live = Live::new();
+    live.join_server_voice(&store, ada.id, voice_id).unwrap();
+    live.join_server_voice(&store, bob.id, voice_id).unwrap();
+    live.set_flags(
+        ada.id,
+        VoiceFlags {
+            transmitting: true,
+            ..VoiceFlags::default()
+        },
+    );
+    live.subscribe_voice_pair(ada.id, bob.id);
+
+    let got = live.admit_rtp(voice_id, ada.id, MediaKind::UserAudio, LayerId::Full, 96, false);
+    assert!(
+        got.contains(&bob.id),
+        "Opus on a voice channel must reach the other member without a prior note_layer, got {got:?}"
+    );
+
+    assert_eq!(
+        banter_server::inbound_rtp_layer(MediaKind::UserAudio, None),
+        Some(LayerId::Full),
+        "audio RTP must not wait on an OnOpen SSRC→RID map"
+    );
+    assert_eq!(banter_server::inbound_rtp_layer(MediaKind::StreamAudio, None), Some(LayerId::Full));
+    assert_eq!(banter_server::inbound_rtp_layer(MediaKind::Camera, None), None);
+    assert_eq!(
+        banter_server::inbound_rtp_layer(MediaKind::Camera, Some("h")),
+        Some(LayerId::Half)
+    );
+    assert_eq!(
+        banter_server::inbound_rtp_layer(MediaKind::Screen, Some("q")),
+        Some(LayerId::Quarter)
+    );
+}
+
+#[test]
 fn direct_message_call() {
     let store = Store::open(&scratch()).unwrap();
     let ada = store.register("ada", "Ada", "password1").unwrap();

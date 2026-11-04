@@ -682,6 +682,19 @@ pub fn speaking_from_level(push_to_talk: bool, held: bool, rms: f32, threshold: 
     }
 }
 
+/// PCM to feed the Opus encoder this capture tick.
+///
+/// Mute, deafen, and push-to-talk-up return `None` so the mic track stops.
+/// Open-mic quiet frames still return samples: skipping them chopped words and
+/// starved Opus DTX. The speaking glow keeps using `speaking_from_level`.
+pub fn mic_opus_frame(flags: &VoiceFlags, samples: &[i16]) -> Option<Vec<i16>> {
+    if !banter_server::should_send_audio(flags) {
+        None
+    } else {
+        Some(samples.to_vec())
+    }
+}
+
 pub fn scale_i16(samples: &[i16], gain: f32) -> Vec<i16> {
     samples
         .iter()

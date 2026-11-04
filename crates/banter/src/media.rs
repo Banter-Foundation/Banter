@@ -23,11 +23,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use banter_server::{ClientSignal, LayerId, MediaKind, MediaPlace, ServerEvent, VoiceFlags, should_send_audio, should_send_camera, should_send_screen, should_send_stream_audio};
+use banter_server::{ClientSignal, LayerId, MediaKind, MediaPlace, ServerEvent, VoiceFlags, should_send_camera, should_send_screen, should_send_stream_audio};
 
 use crate::logic::{
     AUDIO_FRAME_SAMPLES, CameraChoice, CaptureKind, MixSource, automatic_gain, cancel_echo, encode_jpeg_rgba, fade_gain,
-    frame_rms, mix_equal_power, resample_mono_i16, scale_i16, stamp_cursor, suppress_noise,
+    frame_rms, mic_opus_frame, mix_equal_power, resample_mono_i16, scale_i16, stamp_cursor, suppress_noise,
 };
 
 const FLAG_MUTED: u32 = 1;
@@ -780,13 +780,14 @@ fn audio_loop(
         if in_place.load(Ordering::Relaxed) && should_send_stream_audio(&state) {
             push_pcm(&stream_pcm, &stream);
         }
-        if !in_place.load(Ordering::Relaxed) || !should_send_audio(&state) {
+        if !in_place.load(Ordering::Relaxed) {
             continue;
         }
-        if !state.push_to_talk && rms < sensitivity {
-            continue;
+        // Do not gate open-mic by RMS here. Quiet frames still feed Opus so DTX
+        // keeps a stable timeline; mute / PTT still stop the track via mic_opus_frame.
+        if let Some(frame) = mic_opus_frame(&state, &samples) {
+            push_pcm(&user_pcm, &frame);
         }
-        push_pcm(&user_pcm, &samples);
     }
 }
 

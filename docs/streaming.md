@@ -8,7 +8,14 @@ Voice channels and direct calls use WebRTC. The websocket carries signaling only
 - A direct call is peer to peer. The server relays the offer, the answer, ICE, and `SubscribeLayer`.
 - Group calls are not a product surface. The direct-call messages are the mesh shape a later group call would use.
 
-Both sides offer the same four tracks: `user_audio`, `stream_audio`, `camera`, and `screen`. Simulcast RIDs are `q`, `h`, and `f` (quarter, half, full), in that order on the `a=simulcast` line. The H.264 profile is Constrained Baseline, `profile-level-id=42e01f`. Opus is 48 kHz with in-band FEC and DTX on the microphone.
+Both sides offer the same four tracks: `user_audio`, `stream_audio`, `camera`, and `screen`. Simulcast RIDs are `q`, `h`, and `f` (quarter, half, full), in that order on the `a=simulcast` line. The H.264 profile is Constrained Baseline, `profile-level-id=42e01f`. Opus is 48 kHz mono with in-band FEC and DTX on the microphone.
+
+Voice-channel SFU notes (reliability):
+
+- Inbound **audio** RTP is forwarded without waiting on an OnOpen SSRC→RID map (that map often missed the mic SSRC and dropped every Opus packet in a channel while 1:1 P2P still worked).
+- The forward table treats unpublished audio as layer `Full` so the first packet is not dropped before `note_layer`.
+- Trickle ICE that arrives before the SFU slot exists is buffered and applied when the offer is accepted.
+- Open-mic quiet frames still feed Opus (DTX); mute / deafen / PTT-up stop the track. Speaking glow still uses the RMS / PTT level.
 
 ICE is host candidates, `BANTER_STUN` (default `stun:stun.l.google.com:19302`, empty disables it), and optional `BANTER_TURN` with `BANTER_TURN_USER` and `BANTER_TURN_PASSWORD`.
 
