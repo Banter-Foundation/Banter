@@ -604,3 +604,13 @@ Agent: Confirmed origin/test/owl-fixes contained in origin/main (no double-merge
 ## Summary
 
 Docs retargeted to version-1-test-3; builds and pre-release in progress.
+
+## 2026-11-03 20:03:10 -06:00 — Version-1-test-3 ship + cleanup
+
+Owl: pre-release as usual; Win+Linux; Docker/GHCR; list setup-guide changes; when done clean merged branches/worktrees/scratch. Never E:. Coordinate merge agent — already done.
+
+Agent: Confirmed owl-fixes contained in main (791b2c2 docs + prior ff). Pushed docs commit 0d08c40 retargeting version-1-test-3. Built Win release, Podman image+push, WSL Linux client+server. Published pre-release Version-1-test-3. Restarted local release banter. Deleted merged remotes/locals and obsolete worktrees; kept ui-theme PR #2.
+
+## Summary
+
+Version-1-test-3 pre-release live with Win+Linux+GHCR; temp branches/worktrees cleaned.

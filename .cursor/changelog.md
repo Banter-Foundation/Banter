@@ -251,3 +251,11 @@ Retarget the published server image docs and compose default from `version-1-tes
 
 - `docker-compose.yml` default `BANTER_IMAGE` → `ghcr.io/snowedinowl/banter:version-1-test-3`
 - `docs/docker-setup.md`, `docs/build-and-run.md`, `README.md` image/tag references updated
+
+## 2026-11-03 20:03:10 -06:00 [Winter] — Version-1-test-3 pre-release (Win+Linux+GHCR) and cleanup
+
+Shipped pre-release Version-1-test-3 from main `0d08c40` after owl-fixes merge (already on main; no double-merge). Built Windows and Linux clients + servers, pushed `ghcr.io/snowedinowl/banter:version-1-test-3`, retargeted compose/docs. Cleaned merged cursor/* + `test/owl-fixes` branches and obsolete Banter-* worktrees; kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme (PR #2). Never touched E:.
+
+- Release: https://github.com/SnowedInOwl/Banter/releases/tag/Version-1-test-3
+- Assets: Banter-windows-version-1-test-3.zip, Banter-linux-version-1-test-3.zip, banter-server.exe, banter-server-linux
+- Local Owl try: release banter-server + banter on 127.0.0.1:3970
