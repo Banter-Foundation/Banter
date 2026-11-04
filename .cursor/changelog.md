@@ -295,3 +295,7 @@ Desktop startup no longer hard-fails when the loopback server is missing. Local 
 - platform: never `?` on ensure_local at process start; reuse listening local or prompt
 - ui: `prompt_remote_server` opens sign-in Server options toward Remote
 - docs: overview, architecture, build-and-run; features list updated
+
+## 2026-11-03 22:02:00 -06:00 [Winter] — Docs retarget Version-1-test-4.1
+
+Retarget published Docker/pre-release defaults to `version-1-test-4.1` / `Version-1-test-4.1` after the BA-54 client startup change. Older tags stay. Compose default remains `:latest`.

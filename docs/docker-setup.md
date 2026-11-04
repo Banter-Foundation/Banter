@@ -3,7 +3,7 @@
 Run **`banter-server`** behind **Caddy** with a separate **PostgreSQL** container and blue/green app slots (`banter-a` / `banter-b`). The desktop Banter app is **not** in the image; build and run that on the host (see [build-and-run.md](build-and-run.md)).
 
 Image name: **`ghcr.io/snowedinowl/banter`** (tags from GitHub Releases, plus `latest`).
-Published pre-release tag: **`version-1-test-4`** (earlier tags remain on GHCR / Releases).
+Published pre-release tag: **`version-1-test-4.1`** (earlier tags remain on GHCR / Releases).
 
 **Production / release hosts:** use **Docker Compose v2** (`docker compose`) with [`scripts/deploy-hot-swap.sh`](../scripts/deploy-hot-swap.sh). Podman still works for local Postgres-only or image builds.
 
