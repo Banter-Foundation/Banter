@@ -33,8 +33,12 @@ pub enum BanterError {
     CannotFriendSelf,
     #[error("you are not a member")]
     NotMember,
-    #[error("only the server owner can do that until roles exist")]
+    #[error("you do not have permission to do that")]
     NotOwner,
+    #[error("that role is above yours")]
+    RoleHierarchy,
+    #[error("this server already has the maximum number of roles")]
+    TooManyRoles,
     #[error("you did not write that message")]
     NotAuthor,
     #[error("message is empty")]
@@ -86,6 +90,8 @@ impl BanterError {
             Self::CannotFriendSelf => "cannot_friend_self",
             Self::NotMember => "not_member",
             Self::NotOwner => "not_owner",
+            Self::RoleHierarchy => "role_hierarchy",
+            Self::TooManyRoles => "too_many_roles",
             Self::NotAuthor => "not_author",
             Self::EmptyMessage => "empty_message",
             Self::MessageTooLong => "message_too_long",

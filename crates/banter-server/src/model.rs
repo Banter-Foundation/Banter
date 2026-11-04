@@ -172,6 +172,9 @@ pub struct UserProfile {
     pub activity: Vec<ProfileActivity>,
     #[serde(default)]
     pub wishlist: Vec<ProfileWishlistItem>,
+    /// Guild roles for this profile when the viewer asked with `server_id`.
+    #[serde(default)]
+    pub roles: Vec<GuildRole>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,6 +274,25 @@ pub struct Member {
     pub is_owner: bool,
     pub has_avatar: bool,
     pub avatar_rev: i64,
+    #[serde(default)]
+    pub roles: Vec<GuildRole>,
+}
+
+/// A role on a server. @everyone is `everyone` and is not stored in `member_roles`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuildRole {
+    pub id: i64,
+    pub server_id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub color: i64,
+    pub position: i64,
+    #[serde(default)]
+    pub hoist: bool,
+    #[serde(default)]
+    pub permissions: i64,
+    #[serde(default)]
+    pub everyone: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

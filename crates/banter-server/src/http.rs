@@ -58,6 +58,7 @@ impl IntoResponse for BanterError {
             BanterError::NotFound | BanterError::InvalidInvite => StatusCode::NOT_FOUND,
             BanterError::NotMember
             | BanterError::NotOwner
+            | BanterError::RoleHierarchy
             | BanterError::NotAuthor
             | BanterError::NotFriend
             | BanterError::NotPending => StatusCode::FORBIDDEN,
@@ -134,6 +135,12 @@ fn router(state: HttpState) -> Router {
         .route("/v1/servers/{id}/invites", post(create_invite))
         .route("/v1/invites/{code}/join", post(join_invite))
         .route("/v1/servers/{id}/members", get(members))
+        .route("/v1/servers/{id}/members/{user_id}/roles", axum::routing::put(set_member_roles))
+        .route("/v1/servers/{id}/roles", get(list_roles).post(create_role))
+        .route(
+            "/v1/servers/{id}/roles/{role_id}",
+            axum::routing::patch(update_role).delete(delete_role),
+        )
         .route("/v1/servers/{id}/nickname", axum::routing::put(set_nickname))
         .route("/v1/servers/{id}/categories", post(create_category))
         .route("/v1/servers/{id}/channels", post(create_channel))
@@ -434,6 +441,7 @@ async fn members(
                 "avatar_rev": member.avatar_rev,
                 "presence": state.live.presence(member.user_id),
                 "custom_status": state.live.custom_status(member.user_id),
+                "roles": member.roles,
             })
         })
         .collect();
@@ -454,6 +462,100 @@ async fn set_nickname(
     state
         .store
         .set_nickname(account.id, id, body.nickname.as_deref()).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_roles(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+) -> Result<Json<Vec<GuildRole>>, BanterError> {
+    Ok(Json(state.store.roles(account.id, id).await?))
+}
+
+#[derive(Deserialize)]
+struct RoleBody {
+    name: String,
+    #[serde(default)]
+    color: i64,
+    #[serde(default)]
+    hoist: bool,
+    #[serde(default)]
+    permissions: i64,
+}
+
+async fn create_role(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+    Json(body): Json<RoleBody>,
+) -> Result<Json<GuildRole>, BanterError> {
+    Ok(Json(
+        state
+            .store
+            .create_role(account.id, id, &body.name, body.color, body.hoist, body.permissions)
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct ServerRolePath {
+    id: i64,
+    role_id: i64,
+}
+
+async fn update_role(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(path): Path<ServerRolePath>,
+    Json(body): Json<RoleBody>,
+) -> Result<Json<GuildRole>, BanterError> {
+    Ok(Json(
+        state
+            .store
+            .update_role(
+                account.id,
+                path.id,
+                path.role_id,
+                &body.name,
+                body.color,
+                body.hoist,
+                body.permissions,
+            )
+            .await?,
+    ))
+}
+
+async fn delete_role(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(path): Path<ServerRolePath>,
+) -> Result<StatusCode, BanterError> {
+    state.store.delete_role(account.id, path.id, path.role_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct MemberRolePath {
+    id: i64,
+    user_id: i64,
+}
+
+#[derive(Deserialize)]
+struct RoleIdsBody {
+    role_ids: Vec<i64>,
+}
+
+async fn set_member_roles(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(path): Path<MemberRolePath>,
+    Json(body): Json<RoleIdsBody>,
+) -> Result<StatusCode, BanterError> {
+    state
+        .store
+        .set_member_roles(account.id, path.id, path.user_id, &body.role_ids)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

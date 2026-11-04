@@ -1483,3 +1483,103 @@ async fn user_profile_visible_to_self_friends_and_shared_server() {
         BanterError::NotMember
     );
 }
+
+#[tokio::test]
+async fn guild_roles_gate_channels_and_stay_below_the_actor() {
+    use banter_server::{
+        PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_CHANNELS, PERM_MANAGE_ROLES,
+    };
+
+    let (store, _dir) = open_store().await;
+    let owner = store.register("roleowner", "Owner", "password1").await.unwrap();
+    let joiner = store.register("rolejoiner", "Joiner", "password1").await.unwrap();
+    let home = store.create_server(owner.id, "Roles").await.unwrap();
+    let server_id = home.server.id;
+    let category_id = home.categories[0].category.id;
+
+    let roles = store.roles(owner.id, server_id).await.unwrap();
+    assert_eq!(roles.len(), 1);
+    assert!(roles[0].everyone);
+    assert_eq!(roles[0].name, "@everyone");
+    assert_eq!(roles[0].permissions, PERM_CREATE_INVITE);
+    assert_eq!(roles[0].position, 0);
+
+    let code = store.create_invite(owner.id, server_id).await.unwrap();
+    store.join_invite(joiner.id, &code).await.unwrap();
+    assert_eq!(
+        store
+            .create_channel(joiner.id, server_id, category_id, "secret", ChannelKind::Text)
+            .await
+            .unwrap_err(),
+        BanterError::NotOwner
+    );
+    assert_eq!(
+        store.delete_role(owner.id, server_id, roles[0].id).await.unwrap_err(),
+        BanterError::InvalidName
+    );
+
+    let mod_role = store
+        .create_role(owner.id, server_id, "Mod", 0x5865F2, true, PERM_MANAGE_CHANNELS)
+        .await
+        .unwrap();
+    assert!(mod_role.position > 0);
+    store
+        .set_member_roles(owner.id, server_id, joiner.id, &[mod_role.id])
+        .await
+        .unwrap();
+    let created = store
+        .create_channel(joiner.id, server_id, category_id, "mod-chat", ChannelKind::Text)
+        .await
+        .unwrap();
+    assert_eq!(created.name, "mod-chat");
+
+    assert_eq!(
+        store
+            .update_role(joiner.id, server_id, mod_role.id, "Nope", 0, false, 0)
+            .await
+            .unwrap_err(),
+        BanterError::NotOwner
+    );
+    store
+        .update_role(
+            owner.id,
+            server_id,
+            mod_role.id,
+            "Mod",
+            0x5865F2,
+            true,
+            PERM_MANAGE_CHANNELS | PERM_MANAGE_ROLES,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .update_role(joiner.id, server_id, mod_role.id, "Nope", 0, false, 0)
+            .await
+            .unwrap_err(),
+        BanterError::RoleHierarchy
+    );
+    assert_eq!(
+        store
+            .create_role(joiner.id, server_id, "Admin", 0, false, PERM_ADMINISTRATOR)
+            .await
+            .unwrap_err(),
+        BanterError::RoleHierarchy
+    );
+
+    let everyone = store
+        .update_role(joiner.id, server_id, roles[0].id, "renamed", 1, true, PERM_CREATE_INVITE)
+        .await
+        .unwrap();
+    assert_eq!(everyone.name, "@everyone");
+    assert!(!everyone.hoist);
+    assert_eq!(everyone.color, 1);
+
+    let members = store.members(owner.id, server_id).await.unwrap();
+    let joiner_row = members.iter().find(|member| member.user_id == joiner.id).unwrap();
+    assert!(joiner_row.roles.iter().any(|role| role.id == mod_role.id));
+    assert!(joiner_row.roles.iter().any(|role| role.everyone));
+
+    let profile = store.user_profile(owner.id, joiner.id, Some(server_id)).await.unwrap();
+    assert!(profile.roles.iter().any(|role| role.name == "Mod"));
+}
