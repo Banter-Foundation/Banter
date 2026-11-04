@@ -389,3 +389,41 @@ pub fn cosmetic_color(id: &str) -> Option<u32> {
         .find(|item| item.id == id)
         .map(|item| item.color)
 }
+
+/// Max games a board widget may list in the editor (Discord board card caps).
+pub fn games_widget_cap(kind: ProfileWidgetKind) -> usize {
+    match kind {
+        ProfileWidgetKind::GamesInRotation => 5,
+        ProfileWidgetKind::GamesILike => 20,
+        ProfileWidgetKind::FavoriteGame => 0,
+    }
+}
+
+/// Read `(title, tag)` rows from a games widget payload. Missing/invalid entries are skipped.
+pub fn games_from_payload(payload: &serde_json::Value) -> Vec<(String, String)> {
+    let Some(games) = payload.get("games").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    games
+        .iter()
+        .filter_map(|game| {
+            let title = game.get("title").and_then(|v| v.as_str())?.to_string();
+            let tag = game
+                .get("tag")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((title, tag))
+        })
+        .collect()
+}
+
+/// Build a games widget payload from editor rows.
+pub fn games_to_payload(games: &[(String, String)]) -> serde_json::Value {
+    serde_json::json!({
+        "games": games
+            .iter()
+            .map(|(title, tag)| serde_json::json!({ "title": title, "tag": tag }))
+            .collect::<Vec<_>>()
+    })
+}

@@ -3,8 +3,9 @@
 
 use banter::{
     ProfileAction, ProfileBoardTab, ProfileCard, ProfileKind, ProfileMode, ProfileWidgetKind,
-    display_name_style_color, profile_board_tabs, profile_editor_sections, profile_heading,
-    profile_primary_actions, profile_view_shows_board,
+    display_name_style_color, games_from_payload, games_to_payload, games_widget_cap,
+    profile_board_tabs, profile_editor_sections, profile_heading, profile_primary_actions,
+    profile_view_shows_board,
 };
 
 #[test]
@@ -135,4 +136,22 @@ fn display_name_style_resolves_known_colors() {
 #[test]
 fn heading_still_prefers_nickname_in_parity_card() {
     assert_eq!(profile_heading("Ada", Some("Night Owl")), "Night Owl");
+}
+
+#[test]
+fn games_widget_payload_round_trips_without_raw_json() {
+    let empty = games_from_payload(&serde_json::json!({}));
+    assert!(empty.is_empty());
+
+    let list = vec![
+        ("Hytale".into(), "Obsessed".into()),
+        ("Minecraft".into(), "Expert".into()),
+    ];
+    let payload = games_to_payload(&list);
+    assert_eq!(games_from_payload(&payload), list);
+
+    // Caps match Discord board card limits used by the editor.
+    assert_eq!(games_widget_cap(ProfileWidgetKind::GamesInRotation), 5);
+    assert_eq!(games_widget_cap(ProfileWidgetKind::GamesILike), 20);
+    assert_eq!(games_widget_cap(ProfileWidgetKind::FavoriteGame), 0);
 }

@@ -38,8 +38,8 @@ use crate::logic::{
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
     ProfileAction, ProfileBoardTab, ProfileCard, ProfileKind, ProfileMode, cosmetic_color,
-    display_name_style_color, profile_board_tabs, profile_heading, profile_primary_actions,
-    rgb_u32_to_rgba,
+    display_name_style_color, games_from_payload, games_to_payload, games_widget_cap,
+    profile_board_tabs, profile_heading, profile_primary_actions, rgb_u32_to_rgba,
 };
 use crate::profiler;
 use crate::realtime::Realtime;
@@ -4436,6 +4436,12 @@ impl App {
                             &format!("Favorite Game##w{index}"),
                             widget.kind == ProfileWidgetKind::FavoriteGame,
                         ) {
+                            if widget.kind != ProfileWidgetKind::FavoriteGame {
+                                widget.payload = serde_json::json!({
+                                    "title": "",
+                                    "quote": ""
+                                });
+                            }
                             widget.kind = ProfileWidgetKind::FavoriteGame;
                             widget.title = "Favorite Game".into();
                         }
@@ -4444,6 +4450,9 @@ impl App {
                             &format!("Games in Rotation##w{index}"),
                             widget.kind == ProfileWidgetKind::GamesInRotation,
                         ) {
+                            if widget.kind != ProfileWidgetKind::GamesInRotation {
+                                widget.payload = games_to_payload(&[]);
+                            }
                             widget.kind = ProfileWidgetKind::GamesInRotation;
                             widget.title = "Games in Rotation".into();
                         }
@@ -4452,6 +4461,9 @@ impl App {
                             &format!("Games I Like##w{index}"),
                             widget.kind == ProfileWidgetKind::GamesILike,
                         ) {
+                            if widget.kind != ProfileWidgetKind::GamesILike {
+                                widget.payload = games_to_payload(&[]);
+                            }
                             widget.kind = ProfileWidgetKind::GamesILike;
                             widget.title = "Games I Like".into();
                         }
@@ -4478,12 +4490,31 @@ impl App {
                                 widget.payload = serde_json::json!({ "title": title, "quote": quote });
                             }
                             ProfileWidgetKind::GamesInRotation | ProfileWidgetKind::GamesILike => {
-                                let mut blob = widget.payload.to_string();
-                                ui.set_next_item_width((max[0] - min[0] - 40.0).max(120.0));
-                                ui.input_text(&format!("##games-json-{index}"), &mut blob).build();
-                                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&blob) {
-                                    widget.payload = value;
+                                let cap = games_widget_cap(widget.kind);
+                                let mut games = games_from_payload(&widget.payload);
+                                let mut remove_game = None;
+                                for (game_i, (title, tag)) in games.iter_mut().enumerate() {
+                                    ui.set_next_item_width(140.0);
+                                    ui.input_text(&format!("##game-title-{index}-{game_i}"), title)
+                                        .build();
+                                    ui.same_line();
+                                    ui.set_next_item_width(100.0);
+                                    ui.input_text(&format!("##game-tag-{index}-{game_i}"), tag)
+                                        .build();
+                                    ui.same_line();
+                                    if ui.small_button(&format!("x##game-rm-{index}-{game_i}")) {
+                                        remove_game = Some(game_i);
+                                    }
                                 }
+                                if let Some(game_i) = remove_game {
+                                    games.remove(game_i);
+                                }
+                                if games.len() < cap
+                                    && ui.small_button(&format!("+ Add Game##w{index}"))
+                                {
+                                    games.push((String::new(), String::new()));
+                                }
+                                widget.payload = games_to_payload(&games);
                             }
                         }
                         if ui.small_button(&format!("Remove##widget-{index}")) {

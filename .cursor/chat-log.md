@@ -661,3 +661,8 @@ Agent: Merged PR #16 (startup) and PR #17 (docs retarget). Tagged Version-1-test
 ## Summary
 
 Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
+
+## 2026-11-04 00:19:33 -06:00 — Profile system audit fix: games widget editor (BA-60)
+
+Owl asked to audit Discord profile parity after PR #12 and fix only clear proven defects. GamesInRotation/GamesILike editor rebuilt payload from JSON every frame so typing incomplete JSON reverted — structured title/tag rows instead. Audit report in Project store docs/profile-system-review.md.
+

@@ -313,3 +313,8 @@ Shipped pre-release Version-1-test-4.1 from main `c6163fc` (client startup witho
 Documented Arch server + release hot-swap progress. Workflow on `main` lowercases the GHCR owner and logs in with `GHCR_WRITE_TOKEN`. Deploy secrets are set. Releases through `Version-1-test-6` still fail at image push: the write PAT must be a classic token with `write:packages` (current error: token scopes). No GHCR `banter` package exists yet; SSH deploy is untested until push succeeds. Manual path: local `docker build -t banter-server:local` + deploy script (skip-pull for local tags).
 
 - Docs: `docs/docker-setup.md` Status section + troubleshooting; `docs/feature-status.md` container row
+
+## 2026-11-04 00:19:33 -06:00 [Winter] — Fix profile games widget editor (BA-60)
+
+Games In Rotation / Games I Like no longer use a raw JSON text field that reset on every incomplete keystroke. The editor uses title + tag rows with add/remove, capped at Discord board limits (5 / 20). Payload helpers live in profile.rs with a unit test.
+
