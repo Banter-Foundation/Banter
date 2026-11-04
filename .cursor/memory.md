@@ -35,3 +35,5 @@
 - 2026-11-03 20:33 America/Chicago: BA-50 channel type templates canceled. Cleaned agent bc-31605c6f leftover: deleted local `cursor/channel-type-templates-adb6`, discarded uncommitted channel_types WIP on primary checkout, returned to `main`. No channel-type worktree. Kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Never E:.
 
 - 2026-11-03 21:36 America/Chicago: Pre-release Version-1-test-4 from main `b110a9f`. Image `ghcr.io/snowedinowl/banter:version-1-test-4` (+ `:latest`). Assets Win+Linux client zips + `banter-server.exe` + `banter-server-linux`. Includes Discord profile parity (PR #12) and Postgres/hot-swap. Kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Never E:.
+
+- 2026-11-03 22:02 America/Chicago: Pre-release Version-1-test-4.1 from main `c6163fc`. Image `ghcr.io/snowedinowl/banter:version-1-test-4.1` (+ `:latest`). Client startup no longer forces local (BA-54). Kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Never E:.

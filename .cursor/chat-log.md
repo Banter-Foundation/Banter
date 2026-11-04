@@ -651,3 +651,13 @@ Version-1-test-4 pre-release live with Win+Linux+GHCR; temp release branches/scr
 Owl wants Banter client startup changed, then merged to main and a new pre-release Version-1-test-4.1. Project root D:\Projects\Project Banter (NEVER touch E:). Do not require local server to start except: logged in on local; user selects local; remote already selected uses remote. If local cannot start and not on usable remote: ask for remote. Ship: branch from main, merge, pre-release Version-1-test-4.1 (same pattern as test-4), update docs, cleanup, report.
 
 Agent: Branched cursor/client-startup-no-force-local-be5c from main 45240ca. Wrote startup policy tests first, then logic/platform/ui + docs.
+
+## 2026-11-03 22:02:23 -06:00 — Version-1-test-4.1 ship + cleanup (BA-54)
+
+Owl: client starts without forcing local; merge to main; pre-release Version-1-test-4.1; update docs; cleanup; report.
+
+Agent: Merged PR #16 (startup) and PR #17 (docs retarget). Tagged Version-1-test-4.1 at c6163fc. Pushed GHCR version-1-test-4.1 + latest. Published Win+Linux zips + server binaries. Deleted release remotes and target-linux-release; kept ui-theme PR #2.
+
+## Summary
+
+Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
