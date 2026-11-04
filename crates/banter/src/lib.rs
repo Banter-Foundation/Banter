@@ -12,6 +12,7 @@ mod icons;
 mod logic;
 mod media;
 mod platform;
+mod profile;
 mod profiler;
 mod realtime;
 mod session;
@@ -27,6 +28,7 @@ pub use media::{
     current_camera_frame, decode_camera_frame, pick_preferred_camera_mode, preferred_camera_height,
     preferred_camera_width, CameraModeChoice,
 };
+pub use profile::*;
 pub use session::{load_token, save_token};
 pub use settings::*;
 

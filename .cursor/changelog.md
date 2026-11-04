@@ -205,3 +205,11 @@ Starting or accepting a DM call now replaces that conversation's chat stage with
 
 When a friendship becomes active (accept an incoming request, or send a username that completes a mutual pending request), the client opens that friend's DM. Pending-only sends stay on Add Friend. Helper `open_dm_peer_after_friend_add` decides the peer after the friends list refreshes. Never touched E:.
 
+## 2026-11-03 19:28:50 -06:00 [Winter] — User profiles (view/edit basics)
+
+Floating profile cards for foundation identity. Avatar upload already existed; this adds view for others and edit of display name (plus Change Avatar) on your own card. About Me and custom status stay deferred.
+
+- Server: `GET /v1/users/{id}` with optional `server_id` for nickname; visible to self, friends, and shared-server members
+- Client: `profile.rs` card state; open from chat avatars/names, member list, friends, and the user-bar avatar; Edit Profile / Message / Add Friend
+- Tests first: foundation `user_profile_visible_*` and `crates/banter/tests/profile.rs` (15 server + 5 profile + existing client suite green)
+- Docs: features, feature-status, architecture, design. Worktree `D:\Projects\Project Banter\worktrees\Banter-profiles` on `cursor/user-profiles-8837`, merging into `test/owl-fixes` only. Never touched E:.

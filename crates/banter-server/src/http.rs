@@ -115,6 +115,7 @@ fn router(state: HttpState) -> Router {
         .route("/v1/logout", post(logout))
         .route("/v1/me", get(me).patch(patch_me))
         .route("/v1/me/avatar", post(upload_avatar).delete(delete_avatar))
+        .route("/v1/users/{id}", get(user_profile))
         .route("/v1/users/{id}/avatar", get(avatar))
         .route("/v1/friends/requests", get(list_requests).post(create_request))
         .route("/v1/friends/requests/{id}/accept", post(accept_request))
@@ -211,6 +212,20 @@ async fn upload_avatar(
 async fn delete_avatar(State(state): State<HttpState>, Auth(account): Auth) -> Result<StatusCode, BanterError> {
     state.store.clear_avatar(account.id)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ProfileQuery {
+    server_id: Option<i64>,
+}
+
+async fn user_profile(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+    Query(query): Query<ProfileQuery>,
+) -> Result<Json<UserProfile>, BanterError> {
+    Ok(Json(state.store.user_profile(account.id, id, query.server_id)?))
 }
 
 async fn avatar(State(state): State<HttpState>, Path(id): Path<i64>) -> Result<Response, BanterError> {

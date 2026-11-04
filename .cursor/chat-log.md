@@ -535,3 +535,15 @@ Agent: Worktree Banter-friend-dm on cursor/friend-auto-open-dm-fe6d. Tests first
 
 Adding a friend (accept or mutual complete) auto-opens their DM on test/owl-fixes.
 
+
+## 2026-11-03 19:28:50 -06:00 — Add user profiles
+
+Owl test item: it's time to add profiles. Implement user profiles (view/edit basics fitting Banter foundation — avatar already exists).
+
+D:\Projects\Project Banter. Never E:. Branch from `test/owl-fixes`, merge into `test/owl-fixes` only. Clear commits. Worktree under Project Banter/worktrees/.
+
+Agent: Worktree Banter-profiles on cursor/user-profiles-8837 from test/owl-fixes. Wrote failing foundation + client profile contracts first, then GET /v1/users/{id}, ProfileCard UI (view/edit display name + Change Avatar), open from chat/members/friends/user bar. Merging into test/owl-fixes only.
+
+## Summary
+
+User profiles land on test/owl-fixes: view basics + edit own display name/avatar; About Me still deferred.

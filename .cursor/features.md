@@ -3,6 +3,7 @@
 ## Foundation
 
 - [*] Unique username, display name, avatar, and password. An avatar can be a PNG, JPG, GIF, or WebP, cropped and zoomed to a circle, and removed back to the letter.
+- [*] User profiles: view avatar, display name, username, presence, and server nickname; edit your own display name and avatar from the profile card. Open from chat, the member list, friends, or the user-bar avatar.
 - [*] Friend requests and a friends list. Accepting a request (or completing a mutual add) opens that friend's DM.
 - [*] Create a server, join by invite, member list, and server nickname
 - [*] Text and voice channels in categories

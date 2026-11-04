@@ -21,6 +21,7 @@ Banter/
 | `theme.rs` | Skin metrics and colors (temporary Discord dark theme) |
 | `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |
 | `settings.rs` | User Settings rules and `SettingsState` (layout, mic test, keybinds) — kept drawable-free for unit tests |
+| `profile.rs` | Profile card rules (`ProfileCard`, headings, primary actions) — drawable-free for unit tests |
 | `api.rs` | HTTP client (`ureq`) for `/v1/*` |
 | `realtime.rs` | WebSocket client for presence, chat events, and binary media frames |
 | `session.rs` | Load/save `client-session.json` |
@@ -53,7 +54,7 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 
 ### HTTP surface (high level)
 
-Auth and profile: `/v1/register`, `/v1/login`, `/v1/logout`, `/v1/me`, avatar upload/delete.  
+Auth and profile: `/v1/register`, `/v1/login`, `/v1/logout`, `/v1/me`, `/v1/users/{id}` (optional `server_id` for nickname), avatar upload/delete.  
 Social: friends requests/list, presence, mentions.  
 Servers: create/list, invites, members, nickname, categories, channels, layout.  
 Chat: channel/DM messages, send/edit/delete, attachments.  

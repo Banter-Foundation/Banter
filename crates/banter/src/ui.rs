@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use banter_server::{
     Account, CallPhase, CallSnapshot, CategoryLayout, Channel, ChannelKind, ChatTarget, DirectChat,
     ClientSignal, Friend, FriendRequest, LayerId, LayerPreferences, MAX_ATTACHMENT_BYTES, MAX_AVATAR_BYTES, MediaKind, MediaPlace, Mention,
-    Message, Presence, ServerSummary, VoiceFlags, VoiceMember,
+    Message, Presence, ServerSummary, UserProfile, VoiceFlags, VoiceMember,
 };
 use dear_imgui_rs::{
     Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData, PopupQueryFlags, Style,
@@ -33,6 +33,9 @@ use crate::logic::{
     message_is_followup, message_starts_new_day, window_size_label, window_size_presets, OPEN_MIC_RMS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
+use crate::profile::{
+    ProfileAction, ProfileCard, ProfileKind, profile_heading, profile_primary_actions,
+};
 use crate::profiler;
 use crate::realtime::Realtime;
 use crate::session::{load_token, save_token, session_path};
@@ -216,6 +219,12 @@ pub(crate) struct App {
     crop_preview: Option<Shot>,
     crop_preview_key: [i32; 3],
     more_for: Option<i64>,
+    /// Floating user profile card (view/edit foundation basics).
+    profile: ProfileCard,
+    /// Last profile payload from `/v1/users/{id}` for the open card.
+    profile_view: Option<UserProfile>,
+    /// Frames the profile card has been open (skips the opening click for dismiss).
+    profile_frames: u32,
     /// Height of the drawn message history last frame; pads short histories down to the composer.
     history_h: f32,
     /// Set after sending so the list jumps to the newest message even when scrolled up.
@@ -365,6 +374,9 @@ impl App {
             crop_preview: None,
             crop_preview_key: [0, 0, 0],
             more_for: None,
+            profile: ProfileCard::closed(),
+            profile_view: None,
+            profile_frames: 0,
             history_h: 0.0,
             chat_jump: false,
             copy_message: None,
@@ -472,10 +484,13 @@ impl App {
         if self.stream_menu {
             self.draw_stream_menu(ui);
         }
+        self.draw_profile_card(ui);
         self.draw_profiler(ui);
         if ui.is_key_pressed(Key::Escape) {
             if self.crop_open {
                 self.crop_open = false;
+            } else if self.profile.is_open() {
+                self.close_profile();
             } else if self.modal.is_some() {
                 self.modal = None;
             } else if self.server_menu {
@@ -1228,8 +1243,9 @@ impl App {
         let center = [origin[0] + 8.0 + 16.0, origin[1] + USER_PANEL_H * 0.5];
         ui.set_cursor_screen_pos([center[0] - 16.0, center[1] - 16.0]);
         if ui.invisible_button("profile-avatar", [32.0, 32.0]) {
-            self.open_settings();
-            self.settings.select(SettingsSection::Account);
+            if let Some(account_id) = account_id {
+                self.open_profile(account_id, [center[0], center[1]]);
+            }
         }
         let avatar = account_id.and_then(|id| self.avatars.get(&id).map(|shot| shot.texture));
         paint_avatar(ui, avatar, center, 16.0, &initials(&self.display_name), None);
@@ -1724,6 +1740,7 @@ impl App {
         ui.dummy([width, 48.0]);
         let pending_tab = self.friend_tab == 2;
         let mut open_chat = None;
+        let mut open_profile = None;
         let mut accept = None;
         let mut decline = None;
         for (index, (id, name, username, presence, subtitle, incoming)) in rows.iter().enumerate() {
@@ -1770,10 +1787,18 @@ impl App {
                 }
                 skin::item_tooltip(ui, semi, "Message");
             }
+            let action_zone = if pending_tab { 90.0 } else { 50.0 };
             ui.set_cursor_screen_pos(row_min);
-            if ui.invisible_button(format!("friend-row-{id}-{index}"), [row_max[0] - row_min[0], 62.0]) && !pending_tab {
-                open_chat = Some(*id);
+            if ui.invisible_button(
+                format!("friend-row-{id}-{index}"),
+                [(row_max[0] - row_min[0] - action_zone).max(8.0), 62.0],
+            ) && !pending_tab
+            {
+                open_profile = Some((*id, [row_max[0], row_min[1]]));
             }
+        }
+        if let Some((user_id, anchor)) = open_profile {
+            self.open_profile(user_id, anchor);
         }
         if let Some(friend_id) = open_chat {
             if let Some(chat) = self.note(self.client.open_dm(friend_id)) {
@@ -1965,11 +1990,14 @@ impl App {
     }
 
     /// 42 px member row: 32 px avatar with status, name, and the owner crown. Offline rows are dimmed.
-    fn person_row(&self, ui: &Ui, user_id: i64, name: &str, _username: &str, presence: Presence, owner: bool) {
+    fn person_row(&mut self, ui: &Ui, user_id: i64, name: &str, _username: &str, presence: Presence, owner: bool) {
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
-        let _clicked = ui.invisible_button(format!("member-{user_id}"), [width, MEMBER_ROW_H]);
+        let clicked = ui.invisible_button(format!("member-{user_id}"), [width, MEMBER_ROW_H]);
         let hovered = ui.is_item_hovered();
+        if clicked {
+            self.open_profile(user_id, [origin[0] + width, origin[1]]);
+        }
         let min = [origin[0] + ROW_INSET, origin[1] + 1.0];
         let max = [origin[0] + width - ROW_INSET, origin[1] + MEMBER_ROW_H - 1.0];
         if hovered {
@@ -2070,11 +2098,19 @@ impl App {
             } else {
                 let center = [origin[0] + 36.0, origin[1] + 22.0];
                 let avatar = self.avatars.get(&message.author_id).map(|shot| shot.texture);
+                ui.set_cursor_screen_pos([center[0] - 20.0, center[1] - 20.0]);
+                if ui.invisible_button(format!("msg-avatar-{}", message.id), [40.0, 40.0]) {
+                    self.open_profile(message.author_id, [center[0] + 24.0, center[1]]);
+                }
                 paint_avatar(ui, avatar, center, 20.0, &initials(&name), None);
                 let name_w = {
                     let _bold = ui.push_font_with_size(self.bold_font, 16.0);
                     ui.calc_text_size(&name)[0]
                 };
+                ui.set_cursor_screen_pos([origin[0] + text_x, origin[1] + 2.0]);
+                if ui.invisible_button(format!("msg-name-{}", message.id), [name_w.max(8.0), 18.0]) {
+                    self.open_profile(message.author_id, [origin[0] + text_x + name_w, origin[1]]);
+                }
                 {
                     let _bold = ui.push_font_with_size(self.bold_font, 16.0);
                     ui.get_window_draw_list().add_text([origin[0] + text_x, origin[1] + 2.0], TEXT, &name);
@@ -3615,6 +3651,213 @@ impl App {
         }
         if !self.cameras_loaded {
             self.refresh_cameras();
+        }
+    }
+
+    fn close_profile(&mut self) {
+        self.profile.close();
+        self.profile_view = None;
+        self.profile_frames = 0;
+    }
+
+    fn profile_kind_for(&self, user_id: i64) -> ProfileKind {
+        if self.account.as_ref().is_some_and(|account| account.id == user_id) {
+            return ProfileKind::SelfAccount;
+        }
+        let is_friend = self.friends.iter().any(|friend| friend.id == user_id)
+            || self.dms.iter().any(|chat| chat.peer_id == user_id);
+        if matches!(self.place, Place::Server(_)) || self.members.iter().any(|member| member.user_id == user_id) {
+            ProfileKind::ServerMember { is_friend }
+        } else if is_friend {
+            ProfileKind::Friend
+        } else {
+            ProfileKind::ServerMember { is_friend: false }
+        }
+    }
+
+    fn open_profile(&mut self, user_id: i64, anchor: [f32; 2]) {
+        let kind = self.profile_kind_for(user_id);
+        let server_id = match self.place {
+            Place::Server(id) => Some(id),
+            _ => None,
+        };
+        match self.client.user_profile(user_id, server_id) {
+            Ok(view) => {
+                self.profile.open(user_id, kind);
+                self.profile.set_anchor(anchor);
+                self.profile.set_server_id(server_id);
+                self.profile_view = Some(view);
+                self.profile_frames = 0;
+            }
+            Err(err) => {
+                self.status = err.to_string();
+                self.close_profile();
+            }
+        }
+    }
+
+    fn draw_profile_card(&mut self, ui: &Ui) {
+        if !self.profile.is_open() {
+            return;
+        }
+        let Some(view) = self.profile_view.clone() else {
+            self.close_profile();
+            return;
+        };
+        let kind = self.profile.kind().unwrap_or(ProfileKind::Friend);
+        let editing = self.profile.editing();
+        let display = ui.io().display_size();
+        let card_w = PROFILE_W;
+        let body_h = if editing { 260.0 } else { PROFILE_BODY_MIN_H };
+        let card_h = PROFILE_BANNER_H + body_h;
+        let anchor = self.profile.anchor();
+        let mut min = [anchor[0] + 8.0, anchor[1]];
+        if min[0] + card_w > display[0] - 8.0 {
+            min[0] = (anchor[0] - card_w - 8.0).max(8.0);
+        }
+        if min[1] + card_h > display[1] - 8.0 {
+            min[1] = (display[1] - card_h - 8.0).max(8.0);
+        }
+        let max = [min[0] + card_w, min[1] + card_h];
+        let draw = ui.get_window_draw_list();
+        draw.add_rect(min, max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
+        draw.add_rect(min, [max[0], min[1] + PROFILE_BANNER_H], BLURPLE)
+            .rounding(PROFILE_RADIUS)
+            .flags(DrawFlags::ROUND_TOP)
+            .filled(true)
+            .build();
+        let avatar_center = [min[0] + PROFILE_PAD + PROFILE_AVATAR, min[1] + PROFILE_BANNER_H];
+        draw.add_circle(avatar_center, PROFILE_AVATAR + 4.0, FLOATING_BG).filled(true).build();
+        let heading = profile_heading(&view.display_name, view.nickname.as_deref());
+        let avatar = self.avatars.get(&view.id).map(|shot| shot.texture);
+        paint_avatar(ui, avatar, avatar_center, PROFILE_AVATAR, &initials(&heading), None);
+        let presence = self.presence.get(&view.id).copied().unwrap_or(Presence::Offline);
+        paint_status_dot(ui, avatar_center, PROFILE_AVATAR, presence, FLOATING_BG);
+
+        let text_x = min[0] + PROFILE_PAD;
+        let name_y = min[1] + PROFILE_BANNER_H + PROFILE_AVATAR + 12.0;
+        {
+            let _font = ui.push_font_with_size(self.bold_font, FONT_LG);
+            draw.add_text([text_x, name_y], TEXT, &heading);
+        }
+        let handle = format!("@{}", view.username);
+        draw.add_text([text_x, name_y + 26.0], TEXT_SECONDARY, &handle);
+        let mut y = name_y + 52.0;
+        if let Some(nick) = view.nickname.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            if nick != view.display_name {
+                draw.add_text([text_x, y], MUTED, &format!("Display name: {}", view.display_name));
+                y += 20.0;
+            }
+        }
+        draw.add_text([text_x, y], MUTED, presence_label(presence));
+        y += 28.0;
+        skin::line_h(ui, min[0] + PROFILE_PAD, max[0] - PROFILE_PAD, y, LIST_DIVIDER);
+        y += 12.0;
+
+        let mut close_after = false;
+        let mut open_settings = false;
+        let mut message_user = None;
+        let mut add_friend = None;
+        let mut save_name = false;
+
+        ui.set_cursor_screen_pos([text_x, y]);
+        if editing {
+            ui.text_colored(MUTED, "DISPLAY NAME");
+            ui.set_next_item_width(card_w - PROFILE_PAD * 2.0 - 80.0);
+            let entered = ui
+                .input_text("##profile-display-name", self.profile.draft_display_name_mut())
+                .enter_returns_true(true)
+                .build();
+            let draft = self.profile.draft_display_name().to_string();
+            let dirty = display_name_dirty(&draft, &view.display_name);
+            let problem = display_name_error(&draft);
+            ui.same_line();
+            let save_clicked = {
+                let _disabled = ui.begin_disabled_with_cond(!dirty || problem.is_some());
+                ui.button("Save")
+            };
+            if (save_clicked || entered) && dirty && problem.is_none() {
+                save_name = true;
+            }
+            if let Some(problem) = problem.filter(|_| dirty) {
+                ui.text_colored(RED, problem);
+            }
+            if ui.button("Change Avatar") {
+                self.status.clear();
+                self.pick_avatar();
+            }
+            ui.same_line();
+            if ui.button("Cancel") {
+                self.profile.cancel_edit();
+            }
+        } else {
+            for action in profile_primary_actions(kind) {
+                let (id, label) = match action {
+                    ProfileAction::EditProfile => ("profile-edit", "Edit Profile"),
+                    ProfileAction::Message => ("profile-message", "Message"),
+                    ProfileAction::AddFriend => ("profile-add-friend", "Add Friend"),
+                };
+                let btn_w = card_w - PROFILE_PAD * 2.0;
+                if skin::button(ui, id, label, Tone::Brand, [text_x, ui.cursor_screen_pos()[1]], [btn_w, BUTTON_H], true, self.semibold_font) {
+                    match action {
+                        ProfileAction::EditProfile => {
+                            self.profile.begin_edit(&view.display_name);
+                        }
+                        ProfileAction::Message => message_user = Some(view.id),
+                        ProfileAction::AddFriend => add_friend = Some(view.username.clone()),
+                    }
+                }
+                ui.dummy([0.0, 8.0]);
+            }
+            if kind == ProfileKind::SelfAccount {
+                if ui.small_button("Open My Account") {
+                    open_settings = true;
+                }
+            }
+        }
+
+        let over_card = ui.is_mouse_hovering_rect(min, max);
+        if self.profile_frames > 0 && ui.is_mouse_clicked(MouseButton::Left) && !over_card {
+            close_after = true;
+        }
+        self.profile_frames = self.profile_frames.saturating_add(1);
+
+        if save_name {
+            let name = self.profile.draft_display_name().trim().to_string();
+            match self.client.set_display_name(&name) {
+                Ok(saved) => {
+                    self.display_name = saved.display_name.clone();
+                    if let Some(view) = self.profile_view.as_mut() {
+                        view.display_name = saved.display_name.clone();
+                    }
+                    self.account = Some(saved);
+                    self.profile.finish_edit();
+                    self.settings_error.clear();
+                }
+                Err(err) => self.status = err.to_string(),
+            }
+        }
+        if open_settings {
+            self.close_profile();
+            self.open_settings();
+            self.settings.select(SettingsSection::Account);
+        }
+        if let Some(user_id) = message_user {
+            if let Some(chat) = self.note(self.client.open_dm(user_id)) {
+                self.refresh_shell();
+                self.open_dm(chat.id);
+            }
+            self.close_profile();
+        }
+        if let Some(username) = add_friend {
+            if self.note(self.client.send_friend_request(&username)).is_some() {
+                self.refresh_shell();
+                self.status = format!("Friend request sent to @{username}");
+            }
+            self.close_profile();
+        }
+        if close_after {
+            self.close_profile();
         }
     }
 

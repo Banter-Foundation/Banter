@@ -18,6 +18,22 @@ pub struct Account {
     pub avatar_rev: i64,
 }
 
+/// Public profile a signed-in viewer is allowed to see.
+///
+/// Visible for self, friends, or anyone who shares a server. `nickname` is
+/// filled only when the viewer asks with a `server_id` they belong to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserProfile {
+    pub id: i64,
+    pub username: String,
+    pub display_name: String,
+    pub has_avatar: bool,
+    pub avatar_rev: i64,
+    pub nickname: Option<String>,
+    pub is_self: bool,
+    pub is_friend: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
     pub token: String,

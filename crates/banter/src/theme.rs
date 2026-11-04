@@ -158,6 +158,13 @@ pub const PROFILER_W: f32 = 360.0;
 pub const PROFILER_H: f32 = 420.0;
 pub const PROFILER_PAD: f32 = 12.0;
 pub const PROFILER_MARGIN: f32 = 16.0;
+/// Floating user profile card (Discord-like popout).
+pub const PROFILE_W: f32 = 340.0;
+pub const PROFILE_BANNER_H: f32 = 60.0;
+pub const PROFILE_AVATAR: f32 = 40.0;
+pub const PROFILE_PAD: f32 = 16.0;
+pub const PROFILE_RADIUS: f32 = 8.0;
+pub const PROFILE_BODY_MIN_H: f32 = 180.0;
 pub const BUTTON_H: f32 = 38.0;
 pub const INPUT_H: f32 = 40.0;
 pub const INPUT_RADIUS: f32 = 3.0;
