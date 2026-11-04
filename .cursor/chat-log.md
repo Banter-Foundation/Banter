@@ -614,3 +614,13 @@ Agent: Confirmed owl-fixes contained in main (791b2c2 docs + prior ff). Pushed d
 ## Summary
 
 Version-1-test-3 pre-release live with Win+Linux+GHCR; temp branches/worktrees cleaned.
+
+## 2026-11-03 20:33:55 -06:00 — Clean up canceled BA-50 channel type templates
+
+Owl canceled BA-50 channel type templates. Clean up: delete any branch/worktree/scratch that agent bc-31605c6f created under D:\Projects\Project Banter (channel-type / templates related). Do not touch main features or Banter-ui-theme. Never E:. Report what you removed.
+
+Agent: Primary checkout was on local-only branch cursor/channel-type-templates-adb6 (tip == main 3522fdd, never pushed) with uncommitted channel_types WIP. Restored modified server files, deleted three untracked channel_types.rs test/src files, switched primary checkout to main, deleted the branch. No separate channel-type worktree existed. Banter-ui-theme / cursor/ui-theme-layout-cf5e left intact. Never touched E:. Left untracked dist/ alone (not channel-type).
+
+## Summary
+
+Canceled BA-50 channel-type branch and scratch removed; main clean; ui-theme untouched.
