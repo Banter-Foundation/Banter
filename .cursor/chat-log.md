@@ -662,6 +662,16 @@ Agent: Merged PR #16 (startup) and PR #17 (docs retarget). Tagged Version-1-test
 
 Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
 
+## 2026-11-04 00:12:12 -06:00 — Fix server VC and peer screen/camera (BA-55)
+
+Owl reports Banter server voice is still broken: no VC audio between users; peers do not receive each others screen shares; peers do not receive each others camera feeds. Project root D:\Projects\Project Banter (NEVER touch E:). Repo https://github.com/SnowedInOwl/Banter. Work from latest main / Version-1-test-4.1 era. Prefer live multi-client repro. Prior voice/media work: WebRTC Opus + H.264 SFU, RID/SSRC mapping, DTX quiet frames, early ICE — but Owl says server path still fails for audio + video receive. Goals: reproduce 2+ clients; fix SFU/client so channel voice audio is heard and screen/camera tracks are received; open PR reviewable; merge only if Owl said (Owl did NOT); clear commits/docs; clean temp; report root cause, PR URL, how verified.
+
+Agent: Prior RID/OnOpen fixes were already on main. Root cause was SFU forwarding publisher SSRCs into forward tracks that negotiate different SSRCs — write_rtp silently drops them. Added rewrite_forward_rtp + tests + docs. PR opened; do not merge.
+
+## Summary
+
+SFU now rewrites outbound SSRC/PT (and strips extensions) so server VC audio + camera + screen can reach peers; PR for Owl review, not merged.
+
 ## 2026-11-04 00:12:16 -06:00 — UI follows display refresh rate (BA-56)
 
 Owl wants Banter **UI only** to use a dynamic refresh rate (match the display / VSync to the monitor), not stream FPS and not related to the VC/media fix running in parallel.
@@ -669,15 +679,6 @@ Owl wants Banter **UI only** to use a dynamic refresh rate (match the display / 
 Project: D:\Projects\Project Banter (NEVER touch E:).
 Repo: https://github.com/SnowedInOwl/Banter
 Use a separate git worktree/branch under that folder so you do not collide with the Server VC media fix worker if it is also editing the main checkout.
-
-Context: /cursor/stores/self/docs/project-context.md
-Preferences: /cursor/stores/self/preferences.md
-
-Implement:
-- Client UI render loop / GLFW swap interval / frame pacing follows the current display’s refresh rate dynamically (e.g. when moving between monitors or when refresh changes).
-- Do not change stream capture FPS options unless required for UI.
-- Clear commits; open a PR. Do not merge unless Owl says so.
-- Report PR URL and how rate is chosen/updated.
 
 Task: UI follows display refresh rate (BA-56)
 Avoid overlapping uncommitted edits with other workers; own worktree.
@@ -687,3 +688,4 @@ Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-ui-refresh` on `cur
 ## Summary
 
 BA-56 UI display refresh: GLFW VSync follows the current monitor dynamically; stream FPS untouched.
+
