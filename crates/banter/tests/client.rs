@@ -606,3 +606,144 @@ fn accepting_a_friend_then_opening_their_dm_works() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn message_context_menu_lists_reply_copy_and_own_actions() {
+    let other = banter::message_context_menu(10, 2, "hello", Some(1));
+    assert_eq!(
+        banter::context_menu_labels(&other),
+        ["Reply", "Copy Text", "Copy Message ID"]
+    );
+    assert!(banter::context_menu_actions(&other).contains(&banter::ContextMenuAction::Reply { message_id: 10 }));
+    assert!(banter::context_menu_actions(&other).contains(&banter::ContextMenuAction::CopyText {
+        text: "hello".into()
+    }));
+    assert!(banter::context_menu_actions(&other).contains(&banter::ContextMenuAction::CopyMessageId {
+        message_id: 10
+    }));
+    assert!(!banter::context_menu_actions(&other).iter().any(|action| matches!(
+        action,
+        banter::ContextMenuAction::Edit { .. } | banter::ContextMenuAction::Delete { .. }
+    )));
+
+    let own = banter::message_context_menu(11, 1, "mine", Some(1));
+    assert_eq!(
+        banter::context_menu_labels(&own),
+        ["Reply", "Edit Message", "Delete Message", "Copy Text", "Copy Message ID"]
+    );
+    assert!(banter::context_menu_actions(&own).contains(&banter::ContextMenuAction::Edit { message_id: 11 }));
+    assert!(banter::context_menu_actions(&own).contains(&banter::ContextMenuAction::Delete { message_id: 11 }));
+    assert_eq!(
+        banter::context_menu_tone(&own, "Delete Message"),
+        Some(banter::ContextMenuTone::Danger)
+    );
+}
+
+#[test]
+fn member_context_menu_skips_self_actions_and_friend_when_already_friends() {
+    let stranger = banter::member_context_menu(7, "ada", Some(1), false);
+    assert_eq!(
+        banter::context_menu_labels(&stranger),
+        ["Mention", "Message", "Call", "Add Friend", "Copy Username"]
+    );
+    assert!(banter::context_menu_actions(&stranger).contains(&banter::ContextMenuAction::Mention {
+        username: "ada".into()
+    }));
+    assert!(banter::context_menu_actions(&stranger).contains(&banter::ContextMenuAction::MessageUser {
+        user_id: 7
+    }));
+    assert!(banter::context_menu_actions(&stranger).contains(&banter::ContextMenuAction::CallUser {
+        user_id: 7
+    }));
+    assert!(banter::context_menu_actions(&stranger).contains(&banter::ContextMenuAction::AddFriend {
+        username: "ada".into()
+    }));
+    assert_eq!(
+        banter::context_menu_tone(&stranger, "Message"),
+        Some(banter::ContextMenuTone::Brand)
+    );
+
+    let friend = banter::member_context_menu(7, "ada", Some(1), true);
+    assert_eq!(
+        banter::context_menu_labels(&friend),
+        ["Mention", "Message", "Call", "Copy Username"]
+    );
+    assert!(!banter::context_menu_actions(&friend)
+        .iter()
+        .any(|action| matches!(action, banter::ContextMenuAction::AddFriend { .. })));
+
+    let self_menu = banter::member_context_menu(1, "owl", Some(1), false);
+    assert_eq!(banter::context_menu_labels(&self_menu), ["Mention", "Copy Username"]);
+}
+
+#[test]
+fn channel_context_menu_offers_invite_and_copy_for_foundation() {
+    let menu = banter::channel_context_menu(42, "general", 3, false);
+    assert_eq!(
+        banter::context_menu_labels(&menu),
+        ["Invite People", "Copy Name", "Copy Channel ID"]
+    );
+    assert!(banter::context_menu_actions(&menu).contains(&banter::ContextMenuAction::InvitePeople {
+        server_id: 3
+    }));
+    assert!(banter::context_menu_actions(&menu).contains(&banter::ContextMenuAction::CopyChannelName {
+        name: "general".into()
+    }));
+    assert!(banter::context_menu_actions(&menu).contains(&banter::ContextMenuAction::CopyChannelId {
+        channel_id: 42
+    }));
+    assert_eq!(
+        banter::context_menu_tone(&menu, "Invite People"),
+        Some(banter::ContextMenuTone::Brand)
+    );
+
+    let owner = banter::channel_context_menu(42, "general", 3, true);
+    assert_eq!(
+        banter::context_menu_labels(&owner),
+        ["Invite People", "Copy Name", "Copy Channel ID"]
+    );
+}
+
+#[test]
+fn insert_mention_pads_the_composer_like_discord() {
+    let mut empty = String::new();
+    banter::insert_mention(&mut empty, "ada");
+    assert_eq!(empty, "@ada ");
+
+    let mut trailing = String::from("hey ");
+    banter::insert_mention(&mut trailing, "ada");
+    assert_eq!(trailing, "hey @ada ");
+
+    let mut mid = String::from("hey");
+    banter::insert_mention(&mut mid, "ada");
+    assert_eq!(mid, "hey @ada ");
+}
+
+#[test]
+fn context_menu_height_counts_items_and_separators() {
+    let menu = banter::message_context_menu(1, 1, "x", Some(1));
+    let height = banter::context_menu_height(&menu);
+    assert!(height > banter::theme::MENU_PAD * 2.0);
+    assert_eq!(
+        height,
+        banter::theme::MENU_PAD * 2.0
+            + 5.0 * (banter::theme::MENU_ITEM_H + 2.0)
+            + 2.0 * 9.0
+    );
+}
+
+#[test]
+fn clamp_context_menu_keeps_the_panel_on_screen() {
+    assert_eq!(
+        banter::clamp_context_menu_pos([10.0, 10.0], [220.0, 100.0], [800.0, 600.0]),
+        [10.0, 10.0]
+    );
+    assert_eq!(
+        banter::clamp_context_menu_pos([790.0, 580.0], [220.0, 100.0], [800.0, 600.0]),
+        [580.0, 500.0]
+    );
+    assert_eq!(
+        banter::clamp_context_menu_pos([-20.0, -5.0], [220.0, 100.0], [800.0, 600.0]),
+        [0.0, 0.0]
+    );
+}
+

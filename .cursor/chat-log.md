@@ -524,7 +524,6 @@ Agent: Worktree Banter-call-ui on cursor/one-on-one-call-ui-5038 from origin/tes
 
 DM Call phone action now shows a Discord-style 1:1 call stage instead of staying on chat.
 
-
 ## 2026-11-03 19:26:23 -06:00 — Auto-open DM when adding a friend
 
 Owl (via coordinator BA-41): When adding a friend it should auto-open a DM with them. Root D:\Projects\Project Banter. Never E:. Branch from test/owl-fixes, merge into test/owl-fixes only. Clear commits. Worktree under Project Banter/worktrees/.
@@ -544,6 +543,15 @@ Agent: Wire path was already WebRTC H.264; leftover JPEG spray was local camera 
 
 Camera preview is RGBA; outbound video stays I420→H.264 over WebRTC; docs no longer claim software JPEG spray.
 
+## 2026-11-03 19:28:05 -06:00 — Add Discord-like context menus (BA-42 / Owl test)
+
+Owl (via coordinator): There are no right-click menus. Add Discord-like context menus (members, messages, channels as fits foundation). D:\Projects\Project Banter. Never E:. Branch from test/owl-fixes, merge into test/owl-fixes only. Clear commits. Worktree under Project Banter/worktrees/.
+
+Agent: Worktree Banter-context-menus on cursor/context-menus-682a from test/owl-fixes. Wrote client tests first for message/member/channel menus, insert_mention, height, and clamp. Implemented builders in logic.rs and floating UI in ui.rs using existing skin::menu_item. Verified client unit tests + foundation 14. Did not merge to main.
+
+## Summary
+
+Right-click menus land on test/owl-fixes for messages, members, and channels within foundation scope.
 
 ## 2026-11-03 19:28:50 -06:00 — Add user profiles
 

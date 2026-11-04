@@ -16,6 +16,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Mentions + presence | Working |
 | Discord-like temporary skin (rail, sidebar, chat, members, modals) | Working — **not** final Banter branding |
 | Chat rows (avatar, grouping, hover toolbar, bottom-anchored history) | Working |
+| Right-click context menus (messages, members/friends/DMs, channels) | Working — foundation actions only; no kick/ban/profiles |
 | Drop-in voice: mute, deafen, PTT, connection panel | Working (SFU audio forward + open-mic Opus timeline fixed 2026-11-03) |
 | Camera on/off with mirrored local RGBA preview (~720p prefer; device MJPEG OK) | Working (device-dependent); wire is WebRTC H.264 |
 | Screen share Go Live + quality / source switching | Working (WebRTC H.264 SFU/P2P; OpenH264 / hardware when available; remotes receive after RID/SSRC fix) |
