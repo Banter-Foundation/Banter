@@ -124,6 +124,16 @@ impl Store {
         account_by_id(&self.pool, id).await
     }
 
+    pub async fn custom_status(&self, user_id: i64) -> Result<Option<String>, BanterError> {
+        let status: Option<String> = sqlx::query_scalar("SELECT custom_status FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?
+            .flatten();
+        Ok(status)
+    }
+
     pub async fn account(&self, user_id: i64) -> Result<Account, BanterError> {
         account_by_id(&self.pool, user_id).await
     }

@@ -35,16 +35,12 @@ pub fn paint_avatar_decoration_art(ui: &Ui, center: [f32; 2], radius: f32, decor
     let Some(color) = cosmetic_color(id) else { return };
     let draw = ui.get_window_draw_list();
     let rgba = rgb_u32_to_rgba(color);
+    let t = ui.time() as f32;
     draw.add_circle(center, radius + 9.0, rgba).thickness(3.5).build();
     if id.contains("leaf") {
-        for (angle, dist) in [
-            (0.2_f32, 1.28),
-            (1.1, 1.32),
-            (2.0, 1.26),
-            (3.2, 1.3),
-            (4.1, 1.28),
-            (5.0, 1.3),
-        ] {
+        for i in 0..6 {
+            let angle = 0.2 + i as f32 * (std::f32::consts::TAU / 6.0) + t * 0.35;
+            let dist = 1.28 + (t * 1.7 + i as f32).sin() * 0.04;
             let tip = [
                 center[0] + radius * dist * angle.cos(),
                 center[1] + radius * dist * angle.sin(),
@@ -56,12 +52,14 @@ pub fn paint_avatar_decoration_art(ui: &Ui, center: [f32; 2], radius: f32, decor
         }
     } else if id.contains("spark") {
         for i in 0..8 {
-            let a = i as f32 * std::f32::consts::TAU / 8.0;
-            let tip = [center[0] + (radius + 12.0) * a.cos(), center[1] + (radius + 12.0) * a.sin()];
+            let a = i as f32 * std::f32::consts::TAU / 8.0 + t * 1.2;
+            let orbit = radius + 12.0 + (t * 3.0 + i as f32).sin() * 2.0;
+            let tip = [center[0] + orbit * a.cos(), center[1] + orbit * a.sin()];
             draw.add_circle(tip, 2.4, rgba).filled(true).build();
         }
     } else {
-        draw.add_circle(center, radius + 14.0, [rgba[0], rgba[1], rgba[2], 0.35])
+        let pulse = 14.0 + (t * 2.5).sin().abs() * 3.0;
+        draw.add_circle(center, radius + pulse, [rgba[0], rgba[1], rgba[2], 0.35])
             .thickness(6.0)
             .build();
     }
@@ -86,23 +84,32 @@ pub fn paint_profile_effect_art(ui: &Ui, min: [f32; 2], max: [f32; 2], effect_id
     let Some(color) = cosmetic_color(id) else { return };
     let draw = ui.get_window_draw_list();
     let rgba = rgb_u32_to_rgba(color);
-    draw.add_rect(min, max, [rgba[0], rgba[1], rgba[2], 0.10])
+    let t = ui.time() as f32;
+    let wash = 0.08 + (t * 1.4).sin().abs() * 0.06;
+    draw.add_rect(min, max, [rgba[0], rgba[1], rgba[2], wash])
         .rounding(8.0)
         .filled(true)
         .build();
     if id.contains("particle") {
         let w = max[0] - min[0];
         let h = max[1] - min[1];
-        for (fx, fy) in [(0.15, 0.2), (0.7, 0.35), (0.4, 0.7), (0.85, 0.55), (0.25, 0.85)] {
-            draw.add_circle([min[0] + w * fx, min[1] + h * fy], 2.5, [rgba[0], rgba[1], rgba[2], 0.55])
-                .filled(true)
-                .build();
+        for i in 0..7 {
+            let phase = t * 0.9 + i as f32 * 0.85;
+            let fx = (0.12 + i as f32 * 0.12 + phase.sin() * 0.04).rem_euclid(1.0);
+            let fy = (0.18 + i as f32 * 0.11 + (phase * 0.7).cos() * 0.08).rem_euclid(1.0);
+            draw.add_circle(
+                [min[0] + w * fx, min[1] + h * fy],
+                2.0 + (phase).sin().abs(),
+                [rgba[0], rgba[1], rgba[2], 0.55],
+            )
+            .filled(true)
+            .build();
         }
     } else {
-        // Aurora wash band across the top of the body.
+        let band = 0.22 + (t * 0.8).sin().abs() * 0.08;
         draw.add_rect(
             [min[0], min[1]],
-            [max[0], min[1] + (max[1] - min[1]) * 0.28],
+            [max[0], min[1] + (max[1] - min[1]) * band],
             [rgba[0], rgba[1], rgba[2], 0.18],
         )
         .rounding(8.0)
@@ -150,26 +157,46 @@ pub fn paint_badge_icon(ui: &Ui, center: [f32; 2], badge: &ProfileBadge) {
     }
 }
 
-/// Vertical game card (Games in Rotation / Favorite) using Banter color covers — not scraped art.
+/// Vertical game card (Games in Rotation / Favorite) using Banter procedural box art — not scraped art.
 pub fn paint_game_card(ui: &Ui, min: [f32; 2], title: &str, tag: &str) {
     let draw = ui.get_window_draw_list();
     let max = [min[0] + PROFILE_GAME_CARD_W, min[1] + PROFILE_GAME_CARD_H];
     let cover = game_cover_color(title);
+    let cover_hi = [cover[0] * 1.25 + 0.05, cover[1] * 1.2 + 0.05, cover[2] * 1.15 + 0.05, 1.0];
+    let cover_lo = [cover[0] * 0.55, cover[1] * 0.55, cover[2] * 0.6, 1.0];
     draw.add_rect(min, max, [0.08, 0.09, 0.10, 1.0])
         .rounding(PROFILE_RADIUS)
         .filled(true)
         .build();
-    draw.add_rect(min, [max[0], min[1] + PROFILE_GAME_CARD_H * 0.62], cover)
+    let art_max_y = min[1] + PROFILE_GAME_CARD_H * 0.62;
+    draw.add_rect(min, [max[0], art_max_y], cover_lo)
         .rounding(PROFILE_RADIUS)
         .flags(DrawFlags::ROUND_TOP)
         .filled(true)
         .build();
+    draw.add_rect(min, [max[0], min[1] + PROFILE_GAME_CARD_H * 0.28], cover_hi)
+        .rounding(PROFILE_RADIUS)
+        .flags(DrawFlags::ROUND_TOP)
+        .filled(true)
+        .build();
+    // Spine / box-art bevel.
+    draw.add_rect([min[0], min[1]], [min[0] + 7.0, art_max_y], [0.0, 0.0, 0.0, 0.28])
+        .filled(true)
+        .build();
+    draw.add_rect(
+        [min[0] + 10.0, min[1] + 10.0],
+        [max[0] - 8.0, min[1] + 18.0],
+        [1.0, 1.0, 1.0, 0.18],
+    )
+    .rounding(2.0)
+    .filled(true)
+    .build();
     let initials = game_initials(title);
     let size = ui.calc_text_size(&initials);
     draw.add_text(
         [
             min[0] + (PROFILE_GAME_CARD_W - size[0]) * 0.5,
-            min[1] + PROFILE_GAME_CARD_H * 0.28 - size[1] * 0.5,
+            min[1] + PROFILE_GAME_CARD_H * 0.30 - size[1] * 0.5,
         ],
         WHITE,
         &initials,
@@ -189,7 +216,16 @@ pub fn paint_game_thumb(ui: &Ui, min: [f32; 2], title: &str) {
     let draw = ui.get_window_draw_list();
     let max = [min[0] + PROFILE_GAME_THUMB, min[1] + PROFILE_GAME_THUMB];
     let cover = game_cover_color(title);
+    let cover_hi = [cover[0] * 1.2 + 0.05, cover[1] * 1.15 + 0.05, cover[2] * 1.1 + 0.05, 1.0];
     draw.add_rect(min, max, cover).rounding(6.0).filled(true).build();
+    draw.add_rect(min, [max[0], min[1] + PROFILE_GAME_THUMB * 0.35], cover_hi)
+        .rounding(6.0)
+        .flags(DrawFlags::ROUND_TOP)
+        .filled(true)
+        .build();
+    draw.add_rect([min[0], min[1]], [min[0] + 5.0, max[1]], [0.0, 0.0, 0.0, 0.25])
+        .filled(true)
+        .build();
     let initials = game_initials(title);
     let size = ui.calc_text_size(&initials);
     draw.add_text(

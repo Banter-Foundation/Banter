@@ -92,11 +92,13 @@ pub fn serve(addr: &str, data_dir: &std::path::Path, database_url: &str) -> Resu
                 tokio::time::sleep(Duration::from_secs(15)).await;
                 for (user_id, presence) in idle_live.refresh(now_ms()) {
                     let audience = idle_store.related_user_ids(user_id).await.unwrap_or_default();
+                    let custom_status = idle_live.custom_status(user_id);
                     idle_live.send_event(
                         &audience,
                         &ServerEvent::Presence {
                             user_id,
                             state: presence,
+                            custom_status,
                         },
                     );
                 }
@@ -243,7 +245,25 @@ async fn patch_profile(
     Auth(account): Auth,
     Json(body): Json<ProfilePatch>,
 ) -> Result<Json<UserProfile>, BanterError> {
-    Ok(Json(state.store.update_profile(account.id, body).await?))
+    let status_patched = body.custom_status.is_some();
+    let profile = state.store.update_profile(account.id, body).await?;
+    if status_patched {
+        state
+            .live
+            .set_custom_status(account.id, profile.custom_status.clone());
+        if let Ok(audience) = state.store.related_user_ids(account.id).await {
+            let snap = state.live.presence_snapshot(account.id);
+            state.live.send_event(
+                &audience,
+                &ServerEvent::Presence {
+                    user_id: account.id,
+                    state: snap.state,
+                    custom_status: snap.custom_status,
+                },
+            );
+        }
+    }
+    Ok(Json(profile))
 }
 
 async fn list_cosmetics() -> Json<Vec<crate::CosmeticItem>> {
@@ -347,9 +367,11 @@ async fn list_presence(
     let presence = ids
         .into_iter()
         .map(|user_id| {
+            let snap = state.live.presence_snapshot(user_id);
             json!({
                 "user_id": user_id,
-                "state": state.live.presence(user_id),
+                "state": snap.state,
+                "custom_status": snap.custom_status,
             })
         })
         .collect();
@@ -411,6 +433,7 @@ async fn members(
                 "has_avatar": member.has_avatar,
                 "avatar_rev": member.avatar_rev,
                 "presence": state.live.presence(member.user_id),
+                "custom_status": state.live.custom_status(member.user_id),
             })
         })
         .collect();
@@ -808,13 +831,15 @@ async fn ws(
 async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let socket_id = state.live.register_socket(user_id, tx);
-    state.live.connect(user_id, now_ms());
+    let custom_status = state.store.custom_status(user_id).await.ok().flatten();
+    state.live.connect(user_id, now_ms(), custom_status.clone());
     if let Ok(audience) = state.store.related_user_ids(user_id).await {
         state.live.send_event(
             &audience,
             &ServerEvent::Presence {
                 user_id,
                 state: Presence::Online,
+                custom_status,
             },
         );
     }
@@ -863,6 +888,7 @@ async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
             &ServerEvent::Presence {
                 user_id,
                 state: Presence::Offline,
+                custom_status: None,
             },
         );
     }
@@ -905,11 +931,13 @@ async fn apply_board_signal(state: &HttpState, user_id: i64, channel_id: i64, op
 async fn note_ws_activity(state: &HttpState, user_id: i64) {
     state.live.note_activity(user_id, now_ms());
     if let Ok(audience) = state.store.related_user_ids(user_id).await {
+        let snap = state.live.presence_snapshot(user_id);
         state.live.send_event(
             &audience,
             &ServerEvent::Presence {
                 user_id,
-                state: state.live.presence(user_id),
+                state: snap.state,
+                custom_status: snap.custom_status,
             },
         );
     }

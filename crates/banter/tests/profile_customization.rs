@@ -2,10 +2,11 @@
 //! Written before the profile editor state landed.
 
 use banter::{
-    ProfileAction, ProfileBoardTab, ProfileCard, ProfileEditorSlot, ProfileKind, ProfileMediaDraft,
-    ProfileMode, ProfileWidgetKind, display_name_style_color, games_from_payload, games_to_payload,
-    games_widget_cap, profile_badge_row_visible_cap, profile_board_tabs, profile_editor_sections,
-    profile_editor_slot_rows, profile_heading, profile_primary_actions, profile_view_shows_board,
+    ProfileAction, ProfileBoardTab, ProfileCard, ProfileEditScope, ProfileEditorSlot, ProfileKind,
+    ProfileMediaDraft, ProfileMode, ProfileWidgetKind, display_name_style_color, games_from_payload,
+    games_to_payload, games_widget_cap, profile_badge_row_visible_cap, profile_board_tabs,
+    profile_editor_sections, profile_editor_slot_rows, profile_heading, profile_primary_actions,
+    profile_view_shows_board,
 };
 
 #[test]
@@ -168,4 +169,22 @@ fn editor_slot_rows_match_discord_customization_ref() {
     assert_eq!(profile_badge_row_visible_cap(), 6);
     assert!(ProfileMediaDraft::Unchanged.is_unchanged());
     assert!(!ProfileMediaDraft::Clear.is_unchanged());
+}
+
+#[test]
+fn editor_can_switch_main_and_server_profile_scope() {
+    let mut card = ProfileCard::closed();
+    card.open(1, ProfileKind::SelfAccount);
+    assert!(card.begin_customize());
+    assert!(card.edit_scope().is_main());
+    card.set_edit_scope(ProfileEditScope::Server {
+        id: 9,
+        name: "Owl Nest".into(),
+    });
+    assert_eq!(card.edit_scope().server_id(), Some(9));
+    assert_eq!(card.edit_scope().label(), "Owl Nest");
+    card.set_draft_nickname("Night Owl");
+    assert_eq!(card.draft_nickname(), "Night Owl");
+    card.set_edit_scope(ProfileEditScope::Main);
+    assert!(card.edit_scope().is_main());
 }

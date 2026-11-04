@@ -52,6 +52,8 @@ pub struct MemberView {
     #[serde(default)]
     pub avatar_rev: i64,
     pub presence: Presence,
+    #[serde(default)]
+    pub custom_status: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -246,14 +248,19 @@ impl Client {
         self.get_json("/v1/friends")
     }
 
-    pub fn presence(&self) -> Result<Vec<(i64, Presence)>, ApiError> {
+    pub fn presence(&self) -> Result<Vec<(i64, Presence, Option<String>)>, ApiError> {
         #[derive(Deserialize)]
         struct Row {
             user_id: i64,
             state: Presence,
+            #[serde(default)]
+            custom_status: Option<String>,
         }
         let rows: Vec<Row> = self.get_json("/v1/presence")?;
-        Ok(rows.into_iter().map(|row| (row.user_id, row.state)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.user_id, row.state, row.custom_status))
+            .collect())
     }
 
     pub fn servers(&self) -> Result<Vec<ServerSummary>, ApiError> {

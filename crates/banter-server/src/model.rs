@@ -329,6 +329,30 @@ pub enum Presence {
     Offline,
 }
 
+/// Live presence plus optional custom status text (Discord-style).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresenceSnapshot {
+    pub state: Presence,
+    #[serde(default)]
+    pub custom_status: Option<String>,
+}
+
+impl PresenceSnapshot {
+    pub fn offline() -> Self {
+        Self {
+            state: Presence::Offline,
+            custom_status: None,
+        }
+    }
+
+    pub fn with_state(state: Presence, custom_status: Option<String>) -> Self {
+        Self {
+            state,
+            custom_status,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VoiceFlags {
     pub muted: bool,
@@ -765,6 +789,8 @@ pub enum ServerEvent {
     Presence {
         user_id: i64,
         state: Presence,
+        #[serde(default)]
+        custom_status: Option<String>,
     },
     MessageCreated {
         target: ChatTarget,

@@ -63,6 +63,33 @@ impl ProfileMediaDraft {
     }
 }
 
+/// Discord "Main Profile" vs a specific server profile in the editor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProfileEditScope {
+    Main,
+    Server { id: i64, name: String },
+}
+
+impl ProfileEditScope {
+    pub fn is_main(&self) -> bool {
+        matches!(self, Self::Main)
+    }
+
+    pub fn server_id(&self) -> Option<i64> {
+        match self {
+            Self::Main => None,
+            Self::Server { id, .. } => Some(*id),
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::Main => "Main Profile".into(),
+            Self::Server { name, .. } => name.clone(),
+        }
+    }
+}
+
 pub use banter_server::ProfileWidgetKind;
 
 /// Floating profile card state. Drawable-free so unit tests own the contract.
@@ -85,6 +112,8 @@ pub struct ProfileCard {
     board_tab: ProfileBoardTab,
     anchor: [f32; 2],
     server_id: Option<i64>,
+    edit_scope: ProfileEditScope,
+    draft_nickname: String,
 }
 
 impl ProfileCard {
@@ -107,6 +136,8 @@ impl ProfileCard {
             board_tab: ProfileBoardTab::Board,
             anchor: [0.0, 0.0],
             server_id: None,
+            edit_scope: ProfileEditScope::Main,
+            draft_nickname: String::new(),
         }
     }
 
@@ -191,6 +222,26 @@ impl ProfileCard {
         self.server_id
     }
 
+    pub fn edit_scope(&self) -> &ProfileEditScope {
+        &self.edit_scope
+    }
+
+    pub fn set_edit_scope(&mut self, scope: ProfileEditScope) {
+        self.edit_scope = scope;
+    }
+
+    pub fn draft_nickname(&self) -> &str {
+        &self.draft_nickname
+    }
+
+    pub fn draft_nickname_mut(&mut self) -> &mut String {
+        &mut self.draft_nickname
+    }
+
+    pub fn set_draft_nickname(&mut self, draft: impl Into<String>) {
+        self.draft_nickname = draft.into();
+    }
+
     pub fn open(&mut self, user_id: i64, kind: ProfileKind) {
         self.user_id = Some(user_id);
         self.kind = Some(kind);
@@ -198,6 +249,7 @@ impl ProfileCard {
         self.clear_drafts();
         self.board_tab = ProfileBoardTab::Board;
         self.server_id = None;
+        self.edit_scope = ProfileEditScope::Main;
     }
 
     pub fn set_anchor(&mut self, anchor: [f32; 2]) {
@@ -237,6 +289,8 @@ impl ProfileCard {
         self.draft_display_name_style = view.display_name_style_id.clone();
         self.draft_profile_effect = view.profile_effect_id.clone();
         self.draft_profile_frame = view.profile_frame_id.clone();
+        self.draft_nickname = view.nickname.clone().unwrap_or_default();
+        self.edit_scope = ProfileEditScope::Main;
         true
     }
 
@@ -336,6 +390,8 @@ impl ProfileCard {
         self.draft_display_name_style = None;
         self.draft_profile_effect = None;
         self.draft_profile_frame = None;
+        self.draft_nickname.clear();
+        self.edit_scope = ProfileEditScope::Main;
     }
 }
 

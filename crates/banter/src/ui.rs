@@ -37,8 +37,8 @@ use crate::logic::{
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
-    ProfileAction, ProfileBoardTab, ProfileCard, ProfileEditorSlot, ProfileKind, ProfileMediaDraft,
-    ProfileMode, display_name_style_color, games_from_payload, games_to_payload,
+    ProfileAction, ProfileBoardTab, ProfileCard, ProfileEditScope, ProfileEditorSlot, ProfileKind,
+    ProfileMediaDraft, ProfileMode, display_name_style_color, games_from_payload, games_to_payload,
     games_widget_cap, profile_badge_row_visible_cap, profile_board_tabs, profile_editor_slot_rows,
     profile_heading, profile_primary_actions, rgb_u32_to_rgba,
 };
@@ -54,6 +54,12 @@ use crate::settings::{
 };
 use crate::skin::{self, MenuTone, Tone};
 use crate::theme::*;
+
+#[derive(Clone, Debug)]
+struct PresenceInfo {
+    state: Presence,
+    custom_status: Option<String>,
+}
 use crate::websocket_url;
 
 /// Draws the active field as `*` without Dear ImGui's password flag, so copy and paste still work.
@@ -136,7 +142,7 @@ pub(crate) struct App {
     servers: Vec<ServerSummary>,
     dms: Vec<DirectChat>,
     mentions: Vec<Mention>,
-    presence: HashMap<i64, Presence>,
+    presence: HashMap<i64, PresenceInfo>,
     place: Place,
     layout: Vec<CategoryLayout>,
     members: Vec<MemberView>,
@@ -1419,7 +1425,7 @@ impl App {
         let dms = self.dms.clone();
         for chat in dms {
             let selected = self.place == Place::Direct(chat.id);
-            let presence = self.presence.get(&chat.peer_id).copied().unwrap_or(Presence::Offline);
+            let presence = self.presence.get(&chat.peer_id).map(|p| p.state).unwrap_or(Presence::Offline);
             let (left, right) = self.dm_row(
                 ui,
                 &format!("dm{}", chat.id),
@@ -1503,7 +1509,7 @@ impl App {
         let username = self.account.as_ref().map(|account| account.username.clone()).unwrap_or_default();
         let account_id = self.account.as_ref().map(|account| account.id);
         let presence = account_id
-            .and_then(|id| self.presence.get(&id).copied())
+            .and_then(|id| self.presence.get(&id).map(|p| p.state))
             .unwrap_or(Presence::Online);
         let origin = ui.window_pos();
         let width = ui.window_size()[0];
@@ -1752,7 +1758,7 @@ impl App {
                     let center = [x + 12.0, mid];
                     let avatar = self.avatars.get(&chat.peer_id).map(|shot| shot.texture);
                     paint_avatar(ui, avatar, center, 12.0, &initials(&chat.peer_display_name), None);
-                    let presence = self.presence.get(&chat.peer_id).copied().unwrap_or(Presence::Offline);
+                    let presence = self.presence.get(&chat.peer_id).map(|p| p.state).unwrap_or(Presence::Offline);
                     paint_status_dot(ui, center, 12.0, presence, STAGE_BG);
                     x += 24.0 + 8.0;
                     skin::text_in_row(ui, semi, FONT_MD, x, origin[1], HEADER_H, TEXT, &chat.peer_display_name);
@@ -1988,11 +1994,17 @@ impl App {
         } else {
             let online_only = self.friend_tab == 0;
             for friend in &self.friends {
-                let presence = self.presence.get(&friend.id).copied().unwrap_or(Presence::Offline);
+                let presence = self.presence.get(&friend.id).map(|p| p.state).unwrap_or(Presence::Offline);
                 if online_only && presence == Presence::Offline {
                     continue;
                 }
-                rows.push((friend.id, friend.display_name.clone(), friend.username.clone(), presence, presence_label(presence).into(), false));
+                let subtitle = self
+                    .presence
+                    .get(&friend.id)
+                    .and_then(|info| info.custom_status.clone())
+                    .filter(|status| !status.trim().is_empty())
+                    .unwrap_or_else(|| presence_label(presence).into());
+                rows.push((friend.id, friend.display_name.clone(), friend.username.clone(), presence, subtitle, false));
             }
             title = if online_only { "Online" } else { "All Friends" };
             empty = if online_only { "No one's around right now." } else { "You have not added anyone yet." };
@@ -2244,7 +2256,7 @@ impl App {
                 let mut online = Vec::new();
                 let mut offline = Vec::new();
                 for member in members {
-                    let presence = self.presence.get(&member.user_id).copied().unwrap_or(member.presence);
+                    let presence = self.presence.get(&member.user_id).map(|p| p.state).unwrap_or(member.presence);
                     if presence == Presence::Offline {
                         offline.push((member, presence));
                     } else {
@@ -2257,7 +2269,7 @@ impl App {
             }
             Place::Direct(dm_id) => {
                 if let Some(chat) = self.dms.iter().find(|chat| chat.id == dm_id).cloned() {
-                    let presence = self.presence.get(&chat.peer_id).copied().unwrap_or(Presence::Offline);
+                    let presence = self.presence.get(&chat.peer_id).map(|p| p.state).unwrap_or(Presence::Offline);
                     ui.dummy([0.0, 16.0]);
                     if self.person_row(ui, chat.peer_id, &chat.peer_display_name, &chat.peer_username, presence, false) {
                         let mouse = ui.mouse_pos();
@@ -3459,7 +3471,18 @@ impl App {
             self.mentions = mentions;
         }
         if let Some(rows) = self.note(self.client.presence()) {
-            self.presence = rows.into_iter().collect();
+            self.presence = rows
+                .into_iter()
+                .map(|(user_id, state, custom_status)| {
+                    (
+                        user_id,
+                        PresenceInfo {
+                            state,
+                            custom_status,
+                        },
+                    )
+                })
+                .collect();
         }
         if let Place::Server(_) = self.place {
             self.reload_layout();
@@ -3552,7 +3575,13 @@ impl App {
         let Place::Server(server_id) = self.place else { return };
         if let Some(members) = self.note(self.client.members(server_id)) {
             for member in &members {
-                self.presence.insert(member.user_id, member.presence);
+                self.presence.insert(
+                    member.user_id,
+                    PresenceInfo {
+                        state: member.presence,
+                        custom_status: member.custom_status.clone(),
+                    },
+                );
             }
             self.members = members;
         }
@@ -3612,10 +3641,21 @@ impl App {
     fn on_event(&mut self, event: banter_server::ServerEvent) {
         use banter_server::ServerEvent;
         match event {
-            ServerEvent::Presence { user_id, state } => {
-                self.presence.insert(user_id, state);
+            ServerEvent::Presence {
+                user_id,
+                state,
+                custom_status,
+            } => {
+                self.presence.insert(
+                    user_id,
+                    PresenceInfo {
+                        state,
+                        custom_status: custom_status.clone(),
+                    },
+                );
                 if let Some(member) = self.members.iter_mut().find(|member| member.user_id == user_id) {
                     member.presence = state;
+                    member.custom_status = custom_status;
                 }
             }
             ServerEvent::MessageCreated { target, message } | ServerEvent::MessageEdited { target, message } => {
@@ -4104,7 +4144,7 @@ impl App {
         let avatar = self.avatars.get(&view.id).map(|shot| shot.texture);
         paint_avatar(ui, avatar, avatar_center, PROFILE_AVATAR, &initials(&heading), None);
         profile_paint::paint_avatar_decoration_art(ui, avatar_center, PROFILE_AVATAR, deco_id);
-        let presence = self.presence.get(&view.id).copied().unwrap_or(Presence::Offline);
+        let presence = self.presence.get(&view.id).map(|p| p.state).unwrap_or(Presence::Offline);
         paint_status_dot(ui, avatar_center, PROFILE_AVATAR, presence, FLOATING_BG);
 
         if let Some(status) = view.custom_status.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -4185,7 +4225,7 @@ impl App {
         if !view.connections.is_empty() {
             ui.text_colored(MUTED, "CONNECTIONS");
             for connection in &view.connections {
-                ui.text_colored(TEXT_SECONDARY, &format!("{} — {}", connection.kind, connection.name));
+                self.draw_profile_connection_row(ui, connection);
             }
             ui.dummy([0.0, 8.0]);
         }
@@ -4229,6 +4269,51 @@ impl App {
         }
         if close_after {
             self.close_profile();
+        }
+    }
+
+    fn draw_profile_scope_switch(&mut self, ui: &Ui, left_w: f32) {
+        let current = self.profile.edit_scope().label();
+        ui.set_next_item_width(left_w - 8.0);
+        if let Some(_token) = ui.begin_combo("##profile-scope", &current) {
+            let mut selected = None;
+            if ui
+                .selectable_config("Main Profile")
+                .selected(self.profile.edit_scope().is_main())
+                .build()
+            {
+                selected = Some(ProfileEditScope::Main);
+            }
+            for server in self.servers.clone() {
+                let is_sel = self.profile.edit_scope().server_id() == Some(server.id);
+                if ui.selectable_config(&server.name).selected(is_sel).build() {
+                    selected = Some(ProfileEditScope::Server {
+                        id: server.id,
+                        name: server.name.clone(),
+                    });
+                }
+            }
+            if let Some(scope) = selected {
+                self.apply_profile_edit_scope(scope);
+            }
+        }
+    }
+
+    fn apply_profile_edit_scope(&mut self, scope: ProfileEditScope) {
+        self.profile.set_edit_scope(scope.clone());
+        match scope {
+            ProfileEditScope::Main => {
+                if let Some(view) = self.profile_view.clone() {
+                    self.profile.set_draft_nickname(view.nickname.clone().unwrap_or_default());
+                }
+            }
+            ProfileEditScope::Server { id, .. } => {
+                if let Some(account) = self.account.clone() {
+                    if let Ok(view) = self.client.user_profile(account.id, Some(id)) {
+                        self.profile.set_draft_nickname(view.nickname.unwrap_or_default());
+                    }
+                }
+            }
         }
     }
 
@@ -4305,28 +4390,39 @@ impl App {
         ui.child_window("profile-editor-left")
             .size([left_w, body_max_y - left_min[1]])
             .build(ui, || {
-                ui.text_colored(TEXT, "Main Profile");
+                self.draw_profile_scope_switch(ui, left_w);
                 ui.dummy([0.0, 6.0]);
-                ui.text_colored(MUTED, "DISPLAY NAME");
-                ui.set_next_item_width(left_w - 8.0);
-                ui.input_text("##profile-display-name", self.profile.draft_display_name_mut())
+                if self.profile.edit_scope().is_main() {
+                    ui.text_colored(MUTED, "DISPLAY NAME");
+                    ui.set_next_item_width(left_w - 8.0);
+                    ui.input_text("##profile-display-name", self.profile.draft_display_name_mut())
+                        .build();
+                    ui.text_colored(MUTED, "PRONOUNS");
+                    ui.set_next_item_width(left_w - 8.0);
+                    ui.input_text("##profile-pronouns", self.profile.draft_pronouns_mut()).build();
+                    ui.text_colored(MUTED, "CUSTOM STATUS");
+                    ui.set_next_item_width(left_w - 8.0);
+                    ui.input_text("##profile-status", self.profile.draft_custom_status_mut()).build();
+                    ui.text_colored(MUTED, "ABOUT ME");
+                    ui.set_next_item_width(left_w - 8.0);
+                    ui.input_text_multiline(
+                        "##profile-about",
+                        self.profile.draft_about_me_mut(),
+                        [left_w - 8.0, 56.0],
+                    )
                     .build();
-                ui.text_colored(MUTED, "PRONOUNS");
-                ui.set_next_item_width(left_w - 8.0);
-                ui.input_text("##profile-pronouns", self.profile.draft_pronouns_mut()).build();
-                ui.text_colored(MUTED, "CUSTOM STATUS");
-                ui.set_next_item_width(left_w - 8.0);
-                ui.input_text("##profile-status", self.profile.draft_custom_status_mut()).build();
-                ui.text_colored(MUTED, "ABOUT ME");
-                ui.set_next_item_width(left_w - 8.0);
-                ui.input_text_multiline(
-                    "##profile-about",
-                    self.profile.draft_about_me_mut(),
-                    [left_w - 8.0, 56.0],
-                )
-                .build();
-                ui.separator();
-                self.draw_profile_editor_slots(ui, view, left_w);
+                    ui.separator();
+                    self.draw_profile_editor_slots(ui, view, left_w);
+                } else {
+                    ui.text_colored(MUTED, "SERVER NICKNAME");
+                    ui.set_next_item_width(left_w - 8.0);
+                    ui.input_text("##profile-nickname", self.profile.draft_nickname_mut())
+                        .build();
+                    ui.text_colored(
+                        MUTED,
+                        "Server profiles use a nickname here. Cosmetics stay on Main Profile.",
+                    );
+                }
             });
 
         let preview = self.profile_preview_from_drafts(view);
@@ -4385,17 +4481,22 @@ impl App {
 
     fn profile_preview_from_drafts(&self, view: &UserProfile) -> UserProfile {
         let mut preview = view.clone();
-        preview.display_name = self.profile.draft_display_name().to_string();
-        preview.about_me = non_empty_opt(self.profile.draft_about_me());
-        preview.pronouns = non_empty_opt(self.profile.draft_pronouns());
-        preview.custom_status = non_empty_opt(self.profile.draft_custom_status());
-        preview.theme_primary = self.profile.draft_theme_primary();
-        preview.theme_secondary = self.profile.draft_theme_secondary();
-        preview.nameplate_id = self.profile.draft_nameplate().clone();
-        preview.avatar_decoration_id = self.profile.draft_avatar_decoration().clone();
-        preview.display_name_style_id = self.profile.draft_display_name_style().clone();
-        preview.profile_effect_id = self.profile.draft_profile_effect().clone();
-        preview.profile_frame_id = self.profile.draft_profile_frame().clone();
+        if self.profile.edit_scope().is_main() {
+            preview.display_name = self.profile.draft_display_name().to_string();
+            preview.about_me = non_empty_opt(self.profile.draft_about_me());
+            preview.pronouns = non_empty_opt(self.profile.draft_pronouns());
+            preview.custom_status = non_empty_opt(self.profile.draft_custom_status());
+            preview.theme_primary = self.profile.draft_theme_primary();
+            preview.theme_secondary = self.profile.draft_theme_secondary();
+            preview.nameplate_id = self.profile.draft_nameplate().clone();
+            preview.avatar_decoration_id = self.profile.draft_avatar_decoration().clone();
+            preview.display_name_style_id = self.profile.draft_display_name_style().clone();
+            preview.profile_effect_id = self.profile.draft_profile_effect().clone();
+            preview.profile_frame_id = self.profile.draft_profile_frame().clone();
+            preview.nickname = None;
+        } else {
+            preview.nickname = non_empty_opt(self.profile.draft_nickname());
+        }
         preview.widgets = self
             .profile_widget_drafts
             .iter()
@@ -4947,10 +5048,20 @@ impl App {
                 ui.separator();
                 ui.text_colored(MUTED, "CONNECTIONS");
                 for connection in &view.connections {
-                    ui.text_colored(TEXT_SECONDARY, &format!("{} — {}", connection.kind, connection.name));
+                    self.draw_profile_connection_row(ui, connection);
                 }
             }
         }
+    }
+
+    fn draw_profile_connection_row(&mut self, ui: &Ui, connection: &banter_server::ProfileConnection) {
+        let label = format!("{}  {}  ↗", connection_kind_glyph(&connection.kind), connection.name);
+        if ui.small_button(&format!("{label}##conn-{}", connection.id)) {
+            if let Err(err) = open_http_url(&connection.url) {
+                self.status = err;
+            }
+        }
+        skin::item_tooltip(ui, self.semibold_font, &connection.url);
     }
 
     fn draw_profile_activity_tab(&mut self, ui: &Ui, view: &UserProfile, editing: bool) {
@@ -5175,6 +5286,29 @@ impl App {
     }
 
     fn save_profile_customize(&mut self, previous: &UserProfile) {
+        if let Some(server_id) = self.profile.edit_scope().server_id() {
+            let nickname = {
+                let trimmed = self.profile.draft_nickname().trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            };
+            match self.client.set_nickname(server_id, nickname.as_deref()) {
+                Ok(()) => {
+                    self.profile.cancel_customize();
+                    self.profile_editor_slot = None;
+                    self.status.clear();
+                    if matches!(self.place, Place::Server(id) if id == server_id) {
+                        self.reload_members();
+                    }
+                }
+                Err(err) => self.status = err.to_string(),
+            }
+            let _ = previous;
+            return;
+        }
         let draft_name = self.profile.draft_display_name().trim().to_string();
         if let Some(problem) = display_name_error(&draft_name) {
             self.status = problem.to_string();
@@ -5250,6 +5384,20 @@ impl App {
                 }
                 self.banner_rev.remove(&updated.id);
                 self.banner_miss.remove(&updated.id);
+                if let Some(account_id) = self.account.as_ref().map(|account| account.id) {
+                    let state = self
+                        .presence
+                        .get(&account_id)
+                        .map(|info| info.state)
+                        .unwrap_or(Presence::Online);
+                    self.presence.insert(
+                        account_id,
+                        PresenceInfo {
+                            state,
+                            custom_status: updated.custom_status.clone(),
+                        },
+                    );
+                }
                 self.profile_view = Some(updated);
                 self.profile.finish_edit();
                 self.profile_widget_drafts.clear();
@@ -7557,6 +7705,47 @@ fn list_label(ui: &Ui, text: &str, font: Option<FontId>) {
     let _font = ui.push_font_with_size(font, FONT_XS);
     let height = ui.calc_text_size(&label)[1];
     ui.get_window_draw_list().add_text([origin[0] + 18.0, origin[1] + CATEGORY_H - height - 6.0], MUTED, &label);
+}
+
+fn connection_kind_glyph(kind: &str) -> &'static str {
+    match kind {
+        "github" => "GH",
+        "steam" => "ST",
+        "twitch" => "TW",
+        "youtube" => "YT",
+        "twitter" => "X",
+        "website" => "WEB",
+        _ => "LINK",
+    }
+}
+
+fn open_http_url(url: &str) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err("connection URL must be http(s)".into());
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", trimmed])
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        Err("opening links is not supported on this platform".into())
+    }
 }
 
 fn truncate_ui(text: &str, max_chars: usize) -> String {

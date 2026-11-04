@@ -326,3 +326,11 @@ Close High gaps from the BA-60 review: Discord-style editor slot chrome, richer 
 - Server: badges catalog + `badge_ids`, `profile_activity`, `profile_wishlist`; `GET /v1/profile/badges`; ProfilePatch fields
 - Client: slot thumbnails, procedural cosmetics/badges/game cards, Board/Activity/Wishlist editors, media drafts on Save
 - Tests: client profile_customization 12; server profile_customization 8 (Postgres :5433)
+
+## 2026-11-04 00:43:33 -06:00 [Winter] — Profile presence, scope switch, connections, art (BA-62)
+
+Finish the four remaining BA-62 parity items on PR #21: custom status on live presence, Main vs server profile editor switch (nickname), clickable connections, and richer animated cosmetics / procedural box art.
+
+- Server: PresenceSnapshot + custom_status on WS/HTTP presence; load status on connect; broadcast on profile patch
+- Client: PresenceInfo map; friends subtitle; Main/Server combo; open http(s) connections; animated paint + box-art bevels
+- Tests: client 13, server 9

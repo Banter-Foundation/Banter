@@ -58,6 +58,7 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 ### HTTP surface (high level)
 
 Auth and profile: `/v1/register`, `/v1/login`, `/v1/logout`, `/v1/me`, `/v1/users/{id}` (optional `server_id` for nickname), `/v1/me/profile` (customization patch including badges/activity/wishlist), `/v1/me/banner`, `/v1/users/{id}/banner`, `/v1/profile/cosmetics`, `/v1/profile/badges`, avatar upload/delete.  
+Presence (`/v1/presence` and WS `presence` events) includes `custom_status` alongside online/idle/offline.  
 Social: friends requests/list, presence, mentions.  
 Servers: create/list, invites, members, nickname, categories, channels, layout.  
 Chat: channel/DM messages, send/edit/delete, attachments.  

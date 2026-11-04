@@ -672,3 +672,9 @@ Owl asked to audit Discord profile parity after PR #12 and fix only clear proven
 Owl: keep working profiles until Discord 1:1; prioritize High gaps from profile-system-review; incorporate PR #21; stacked PRs OK; do not merge until Owl says.
 
 Agent: Expanded cursor/profile-games-widget-fix-21d4 with server badges/activity/wishlist + client Discord editor chrome, board cards, Save/Cancel media, full preview. Updating review doc and PR #21.
+
+## 2026-11-04 00:43:33 -06:00 — BA-62 remaining four gaps
+
+Owl: keep going until Discord 1:1; finish custom status in presence, Main vs server switch, clickable connections, richer animation/box art. Update living review. Same PR stack #21.
+
+Agent: Implemented all four on cursor/profile-games-widget-fix-21d4 and pushing.

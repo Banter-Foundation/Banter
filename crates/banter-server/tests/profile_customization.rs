@@ -390,3 +390,15 @@ async fn profile_text_limits_match_discord_style_caps() {
         BanterError::InvalidProfile
     );
 }
+
+#[test]
+fn presence_snapshot_carries_custom_status() {
+    use banter_server::Live;
+    let live = Live::new();
+    live.connect(7, 0, Some("Favorite NPC companion?".into()));
+    let snap = live.presence_snapshot(7);
+    assert_eq!(snap.state, banter_server::Presence::Online);
+    assert_eq!(snap.custom_status.as_deref(), Some("Favorite NPC companion?"));
+    live.set_custom_status(7, None);
+    assert_eq!(live.presence_snapshot(7).custom_status, None);
+}
