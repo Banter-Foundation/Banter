@@ -4,9 +4,13 @@
 //! software path on both operating systems. A hardware encoder that answers
 //! with a different profile is dropped for that layer.
 
+#[cfg(target_os = "linux")]
 use std::process::{Child, ChildStdin, Command, Stdio};
+#[cfg(target_os = "linux")]
 use std::sync::{Arc, Mutex};
+#[cfg(target_os = "linux")]
 use std::thread::{self, JoinHandle};
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
 use banter_server::LayerId;
@@ -23,7 +27,9 @@ const STREAM_AUDIO_BPS: i32 = 64_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
     Software,
+    #[cfg(target_os = "linux")]
     Nvenc,
+    #[cfg(target_os = "linux")]
     Vaapi,
     #[cfg_attr(not(windows), allow(dead_code))]
     MediaFoundation,
@@ -33,7 +39,9 @@ impl Backend {
     pub fn label(self) -> &'static str {
         match self {
             Self::Software => "openh264",
+            #[cfg(target_os = "linux")]
             Self::Nvenc => "nvenc",
+            #[cfg(target_os = "linux")]
             Self::Vaapi => "vaapi",
             Self::MediaFoundation => "media foundation",
         }
@@ -484,6 +492,8 @@ fn try_hardware(screen: bool, width: u32, height: u32, fps: f32, bps: u32) -> Op
     None
 }
 
+/// Linux NVENC/VAAPI path via ffmpeg. Windows uses Media Foundation instead.
+#[cfg(target_os = "linux")]
 fn ffmpeg_has_encoder(name: &str) -> bool {
     let Ok(output) = Command::new("ffmpeg").args(["-hide_banner", "-encoders"]).output() else {
         return false;
@@ -491,12 +501,14 @@ fn ffmpeg_has_encoder(name: &str) -> bool {
     String::from_utf8_lossy(&output.stdout).contains(name)
 }
 
+#[cfg(target_os = "linux")]
 fn nvidia_encode_present() -> bool {
     std::path::Path::new("/usr/lib/libnvidia-encode.so").exists()
         || std::path::Path::new("/usr/lib64/libnvidia-encode.so").exists()
         || Command::new("ldconfig").arg("-p").output().ok().is_some_and(|output| String::from_utf8_lossy(&output.stdout).contains("libnvidia-encode"))
 }
 
+#[cfg(target_os = "linux")]
 struct FfmpegEncoder {
     backend: Backend,
     child: Child,
@@ -511,6 +523,7 @@ struct FfmpegEncoder {
     name: &'static str,
 }
 
+#[cfg(target_os = "linux")]
 impl FfmpegEncoder {
     fn open(name: &'static str, backend: Backend, screen: bool, width: u32, height: u32, fps: f32, bps: u32) -> Result<Self, String> {
         let mut command = Command::new("ffmpeg");
@@ -574,6 +587,7 @@ impl FfmpegEncoder {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Drop for FfmpegEncoder {
     fn drop(&mut self) {
         self.stdin.take();
@@ -585,6 +599,7 @@ impl Drop for FfmpegEncoder {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl VideoEncoder for FfmpegEncoder {
     fn backend(&self) -> Backend {
         self.backend

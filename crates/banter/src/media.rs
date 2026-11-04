@@ -1182,7 +1182,8 @@ fn screen_loop(
     let mut next_encode = Instant::now();
     let mut failed: Option<StreamPick> = None;
     let mut keyed: Option<(u32, u32)> = None;
-    #[cfg_attr(not(target_os = "linux"), allow(unused_variables, unused_assignments))]
+    // Only the Linux Cast feed reads this; Record/Still never need a cast timeout.
+    #[cfg(target_os = "linux")]
     let mut cast_since: Option<Instant> = None;
     while !stop.load(Ordering::Relaxed) {
         let state = unpack(flags.load(Ordering::Relaxed));
@@ -1193,7 +1194,10 @@ fn screen_loop(
             latest = None;
             fresh = false;
             failed = None;
-            cast_since = None;
+            #[cfg(target_os = "linux")]
+            {
+                cast_since = None;
+            }
             thread::sleep(Duration::from_millis(40));
             continue;
         };
@@ -1203,7 +1207,10 @@ fn screen_loop(
             feed = None;
             latest = None;
             fresh = false;
-            cast_since = None;
+            #[cfg(target_os = "linux")]
+            {
+                cast_since = None;
+            }
             if failed == Some(pick) {
                 thread::sleep(Duration::from_millis(100));
                 continue;
@@ -1211,7 +1218,10 @@ fn screen_loop(
             match open_feed(pick, &stream_target, &stop, edge, interval) {
                 Ok(Some(opened)) => {
                     failed = None;
-                    cast_since = Some(Instant::now());
+                    #[cfg(target_os = "linux")]
+                    {
+                        cast_since = Some(Instant::now());
+                    }
                     feed = Some((pick, opened));
                     next_encode = Instant::now();
                     keyed = None;

@@ -815,9 +815,14 @@ Owl: hard crash `A DrawListMut is already in use for this draw list`; fix ASAP; 
 
 Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-drawlist-fix` on `cursor/drawlist-mut-panic-e31e`. Scoping nested window draw-list acquires in ui.rs and board.rs.
 
+## 2026-11-04 01:20:36 -06:00 — Clear media unused-code warnings (BA-68)
+
+Owl pasted cargo warnings: cast_since unused_assignments in media.rs; encode.rs dead_code for Backend::Nvenc/Vaapi, ffmpeg_has_encoder, nvidia_encode_present, FfmpegEncoder/open. Separate worktree; rebase onto latest main; gh CLI for PR; do not merge.
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-media-warnings` on `cursor/media-unused-warnings-25a9`. Linux-gated cast_since and ffmpeg HW encode path; opening PR for review.
+
 ## 2026-11-04 01:21:17 -06:00 — Version-1-test-7 ship done
 
 Owl: pre-release from tip of main; Win+Linux; GHCR; docs; gh CLI.
 
 Agent: Published Version-1-test-7 at https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-7. Image ghcr.io/snowedinowl/banter:version-1-test-7 (+ latest). Merge #27 SHA 83d5588; tagged tip 537e1e3.
-
