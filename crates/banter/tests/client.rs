@@ -6,10 +6,11 @@ use banter::{
     CameraChoice, CaptureKind, Client, MuteMemory, ScreenShare, SettingsSection, StreamDefaults, StreamFps,
     StreamResolution, VoicePrefs, camera_preview_mirrored, default_stream_fps, default_stream_resolution,
     discord_shell_columns, either_key_held, encode_jpeg_rgba, encode_jpeg_rgba_quality, equal_power_gains, fps_block,
-    hardware_encoder_block, load_json, load_token, mic_opus_frame, mirror_rgba, mix_equal_power, open_mic_should_send,
-    password_blocks_copy, password_is_masked, push_to_talk_held, rasterize_lucide, remove_message, resample_mono_i16,
-    resolution_block, save_json, save_token, settings_sections, speaking_from_level, stamp_cursor, stream_frame_rates,
-    stream_frame_size, stream_interval_ms, stream_max_edge, stream_resolutions, upsert_message, websocket_url,
+    hardware_encoder_block, load_json, load_token, mic_opus_frame, mirror_rgba, mix_equal_power, open_dm_peer_after_friend_add,
+    open_mic_should_send, password_blocks_copy, password_is_masked, push_to_talk_held, rasterize_lucide, remove_message,
+    resample_mono_i16, resolution_block, save_json, save_token, settings_sections, speaking_from_level, stamp_cursor,
+    stream_frame_rates, stream_frame_size, stream_interval_ms, stream_max_edge, stream_resolutions, upsert_message,
+    websocket_url,
 };
 use banter_server::{
     ChannelKind, ChatTarget, ClientSignal, LayerId, MediaKind, MediaPlace, Message, ServerEvent, VoiceFlags, sdp_fixture,
@@ -553,5 +554,55 @@ fn avatar_crop_covers_the_center_and_zooms_in() {
 
     let panned = banter::crop_avatar_rgba(4, 2, &rgba, 2.0, 1.0, 0.0, 2);
     assert_eq!(panned[0], 40);
+}
+
+#[test]
+fn adding_a_friend_opens_their_dm_when_they_are_friends() {
+    let friends = [(9_i64, "bob"), (4, "cam")];
+    assert_eq!(open_dm_peer_after_friend_add(friends, "Bob"), Some(9));
+    assert_eq!(open_dm_peer_after_friend_add(friends, "  cam "), Some(4));
+    assert_eq!(open_dm_peer_after_friend_add(friends, "nobody"), None);
+    assert_eq!(open_dm_peer_after_friend_add(friends, ""), None);
+    assert_eq!(open_dm_peer_after_friend_add([], "bob"), None);
+}
+
+#[test]
+fn accepting_a_friend_then_opening_their_dm_works() {
+    let dir = std::env::temp_dir().join(format!(
+        "banter-friend-dm-store-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let store = banter_server::Store::open(&dir).unwrap();
+    let ada = store.register("ada", "Ada", "password1").unwrap();
+    let bob = store.register("bob", "Bob", "password1").unwrap();
+    let request = store.send_friend_request(ada.id, "bob").unwrap();
+    assert_eq!(
+        open_dm_peer_after_friend_add(
+            store
+                .friends(bob.id)
+                .unwrap()
+                .iter()
+                .map(|friend| (friend.id, friend.username.as_str())),
+            &request.from_username,
+        ),
+        None,
+        "pending requests must not open a DM"
+    );
+    store.accept_friend_request(bob.id, request.id).unwrap();
+    let friends = store.friends(bob.id).unwrap();
+    let peer = open_dm_peer_after_friend_add(
+        friends.iter().map(|friend| (friend.id, friend.username.as_str())),
+        &request.from_username,
+    )
+    .expect("accepting a friend should yield a DM peer");
+    let chat = store.open_dm(bob.id, peer).unwrap();
+    assert_eq!(chat.peer_id, ada.id);
+    assert_eq!(chat.peer_username, "ada");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 

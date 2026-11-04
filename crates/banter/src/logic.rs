@@ -1018,3 +1018,19 @@ pub fn crop_window(width: u32, height: u32, zoom: f32, pan_x: f32, pan_y: f32) -
     let slack_y = (height as f32 - window).max(0.0);
     Some((slack_x * 0.5 + pan_x * slack_x * 0.5, slack_y * 0.5 + pan_y * slack_y * 0.5, window))
 }
+
+/// After a friend-add succeeds and the friends list is refreshed, return the peer
+/// id whose DM should open. Pending-only requests leave the peer off the list.
+pub fn open_dm_peer_after_friend_add<'a>(
+    friends: impl IntoIterator<Item = (i64, &'a str)>,
+    peer_username: &str,
+) -> Option<i64> {
+    let want = peer_username.trim().to_ascii_lowercase();
+    if want.is_empty() {
+        return None;
+    }
+    friends
+        .into_iter()
+        .find(|(_, username)| username.eq_ignore_ascii_case(&want))
+        .map(|(id, _)| id)
+}

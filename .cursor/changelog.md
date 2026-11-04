@@ -191,3 +191,8 @@ Restyled the Screen Share / Go Live picker to match Discord’s Stream Select: d
 
 Starting or accepting a DM call now replaces that conversation's chat stage with a Discord-like call view. Ringing shows a large peer avatar, status text, and Accept/Decline; an active call shows two participant tiles and the shared call control bar. Theme helpers and tests cover when the stage opens and the ringing layout. Stage disconnect ends a call as well as leaving voice. Never touched E:.
 
+
+## 2026-11-03 19:26:23 -06:00 [Winter] — Auto-open DM when adding a friend
+
+When a friendship becomes active (accept an incoming request, or send a username that completes a mutual pending request), the client opens that friend's DM. Pending-only sends stay on Add Friend. Helper `open_dm_peer_after_friend_add` decides the peer after the friends list refreshes. Never touched E:.
+
