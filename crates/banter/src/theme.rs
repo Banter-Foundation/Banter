@@ -90,6 +90,12 @@ pub const RAIL_SEPARATOR_W: f32 = 32.0;
 pub const RAIL_SEPARATOR_H: f32 = 2.0;
 pub const RAIL_PILL_W: f32 = 4.0;
 
+// Reddit-style comment threads in text chat / DMs.
+pub const COMMENT_INDENT: f32 = 24.0;
+pub const COMMENT_MAX_VISUAL_DEPTH: u32 = 12;
+pub const COMMENT_COLLAPSE_W: f32 = 18.0;
+pub const COMMENT_THREAD_LINE: [f32; 4] = hex(0x4E5058);
+
 // Channel list.
 pub const CHANNEL_ROW_H: f32 = 32.0;
 pub const CHANNEL_ROW_GAP: f32 = 2.0;

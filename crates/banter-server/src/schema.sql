@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS board_assets (
 
 CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm ON messages(dm_id, id);
+CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON messages(reply_to);
 CREATE INDEX IF NOT EXISTS idx_mentions_user ON mentions(user_id, read_at);
 CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);

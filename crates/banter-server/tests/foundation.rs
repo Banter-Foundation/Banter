@@ -644,6 +644,83 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
 }
 
 #[tokio::test]
+async fn messages_persist_nested_reply_threads() {
+    let dir = scratch();
+    let store = open_store_at(&dir).await;
+    let ada = store.register("ada", "Ada", "password1").await.unwrap();
+    let bob = store.register("bob", "Bob", "password1").await.unwrap();
+    let home = store.create_server(ada.id, "Threads").await.unwrap();
+    let text_id = home.categories[0].channels[0].id;
+    let code = store.create_invite(ada.id, home.server.id).await.unwrap();
+    store.join_invite(bob.id, &code).await.unwrap();
+
+    let root = store
+        .send_message(ada.id, ChatTarget::Channel(text_id), "root", None, &[])
+        .await
+        .unwrap();
+    let child = store
+        .send_message(
+            bob.id,
+            ChatTarget::Channel(text_id),
+            "child",
+            Some(root.id),
+            &[],
+        )
+        .await
+        .unwrap();
+    let grand = store
+        .send_message(
+            ada.id,
+            ChatTarget::Channel(text_id),
+            "grand",
+            Some(child.id),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(child.reply_to, Some(root.id));
+    assert_eq!(grand.reply_to, Some(child.id));
+
+    let request = store.send_friend_request(ada.id, "bob").await.unwrap();
+    store.accept_friend_request(bob.id, request.id).await.unwrap();
+    let dm = store.open_dm(ada.id, bob.id).await.unwrap();
+    let dm_root = store
+        .send_message(ada.id, ChatTarget::Direct(dm.id), "dm root", None, &[])
+        .await
+        .unwrap();
+    let dm_reply = store
+        .send_message(
+            bob.id,
+            ChatTarget::Direct(dm.id),
+            "dm nested",
+            Some(dm_root.id),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(dm_reply.reply_to, Some(dm_root.id));
+
+    drop(store);
+    let store = open_store_at(&dir).await;
+    let channel = store
+        .messages(bob.id, ChatTarget::Channel(text_id), 100)
+        .await
+        .unwrap();
+    let by_id = |id: i64| channel.iter().find(|m| m.id == id).unwrap();
+    assert_eq!(by_id(root.id).reply_to, None);
+    assert_eq!(by_id(child.id).reply_to, Some(root.id));
+    assert_eq!(by_id(grand.id).reply_to, Some(child.id));
+    let direct = store
+        .messages(ada.id, ChatTarget::Direct(dm.id), 100)
+        .await
+        .unwrap();
+    assert_eq!(
+        direct.iter().find(|m| m.id == dm_reply.id).unwrap().reply_to,
+        Some(dm_root.id)
+    );
+}
+
+#[tokio::test]
 async fn voice_channel_is_drop_in_and_routes_media() {
     let store = open_store().await.0;
     let ada = store.register("ada", "Ada", "password1").await.unwrap();
