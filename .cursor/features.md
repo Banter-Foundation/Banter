@@ -8,7 +8,7 @@
 - [*] Text and voice channels in categories
 - [*] Send, reply, edit, delete, attach a file, and search. Rows show a round avatar, a local time, grouped follow-ups, and a hover toolbar.
 - [*] Drop-in voice with mute, deafen, push-to-talk, camera, and screen share. Voice & Video settings and stream quality drive the engine and are saved on this PC.
-- [*] 1:1 direct messages that can start a call
+- [*] 1:1 direct messages that can start a call. Starting or accepting a call opens a Discord-style call stage in that DM (large avatar while ringing, two tiles when active, shared call controls).
 - [*] Presence and mentions
 - [*] GLFW + OpenGL window with Dear ImGui docking
 - [*] Developer settings: Local (`127.0.0.1:3970`) or Remote host, persisted in `dev-server.json`

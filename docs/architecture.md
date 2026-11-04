@@ -17,7 +17,7 @@ Banter/
 | --- | --- |
 | `main.rs` | Entry → `banter::run()` |
 | `platform.rs` | GLFW window, OpenGL 3.3 context, Dear ImGui docking + glow renderer, clipboard, input, embedded-server bootstrap |
-| `ui.rs` | Signed-in Discord-like shell, sign-in/register, modals, chat, voice stage, friends/DMs |
+| `ui.rs` | Signed-in Discord-like shell, sign-in/register, modals, chat, voice stage, 1:1 DM call stage, friends/DMs |
 | `theme.rs` | Skin metrics and colors (temporary Discord dark theme) |
 | `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |
 | `settings.rs` | User Settings rules and `SettingsState` (layout, mic test, keybinds) — kept drawable-free for unit tests |

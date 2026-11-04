@@ -122,6 +122,8 @@ pub const CALL_BAR_H: f32 = 96.0;
 pub const TILE_GAP: f32 = 8.0;
 pub const TILE_RADIUS: f32 = 8.0;
 pub const TILE_AVATAR: f32 = 80.0;
+/// Large peer avatar while a 1:1 DM call is ringing (Discord-style center stage).
+pub const CALL_RING_AVATAR: f32 = 120.0;
 
 // Floating surfaces.
 pub const TOOLTIP_PAD_X: f32 = 12.0;
@@ -212,6 +214,27 @@ pub struct TileGrid {
     pub rows: usize,
     pub tile_w: f32,
     pub tile_h: f32,
+}
+
+/// Whether the DM stage should show the one-on-one call view instead of the chat.
+///
+/// Only the conversation that owns the call replaces the stage; other DMs and Home stay as chat.
+pub fn dm_call_takes_stage(call_dm_id: Option<i64>, viewing_dm_id: Option<i64>) -> bool {
+    match (call_dm_id, viewing_dm_id) {
+        (Some(call), Some(place)) => call == place,
+        _ => false,
+    }
+}
+
+/// Participant tiles for an active 1:1 call (caller and callee). Ringing uses the large avatar layout.
+pub fn dm_call_participant_tiles(active: bool) -> usize {
+    if active { 2 } else { 0 }
+}
+
+/// Center of the large peer avatar while a 1:1 call is ringing, above the control bar.
+pub fn call_ring_avatar_center(origin: [f32; 2], width: f32, height: f32, bar_h: f32) -> [f32; 2] {
+    let usable_h = (height - bar_h).max(0.0);
+    [origin[0] + width * 0.5, origin[1] + usable_h * 0.42]
 }
 
 /// The column count that gives the largest 16:9 tiles inside the stage.

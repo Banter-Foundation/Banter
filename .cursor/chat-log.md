@@ -492,7 +492,6 @@ Agent: Branched test/owl-fixes from origin/main @ 89f41b0 via worktree Banter-ow
 
 Shared integration branch ready; sibling agents merge into test/owl-fixes, not main.
 
-
 ## 2026-11-03 19:23:32 -06:00 — Stream Select UI like Discord (BA-39)
 
 Owl (via coordinator): Stream Select UI still sucks — make it look like Discord. D:\Projects\Project Banter. Never E:. Branch from test/owl-fixes, merge into test/owl-fixes only. UI-only if possible. Clear commits. Worktree under Project Banter/worktrees/.
@@ -502,3 +501,14 @@ Agent: Rewrote draw_share to a Discord-style overlay card (underline tabs, thumb
 ## Summary
 
 Stream Select picker now matches Discord’s Go Live chrome; landed on test/owl-fixes only.
+
+## 2026-11-03 19:24:57 -06:00 — Add Discord-like 1:1 call UI when calling
+
+Owl test item: call doesn't bring up the one-on-one call UI. Add Discord-like 1:1 call UI when calling. D:\Projects\Project Banter. Never E:. Branch from test/owl-fixes, merge into test/owl-fixes only. Clear commits. Worktree under Project Banter/worktrees/.
+
+Agent: Worktree Banter-call-ui on cursor/one-on-one-call-ui-5038 from origin/test/owl-fixes. Wrote theme tests first (dm_call_takes_stage, dm_call_participant_tiles, call_ring_avatar_center). Implemented draw_call_stage: ringing avatar + Accept/Decline, active two-tile grid, CALL_BG header, hide members/search. start/accept/Call events open the DM. Stage disconnect uses end_voice_or_call. Theme 19 passed; cargo check -p banter ok. Rebased onto test/owl-fixes after Stream Select landed.
+
+## Summary
+
+DM Call phone action now shows a Discord-style 1:1 call stage instead of staying on chat.
+
