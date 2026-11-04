@@ -1116,3 +1116,71 @@ fn data_dir_prefers_banter_data_then_platform_home() {
         PathBuf::from("AppData").join("Local").join("Banter")
     );
 }
+
+#[test]
+fn user_profile_visible_to_self_friends_and_shared_server() {
+    let store = Store::open(&scratch()).unwrap();
+    let ada = store.register("ada", "Ada Lovelace", "password1").unwrap();
+    let bob = store.register("bob", "Bob", "password1").unwrap();
+    let cam = store.register("cam", "Cam", "password1").unwrap();
+    let stranger = store.register("stranger", "Stranger", "password1").unwrap();
+
+    let self_profile = store.user_profile(ada.id, ada.id, None).unwrap();
+    assert_eq!(self_profile.id, ada.id);
+    assert_eq!(self_profile.username, "ada");
+    assert_eq!(self_profile.display_name, "Ada Lovelace");
+    assert!(!self_profile.has_avatar);
+    assert_eq!(self_profile.avatar_rev, 0);
+    assert!(self_profile.is_self);
+    assert!(!self_profile.is_friend);
+    assert_eq!(self_profile.nickname, None);
+
+    assert_eq!(
+        store.user_profile(ada.id, bob.id, None).unwrap_err(),
+        BanterError::NotFound
+    );
+    assert_eq!(
+        store.user_profile(ada.id, stranger.id, None).unwrap_err(),
+        BanterError::NotFound
+    );
+
+    let req = store.send_friend_request(ada.id, "bob").unwrap();
+    store.accept_friend_request(bob.id, req.id).unwrap();
+    let friend = store.user_profile(ada.id, bob.id, None).unwrap();
+    assert_eq!(friend.id, bob.id);
+    assert_eq!(friend.username, "bob");
+    assert_eq!(friend.display_name, "Bob");
+    assert!(!friend.is_self);
+    assert!(friend.is_friend);
+    assert_eq!(friend.nickname, None);
+    assert!(store.user_profile(bob.id, ada.id, None).unwrap().is_friend);
+
+    let home = store.create_server(ada.id, "Owls").unwrap();
+    let server_id = home.server.id;
+    let code = store.create_invite(ada.id, server_id).unwrap();
+    store.join_invite(cam.id, &code).unwrap();
+    store.set_nickname(cam.id, server_id, Some("Night Owl")).unwrap();
+
+    let member = store.user_profile(ada.id, cam.id, None).unwrap();
+    assert_eq!(member.id, cam.id);
+    assert!(!member.is_friend);
+    assert!(!member.is_self);
+    assert_eq!(member.nickname, None);
+
+    let nicknamed = store.user_profile(ada.id, cam.id, Some(server_id)).unwrap();
+    assert_eq!(nicknamed.nickname.as_deref(), Some("Night Owl"));
+    assert_eq!(nicknamed.display_name, "Cam");
+
+    assert_eq!(
+        store.user_profile(stranger.id, cam.id, Some(server_id)).unwrap_err(),
+        BanterError::NotMember
+    );
+    assert_eq!(
+        store.user_profile(ada.id, stranger.id, Some(server_id)).unwrap_err(),
+        BanterError::NotFound
+    );
+    assert_eq!(
+        store.user_profile(ada.id, cam.id, Some(server_id + 99)).unwrap_err(),
+        BanterError::NotMember
+    );
+}
