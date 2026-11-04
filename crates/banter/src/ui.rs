@@ -28,10 +28,10 @@ use crate::logic::{
     MuteMemory, ScreenShare, ServerTarget, SettingsSection, StreamDefaults, StreamFps, StreamResolution, VideoPrefs,
     VoicePrefs, api_base_for, camera_preview_mirrored, channel_context_menu, clamp_context_menu_pos, clamp_window_size,
     comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution, discord_shell_columns,
-    encode_jpeg_rgba, fps_block, fps_from_key, fps_key, hardware_encoder_block, insert_mention, lerp_size, load_json,
-    local_api_base, member_context_menu, message_context_menu, mirror_rgba, password_blocks_copy, password_is_masked,
-    push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key, save_json,
-    speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
+    encode_jpeg_rgba, fps_block, fps_from_key, fps_key, grouped_mix_sources, hardware_encoder_block, insert_mention,
+    lerp_size, load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, password_blocks_copy,
+    password_is_masked, push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key,
+    save_json, speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
     stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message, chat_date_separator,
     chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day, window_size_label,
     window_size_presets, OPEN_MIC_RMS,
@@ -6481,30 +6481,40 @@ impl App {
     fn draw_audio_sources(&mut self, ui: &Ui, width: f32) {
         self.ensure_audio_devices();
         settings_form_label(ui, self.bold_font, "STREAM AUDIO");
-        ui.text_colored(MUTED, "Turn on every app or device to mix into the stream. Each one has its own volume.");
+        ui.text_colored(
+            MUTED,
+            "Turn on every app or device to mix into the stream. Each one has its own volume.",
+        );
         settings_spacer(ui);
-        let count = self.stream.sources.len();
-        if count == 0 {
+        let groups = grouped_mix_sources(&self.stream.sources);
+        if groups.is_empty() {
             ui.text_colored(MUTED, "No audio sources were found.");
+            return;
         }
-        for index in 0..count {
-            let mut enabled = self.stream.sources[index].enabled;
-            let name = self.stream.sources[index].name.clone();
-            let id = self.stream.sources[index].id.clone();
-            if settings_toggle_row(ui, &format!("src-{id}"), &name, &mut enabled, width) {
-                self.stream.sources[index].enabled = enabled;
-                self.save_stream();
-            }
-            if enabled {
-                let mut volume = self.stream.sources[index].volume;
-                let release = settings_volume_slider(ui, &format!("vol-{id}"), &mut volume, width);
-                self.stream.sources[index].volume = volume;
-                if release {
-                    self.save_stream();
-                }
+        for (group_index, (group, indices)) in groups.into_iter().enumerate() {
+            if group_index > 0 {
                 settings_spacer(ui);
             }
-            settings_divider(ui, width);
+            settings_form_label(ui, self.bold_font, group.label());
+            for index in indices {
+                let mut enabled = self.stream.sources[index].enabled;
+                let name = self.stream.sources[index].name.clone();
+                let id = self.stream.sources[index].id.clone();
+                if settings_toggle_row(ui, &format!("src-{id}"), &name, &mut enabled, width) {
+                    self.stream.sources[index].enabled = enabled;
+                    self.save_stream();
+                }
+                if enabled {
+                    let mut volume = self.stream.sources[index].volume;
+                    let release = settings_volume_slider(ui, &format!("vol-{id}"), &mut volume, width);
+                    self.stream.sources[index].volume = volume;
+                    if release {
+                        self.save_stream();
+                    }
+                    settings_spacer(ui);
+                }
+                settings_divider(ui, width);
+            }
         }
     }
 
