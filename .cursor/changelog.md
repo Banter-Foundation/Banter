@@ -410,10 +410,17 @@ dear-imgui-rs panics when two `DrawListMut` wrappers wrap the same window draw l
 - `ui.rs`: comment thread line, tool, profile view/customize/preview/banner/board/editor thumbs
 - `board.rs`: rect/sticky, image, file card, paint_poly fill before stroke helpers
 
+## 2026-11-04 01:20:36 -06:00 [Winter] — Clear media unused-code warnings (BA-68)
+
+Windows builds warned about Linux-only screen-cast timing and ffmpeg hardware encode paths that were still compiled in.
+
+- `media.rs`: gate `cast_since` (Cast feed start timeout) behind `cfg(target_os = "linux")` so non-Linux no longer assigns a never-read timer
+- `encode.rs`: keep NVENC/VAAPI `Backend` variants, `FfmpegEncoder`, and ffmpeg probe helpers behind `cfg(target_os = "linux")`; Windows still uses Media Foundation. Imports for those paths are Linux-only too
+- Verified: `cargo build -p banter` clean; `RUSTFLAGS=-Dwarnings cargo test -p banter --lib encode::tests` — 3 passed
+
 ## 2026-11-04 01:21:17 -06:00 [Winter] — Version-1-test-7 pre-release (BA-66)
 
 Shipped pre-release Version-1-test-7 from main `537e1e3` (Stay signed in PR #27 + docs retarget PR #28). Built Win+Linux clients/servers, pushed `ghcr.io/snowedinowl/banter:version-1-test-7` (+ `:latest`). Kept `cursor/ui-theme-layout-cf5e` / Banter-ui-theme. Never touched E:.
 
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-7
 - Assets: Banter-windows-version-1-test-7.zip, Banter-linux-version-1-test-7.zip, banter-server.exe, banter-server-linux
-
