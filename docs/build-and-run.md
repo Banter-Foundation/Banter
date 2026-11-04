@@ -119,7 +119,7 @@ Server foundation tests in `crates/banter-server/tests/foundation.rs` are the AP
 
 Full walkthrough: **[docker-setup.md](docker-setup.md)**.
 
-Image: **`ghcr.io/snowedinowl/banter`** (`version-1-test-9` for the current pre-release; older `version-1-test-1` … `version-1-test-8` tags stay). Server only — not the desktop app.
+Image: **`ghcr.io/snowedinowl/banter`**. Newest tag on GHCR is `version-1-test-8`. `version-1-test-9` is the current GitHub pre-release and was not pushed. Older `version-1-test-1` … `version-1-test-7` tags stay. Server only — not the desktop app.
 
 ```powershell
 cd "D:\Projects\Project Banter"

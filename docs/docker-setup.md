@@ -6,7 +6,7 @@ Image name: **`ghcr.io/snowedinowl/banter`** (owner must be lowercase; tags from
 
 **Production / release hosts:** use **Docker Compose v2** (`docker compose`) with [`scripts/deploy-hot-swap.sh`](../scripts/deploy-hot-swap.sh). Podman still works for local Postgres-only or image builds.
 
-## Status (2026-11-03 evening)
+## Status (2026-11-04)
 
 Where Arch server + release auto-deploy stand right now:
 
@@ -18,8 +18,8 @@ Where Arch server + release auto-deploy stand right now:
 | Repo Actions secrets | Set: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_PATH`, `GHCR_READ_TOKEN`, `GHCR_WRITE_TOKEN` |
 | GHCR package `banter` | **Not created yet** — every release `build-push` has failed before a successful push |
 | Server first boot / hot-swap via Actions | **Blocked** on a successful image push |
-| Latest Actions release tried | `Version-1-test-6` — login OK, push failed: *token does not match expected scopes* |
-| Manual Podman publish | `Version-1-test-9` / `ghcr.io/snowedinowl/banter:version-1-test-9` (+ `:latest`) from tip of `main` |
+| Latest Actions release tried | `Version-1-test-9` — GHCR login denied (`Get https://ghcr.io/v2/: denied`). Run `41882418018`. Same `GHCR_WRITE_TOKEN` scopes gap |
+| Manual image publish | Newest tag on `ghcr.io/snowedinowl/banter` is still `version-1-test-8` (+ `:latest` from that publish). `version-1-test-9` was built and not pushed (403 on that owner; org package create denied) |
 
 **Next step (human):** replace `GHCR_WRITE_TOKEN` (and ideally `GHCR_READ_TOKEN`) with a **classic** PAT that has both **`write:packages`** and **`read:packages`** so Actions can push like the manual Podman path. Fine-grained / read-only tokens produce the scopes error. Then re-run a failed workflow. Deploy job has not been reached yet via Actions; SSH secrets are untested until Actions push succeeds.
 

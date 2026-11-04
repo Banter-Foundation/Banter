@@ -473,3 +473,7 @@ Shipped pre-release Version-1-test-9. Older tags stay. Compose default remains `
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-9
 - Assets: Banter-windows-version-1-test-9.zip, Banter-linux-version-1-test-9.zip, banter-server.exe, banter-server-linux
 - `room::tests::voice_channel_sfu_delivers_audio_camera_and_screen` passed (microphone, camera, and screen RTP).
+
+## 2026-11-04 13:03:00 -0500 [ubuntu] — Version-1-test-9 image was not pushed
+
+The GitHub pre-release stayed as published. The server image was built and tagged `ghcr.io/snowedinowl/banter:version-1-test-9` and `:latest`, then both registries rejected the push (403 on `snowedinowl`; org package create denied for `banter-foundation`). Actions run `41882418018` failed at GHCR login. `:latest` on GHCR was not moved. Docs now name `version-1-test-8` as the newest image tag.
