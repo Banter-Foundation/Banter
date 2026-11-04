@@ -662,10 +662,128 @@ Agent: Merged PR #16 (startup) and PR #17 (docs retarget). Tagged Version-1-test
 
 Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
 
+
+## 2026-11-04 00:12:12 -06:00 — Fix server VC and peer screen/camera (BA-55)
+
+Owl reports Banter server voice is still broken: no VC audio between users; peers do not receive each others screen shares; peers do not receive each others camera feeds. Project root D:\Projects\Project Banter (NEVER touch E:). Repo https://github.com/SnowedInOwl/Banter. Work from latest main / Version-1-test-4.1 era. Prefer live multi-client repro. Prior voice/media work: WebRTC Opus + H.264 SFU, RID/SSRC mapping, DTX quiet frames, early ICE — but Owl says server path still fails for audio + video receive. Goals: reproduce 2+ clients; fix SFU/client so channel voice audio is heard and screen/camera tracks are received; open PR reviewable; merge only if Owl said (Owl did NOT); clear commits/docs; clean temp; report root cause, PR URL, how verified.
+
+Agent: Prior RID/OnOpen fixes were already on main. Root cause was SFU forwarding publisher SSRCs into forward tracks that negotiate different SSRCs — write_rtp silently drops them. Added rewrite_forward_rtp + tests + docs. PR opened; do not merge.
+
+## Summary
+
+SFU now rewrites outbound SSRC/PT (and strips extensions) so server VC audio + camera + screen can reach peers; PR for Owl review, not merged.
+
+## 2026-11-04 00:12:16 -06:00 — UI follows display refresh rate (BA-56)
+
+Owl wants Banter **UI only** to use a dynamic refresh rate (match the display / VSync to the monitor), not stream FPS and not related to the VC/media fix running in parallel.
+
+Project: D:\Projects\Project Banter (NEVER touch E:).
+Repo: https://github.com/SnowedInOwl/Banter
+Use a separate git worktree/branch under that folder so you do not collide with the Server VC media fix worker if it is also editing the main checkout.
+
+Task: UI follows display refresh rate (BA-56)
+Avoid overlapping uncommitted edits with other workers; own worktree.
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-ui-refresh` on `cursor/ui-display-refresh-bc78`. Tests first for display pick / swap reapply; platform reapplies `Sync(1)` when monitor Hz or VSync changes.
+
+## Summary
+
+BA-56 UI display refresh: GLFW VSync follows the current monitor dynamically; stream FPS untouched.
+
+
+## 2026-11-04 00:18:19 -06:00 — Group stream audio by channel and app (BA-59)
+
+Owl wants Banter stream audio sources organized into groups like audio channels and apps (or similar clear categories) in the Stream Select / stream options UI — not one flat checklist.
+
+Project: D:\Projects\Project Banter (NEVER touch E:). Repo: Banter. Use a separate git worktree/branch so you do not collide with parallel workers (VC media, UI refresh, Reddit replies, Postgres audit).
+
+Streaming rules: audio is checkable sources that can mix; settings live in the upward arrow next to stream.
+
+Implement:
+- Group enumerated capture/mix sources under sensible headers (e.g. Audio channels / system devices vs Apps / process loopback). Match Windows WASAPI realities.
+- Keep multi-select mix behavior.
+- Open PR; do not merge until Owl says so.
+- Report PR URL and how groups are labeled.
+
+Task: Group stream audio by channel and app (BA-59)
+
+Agent: Worktree D:\Projects\Project Banter\worktrees\Banter-stream-audio-groups on branch cursor/stream-audio-groups-19d2. Wrote failing client test first, then MixSourceGroup helpers in logic.rs and grouped draw_audio_sources in ui.rs. Labels: "Audio channels" and "Apps".
+
+## Summary
+
+Stream audio checklist grouped under Audio channels and Apps; PR opened, not merged.
+
+---
+## 2026-11-04 BA-57 Reddit-style reply threading
+
+Owl wants Banter text replies to work **exactly like Reddit** (1:1 Reddit comment UX as the baseline).
+
+Project: D:\Projects\Project Banter (NEVER touch E:).
+Repo: https://github.com/SnowedInOwl/Banter
+Use a **separate git worktree/branch** under that folder so you do not collide with parallel workers (Server VC media fix, UI display refresh rate).
+
+Context: /cursor/stores/self/docs/project-context.md
+Preferences: /cursor/stores/self/preferences.md
+Preference: plan one feature at a time for Owl unless parallel requested — Owl is OK with parallel agents right now; still keep scope to Reddit replies only.
+
+Implement Reddit-parity reply threading for text channels/DMs as appropriate:
+- Nested comment threads (reply to reply), indentation/tree like Reddit
+- Collapse/expand threads
+- Reply composer scoped to a parent comment
+- Persist parent/child relationships server-side; migrate DB as needed
+- Match Discord message row polish where it still applies for leaf posts, but threading behavior is Reddit-exact
+
+Open a PR with clear commits/docs. Do **not** merge until Owl says so.
+Report: PR URL, UX notes, API/schema changes, how to try it.
+
+Task: Reddit-style reply threading in chat (BA-57)
+
+### Summary (agent)
+Implemented on worktree `D:\Projects\Project Banter\worktrees\Banter-reddit-replies` branch `cursor/reddit-reply-threading-867a`. Reused existing `reply_to` parent pointer; added index; client DFS tree + collapse + inline composer. Did not merge.
+
+## 2026-11-04 00:24:59 -06:00 — Disable uploads with unavailable popup (BA-61)
+
+Owl: disable file uploads in Banter and replace the upload action with a popup that says exactly:
+
+Currently Unavailable
+
+Project: D:\Projects\Project Banter (NEVER touch E:).
+Separate worktree/branch; do not collide with other Banter workers.
+Repo: Banter.
+
+Implement:
+- All client entry points that attach/upload files (composer paperclip, drag-drop, paste-as-file if any, context menus) should not upload; show a modal/popup with that exact title/body text as Owl wrote (use that string as the message; keep UI consistent with existing Banter dialogs).
+- Prefer disabling client UX now; server can reject uploads too if trivial, but client popup is required.
+- Open PR; do not merge until Owl says so.
+- Report PR URL.
+
+Task: Disable uploads with unavailable popup (BA-61)
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-disable-uploads` on `cursor/disable-uploads-unavailable-95f7`. Composer attach opens `Modal::UploadsUnavailable` with message `Currently Unavailable`; submit path never sends file bytes. No drag-drop/paste/context-menu upload entry points existed. Server left alone to keep foundation attachment tests. PR https://github.com/Banter-Foundation/Banter/pull/24 (not merged).
+
+---
+## 2026-11-04 BA-63 Postgres punch list
+
+Owl said: go ahead and fix the Postgres punch-list items from the cutover audit. Audit: /cursor/stores/self/docs/postgres-cutover-audit.md. Project: D:\Projects\Project Banter (NEVER touch E:). Separate worktree/branch. Preferences: /cursor/stores/self/preferences.md. Context: /cursor/stores/self/docs/project-context.md. Implement punch-list 1–4 (required), and 5 if straightforward. Do not merge until Owl says so. Open a clear PR. Update the audit doc punch-list status. Task: Land Postgres cutover punch list (BA-63).
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-postgres-punchlist` on `cursor/postgres-cutover-punchlist-a4ce`. Added versioned migrate runner + `001_profile_customization`, docs/port/.env.example updates, Windows CI `--lib` note. Tests: migrations + profile 7/7 + foundation 18/18 on `BANTER_DATABASE_URL=…5433`. PR opened; not merged.
+
+### Summary
+- Critical gap closed: existing `banter-pg` volumes upgrade profile columns/tables on boot.
+- Local port conflict and stale `banter.db` docs fixed; `.env.example` shipped.
+
+---
+## 2026-11-04 BA-64 Settings as separate polished window
+
+Owl (via coordinator): Move User Settings into a dedicated GLFW/ImGui window so the main Banter window stays usable; polish settings chrome (layout, spacing, nav hierarchy); fix known overflow (My Account avatar buttons); closing settings must return focus cleanly with no stuck modal state. Do not hijack theme PR #2. Separate worktree/branch under D:\Projects\Project Banter. Never touch E:. Open PR; do not merge until Owl says so. Report PR URL + how to open/try the window.
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-settings-window` on `cursor/settings-separate-window-af13`. Implemented shared-context Banter Settings OS window, dual draw passes, chrome polish, avatar stack-on-narrow. Tests: `cargo test -p banter --test settings` 28 passed. PR opened; not merged.
+
+
+
 ## 2026-11-04 00:19:33 -06:00 — Profile system audit fix: games widget editor (BA-60)
 
 Owl asked to audit Discord profile parity after PR #12 and fix only clear proven defects. GamesInRotation/GamesILike editor rebuilt payload from JSON every frame so typing incomplete JSON reverted — structured title/tag rows instead. Audit report in Project store docs/profile-system-review.md.
-
 
 ## 2026-11-04 00:35:16 -06:00 — Finish Discord 1:1 profile parity (BA-62)
 

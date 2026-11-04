@@ -6,7 +6,7 @@ Prefer keeping the checkout and Cargo `target/` on `D:\Projects\Project Banter` 
 
 1. **Rust stable** (project has been built with 1.99.x).
 2. **Visual Studio Build Tools** with a C/C++ toolchain. Dear ImGui needs `cl.exe`. Open an **x64 Native Tools** / Developer PowerShell, or run `vcvars64.bat` before `cargo` — `cl.exe` is not on a plain PowerShell PATH.
-3. **PostgreSQL** reachable at `BANTER_DATABASE_URL` (default `postgres://banter:banter@127.0.0.1:5432/banter`). For local work: `podman compose up -d postgres` (or Docker Compose).
+3. **PostgreSQL** reachable at `BANTER_DATABASE_URL` (default `postgres://banter:banter@127.0.0.1:5432/banter`). For local work: `podman compose up -d postgres` (or Docker Compose). See **Local Postgres port** below when host `5432` is already taken.
 4. A display (GLFW opens a real window).
 
 ```powershell
@@ -16,6 +16,25 @@ cargo build -p banter-server
 ```
 
 Debug binaries land in `target\debug\banter.exe` and `target\debug\banter-server.exe`.
+
+## Local Postgres port
+
+Compose publishes Postgres on host port **`BANTER_PG_PORT`** (default **5432**). On machines where another Postgres already owns `5432` (common on Black-Birb), map Banter’s DB to a free port and point the app at the same host port:
+
+```powershell
+cd "D:\Projects\Project Banter"
+$env:BANTER_PG_PORT = "5433"
+podman compose up -d postgres
+# or: docker compose up -d postgres
+
+$env:BANTER_DATABASE_URL = "postgres://banter:banter@127.0.0.1:5433/banter"
+cargo run -p banter
+# or: cargo run -p banter-server
+```
+
+`BANTER_DATABASE_URL` must use the **host** port (`BANTER_PG_PORT`), not the container-internal `5432`. Inside Compose, app containers still talk to `postgres:5432` via the compose default URL. Copy `.env.example` to `.env` if you prefer file-based env (`.env` is gitignored).
+
+Boot applies `schema.sql` then versioned migrations under `crates/banter-server/src/migrations/` so existing `banter-pg` volumes pick up new columns/tables (for example profile customization) without a wipe.
 
 ## Run the desktop client (Windows)
 
@@ -86,11 +105,15 @@ Data: `$XDG_DATA_HOME/Banter` or `~/.local/share/Banter`. Speaker loopback and p
 ## Tests
 
 ```powershell
+# Needs Postgres at BANTER_DATABASE_URL (default 127.0.0.1:5432).
+# On Black-Birb with Tubecast on 5432, use 5433 as in Local Postgres port.
 cargo test -p banter-server
 cargo test -p banter
 ```
 
 Server foundation tests in `crates/banter-server/tests/foundation.rs` are the API contract — do not weaken them. Client coverage includes session, mute/deafen, push-to-talk, media helpers, settings layout rules, and theme metrics.
+
+**CI:** Linux Actions runs the full `banter-server` / `banter` suites against a `postgres:16` service. Windows Actions runs **`--lib` unit tests only** (no Postgres service), so sqlx/store integration contracts are Linux-only in CI.
 
 ## Container image (Podman / Docker)
 

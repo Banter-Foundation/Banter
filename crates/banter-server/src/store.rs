@@ -33,15 +33,13 @@ impl Store {
             .connect(database_url)
             .await
             .map_err(db_err)?;
+        // Greenfield: CREATE IF NOT EXISTS for the current tip schema.
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&pool)
             .await
             .map_err(db_err)?;
-        // Existing Local DBs created before badge_ids still need the column.
-        sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_ids TEXT NOT NULL DEFAULT '[]'")
-            .execute(&pool)
-            .await
-            .map_err(db_err)?;
+        // Existing volumes: versioned ALTER / new-table upgrades (see migrate.rs).
+        crate::migrate::apply(&pool).await?;
         Ok(Self {
             pool,
             root: root.to_path_buf(),

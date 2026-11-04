@@ -13,16 +13,18 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Create server, invite join, member list, server nickname | Working |
 | Text + voice channels in categories (owner creates) | Working |
 | Drawing board channels (shapes, stickies, images, files, realtime ops) | Working |
-| Send / reply / edit / delete / attach / search messages | Working |
+| Send / reply / edit / delete / search messages | Working |
+| Reddit-style reply threading (nested replies, collapse, inline composer) | Working — text channels + DMs; `reply_to` is the parent pointer |
+| Attach a file to a message (composer upload) | Disabled — popup **Currently Unavailable** (BA-61); existing attachments still downloadable |
 | Mentions + presence | Working |
 | Discord-like temporary skin (rail, sidebar, chat, members, modals) | Working — **not** final Banter branding |
-| Chat rows (avatar, grouping, hover toolbar, bottom-anchored history) | Working |
+| Chat rows (avatar, hover toolbar, bottom-anchored history; threaded tree layout) | Working |
 | Right-click context menus (messages, members/friends/DMs, channels) | Working — foundation actions only; no kick/ban/profiles |
-| Drop-in voice: mute, deafen, PTT, connection panel | Working (SFU audio forward + open-mic Opus timeline fixed 2026-11-03) |
-| Camera on/off with mirrored local RGBA preview (~720p prefer; device MJPEG OK) | Working (device-dependent); wire is WebRTC H.264; remotes receive after shared RID/SSRC SFU fix |
-| Screen share Go Live + quality / source switching | Working (WebRTC H.264 SFU/P2P; OpenH264 / hardware when available; remotes receive after RID/SSRC fix) |
+| Drop-in voice: mute, deafen, PTT, connection panel | Working (SFU rewrite outbound SSRC/PT on forward; open-mic Opus timeline) |
+| Camera on/off with mirrored local RGBA preview (~720p prefer; device MJPEG OK) | Working (device-dependent); wire is WebRTC H.264; remotes receive after RID map + forward SSRC rewrite |
+| Screen share Go Live + quality / source switching | Working (WebRTC H.264 SFU/P2P; remotes receive after RID map + forward SSRC rewrite) |
 | 1:1 DMs + start a call | Working — phone icon opens a Discord-style call stage (ringing avatar / two tiles when active) |
-| User Settings: My Account, Voice & Video, Developer (Local/Remote API, persisted) | Working |
+| User Settings: My Account, Voice & Video, Developer (Local/Remote API, persisted) in a dedicated Banter Settings OS window | Working |
 | Embedded + standalone server, PostgreSQL data | Working |
 | Containerized `banter-server` (`ghcr.io/snowedinowl/banter`) | Image/Dockerfile ready; **GHCR publish + release auto-deploy blocked** until classic PAT has `write:packages` (see [docker-setup.md](docker-setup.md) Status) |
 | Linux native client (XDG paths, PipeWire-ready capture) | Working; loopback/app audio still Windows-only |

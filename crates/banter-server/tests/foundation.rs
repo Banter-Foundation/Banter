@@ -644,6 +644,83 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
 }
 
 #[tokio::test]
+async fn messages_persist_nested_reply_threads() {
+    let dir = scratch();
+    let store = open_store_at(&dir).await;
+    let ada = store.register("ada", "Ada", "password1").await.unwrap();
+    let bob = store.register("bob", "Bob", "password1").await.unwrap();
+    let home = store.create_server(ada.id, "Threads").await.unwrap();
+    let text_id = home.categories[0].channels[0].id;
+    let code = store.create_invite(ada.id, home.server.id).await.unwrap();
+    store.join_invite(bob.id, &code).await.unwrap();
+
+    let root = store
+        .send_message(ada.id, ChatTarget::Channel(text_id), "root", None, &[])
+        .await
+        .unwrap();
+    let child = store
+        .send_message(
+            bob.id,
+            ChatTarget::Channel(text_id),
+            "child",
+            Some(root.id),
+            &[],
+        )
+        .await
+        .unwrap();
+    let grand = store
+        .send_message(
+            ada.id,
+            ChatTarget::Channel(text_id),
+            "grand",
+            Some(child.id),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(child.reply_to, Some(root.id));
+    assert_eq!(grand.reply_to, Some(child.id));
+
+    let request = store.send_friend_request(ada.id, "bob").await.unwrap();
+    store.accept_friend_request(bob.id, request.id).await.unwrap();
+    let dm = store.open_dm(ada.id, bob.id).await.unwrap();
+    let dm_root = store
+        .send_message(ada.id, ChatTarget::Direct(dm.id), "dm root", None, &[])
+        .await
+        .unwrap();
+    let dm_reply = store
+        .send_message(
+            bob.id,
+            ChatTarget::Direct(dm.id),
+            "dm nested",
+            Some(dm_root.id),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(dm_reply.reply_to, Some(dm_root.id));
+
+    drop(store);
+    let store = open_store_at(&dir).await;
+    let channel = store
+        .messages(bob.id, ChatTarget::Channel(text_id), 100)
+        .await
+        .unwrap();
+    let by_id = |id: i64| channel.iter().find(|m| m.id == id).unwrap();
+    assert_eq!(by_id(root.id).reply_to, None);
+    assert_eq!(by_id(child.id).reply_to, Some(root.id));
+    assert_eq!(by_id(grand.id).reply_to, Some(child.id));
+    let direct = store
+        .messages(ada.id, ChatTarget::Direct(dm.id), 100)
+        .await
+        .unwrap();
+    assert_eq!(
+        direct.iter().find(|m| m.id == dm_reply.id).unwrap().reply_to,
+        Some(dm_root.id)
+    );
+}
+
+#[tokio::test]
 async fn voice_channel_is_drop_in_and_routes_media() {
     let store = open_store().await.0;
     let ada = store.register("ada", "Ada", "password1").await.unwrap();
@@ -738,6 +815,37 @@ async fn voice_channel_is_drop_in_and_routes_media() {
     assert_eq!(live.voice_channel_members(lounge.id).len(), 1);
     live.leave_voice(ada.id);
     assert!(live.voice_channel_members(lounge.id).is_empty());
+}
+
+#[test]
+fn sfu_forward_rtp_rewrites_publisher_ssrc_for_write_rtp() {
+    // Forward tracks negotiate their own SSRCs. Cloning the publisher packet into
+    // write_rtp left the publisher SSRC in place; the sender rejected every packet
+    // (ErrSenderWithNoSSRCs / extension mismatch), so channel peers heard silence
+    // and never got camera or screen tiles. rewrite_forward_rtp stamps the outbound
+    // SSRC/PT and strips inbound header extensions before write_rtp.
+    let mut packet = rtc::rtp::Packet::default();
+    packet.header.ssrc = banter_server::USER_AUDIO_SSRC;
+    packet.header.payload_type = 42;
+    packet.header.extension = true;
+    packet.header.extensions = vec![rtc::rtp::header::Extension {
+        id: 1,
+        payload: bytes::Bytes::from_static(&[9]),
+    }];
+    packet.payload = bytes::Bytes::from_static(&[0xaa]);
+
+    let out = banter_server::rewrite_forward_rtp(packet, 0x8100_0100, banter_server::OPUS_PT);
+    assert_eq!(out.header.ssrc, 0x8100_0100);
+    assert_eq!(out.header.payload_type, banter_server::OPUS_PT);
+    assert!(out.header.extensions.is_empty());
+    assert!(!out.header.extension);
+
+    let mut video = rtc::rtp::Packet::default();
+    video.header.ssrc = banter_server::CAMERA_SSRC_Q + 2;
+    video.header.payload_type = banter_server::H264_PT;
+    let out_v = banter_server::rewrite_forward_rtp(video, 0x8100_0200, banter_server::H264_PT);
+    assert_eq!(out_v.header.ssrc, 0x8100_0200);
+    assert_ne!(out_v.header.ssrc, banter_server::CAMERA_SSRC_Q + 2);
 }
 
 #[tokio::test]
