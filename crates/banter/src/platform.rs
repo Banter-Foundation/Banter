@@ -240,9 +240,10 @@ pub(crate) fn ensure_local_server() -> Result<(), String> {
         return Ok(());
     }
     let data = banter_server::default_data_dir();
+    let database_url = banter_server::database_url();
     std::fs::create_dir_all(&data).map_err(|err| err.to_string())?;
     std::thread::spawn(move || {
-        if let Err(err) = banter_server::serve(addr, &data) {
+        if let Err(err) = banter_server::serve(addr, &data, &database_url) {
             eprintln!("Banter server: {err}");
         }
     });

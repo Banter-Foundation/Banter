@@ -7,7 +7,7 @@ Banter is a local desktop chat app with a Discord-like layout (temporary skin). 
 | Piece | Crate / binary | Role |
 | --- | --- | --- |
 | Desktop client | `banter` → `banter.exe` | GLFW window, OpenGL 3.3, Dear ImGui docking UI, media capture, HTTP + WebSocket client |
-| Local server | `banter-server` | Accounts, servers, channels, messages, files in SQLite; voice/calls/presence in memory; Axum HTTP + WebSocket |
+| Local server | `banter-server` | Accounts, servers, channels, messages in PostgreSQL; files under `BANTER_DATA`; voice/calls/presence in memory; Axum HTTP + WebSocket |
 
 The client talks to `http://127.0.0.1:3970` by default (Developer → Local). If nothing is listening there in Local mode, it starts an embedded `banter-server` in the background on that address. User Settings → Developer can switch to a Remote host (`host`, `host:port`, or `http(s)://…`); the choice is saved in `dev-server.json` under the data directory.
 
@@ -16,7 +16,7 @@ The client talks to `http://127.0.0.1:3970` by default (Developer → Local). If
 - **Language:** Rust (edition 2021). Workspace members: `crates/banter`, `crates/banter-server`.
 - **Window / GL:** `glfw` 0.63, OpenGL **3.3** core profile, `glow` 0.18.
 - **UI:** Dear ImGui **docking** branch via `dear-imgui-rs` 0.22 and `dear-imgui-glow` 0.22. `ConfigFlags::DOCKING_ENABLE` is set before the first frame.
-- **Server HTTP:** Axum 0.8 (REST + `/v1/ws`), Tokio, rusqlite (bundled SQLite).
+- **Server HTTP:** Axum 0.8 (REST + `/v1/ws`), Tokio, sqlx (PostgreSQL).
 - **Client media:** `cpal` (mic/speakers), `nokhwa` (camera), `xcap` (screen/window capture). WASAPI loopback / per-app audio are Windows-only.
 - **Icons:** Lucide SVGs under `crates/banter/assets/lucide`, rasterized at runtime.
 
@@ -32,7 +32,7 @@ The client talks to `http://127.0.0.1:3970` by default (Developer → Local). If
 
 Typical files under the data directory:
 
-- `banter.db` (+ WAL) — accounts, servers, channels, messages, attachments metadata
+- PostgreSQL (`BANTER_DATABASE_URL`) — accounts, servers, channels, messages, attachment metadata
 - `avatars/`, `files/` — blobs
 - `client-session.json` — last login token (shared across clients on this machine; last writer wins on next launch)
 - `voice.json`, `stream.json` — Voice & Video and Go Live preferences

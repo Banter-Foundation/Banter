@@ -1,0 +1,80 @@
+name: release-deploy
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/banter
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image tags
+        id: meta
+        run: |
+          raw="${{ github.event.release.tag_name }}"
+          tag="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-')"
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Release tag '$raw' → image $image:$tag"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:latest
+
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          BANTER_IMAGE: ${{ needs.build-push.outputs.image }}:${{ needs.build-push.outputs.image_tag }}
+          GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          GHCR_USER: ${{ github.repository_owner }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          envs: BANTER_IMAGE,GHCR_TOKEN,GHCR_USER,DEPLOY_PATH
+          script: |
+            set -euo pipefail
+            if [ -n "${DEPLOY_PATH:-}" ]; then
+              cd "$DEPLOY_PATH"
+            elif [ -d "$HOME/Banter" ]; then
+              cd "$HOME/Banter"
+            elif [ -d /opt/banter ]; then
+              cd /opt/banter
+            else
+              echo "Set repository secret DEPLOY_PATH to the Banter checkout on the server" >&2
+              exit 1
+            fi
+            git pull --ff-only || true
+            ./scripts/deploy-hot-swap.sh

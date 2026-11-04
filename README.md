@@ -1,6 +1,6 @@
 # Banter
 
-Local desktop chat. The window is GLFW and OpenGL 3.3. The interface is Dear ImGui from the docking branch (`dear-imgui-rs` 0.22). Accounts, servers, channels, messages, and files stay in SQLite after the app closes. Voice membership, calls, and presence are in memory and reset when the server process stops.
+Local desktop chat. The window is GLFW and OpenGL 3.3. The interface is Dear ImGui from the docking branch (`dear-imgui-rs` 0.22). Accounts, servers, channels, and messages stay in PostgreSQL after the app closes; uploaded files live under `BANTER_DATA`. Voice membership, calls, and presence are in memory and reset when the server process stops.
 
 **Docs for collaborators**
 
@@ -19,7 +19,7 @@ Local desktop chat. The window is GLFW and OpenGL 3.3. The interface is Dear ImG
 
 ### Windows
 
-Use a Visual Studio developer shell so `cl.exe` is available (SQLite and Dear ImGui compile C/C++):
+Use a Visual Studio developer shell so `cl.exe` is available (Dear ImGui compiles C/C++). PostgreSQL must be reachable (see [docs/docker-setup.md](docs/docker-setup.md)):
 
 ```
 cd "D:\Projects\Project Banter"

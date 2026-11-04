@@ -1,0 +1,4 @@
+# Public entry for Banter. Upstream is rewritten by scripts/deploy-hot-swap.sh.
+:3970 {
+	reverse_proxy banter-a:3970
+}

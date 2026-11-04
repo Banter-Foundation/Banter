@@ -1,8 +1,9 @@
 //! Local Banter server.
 //!
-//! Accounts, servers, channels, messages, and files are stored in SQLite and
-//! survive after the process exits. Voice membership, calls, and presence live
-//! in memory and reset when the server stops.
+//! Accounts, servers, channels, and messages live in PostgreSQL
+//! (`BANTER_DATABASE_URL`). Uploaded files stay under `BANTER_DATA` and survive
+//! after the process exits. Voice membership, calls, and presence live in
+//! memory and reset when the server stops.
 //!
 //! Deferred, and not implemented here: About Me, custom status, reactions,
 //! bold and italic, text chat inside a voice channel, group chats, roles,
@@ -30,6 +31,9 @@ pub use store::Store;
 
 pub const DEFAULT_ADDR: &str = "127.0.0.1:3970";
 
+/// Default Postgres URL for Local and bare-metal runs (Compose uses host `postgres`).
+pub const DEFAULT_DATABASE_URL: &str = "postgres://banter:banter@127.0.0.1:5432/banter";
+
 /// Address the server binary should bind.
 ///
 /// A non-empty command-line address wins. Otherwise a non-empty `BANTER_BIND`
@@ -51,12 +55,23 @@ fn present(value: Option<&str>) -> Option<&str> {
     value.filter(|text| !text.is_empty())
 }
 
-pub fn serve(addr: &str, data_dir: &std::path::Path) -> Result<(), BanterError> {
-    http::serve(addr, data_dir)
+pub fn serve(addr: &str, data_dir: &std::path::Path, database_url: &str) -> Result<(), BanterError> {
+    http::serve(addr, data_dir, database_url)
 }
 
 pub fn default_data_dir() -> std::path::PathBuf {
     resolve_data_dir(std::env::var("BANTER_DATA").ok().as_deref(), &platform_data_dir())
+}
+
+/// `BANTER_DATABASE_URL` wins when non-empty; otherwise [`DEFAULT_DATABASE_URL`].
+pub fn database_url() -> String {
+    resolve_database_url(std::env::var("BANTER_DATABASE_URL").ok().as_deref())
+}
+
+pub fn resolve_database_url(banter_database_url: Option<&str>) -> String {
+    present(banter_database_url)
+        .map(str::to_string)
+        .unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string())
 }
 
 /// `BANTER_DATA` wins when non-empty. Otherwise the platform home plus `Banter`.
