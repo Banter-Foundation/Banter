@@ -61,7 +61,7 @@ Auth and profile: `/v1/register`, `/v1/login`, `/v1/logout`, `/v1/me`, `/v1/user
 Presence (`/v1/presence` and WS `presence` events) includes `custom_status` alongside online/idle/offline.  
 Social: friends requests/list, presence, mentions.  
 Servers: create/list, invites, members, nickname, categories, channels, layout.  
-Chat: channel/DM messages, send/edit/delete, attachments.  
+Chat: channel/DM messages, send/edit/delete, attachments. Message `body` is BFMD source (plain text valid); client parses/renders styled runs (`bfmd` / `bfmd_paint`). Spec: [bfmd.md](bfmd.md).  
 Calls: DM call start/accept/decline/end.  
 Voice: join, leave, flags.  
 Realtime: `/v1/ws`.  

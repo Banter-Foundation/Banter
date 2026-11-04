@@ -41,16 +41,26 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 - **Email / 2FA / social login / passkeys:** designed in project notes, not the shipping local path yet.
 - **Roles / kick / ban / community badges:** decided in product notes, not implemented in this foundation pass.
 
+## Text formatting (BFMD)
+
+| Piece | Status |
+| --- | --- |
+| BFMD parse / serialize (v1 commands) | Working — `crates/banter/src/bfmd.rs` + tests |
+| Persist BFMD in message `body` | Working — plain text unchanged |
+| Message-row ImGui render (runs) | Working — bold/italic/underline/strike/size/color/bg/hr |
+| Composer B/I/U/S toolbar | Working — toggles whole draft (ImGui selection limited) |
+
+Authoritative language: [bfmd.md](bfmd.md). Not CommonMark.
+
 ## Deferred (options kept)
 
 From [foundation.md](foundation.md):
 
 - Reactions
-- Bold and italic
 - Text chat inside a voice channel
 - Group chats
 - Roles
 - Kick
 - Ban
 
-Messages are plain text. Channel and category mutations stay owner-only until roles exist.
+Message bodies are BFMD source (plain text is valid). Channel and category mutations stay owner-only until roles exist.

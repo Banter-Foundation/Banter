@@ -860,3 +860,15 @@ Report PR URL.
 
 ### Summary (agent)
 Visual clarity only on branch `cursor/clarify-reddit-replies-ui-adac`. Theme metrics + chat row chrome (guides, chevron fold, Reply link, accented inline composer). Did not merge.
+
+## 2026-11-04 08:04:53 +00:00 — Adopt BFMD for chat text formatting (BA-71)
+
+Owl: Implement BFMD for chat text formatting per docs/bfmd.md (Sickle-adapted); parser; persist BFMD body; ImGui render; composer bold/italic/underline; plain text stays valid; tests; clear commits; open PR with gh (no GitHub MCP); do not merge until Owl says so; report PR URL + v1 styles. Task BA-71. Black-Birb offline; work on cloud VM.
+
+Agent: Branch cursor/bfmd-chat-formatting-f6a3. Implemented bfmd parser/serializer, bfmd_paint for message rows, composer B/I/U/S with pending empty-draft flags, italic fonts, docs, and §12 tests. Opening PR for review; not merging.
+
+### Reasoning summary (BA-71)
+- Authoritative format is BFMD style-command language from Sickle, not CommonMark.
+- Persistence reuses existing message.body string; no schema migration.
+- Composer toggles whole draft because ImGui InputText selection APIs are limited in this stack.
+- v1 styles rendered: bold, italic, underline, strike, size, color, background, hr (plus parse for font/align/heading).

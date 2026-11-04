@@ -445,3 +445,13 @@ Visual-only clarity pass on Reddit-style reply threading already shipped in #22.
 - Clearer Reply: always-visible Reply link; accented inline composer (header, stripe, Cancel/Reply) vs bottom top-level bar hint strip
 - Spacing: root gap vs tighter nested gap; soft blurple wash on the active reply parent
 - Docs: design, features, architecture, feature-status
+
+## 2026-11-04 08:04:53 +00:00 [ubuntu] — Adopt BFMD for chat text formatting (BA-71)
+
+Implement BFMD v1 for Banter chat: parser/state machine, persist BFMD in message body (plain text still valid), ImGui run rendering, composer B/I/U/S toolbar, and §12 conformance tests. Not CommonMark.
+
+- `crates/banter/src/bfmd.rs` — parse, serialize, flag apply/toggle
+- `crates/banter/src/bfmd_paint.rs` — wrapped ImGui draw/measure for runs
+- `ui.rs` / `platform.rs` — message rows + format toolbar; italic/bold-italic fonts
+- `docs/bfmd.md` — in-repo copy of the Sickle-adapted spec
+- Tests: `crates/banter/tests/bfmd.rs` + unit tests in `bfmd.rs`

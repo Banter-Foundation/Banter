@@ -11,6 +11,7 @@ For a longer status table (what works, caveats, deferred), see [feature-status.m
 - Create a server, join by invite, member list, and a server nickname
 - Text and voice channels in categories
 - Send, reply, edit, delete, attach a file, and search
+- Chat text formatting via **BFMD** (style-command language adapted from Sickle — not CommonMark). See [bfmd.md](bfmd.md). Plain text bodies stay valid.
 - Drop-in voice with mute, deafen, push-to-talk, camera, and screen share
 - Voice media is Opus and simulcast H.264 over WebRTC. See [streaming.md](streaming.md)
 - 1:1 direct messages that can start a call
@@ -22,11 +23,10 @@ For a longer status table (what works, caveats, deferred), see [feature-status.m
 Still options. Not implemented, and not removed from the plan. Owl will decide later.
 
 - Reactions
-- Bold and italic
 - Text chat inside a voice channel
 - Group chats
 - Roles
 - Kick
 - Ban
 
-Messages are plain text. Channel and category changes are owner-only until roles exist. Voice-channel text is rejected by the server.
+Message bodies are BFMD source (plain text is valid BFMD). Channel and category changes are owner-only until roles exist. Voice-channel text is rejected by the server.
