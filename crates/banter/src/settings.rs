@@ -1,22 +1,52 @@
 //! User Settings rules: page layout, open and close, mic test, keybinds, and control units.
 //!
 //! Kept free of drawing so `tests/settings.rs` can check every rule without a window.
+//! User Settings opens in its own GLFW window so the main Banter window stays usable.
 
 use dear_imgui_rs::Key;
 
 use crate::logic::SettingsSection;
+
+/// OS window title for the dedicated User Settings window.
+pub const SETTINGS_WINDOW_TITLE: &str = "Banter Settings";
+/// Default client size for the settings window (wide enough for Discord-like nav + content).
+pub const SETTINGS_WINDOW_DEFAULT_W: i32 = 1280;
+pub const SETTINGS_WINDOW_DEFAULT_H: i32 = 800;
 
 /// Discord's settings sidebar list width.
 pub const SETTINGS_NAV_LIST_W: f32 = 218.0;
 /// Discord caps the settings content column at 740 px.
 pub const SETTINGS_CONTENT_MAX_W: f32 = 740.0;
 pub const SETTINGS_CLOSE_SIZE: f32 = 36.0;
+/// Top inset for nav labels, page titles, and the close control.
 pub const SETTINGS_TOP_PAD: f32 = 60.0;
+/// Extra gap under a nav section heading before its rows.
+pub const SETTINGS_NAV_HEADING_GAP: f32 = 8.0;
+/// Gap between nav section blocks (User Settings / Developer / Log Out).
+pub const SETTINGS_NAV_SECTION_GAP: f32 = 10.0;
+/// Inset from the nav column's right edge before the list starts shrinking.
+pub const SETTINGS_NAV_LIST_INSET: f32 = 20.0;
 const SETTINGS_PAD: f32 = 40.0;
 const SETTINGS_NARROW_PAD: f32 = 16.0;
 const SETTINGS_CLOSE_GAP: f32 = 18.0;
 const SETTINGS_CLOSE_COL: f32 = SETTINGS_CLOSE_GAP * 2.0 + SETTINGS_CLOSE_SIZE;
 const SETTINGS_MIN_CONTENT_W: f32 = 280.0;
+
+/// Default client size for a new Banter Settings window.
+pub fn settings_window_default_size() -> (i32, i32) {
+    (SETTINGS_WINDOW_DEFAULT_W, SETTINGS_WINDOW_DEFAULT_H)
+}
+
+/// Left edge of the nav list inside the nav column, right-aligned toward Discord's 218 px strip.
+pub fn settings_nav_list_x(nav_w: f32) -> f32 {
+    (nav_w - SETTINGS_NAV_LIST_W).max(0.0) + SETTINGS_NAV_LIST_INSET
+}
+
+/// Width of the scrollable nav list for a nav column of `nav_w`.
+pub fn settings_nav_list_w(nav_w: f32) -> f32 {
+    let list_x = settings_nav_list_x(nav_w);
+    (nav_w - list_x - 6.0).max(32.0)
+}
 
 /// Window-space rectangles for the settings overlay. `content_x` is relative to `body_x`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,12 +97,18 @@ pub fn settings_layout(width: f32, height: f32) -> SettingsLayout {
 }
 
 /// Open page, keybind recording, and mic test. Leaving the page or closing settings stops both.
+///
+/// `open` also means the dedicated Banter Settings OS window should exist. Closing settings
+/// (Escape, the X control, or the window chrome) clears modal/recording state so the main
+/// window is not left thinking settings is still modal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SettingsState {
     open: bool,
     section: SettingsSection,
     recording: bool,
     mic_test: bool,
+    /// Platform focuses the settings window once after open, then clears this.
+    needs_focus: bool,
 }
 
 impl SettingsState {
@@ -82,10 +118,16 @@ impl SettingsState {
             section: SettingsSection::Account,
             recording: false,
             mic_test: false,
+            needs_focus: false,
         }
     }
 
     pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// True while User Settings should be hosted in its own GLFW window.
+    pub fn os_window_desired(&self) -> bool {
         self.open
     }
 
@@ -103,12 +145,32 @@ impl SettingsState {
 
     pub fn open(&mut self) {
         self.open = true;
+        self.needs_focus = true;
+    }
+
+    /// Open settings on a specific sidebar page (My Account, Voice & Video, Developer).
+    pub fn open_section(&mut self, section: SettingsSection) {
+        self.open();
+        self.select(section);
     }
 
     pub fn close(&mut self) {
         self.open = false;
         self.recording = false;
         self.mic_test = false;
+        self.needs_focus = false;
+    }
+
+    /// Called when the OS settings window is closed via its chrome (not the in-UI X).
+    pub fn window_closed(&mut self) {
+        self.close();
+    }
+
+    /// Take-and-clear the one-shot focus request for the settings OS window.
+    pub fn take_needs_focus(&mut self) -> bool {
+        let needs = self.needs_focus;
+        self.needs_focus = false;
+        needs
     }
 
     pub fn select(&mut self, section: SettingsSection) {
@@ -132,6 +194,7 @@ impl SettingsState {
     }
 
     /// Dear ImGui closes an open dropdown on Escape by itself, so that press must not also close settings.
+    /// Escape is handled on the settings window surface only — not on the main Banter window.
     pub fn escape(&mut self, popup_open: bool) {
         if !self.open || popup_open {
             return;
@@ -324,4 +387,45 @@ pub fn account_avatar_actions_origin_x(
     let actions_w = change_w + gap + remove_w;
     let right_edge = card_x + card_w - right_pad;
     (right_edge - actions_w).max(card_x + right_pad)
+}
+
+/// Where Change / Remove Avatar sit on the My Account card.
+///
+/// Same-row when the right-aligned group clears the display name; otherwise stacked under
+/// the name so narrow settings windows never clip the buttons.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AccountAvatarActionsPlace {
+    pub x: f32,
+    pub y: f32,
+    pub stacked: bool,
+}
+
+pub fn account_avatar_actions_place(
+    card_x: f32,
+    card_y: f32,
+    card_w: f32,
+    banner_h: f32,
+    right_pad: f32,
+    name_left: f32,
+    name_reserve_w: f32,
+    change_w: f32,
+    remove_w: f32,
+    gap: f32,
+) -> AccountAvatarActionsPlace {
+    let row_y = card_y + banner_h + 14.0;
+    let x = account_avatar_actions_origin_x(card_x, card_w, right_pad, change_w, remove_w, gap);
+    let name_right = name_left + name_reserve_w;
+    if x < name_right + 12.0 {
+        AccountAvatarActionsPlace {
+            x: card_x + right_pad,
+            y: row_y + 36.0,
+            stacked: true,
+        }
+    } else {
+        AccountAvatarActionsPlace {
+            x,
+            y: row_y,
+            stacked: false,
+        }
+    }
 }
