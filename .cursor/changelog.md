@@ -398,3 +398,7 @@ Sign-in and register show a **Stay signed in** checkbox (default on). Checked wr
 - `session.rs`: `clear_token`, `persist_login`
 - Login card checkbox + `persist_login` after auth
 - Docs and client tests for persist / no-persist / clear
+
+## 2026-11-04 01:13:47 -06:00 [Winter] — Docs retarget Version-1-test-7
+
+Retarget published Docker/pre-release defaults to `version-1-test-7` / `Version-1-test-7` after Stay signed in (BA-66) landed on main. Older tags stay. Compose default remains `:latest`.
