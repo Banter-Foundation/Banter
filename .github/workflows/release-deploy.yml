@@ -10,7 +10,6 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/banter
 
 jobs:
   build-push:
@@ -26,7 +25,9 @@ jobs:
         run: |
           raw="${{ github.event.release.tag_name }}"
           tag="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-')"
-          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          # GHCR/Docker require the repository path to be lowercase (owner may be mixed-case).
+          owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          image="${{ env.REGISTRY }}/${owner}/banter"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "Release tag '$raw' → image $image:$tag"
