@@ -544,3 +544,15 @@ Agent: Wire path was already WebRTC H.264; leftover JPEG spray was local camera 
 
 Camera preview is RGBA; outbound video stays I420→H.264 over WebRTC; docs no longer claim software JPEG spray.
 
+
+## 2026-11-03 19:28:50 -06:00 — Add user profiles
+
+Owl test item: it's time to add profiles. Implement user profiles (view/edit basics fitting Banter foundation — avatar already exists).
+
+D:\Projects\Project Banter. Never E:. Branch from `test/owl-fixes`, merge into `test/owl-fixes` only. Clear commits. Worktree under Project Banter/worktrees/.
+
+Agent: Worktree Banter-profiles on cursor/user-profiles-8837 from test/owl-fixes. Wrote failing foundation + client profile contracts first, then GET /v1/users/{id}, ProfileCard UI (view/edit display name + Change Avatar), open from chat/members/friends/user bar. Merging into test/owl-fixes only.
+
+## Summary
+
+User profiles land on test/owl-fixes: view basics + edit own display name/avatar; About Me still deferred.

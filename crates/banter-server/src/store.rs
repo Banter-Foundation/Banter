@@ -118,6 +118,48 @@ impl Store {
         self.with(|conn| account_by_id(conn, user_id))
     }
 
+    /// Profile card for `target_id` as seen by `viewer_id`.
+    ///
+    /// Self, friends, and shared-server members can view. Strangers get
+    /// `NotFound`. When `server_id` is set, the viewer must be a member of that
+    /// server (`NotMember` otherwise), and the target's nickname there is
+    /// included when they are also a member.
+    pub fn user_profile(
+        &self,
+        viewer_id: i64,
+        target_id: i64,
+        server_id: Option<i64>,
+    ) -> Result<UserProfile, BanterError> {
+        self.with(|conn| {
+            if let Some(server_id) = server_id {
+                if !is_member(conn, viewer_id, server_id)? {
+                    return Err(BanterError::NotMember);
+                }
+            }
+            let is_self = viewer_id == target_id;
+            let is_friend = !is_self && are_friends(conn, viewer_id, target_id)?;
+            let can_view = is_self || is_friend || share_server(conn, viewer_id, target_id)?;
+            if !can_view {
+                return Err(BanterError::NotFound);
+            }
+            let account = account_by_id(conn, target_id)?;
+            let nickname = match server_id {
+                Some(server_id) => member_nickname(conn, server_id, target_id)?,
+                None => None,
+            };
+            Ok(UserProfile {
+                id: account.id,
+                username: account.username,
+                display_name: account.display_name,
+                has_avatar: account.has_avatar,
+                avatar_rev: account.avatar_rev,
+                nickname,
+                is_self,
+                is_friend,
+            })
+        })
+    }
+
     pub fn set_display_name(&self, user_id: i64, display_name: &str) -> Result<Account, BanterError> {
         let display_name = clean_display(display_name)?;
         self.with_mut(|conn| {
@@ -981,6 +1023,32 @@ fn are_friends(conn: &Connection, a: i64, b: i64) -> Result<bool, BanterError> {
         .optional()
         .map_err(db_err)?;
     Ok(found.is_some())
+}
+
+fn share_server(conn: &Connection, a: i64, b: i64) -> Result<bool, BanterError> {
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM memberships m1
+             JOIN memberships m2 ON m1.server_id = m2.server_id
+             WHERE m1.user_id = ?1 AND m2.user_id = ?2
+             LIMIT 1",
+            params![a, b],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_err)?;
+    Ok(found.is_some())
+}
+
+fn member_nickname(conn: &Connection, server_id: i64, user_id: i64) -> Result<Option<String>, BanterError> {
+    conn.query_row(
+        "SELECT nickname FROM memberships WHERE server_id = ?1 AND user_id = ?2",
+        params![server_id, user_id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .map_err(db_err)
+    .map(|row| row.flatten())
 }
 
 fn ordered_pair(a: i64, b: i64) -> (i64, i64) {

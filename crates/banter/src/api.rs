@@ -9,8 +9,8 @@ use crate::profiler;
 use base64::engine::general_purpose::STANDARD;
 use banter_server::{
     Account, CallSnapshot, Category, CategoryLayout, Channel, ChannelKind, ChatTarget, DirectChat,
-    Friend, FriendRequest, Mention, Message, Presence, ServerHome, ServerSummary, Session, VoiceFlags,
-    VoiceMember,
+    Friend, FriendRequest, Mention, Message, Presence, ServerHome, ServerSummary, Session, UserProfile,
+    VoiceFlags, VoiceMember,
 };
 use serde::Deserialize;
 
@@ -130,6 +130,14 @@ impl Client {
 
     pub fn me(&self) -> Result<Account, ApiError> {
         self.get_json("/v1/me")
+    }
+
+    pub fn user_profile(&self, user_id: i64, server_id: Option<i64>) -> Result<UserProfile, ApiError> {
+        let path = match server_id {
+            Some(server_id) => format!("/v1/users/{user_id}?server_id={server_id}"),
+            None => format!("/v1/users/{user_id}"),
+        };
+        self.get_json(&path)
     }
 
     pub fn set_display_name(&self, display_name: &str) -> Result<Account, ApiError> {
