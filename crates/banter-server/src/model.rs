@@ -208,6 +208,42 @@ pub struct ServerSummary {
     pub owner_id: i64,
 }
 
+/// One per-user folder on the server rail. `color` is RGB (`0` = default look).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerFolder {
+    pub id: i64,
+    pub parent_id: Option<i64>,
+    pub name: String,
+    pub color: i64,
+    pub position: i64,
+    pub collapsed: bool,
+}
+
+/// A server membership placed in the signed-in user's rail tree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerRailServer {
+    pub server: ServerSummary,
+    pub folder_id: Option<i64>,
+    pub position: i64,
+}
+
+/// Private rail layout for one account: nested folders plus server placements.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerRail {
+    pub folders: Vec<ServerFolder>,
+    pub servers: Vec<ServerRailServer>,
+}
+
+/// Partial update for a rail folder. Nested `parent_id: Some(None)` means top-level.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerFolderPatch {
+    pub name: Option<String>,
+    pub parent_id: Option<Option<i64>>,
+    pub color: Option<i64>,
+    pub collapsed: Option<bool>,
+    pub position: Option<i64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerHome {
     pub server: ServerSummary,

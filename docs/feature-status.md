@@ -11,6 +11,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | User profiles (Discord-parity popout + customization editor: banner, theme, cosmetics, badges, bio, board cards, Activity/Wishlist) | Working — BA-73 repaired overlay/column chrome (clipped panels, Save/Cancel footer); Banter-owned procedural art; keep iterating vs Discord ref |
 | Friends list + friend requests | Working — accepting (or completing a mutual request) opens that friend's DM |
 | Create server, invite join, member list, server nickname | Working |
+| Nested server-rail folders (subfolders, hex color, collapse) | Working — per-user layout in Postgres (BA-79) |
 | Guild roles (@everyone, color, hoist, permissions, assign from the member menu) | Working — kick and ban stay deferred |
 | Text + voice channels in categories (Manage Channels; owner has every permission; optional Lucide channel icons) | Working |
 | Drawing board channels (shapes, stickies, images, files, realtime ops) | Working |

@@ -10,8 +10,8 @@ use base64::engine::general_purpose::STANDARD;
 use banter_server::{
     Account, CallSnapshot, Category, CategoryLayout, Channel, ChannelKind, ChatTarget, CosmeticItem,
     DirectChat, Friend, FriendRequest, GuildRole, Mention, Message, Presence, ProfilePatch, ServerDebug,
-    ServerHome,
-    ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember,
+    ServerFolder, ServerFolderPatch, ServerHome, ServerRail, ServerRailServer, ServerSummary, Session,
+    UserProfile, VoiceFlags, VoiceMember,
 };
 use serde::Deserialize;
 
@@ -272,6 +272,58 @@ impl Client {
 
     pub fn servers(&self) -> Result<Vec<ServerSummary>, ApiError> {
         self.get_json("/v1/servers")
+    }
+
+    pub fn server_rail(&self) -> Result<ServerRail, ApiError> {
+        self.get_json("/v1/me/server-rail")
+    }
+
+    pub fn create_server_folder(
+        &self,
+        name: &str,
+        parent_id: Option<i64>,
+        color: i64,
+    ) -> Result<ServerFolder, ApiError> {
+        self.send_json(
+            self.auth(http().post(&self.url("/v1/me/server-folders"))),
+            serde_json::json!({
+                "name": name,
+                "parent_id": parent_id,
+                "color": color,
+            }),
+        )
+    }
+
+    pub fn update_server_folder(
+        &self,
+        folder_id: i64,
+        patch: ServerFolderPatch,
+    ) -> Result<ServerFolder, ApiError> {
+        let body = serde_json::to_value(patch).map_err(|err| ApiError::new(err.to_string()))?;
+        self.send_json(
+            self.auth(http().patch(&self.url(&format!("/v1/me/server-folders/{folder_id}")))),
+            body,
+        )
+    }
+
+    pub fn delete_server_folder(&self, folder_id: i64) -> Result<(), ApiError> {
+        let path = format!("/v1/me/server-folders/{folder_id}");
+        self.call_empty("DELETE", &path, self.auth(http().delete(&self.url(&path))))
+    }
+
+    pub fn move_server_to_folder(
+        &self,
+        server_id: i64,
+        folder_id: Option<i64>,
+        position: i64,
+    ) -> Result<ServerRailServer, ApiError> {
+        self.send_json(
+            self.auth(http().put(&self.url(&format!("/v1/me/servers/{server_id}/folder")))),
+            serde_json::json!({
+                "folder_id": folder_id,
+                "position": position,
+            }),
+        )
     }
 
     pub fn create_server(&self, name: &str) -> Result<ServerHome, ApiError> {

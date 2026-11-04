@@ -2,8 +2,102 @@
 
 use std::collections::{HashMap, HashSet};
 
-use banter_server::{is_channel_icon, ChannelKind, Message, VoiceFlags};
+use banter_server::{is_channel_icon, ChannelKind, Message, ServerFolder, ServerRail, ServerRailServer, VoiceFlags};
 use serde::{Deserialize, Serialize};
+
+/// One visible rail row after expanding folders (collapsed folders hide children).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RailTreeRow {
+    Folder { id: i64, depth: u32 },
+    Server { id: i64, depth: u32 },
+}
+
+/// Parse a folder hex color (`#RRGGBB` / `RRGGBB`). Empty means default (`0`).
+pub fn parse_folder_color(raw: &str) -> Result<i64, String> {
+    let text = raw.trim().trim_start_matches('#');
+    if text.is_empty() {
+        return Ok(0);
+    }
+    if text.len() != 6 || !text.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("color is a 6 digit hex value".into());
+    }
+    i64::from_str_radix(text, 16).map_err(|_| "color is a 6 digit hex value".into())
+}
+
+/// Depth-first rail rows. Collapsed folders omit nested folders and servers.
+pub fn rail_tree_rows(rail: &ServerRail) -> Vec<RailTreeRow> {
+    let mut folder_kids: HashMap<Option<i64>, Vec<&ServerFolder>> = HashMap::new();
+    for folder in &rail.folders {
+        folder_kids.entry(folder.parent_id).or_default().push(folder);
+    }
+    for list in folder_kids.values_mut() {
+        list.sort_by(|a, b| a.position.cmp(&b.position).then(a.id.cmp(&b.id)));
+    }
+    let mut server_kids: HashMap<Option<i64>, Vec<&ServerRailServer>> = HashMap::new();
+    for server in &rail.servers {
+        server_kids.entry(server.folder_id).or_default().push(server);
+    }
+    for list in server_kids.values_mut() {
+        list.sort_by(|a, b| a.position.cmp(&b.position).then(a.server.id.cmp(&b.server.id)));
+    }
+    let mut rows = Vec::new();
+    walk_rail_tree(None, 0, &folder_kids, &server_kids, &mut rows);
+    rows
+}
+
+fn walk_rail_tree(
+    parent: Option<i64>,
+    depth: u32,
+    folders: &HashMap<Option<i64>, Vec<&ServerFolder>>,
+    servers: &HashMap<Option<i64>, Vec<&ServerRailServer>>,
+    rows: &mut Vec<RailTreeRow>,
+) {
+    let mut folder_iter = folders.get(&parent).into_iter().flatten().peekable();
+    let mut server_iter = servers.get(&parent).into_iter().flatten().peekable();
+    // Interleave by position so folders and servers share one ordering at each level.
+    loop {
+        let next_folder = folder_iter.peek().copied();
+        let next_server = server_iter.peek().copied();
+        match (next_folder, next_server) {
+            (None, None) => break,
+            (Some(folder), Some(server)) => {
+                if (folder.position, folder.id) <= (server.position, server.server.id) {
+                    folder_iter.next();
+                    rows.push(RailTreeRow::Folder {
+                        id: folder.id,
+                        depth,
+                    });
+                    if !folder.collapsed {
+                        walk_rail_tree(Some(folder.id), depth + 1, folders, servers, rows);
+                    }
+                } else {
+                    server_iter.next();
+                    rows.push(RailTreeRow::Server {
+                        id: server.server.id,
+                        depth,
+                    });
+                }
+            }
+            (Some(folder), None) => {
+                folder_iter.next();
+                rows.push(RailTreeRow::Folder {
+                    id: folder.id,
+                    depth,
+                });
+                if !folder.collapsed {
+                    walk_rail_tree(Some(folder.id), depth + 1, folders, servers, rows);
+                }
+            }
+            (None, Some(server)) => {
+                server_iter.next();
+                rows.push(RailTreeRow::Server {
+                    id: server.server.id,
+                    depth,
+                });
+            }
+        }
+    }
+}
 
 /// One visible row in a Reddit-style comment tree (depth-first).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1401,6 +1495,14 @@ pub enum ContextMenuAction {
     CopyChannelName { name: String },
     CopyChannelId { channel_id: i64 },
     EditChannel { channel_id: i64 },
+    CreateServerFolder { parent_id: Option<i64> },
+    RenameServerFolder { folder_id: i64 },
+    RecolorServerFolder { folder_id: i64 },
+    DeleteServerFolder { folder_id: i64 },
+    MoveServerToFolder {
+        server_id: i64,
+        folder_id: Option<i64>,
+    },
 }
 
 fn menu_item(id: &'static str, label: &'static str, tone: ContextMenuTone, action: ContextMenuAction) -> ContextMenuEntry {
@@ -1597,6 +1699,99 @@ pub fn channel_context_menu(
         ContextMenuTone::Normal,
         ContextMenuAction::CopyChannelId { channel_id },
     ));
+    entries
+}
+
+/// Empty rail / add-server context: create a top-level folder.
+pub fn server_rail_context_menu() -> Vec<ContextMenuEntry> {
+    vec![menu_item(
+        "ctx-create-folder",
+        "Create Folder",
+        ContextMenuTone::Normal,
+        ContextMenuAction::CreateServerFolder { parent_id: None },
+    )]
+}
+
+/// Right-click menu for a server-rail folder.
+pub fn folder_context_menu(folder_id: i64, _can_nest: bool) -> Vec<ContextMenuEntry> {
+    vec![
+        menu_item(
+            "ctx-create-subfolder",
+            "Create Subfolder",
+            ContextMenuTone::Normal,
+            ContextMenuAction::CreateServerFolder {
+                parent_id: Some(folder_id),
+            },
+        ),
+        menu_item(
+            "ctx-rename-folder",
+            "Rename Folder",
+            ContextMenuTone::Normal,
+            ContextMenuAction::RenameServerFolder { folder_id },
+        ),
+        menu_item(
+            "ctx-recolor-folder",
+            "Change Color",
+            ContextMenuTone::Normal,
+            ContextMenuAction::RecolorServerFolder { folder_id },
+        ),
+        menu_item(
+            "ctx-delete-folder",
+            "Delete Folder",
+            ContextMenuTone::Danger,
+            ContextMenuAction::DeleteServerFolder { folder_id },
+        ),
+    ]
+}
+
+/// Right-click menu for a server icon on the rail. `folders` are `(name, id)` move targets.
+pub fn server_rail_item_menu(
+    server_id: i64,
+    current_folder: Option<i64>,
+    folders: &[(String, i64)],
+) -> Vec<ContextMenuEntry> {
+    let mut entries = Vec::new();
+    if current_folder.is_some() {
+        entries.push(menu_item(
+            "ctx-remove-folder",
+            "Remove from Folder",
+            ContextMenuTone::Normal,
+            ContextMenuAction::MoveServerToFolder {
+                server_id,
+                folder_id: None,
+            },
+        ));
+    }
+    for (name, folder_id) in folders {
+        if Some(*folder_id) == current_folder {
+            continue;
+        }
+        // Static labels are required by ContextMenuEntry; use a fixed id and the live action.
+        let _ = name;
+        entries.push(menu_item(
+            "ctx-move-folder",
+            "Move to Folder",
+            ContextMenuTone::Normal,
+            ContextMenuAction::MoveServerToFolder {
+                server_id,
+                folder_id: Some(*folder_id),
+            },
+        ));
+        // Only offer the first alternate folder via the shared label; UI lists targets in a modal when many.
+        break;
+    }
+    if entries.is_empty() && !folders.is_empty() {
+        let folder_id = folders[0].1;
+        entries.push(menu_item(
+            "ctx-move-folder",
+            "Move to Folder",
+            ContextMenuTone::Normal,
+            ContextMenuAction::MoveServerToFolder {
+                server_id,
+                folder_id: Some(folder_id),
+            },
+        ));
+    }
     entries
 }
 

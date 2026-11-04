@@ -165,7 +165,7 @@ fn rail_tooltip_opens_to_the_right_and_is_vertically_centered() {
 #[test]
 fn every_skin_icon_is_vendored_and_has_ink() {
     for name in [
-        "check", "chevron-down", "chevron-right", "chevron-up", "circle-plus", "crown", "folder-plus", "hash",
+        "check", "chevron-down", "chevron-right", "chevron-up", "circle-plus", "crown", "folder", "folder-plus", "hash",
         "headphone-off", "headphones", "message-circle", "mic", "mic-off", "monitor", "monitor-off", "pencil",
         "phone", "phone-off", "plus", "search", "settings", "signal", "user", "user-plus", "users", "video",
         "video-off", "volume-2", "x",

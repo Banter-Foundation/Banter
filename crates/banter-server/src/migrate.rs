@@ -28,6 +28,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "004_channel_icons",
         include_str!("migrations/004_channel_icons.sql"),
     ),
+    (
+        "005_server_folders",
+        include_str!("migrations/005_server_folders.sql"),
+    ),
 ];
 
 /// Transaction-scoped advisory lock so concurrent boots serialize migrate.

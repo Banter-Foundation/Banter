@@ -888,3 +888,28 @@ Agent: Branch `cursor/channel-icons-ded0`. Lucide id on `channels.icon` (no uplo
 ### Reasoning summary (BA-78)
 - Uploads are disabled (BA-61), so Lucide icon ids fit existing Banter icon usage better than custom image uploads.
 - Edit Channel was missing; Manage Channels already gates create, so edit reuses that permission and adds a context-menu entry.
+
+## 2026-11-04 BA-79 nested server folders
+
+Owl wants **server folders** on the Banter server rail that:
+1. Support **subfolders** (nested folders)
+2. Allow a **custom hex color** per folder for the folder’s color
+
+Repo: Banter-Foundation/Banter. Use gh, no GitHub MCP.
+
+Implement UX + persistence (Postgres migrate):
+- Create/rename/delete folders; nest servers (and folders) under folders
+- Collapse/expand folders
+- Color picker or hex input for folder color; validate hex
+- Open PR; do not merge until Owl says so
+
+Coordinate with optional channel icons work if needed (separate PR). Prefer own branch from main.
+
+Preferences: /cursor/stores/self/preferences.md
+Context: /cursor/stores/self/docs/project-context.md
+Task: Nested server folders with hex colors (BA-79)
+
+Report PR URL + nesting rules.
+
+### Summary
+Implemented per-user nested server-rail folders with hex colors, Postgres migration (renumbered to 005 after channel icons 004), API, and rail UX. Opened PR; merging after Owl said so.

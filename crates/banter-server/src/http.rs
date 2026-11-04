@@ -138,6 +138,13 @@ fn router(state: HttpState) -> Router {
         .route("/v1/friends", get(list_friends))
         .route("/v1/presence", get(list_presence))
         .route("/v1/servers", get(list_servers).post(create_server))
+        .route("/v1/me/server-rail", get(server_rail))
+        .route("/v1/me/server-folders", post(create_server_folder))
+        .route(
+            "/v1/me/server-folders/{id}",
+            axum::routing::patch(update_server_folder).delete(delete_server_folder),
+        )
+        .route("/v1/me/servers/{id}/folder", axum::routing::put(move_server_to_folder))
         .route("/v1/servers/{id}/invites", post(create_invite))
         .route("/v1/invites/{code}/join", post(join_invite))
         .route("/v1/servers/{id}/members", get(members))
@@ -450,6 +457,74 @@ async fn list_servers(
     Auth(account): Auth,
 ) -> Result<Json<Vec<ServerSummary>>, BanterError> {
     Ok(Json(state.store.servers(account.id).await?))
+}
+
+async fn server_rail(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+) -> Result<Json<ServerRail>, BanterError> {
+    Ok(Json(state.store.server_rail(account.id).await?))
+}
+
+#[derive(Deserialize)]
+struct CreateServerFolderBody {
+    name: String,
+    parent_id: Option<i64>,
+    color: Option<i64>,
+}
+
+async fn create_server_folder(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Json(body): Json<CreateServerFolderBody>,
+) -> Result<Json<ServerFolder>, BanterError> {
+    Ok(Json(
+        state
+            .store
+            .create_server_folder(account.id, &body.name, body.parent_id, body.color)
+            .await?,
+    ))
+}
+
+async fn update_server_folder(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+    Json(body): Json<ServerFolderPatch>,
+) -> Result<Json<ServerFolder>, BanterError> {
+    Ok(Json(
+        state.store.update_server_folder(account.id, id, body).await?,
+    ))
+}
+
+async fn delete_server_folder(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, BanterError> {
+    state.store.delete_server_folder(account.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct MoveServerFolderBody {
+    folder_id: Option<i64>,
+    #[serde(default)]
+    position: i64,
+}
+
+async fn move_server_to_folder(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+    Json(body): Json<MoveServerFolderBody>,
+) -> Result<Json<ServerRailServer>, BanterError> {
+    Ok(Json(
+        state
+            .store
+            .move_server_to_folder(account.id, id, body.folder_id, body.position)
+            .await?,
+    ))
 }
 
 async fn create_invite(
