@@ -178,3 +178,7 @@ Voice channels dropped Opus when the SFU required an OnOpen SSRC→RID map and w
 - Tests first: foundation voice admit path, SFU unit forward, client `mic_opus_frame`
 - Docs: `docs/streaming.md`, feature-status. Never touched E:.
 
+
+## 2026-11-03 19:16:58 -06:00 [Winter] — Shared integration branch test/owl-fixes
+
+Created branch test/owl-fixes from origin/main (89f41b0) for sibling Owl-fix work. Documented merge protocol in docs/test-branch.md: feature branches rebase onto and merge into test/owl-fixes (not main); clear commits; never touch E:. Worktree at D:\Projects\Project Banter\worktrees\Banter-owl-fixes.

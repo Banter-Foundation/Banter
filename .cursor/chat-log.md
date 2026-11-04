@@ -481,3 +481,13 @@ Agent: Root causes — (1) SFU OnRtpPacket required OnOpen SSRC→RID before for
 
 Voice-channel SFU now forwards Opus without the SSRC map; open-mic keeps an Opus timeline. Report SHA after push.
 
+
+## 2026-11-03 19:16:58 -06:00 — Create shared test/owl-fixes branch
+
+Owl (via coordinator): Create shared integration branch test/owl-fixes from current origin/main at D:\Projects\Project Banter. Push it. Document merge protocol for sibling agents: short-lived feature branches merge INTO test/owl-fixes (not main) when done; rebase onto test/owl-fixes before merge; never touch E:; clear commits. Report branch URL. Do not implement features yourself beyond creating the branch + short docs/test-branch.md note.
+
+Agent: Branched test/owl-fixes from origin/main @ 89f41b0 via worktree Banter-owl-fixes (primary checkout was dirty). Added docs/test-branch.md with merge protocol. Pushing branch + docs commit. No feature work.
+
+## Summary
+
+Shared integration branch ready; sibling agents merge into test/owl-fixes, not main.
