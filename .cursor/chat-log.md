@@ -689,3 +689,15 @@ Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-ui-refresh` on `cur
 
 BA-56 UI display refresh: GLFW VSync follows the current monitor dynamically; stream FPS untouched.
 
+---
+## 2026-11-04 BA-63 Postgres punch list
+
+Owl said: go ahead and fix the Postgres punch-list items from the cutover audit. Audit: /cursor/stores/self/docs/postgres-cutover-audit.md. Project: D:\Projects\Project Banter (NEVER touch E:). Separate worktree/branch. Preferences: /cursor/stores/self/preferences.md. Context: /cursor/stores/self/docs/project-context.md. Implement punch-list 1–4 (required), and 5 if straightforward. Do not merge until Owl says so. Open a clear PR. Update the audit doc punch-list status. Task: Land Postgres cutover punch list (BA-63).
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-postgres-punchlist` on `cursor/postgres-cutover-punchlist-a4ce`. Added versioned migrate runner + `001_profile_customization`, docs/port/.env.example updates, Windows CI `--lib` note. Tests: migrations + profile 7/7 + foundation 18/18 on `BANTER_DATABASE_URL=…5433`. PR opened; not merged.
+
+### Summary
+- Critical gap closed: existing `banter-pg` volumes upgrade profile columns/tables on boot.
+- Local port conflict and stale `banter.db` docs fixed; `.env.example` shipped.
+
+

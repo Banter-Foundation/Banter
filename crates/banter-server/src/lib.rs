@@ -15,6 +15,7 @@ mod cosmetics;
 mod error;
 mod http;
 mod live;
+mod migrate;
 mod model;
 mod room;
 mod sfu;
