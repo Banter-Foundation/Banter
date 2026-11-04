@@ -313,3 +313,11 @@ Shipped pre-release Version-1-test-4.1 from main `c6163fc` (client startup witho
 Documented Arch server + release hot-swap progress. Workflow on `main` lowercases the GHCR owner and logs in with `GHCR_WRITE_TOKEN`. Deploy secrets are set. Releases through `Version-1-test-6` still fail at image push: the write PAT must be a classic token with `write:packages` (current error: token scopes). No GHCR `banter` package exists yet; SSH deploy is untested until push succeeds. Manual path: local `docker build -t banter-server:local` + deploy script (skip-pull for local tags).
 
 - Docs: `docs/docker-setup.md` Status section + troubleshooting; `docs/feature-status.md` container row
+
+## 2026-11-04 00:12:16 -06:00 [Winter] — UI follows display refresh rate (BA-56)
+
+Client UI present rate tracks the monitor under the window. With VSync on, GLFW `Sync(1)` is reapplied when the window moves to another display or the active mode Hz changes. Stream capture FPS options are unchanged.
+
+- `logic`: `DisplayRefresh`, `pick_display_refresh_hz`, `ui_swap_needs_update` (tests in `settings.rs`)
+- `platform`: each frame syncs swap interval to the current display; Wayland falls back to the primary monitor
+- Docs: architecture, features, design, README Display note

@@ -661,3 +661,29 @@ Agent: Merged PR #16 (startup) and PR #17 (docs retarget). Tagged Version-1-test
 ## Summary
 
 Version-1-test-4.1 pre-release live with Win+Linux+GHCR; temp release branches/scratch cleaned.
+
+## 2026-11-04 00:12:16 -06:00 — UI follows display refresh rate (BA-56)
+
+Owl wants Banter **UI only** to use a dynamic refresh rate (match the display / VSync to the monitor), not stream FPS and not related to the VC/media fix running in parallel.
+
+Project: D:\Projects\Project Banter (NEVER touch E:).
+Repo: https://github.com/SnowedInOwl/Banter
+Use a separate git worktree/branch under that folder so you do not collide with the Server VC media fix worker if it is also editing the main checkout.
+
+Context: /cursor/stores/self/docs/project-context.md
+Preferences: /cursor/stores/self/preferences.md
+
+Implement:
+- Client UI render loop / GLFW swap interval / frame pacing follows the current display’s refresh rate dynamically (e.g. when moving between monitors or when refresh changes).
+- Do not change stream capture FPS options unless required for UI.
+- Clear commits; open a PR. Do not merge unless Owl says so.
+- Report PR URL and how rate is chosen/updated.
+
+Task: UI follows display refresh rate (BA-56)
+Avoid overlapping uncommitted edits with other workers; own worktree.
+
+Agent: Worktree `D:\Projects\Project Banter\worktrees\Banter-ui-refresh` on `cursor/ui-display-refresh-bc78`. Tests first for display pick / swap reapply; platform reapplies `Sync(1)` when monitor Hz or VSync changes.
+
+## Summary
+
+BA-56 UI display refresh: GLFW VSync follows the current monitor dynamically; stream FPS untouched.
