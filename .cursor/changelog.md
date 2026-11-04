@@ -314,6 +314,7 @@ Documented Arch server + release hot-swap progress. Workflow on `main` lowercase
 
 - Docs: `docs/docker-setup.md` Status section + troubleshooting; `docs/feature-status.md` container row
 
+
 ## 2026-11-04 00:12:12 -06:00 [Winter] — Fix SFU forward SSRC rewrite (BA-55)
 
 Server voice channels stayed silent and peers never got camera/screen because the SFU cloned publisher RTP into forward tracks unchanged. `RTCRtpSender::write_rtp` drops packets whose SSRC/PT/extensions are not on that sender leg (errors are logged inside the webrtc driver, so `write_rtp` still returned Ok). `rewrite_forward_rtp` now stamps the forward-track SSRC and payload type and clears inbound header extensions before forward.
@@ -331,6 +332,27 @@ Client UI present rate tracks the monitor under the window. With VSync on, GLFW 
 - `logic`: `DisplayRefresh`, `pick_display_refresh_hz`, `ui_swap_needs_update` (tests in `settings.rs`)
 - `platform`: each frame syncs swap interval to the current display; Wayland falls back to the primary monitor
 - Docs: architecture, features, design, README Display note
+
+
+## 2026-11-04 00:18:19 -06:00 [Winter] — Group stream audio by channel and app
+
+Stream Select / stream options list mix sources under **Audio channels** (`mic:` and `loop:` system devices) and **Apps** (`app:` process loopback) instead of one flat checklist. Multi-select mix and per-source volume are unchanged. Helpers: `MixSourceGroup`, `mix_source_group`, `grouped_mix_sources`. Client test `stream_audio_sources_group_by_channel_and_app`.
+
+## 2026-11-04 00:23:01 -06:00 [Winter] — Reddit-style reply threading (BA-57)
+
+Text channels and DMs render messages as Reddit comment trees. Nested reply-to-reply stays persisted via `reply_to`. Collapse/expand is local. Reply opens an inline composer under the parent; the bottom bar posts top-level only.
+
+- Client: `comment_tree_rows`, `comment_descendant_count`, `toggle_comment_collapsed`; chat UI tree, indent, fold controls, inline reply draft
+- Server: `idx_messages_reply_to`; foundation test for nested channel + DM threads
+- Docs: architecture threading section, feature-status, features list
+- Also fixed a broken client friend-DM integration test that called sync `Store::open` (now HTTP client like the other live tests)
+
+## 2026-11-04 00:24:59 -06:00 [Winter] — Disable chat file uploads (BA-61)
+
+Composer attach no longer opens a file picker or queues upload bytes. The attach control (and any leftover pending-file send path) opens the existing Banter modal shell with the exact message `Currently Unavailable`. Saving/downloading attachments already on a message still works. Server attachment API left unchanged so foundation tests stay intact. Client-only UX gate until Owl re-enables uploads.
+
+- `Modal::UploadsUnavailable` + `pick_attachment` / `submit_composer` guards in `crates/banter/src/ui.rs`
+- Docs: `.cursor/features.md`, `docs/feature-status.md`
 
 ## 2026-11-04 00:39:16 -06:00 [Winter] — Postgres cutover punch list (BA-63)
 

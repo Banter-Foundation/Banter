@@ -2,15 +2,18 @@
 
 use std::time::Duration;
 
+use std::collections::HashSet;
+
 use banter::{
-    CameraChoice, CaptureKind, Client, MuteMemory, ScreenShare, SettingsSection, StreamDefaults, StreamFps,
-    StreamResolution, VoicePrefs, camera_preview_mirrored, default_stream_fps, default_stream_resolution,
-    discord_shell_columns, either_key_held, encode_jpeg_rgba, encode_jpeg_rgba_quality, equal_power_gains, fps_block,
-    hardware_encoder_block, load_json, load_token, mic_opus_frame, mirror_rgba, mix_equal_power, open_dm_peer_after_friend_add,
+    CameraChoice, CaptureKind, Client, CommentRow, MixSource, MixSourceGroup, MuteMemory, ScreenShare, SettingsSection,
+    StreamDefaults, StreamFps, StreamResolution, VoicePrefs, camera_preview_mirrored, comment_descendant_count,
+    comment_tree_rows, default_stream_fps, default_stream_resolution, discord_shell_columns, either_key_held,
+    encode_jpeg_rgba, encode_jpeg_rgba_quality, equal_power_gains, fps_block, grouped_mix_sources, hardware_encoder_block,
+    load_json, load_token, mic_opus_frame, mirror_rgba, mix_equal_power, mix_source_group, open_dm_peer_after_friend_add,
     open_mic_should_send, password_blocks_copy, password_is_masked, push_to_talk_held, rasterize_lucide, remove_message,
     resample_mono_i16, resolution_block, save_json, save_token, settings_sections, speaking_from_level, stamp_cursor,
-    stream_frame_rates, stream_frame_size, stream_interval_ms, stream_max_edge, stream_resolutions, upsert_message,
-    websocket_url,
+    stream_frame_rates, stream_frame_size, stream_interval_ms, stream_max_edge, stream_resolutions,
+    toggle_comment_collapsed, upsert_message, websocket_url,
 };
 use banter_server::{
     ChannelKind, ChatTarget, ClientSignal, LayerId, MediaKind, MediaPlace, Message, ServerEvent, VoiceFlags, sdp_fixture,
@@ -315,6 +318,75 @@ fn messages_upsert_in_order_and_delete_clears_replies() {
 }
 
 #[test]
+fn comment_tree_nests_replies_depth_first_like_reddit() {
+    // Roots in id order; each parent's children immediately after it (Reddit DFS).
+    let messages = vec![
+        message(1, "root a", None),
+        message(2, "root b", None),
+        message(3, "reply to a", Some(1)),
+        message(4, "reply to reply", Some(3)),
+        message(5, "second reply to a", Some(1)),
+        message(6, "orphan becomes root", Some(99)),
+    ];
+    let rows = comment_tree_rows(&messages, &HashSet::new());
+    assert_eq!(
+        rows
+            .iter()
+            .map(|row| (row.message_id, row.depth, row.child_count, row.collapsed))
+            .collect::<Vec<_>>(),
+        vec![
+            (1, 0, 3, false),
+            (3, 1, 1, false),
+            (4, 2, 0, false),
+            (5, 1, 0, false),
+            (2, 0, 0, false),
+            (6, 0, 0, false),
+        ]
+    );
+}
+
+#[test]
+fn comment_tree_collapse_hides_descendants_and_toggle_round_trips() {
+    let messages = vec![
+        message(1, "root", None),
+        message(2, "child", Some(1)),
+        message(3, "grand", Some(2)),
+        message(4, "other root", None),
+    ];
+    let mut collapsed = HashSet::new();
+    toggle_comment_collapsed(&mut collapsed, 1);
+    assert!(collapsed.contains(&1));
+    let rows = comment_tree_rows(&messages, &collapsed);
+    assert_eq!(
+        rows
+            .iter()
+            .map(|row| (row.message_id, row.depth, row.child_count, row.collapsed))
+            .collect::<Vec<_>>(),
+        vec![(1, 0, 2, true), (4, 0, 0, false)]
+    );
+    assert_eq!(comment_descendant_count(&messages, 1), 2);
+    assert_eq!(comment_descendant_count(&messages, 2), 1);
+    assert_eq!(comment_descendant_count(&messages, 4), 0);
+    toggle_comment_collapsed(&mut collapsed, 1);
+    assert!(collapsed.is_empty());
+    assert_eq!(comment_tree_rows(&messages, &collapsed).len(), 4);
+}
+
+#[test]
+fn comment_row_helper_matches_visible_node() {
+    let row = CommentRow {
+        message_id: 7,
+        depth: 3,
+        child_count: 2,
+        collapsed: true,
+    };
+    assert_eq!(row.message_id, 7);
+    assert_eq!(row.depth, 3);
+    assert_eq!(row.child_count, 2);
+    assert!(row.collapsed);
+}
+
+#[test]
 fn websocket_url_rewrites_the_http_base() {
     assert_eq!(
         websocket_url("http://127.0.0.1:3970", "abc"),
@@ -435,6 +507,54 @@ fn equal_power_mix_and_stream_prefs_round_trip() {
     let loaded: StreamDefaults = load_json(&dir.join("stream.json")).unwrap();
     assert_eq!(loaded.fps, "60");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn stream_audio_sources_group_by_channel_and_app() {
+    assert_eq!(mix_source_group("mic:Headset"), MixSourceGroup::AudioChannels);
+    assert_eq!(mix_source_group("loop:Speakers"), MixSourceGroup::AudioChannels);
+    assert_eq!(mix_source_group("app:4242"), MixSourceGroup::Apps);
+    assert_eq!(MixSourceGroup::AudioChannels.label(), "Audio channels");
+    assert_eq!(MixSourceGroup::Apps.label(), "Apps");
+
+    let sources = vec![
+        MixSource {
+            id: "mic:Mic".into(),
+            name: "Mic".into(),
+            enabled: true,
+            volume: 1.0,
+        },
+        MixSource {
+            id: "app:100".into(),
+            name: "Game".into(),
+            enabled: false,
+            volume: 0.8,
+        },
+        MixSource {
+            id: "loop:Speakers".into(),
+            name: "Speakers (speakers)".into(),
+            enabled: true,
+            volume: 0.5,
+        },
+        MixSource {
+            id: "app:200".into(),
+            name: "Browser".into(),
+            enabled: true,
+            volume: 1.0,
+        },
+    ];
+    let groups = grouped_mix_sources(&sources);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].0, MixSourceGroup::AudioChannels);
+    assert_eq!(groups[0].1, vec![0, 2]);
+    assert_eq!(groups[1].0, MixSourceGroup::Apps);
+    assert_eq!(groups[1].1, vec![1, 3]);
+    assert!(sources.iter().filter(|source| source.enabled).count() >= 2);
+
+    let apps_only = grouped_mix_sources(&[sources[1].clone()]);
+    assert_eq!(apps_only.len(), 1);
+    assert_eq!(apps_only[0].0, MixSourceGroup::Apps);
+    assert!(grouped_mix_sources(&[]).is_empty());
 }
 
 #[test]
@@ -597,41 +717,54 @@ fn adding_a_friend_opens_their_dm_when_they_are_friends() {
 
 #[test]
 fn accepting_a_friend_then_opening_their_dm_works() {
-    let dir = std::env::temp_dir().join(format!(
-        "banter-friend-dm-store-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    // Uses the HTTP client (Store::open is async and needs a DB URL; see foundation tests).
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let dir = std::env::temp_dir().join(format!("banter-friend-dm-api-{}-{port}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let store = banter_server::Store::open(&dir).unwrap();
-    let ada = store.register("ada", "Ada", "password1").unwrap();
-    let bob = store.register("bob", "Bob", "password1").unwrap();
-    let request = store.send_friend_request(ada.id, "bob").unwrap();
+    std::fs::create_dir_all(&dir).unwrap();
+    let addr = format!("127.0.0.1:{port}");
+    let serve_addr = addr.clone();
+    let serve_dir = dir.clone();
+    let db_url = test_db_url();
+    let server = std::thread::spawn(move || banter_server::serve(&serve_addr, &serve_dir, &db_url));
+    let base = format!("http://{addr}");
+    let mut ready = false;
+    for _ in 0..50 {
+        if ureq::get(&format!("{base}/v1/health")).call().is_ok() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(ready, "server did not open {base}");
+
+    let mut ada = Client::new(&base);
+    ada.register("ada", "Ada", "password1").unwrap();
+    let mut bob = Client::new(&base);
+    bob.register("bob", "Bob", "password1").unwrap();
+    let request = ada.send_friend_request("bob").unwrap();
     assert_eq!(
         open_dm_peer_after_friend_add(
-            store
-                .friends(bob.id)
-                .unwrap()
-                .iter()
-                .map(|friend| (friend.id, friend.username.as_str())),
+            bob.friends().unwrap().iter().map(|friend| (friend.id, friend.username.as_str())),
             &request.from_username,
         ),
         None,
         "pending requests must not open a DM"
     );
-    store.accept_friend_request(bob.id, request.id).unwrap();
-    let friends = store.friends(bob.id).unwrap();
+    bob.accept_friend_request(request.id).unwrap();
+    let friends = bob.friends().unwrap();
     let peer = open_dm_peer_after_friend_add(
         friends.iter().map(|friend| (friend.id, friend.username.as_str())),
         &request.from_username,
     )
     .expect("accepting a friend should yield a DM peer");
-    let chat = store.open_dm(bob.id, peer).unwrap();
-    assert_eq!(chat.peer_id, ada.id);
+    let chat = bob.open_dm(peer).unwrap();
+    assert_eq!(chat.peer_id, ada.me().unwrap().id);
     assert_eq!(chat.peer_username, "ada");
+
+    drop(server);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

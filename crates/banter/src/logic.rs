@@ -1,7 +1,111 @@
 //! Pure client rules: mute memory, push-to-talk, silence, resampling, and message lists.
 
+use std::collections::{HashMap, HashSet};
+
 use banter_server::{Message, VoiceFlags};
 use serde::{Deserialize, Serialize};
+
+/// One visible row in a Reddit-style comment tree (depth-first).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommentRow {
+    pub message_id: i64,
+    pub depth: u32,
+    /// Total nested replies under this node (direct + deeper).
+    pub child_count: usize,
+    pub collapsed: bool,
+}
+
+/// Build children lists keyed by parent message id. Orphans (missing parent) are roots.
+fn comment_children(messages: &[Message]) -> (Vec<i64>, HashMap<i64, Vec<i64>>) {
+    let ids: HashSet<i64> = messages.iter().map(|m| m.id).collect();
+    let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut roots = Vec::new();
+    for message in messages {
+        match message.reply_to {
+            Some(parent) if ids.contains(&parent) => {
+                children.entry(parent).or_default().push(message.id);
+            }
+            _ => roots.push(message.id),
+        }
+    }
+    roots.sort_unstable();
+    for list in children.values_mut() {
+        list.sort_unstable();
+    }
+    (roots, children)
+}
+
+fn comment_descendant_total(children: &HashMap<i64, Vec<i64>>, id: i64, stack: &mut HashSet<i64>) -> usize {
+    if !stack.insert(id) {
+        return 0;
+    }
+    let mut total = 0;
+    if let Some(kids) = children.get(&id) {
+        total += kids.len();
+        for kid in kids {
+            total += comment_descendant_total(children, *kid, stack);
+        }
+    }
+    stack.remove(&id);
+    total
+}
+
+/// Count every nested reply under `root_id` (0 when it has none).
+pub fn comment_descendant_count(messages: &[Message], root_id: i64) -> usize {
+    let (_, children) = comment_children(messages);
+    let mut stack = HashSet::new();
+    comment_descendant_total(&children, root_id, &mut stack)
+}
+
+/// Depth-first Reddit comment rows. Collapsed nodes stay visible; their descendants do not.
+pub fn comment_tree_rows(messages: &[Message], collapsed: &HashSet<i64>) -> Vec<CommentRow> {
+    let (roots, children) = comment_children(messages);
+    let mut rows = Vec::with_capacity(messages.len());
+    let mut stack = HashSet::new();
+    for root in roots {
+        walk_comment_tree(root, 0, &children, collapsed, &mut stack, &mut rows);
+    }
+    rows
+}
+
+fn walk_comment_tree(
+    id: i64,
+    depth: u32,
+    children: &HashMap<i64, Vec<i64>>,
+    collapsed: &HashSet<i64>,
+    stack: &mut HashSet<i64>,
+    rows: &mut Vec<CommentRow>,
+) {
+    if !stack.insert(id) {
+        return;
+    }
+    let child_count = {
+        let mut inner = HashSet::new();
+        comment_descendant_total(children, id, &mut inner)
+    };
+    let is_collapsed = collapsed.contains(&id);
+    rows.push(CommentRow {
+        message_id: id,
+        depth,
+        child_count,
+        collapsed: is_collapsed,
+    });
+    if !is_collapsed {
+        if let Some(kids) = children.get(&id) {
+            for kid in kids {
+                walk_comment_tree(*kid, depth.saturating_add(1), children, collapsed, stack, rows);
+            }
+        }
+    }
+    stack.remove(&id);
+}
+
+/// Collapse or expand a comment thread locally (Reddit client-side fold).
+pub fn toggle_comment_collapsed(collapsed: &mut HashSet<i64>, id: i64) {
+    if !collapsed.remove(&id) {
+        collapsed.insert(id);
+    }
+}
 
 /// Remembers mute across deafen. Deafen forces mute, then restores the earlier choice.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -791,6 +895,110 @@ pub struct MixSource {
     pub name: String,
     pub enabled: bool,
     pub volume: f32,
+}
+
+/// Stream Select / stream-options grouping for checkable mix sources.
+///
+/// Windows WASAPI (and the Linux `loop:` / `app:` mirrors) split into system
+/// devices versus per-process loopback. Several sources stay checkable so they
+/// can mix into one stream-audio track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MixSourceGroup {
+    /// System capture and render devices (`mic:` microphones, `loop:` speaker loopback).
+    AudioChannels,
+    /// Per-process loopback (`app:` PID), e.g. WASAPI process loopback.
+    Apps,
+}
+
+impl MixSourceGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AudioChannels => "Audio channels",
+            Self::Apps => "Apps",
+        }
+    }
+}
+
+/// Classify a mix source id into its Stream Select group.
+pub fn mix_source_group(id: &str) -> MixSourceGroup {
+    if id.starts_with("app:") {
+        MixSourceGroup::Apps
+    } else {
+        MixSourceGroup::AudioChannels
+    }
+}
+
+/// Group indices for the UI: Audio channels first, then Apps. Empty groups are omitted.
+/// Relative order inside each group matches `sources`. Multi-select is unchanged.
+pub fn grouped_mix_sources(sources: &[MixSource]) -> Vec<(MixSourceGroup, Vec<usize>)> {
+    [
+        MixSourceGroup::AudioChannels,
+        MixSourceGroup::Apps,
+    ]
+    .into_iter()
+    .filter_map(|group| {
+        let indices: Vec<usize> = sources
+            .iter()
+            .enumerate()
+            .filter(|(_, source)| mix_source_group(&source.id) == group)
+            .map(|(index, _)| index)
+            .collect();
+        if indices.is_empty() {
+            None
+        } else {
+            Some((group, indices))
+        }
+    })
+    .collect()
+}
+
+#[cfg(test)]
+mod mix_source_group_tests {
+    use super::{MixSource, MixSourceGroup, grouped_mix_sources, mix_source_group};
+
+    #[test]
+    fn classifies_and_groups_channel_and_app_sources() {
+        assert_eq!(mix_source_group("mic:Headset"), MixSourceGroup::AudioChannels);
+        assert_eq!(mix_source_group("loop:Speakers"), MixSourceGroup::AudioChannels);
+        assert_eq!(mix_source_group("app:4242"), MixSourceGroup::Apps);
+        assert_eq!(MixSourceGroup::AudioChannels.label(), "Audio channels");
+        assert_eq!(MixSourceGroup::Apps.label(), "Apps");
+
+        let sources = vec![
+            MixSource {
+                id: "mic:Mic".into(),
+                name: "Mic".into(),
+                enabled: true,
+                volume: 1.0,
+            },
+            MixSource {
+                id: "app:100".into(),
+                name: "Game".into(),
+                enabled: false,
+                volume: 0.8,
+            },
+            MixSource {
+                id: "loop:Speakers".into(),
+                name: "Speakers (speakers)".into(),
+                enabled: true,
+                volume: 0.5,
+            },
+            MixSource {
+                id: "app:200".into(),
+                name: "Browser".into(),
+                enabled: true,
+                volume: 1.0,
+            },
+        ];
+        let groups = grouped_mix_sources(&sources);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].0, MixSourceGroup::AudioChannels);
+        assert_eq!(groups[0].1, vec![0, 2]);
+        assert_eq!(groups[1].0, MixSourceGroup::Apps);
+        assert_eq!(groups[1].1, vec![1, 3]);
+        assert!(sources.iter().filter(|source| source.enabled).count() >= 2);
+        assert!(grouped_mix_sources(&[]).is_empty());
+    }
 }
 
 pub fn fade_gain(current: f32, target: f32, step: f32) -> f32 {
