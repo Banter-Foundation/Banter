@@ -257,6 +257,9 @@ pub struct Channel {
     pub name: String,
     pub kind: ChannelKind,
     pub position: i64,
+    /// Optional Lucide icon id. `None` means the client uses the kind default.
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

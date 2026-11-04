@@ -370,16 +370,17 @@ async fn server_invite_members_nickname_and_channels() {
                 notes.id,
                 "announcements",
                 ChannelKind::Text,
+                None,
             ).await
             .unwrap();
         assert_eq!(announcements.kind, ChannelKind::Text);
         assert_eq!(announcements.category_id, notes.id);
         let lounge = store
-            .create_channel(owner.id, server_id, notes.id, "Lounge", ChannelKind::Voice).await
+            .create_channel(owner.id, server_id, notes.id, "Lounge", ChannelKind::Voice, None).await
             .unwrap();
         assert_eq!(lounge.kind, ChannelKind::Voice);
         let sketch = store
-            .create_channel(owner.id, server_id, notes.id, "Sketch", ChannelKind::Board).await
+            .create_channel(owner.id, server_id, notes.id, "Sketch", ChannelKind::Board, None).await
             .unwrap();
         assert_eq!(sketch.kind, ChannelKind::Board);
         let scene = store.board_scene(joiner.id, sketch.id).await.unwrap();
@@ -480,7 +481,7 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
 
     let other = store.create_category(ada.id, server_id, "Other").await.unwrap();
     let other_channel = store
-        .create_channel(ada.id, server_id, other.id, "side", ChannelKind::Text).await
+        .create_channel(ada.id, server_id, other.id, "side", ChannelKind::Text, None).await
         .unwrap();
     let elsewhere = store
         .send_message(
@@ -732,7 +733,7 @@ async fn voice_channel_is_drop_in_and_routes_media() {
     store.join_invite(bob.id, &code).await.unwrap();
     let notes = store.create_category(ada.id, home.server.id, "More").await.unwrap();
     let lounge = store
-        .create_channel(ada.id, home.server.id, notes.id, "Lounge", ChannelKind::Voice).await
+        .create_channel(ada.id, home.server.id, notes.id, "Lounge", ChannelKind::Voice, None).await
         .unwrap();
 
     let live = Live::new();
@@ -1155,7 +1156,7 @@ async fn drawing_board_ops_assets_and_conflict() {
     store.join_invite(bob.id, &code).await.unwrap();
     let category_id = home.categories[0].category.id;
     let board = store
-        .create_channel(ada.id, server_id, category_id, "whiteboard", ChannelKind::Board).await
+        .create_channel(ada.id, server_id, category_id, "whiteboard", ChannelKind::Board, None).await
         .unwrap();
 
     assert_eq!(
@@ -1524,7 +1525,7 @@ async fn guild_roles_gate_channels_and_stay_below_the_actor() {
     store.join_invite(joiner.id, &code).await.unwrap();
     assert_eq!(
         store
-            .create_channel(joiner.id, server_id, category_id, "secret", ChannelKind::Text)
+            .create_channel(joiner.id, server_id, category_id, "secret", ChannelKind::Text, None)
             .await
             .unwrap_err(),
         BanterError::NotOwner
@@ -1544,7 +1545,7 @@ async fn guild_roles_gate_channels_and_stay_below_the_actor() {
         .await
         .unwrap();
     let created = store
-        .create_channel(joiner.id, server_id, category_id, "mod-chat", ChannelKind::Text)
+        .create_channel(joiner.id, server_id, category_id, "mod-chat", ChannelKind::Text, None)
         .await
         .unwrap();
     assert_eq!(created.name, "mod-chat");
@@ -1598,4 +1599,104 @@ async fn guild_roles_gate_channels_and_stay_below_the_actor() {
 
     let profile = store.user_profile(owner.id, joiner.id, Some(server_id)).await.unwrap();
     assert!(profile.roles.iter().any(|role| role.name == "Mod"));
+}
+
+#[tokio::test]
+async fn channels_can_set_and_clear_an_optional_lucide_icon() {
+    let (store, _dir) = open_store().await;
+    let owner = store.register("iconowner", "Owner", "password1").await.unwrap();
+    let home = store.create_server(owner.id, "Icons").await.unwrap();
+    let server_id = home.server.id;
+    let category_id = home.categories[0].category.id;
+
+    let plain = store
+        .create_channel(
+            owner.id,
+            server_id,
+            category_id,
+            "plain",
+            ChannelKind::Text,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(plain.icon, None);
+
+    let themed = store
+        .create_channel(
+            owner.id,
+            server_id,
+            category_id,
+            "games",
+            ChannelKind::Voice,
+            Some("mic"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(themed.icon.as_deref(), Some("mic"));
+
+    assert_eq!(
+        store
+            .create_channel(
+                owner.id,
+                server_id,
+                category_id,
+                "bad",
+                ChannelKind::Text,
+                Some("not-a-real-icon"),
+            )
+            .await
+            .unwrap_err(),
+        BanterError::InvalidName
+    );
+
+    let cleared = store
+        .update_channel(owner.id, server_id, themed.id, "team", None)
+        .await
+        .unwrap();
+    assert_eq!(cleared.name, "team");
+    assert_eq!(cleared.icon, None);
+
+    let renamed = store
+        .update_channel(owner.id, server_id, themed.id, "squad", Some("users"))
+        .await
+        .unwrap();
+    assert_eq!(renamed.name, "squad");
+    assert_eq!(renamed.icon.as_deref(), Some("users"));
+
+    let layout = store.layout(owner.id, server_id).await.unwrap();
+    let found = layout
+        .iter()
+        .flat_map(|category| category.channels.iter())
+        .find(|channel| channel.id == themed.id)
+        .expect("updated channel in layout");
+    assert_eq!(found.icon.as_deref(), Some("users"));
+    assert_eq!(found.name, "squad");
+
+    let stranger = store.register("iconstranger", "Stranger", "password1").await.unwrap();
+    assert_eq!(
+        store
+            .update_channel(stranger.id, server_id, themed.id, "nope", Some("mic"))
+            .await
+            .unwrap_err(),
+        BanterError::NotMember
+    );
+}
+
+#[test]
+fn channel_icon_choices_are_known_lucide_names() {
+    assert!(banter_server::CHANNEL_ICON_CHOICES.contains(&"mic"));
+    assert!(banter_server::CHANNEL_ICON_CHOICES.contains(&"users"));
+    assert!(banter_server::is_channel_icon("hash"));
+    assert!(!banter_server::is_channel_icon("not-a-real-icon"));
+    assert_eq!(
+        banter_server::normalize_channel_icon(Some("  mic  ")).unwrap().as_deref(),
+        Some("mic")
+    );
+    assert_eq!(banter_server::normalize_channel_icon(Some("")).unwrap(), None);
+    assert_eq!(banter_server::normalize_channel_icon(None).unwrap(), None);
+    assert_eq!(
+        banter_server::normalize_channel_icon(Some("nope")).unwrap_err(),
+        BanterError::InvalidName
+    );
 }

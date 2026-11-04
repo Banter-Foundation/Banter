@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use banter_server::{Message, VoiceFlags};
+use banter_server::{is_channel_icon, ChannelKind, Message, VoiceFlags};
 use serde::{Deserialize, Serialize};
 
 /// One visible row in a Reddit-style comment tree (depth-first).
@@ -1400,6 +1400,7 @@ pub enum ContextMenuAction {
     AssignRoles { user_id: i64 },
     CopyChannelName { name: String },
     CopyChannelId { channel_id: i64 },
+    EditChannel { channel_id: i64 },
 }
 
 fn menu_item(id: &'static str, label: &'static str, tone: ContextMenuTone, action: ContextMenuAction) -> ContextMenuEntry {
@@ -1541,31 +1542,62 @@ pub fn plan_member_groups(rows: &[(bool, Option<(i64, String)>)]) -> Vec<(String
     groups
 }
 
+/// Lucide name shown in the sidebar / header for a channel.
+///
+/// Custom icons that Banter does not recognize fall back to the kind glyph.
+pub fn channel_display_icon<'a>(kind: ChannelKind, icon: Option<&'a str>) -> &'a str {
+    match icon.map(str::trim).filter(|name| !name.is_empty() && is_channel_icon(name)) {
+        Some(name) => name,
+        None => channel_default_icon(kind),
+    }
+}
+
+/// Kind default when no custom Lucide icon is set.
+pub fn channel_default_icon(kind: ChannelKind) -> &'static str {
+    match kind {
+        ChannelKind::Text => "hash",
+        ChannelKind::Voice => "volume-2",
+        ChannelKind::Board => "pencil",
+    }
+}
+
 /// Right-click menu for a text or voice channel in the sidebar.
-pub fn channel_context_menu(channel_id: i64, name: &str, server_id: i64, _is_owner: bool) -> Vec<ContextMenuEntry> {
-    vec![
-        menu_item(
-            "ctx-invite",
-            "Invite People",
-            ContextMenuTone::Brand,
-            ContextMenuAction::InvitePeople { server_id },
-        ),
-        ContextMenuEntry::Separator,
-        menu_item(
-            "ctx-copy-channel-name",
-            "Copy Name",
+pub fn channel_context_menu(
+    channel_id: i64,
+    name: &str,
+    server_id: i64,
+    can_manage: bool,
+) -> Vec<ContextMenuEntry> {
+    let mut entries = vec![menu_item(
+        "ctx-invite",
+        "Invite People",
+        ContextMenuTone::Brand,
+        ContextMenuAction::InvitePeople { server_id },
+    )];
+    if can_manage {
+        entries.push(menu_item(
+            "ctx-edit-channel",
+            "Edit Channel",
             ContextMenuTone::Normal,
-            ContextMenuAction::CopyChannelName {
-                name: name.to_string(),
-            },
-        ),
-        menu_item(
-            "ctx-copy-channel-id",
-            "Copy Channel ID",
-            ContextMenuTone::Normal,
-            ContextMenuAction::CopyChannelId { channel_id },
-        ),
-    ]
+            ContextMenuAction::EditChannel { channel_id },
+        ));
+    }
+    entries.push(ContextMenuEntry::Separator);
+    entries.push(menu_item(
+        "ctx-copy-channel-name",
+        "Copy Name",
+        ContextMenuTone::Normal,
+        ContextMenuAction::CopyChannelName {
+            name: name.to_string(),
+        },
+    ));
+    entries.push(menu_item(
+        "ctx-copy-channel-id",
+        "Copy Channel ID",
+        ContextMenuTone::Normal,
+        ContextMenuAction::CopyChannelId { channel_id },
+    ));
+    entries
 }
 
 /// Append `@username ` to the composer, matching Discord's mention insert.

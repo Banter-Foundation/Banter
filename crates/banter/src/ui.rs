@@ -15,8 +15,8 @@ use banter_server::{
     LayerPreferences, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MediaKind, MediaPlace, Mention, Message,
     PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_CHANNELS, PERM_MANAGE_ROLES, Presence,
     ProfileActivityInput, ProfileConnectionInput, ProfilePatch, ProfileWidgetInput, ProfileWidgetKind,
-    ProfileWishlistInput, ServerDebug, ServerSummary, UserProfile, VoiceFlags, VoiceMember, has_permission,
-    top_hoisted_role, top_role_color,
+    ProfileWishlistInput, ServerDebug, ServerSummary, UserProfile, VoiceFlags, VoiceMember,
+    CHANNEL_ICON_CHOICES, has_permission, top_hoisted_role, top_role_color,
 };
 use dear_imgui_rs::{
     ChildFlags, Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData,
@@ -31,12 +31,11 @@ use crate::icons::rasterize_lucide;
 use crate::logic::{
     CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry, ContextMenuTone, DevServerPrefs, MixSource,
     MuteMemory, ScreenShare, ServerTarget, SettingsSection, StreamDefaults, StreamFps, StreamResolution, VideoPrefs,
-    VoicePrefs, api_base_for, camera_preview_mirrored, channel_context_menu, clamp_context_menu_pos, clamp_window_size,
-    comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution, discord_shell_columns,
-    encode_jpeg_rgba, fps_block, fps_from_key, fps_key, grouped_mix_sources, hardware_encoder_block, insert_mention,
-    is_debug_command,
-    lerp_size, load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, password_blocks_copy,
-    plan_member_groups,
+    VoicePrefs, api_base_for, camera_preview_mirrored, channel_context_menu, channel_default_icon,
+    channel_display_icon, clamp_context_menu_pos, clamp_window_size, comment_tree_rows, context_menu_height,
+    default_stream_fps, default_stream_resolution, discord_shell_columns, encode_jpeg_rgba, fps_block, fps_from_key,
+    fps_key, grouped_mix_sources, hardware_encoder_block, insert_mention, is_debug_command, lerp_size, load_json,
+    local_api_base, member_context_menu, message_context_menu, mirror_rgba, password_blocks_copy, plan_member_groups,
     password_is_masked, push_to_talk_held, remove_message, resolution_block, resolution_from_key, resolution_key,
     save_json, speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
     stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message, chat_date_separator,
@@ -170,6 +169,7 @@ enum Modal {
     Invite,
     Nickname,
     CreateChannel,
+    EditChannel,
     CreateCategory,
     Roles,
     MemberRoles,
@@ -239,6 +239,10 @@ pub(crate) struct App {
     category_name: String,
     channel_name: String,
     channel_is_voice: bool,
+    /// Optional Lucide id while creating or editing a channel.
+    channel_icon: Option<String>,
+    /// Channel being edited in [`Modal::EditChannel`].
+    channel_edit_id: Option<i64>,
     nickname: String,
     about_draft: String,
     status_draft: String,
@@ -455,6 +459,8 @@ impl App {
             category_name: String::new(),
             channel_name: String::new(),
             channel_is_voice: false,
+            channel_icon: None,
+            channel_edit_id: None,
             nickname: String::new(),
             about_draft: String::new(),
             status_draft: String::new(),
@@ -1405,6 +1411,9 @@ impl App {
                 Modal::CreateChannel => {
                     self.channel_category = None;
                     self.channel_name.clear();
+                    self.channel_icon = None;
+                    self.channel_edit_id = None;
+                    self.channel_is_voice = false;
                     self.open_modal(Modal::CreateChannel);
                 }
                 Modal::CreateCategory => {
@@ -1603,7 +1612,29 @@ impl App {
             ContextMenuAction::AssignRoles { user_id } => {
                 self.open_member_roles(user_id);
             }
+            ContextMenuAction::EditChannel { channel_id } => {
+                self.open_edit_channel(channel_id);
+            }
         }
+    }
+
+    fn open_edit_channel(&mut self, channel_id: i64) {
+        let Some(channel) = self
+            .layout
+            .iter()
+            .flat_map(|category| category.channels.iter())
+            .find(|channel| channel.id == channel_id)
+            .cloned()
+        else {
+            self.status = "channel not found".into();
+            return;
+        };
+        self.channel_edit_id = Some(channel.id);
+        self.channel_name = channel.name;
+        self.channel_icon = channel.icon;
+        self.channel_is_voice = channel.kind == ChannelKind::Voice;
+        self.channel_category = Some(channel.category_id);
+        self.open_modal(Modal::EditChannel);
     }
 
     fn open_dm_for_user(&mut self, user_id: i64) -> Option<i64> {
@@ -2136,14 +2167,10 @@ impl App {
         }
     }
 
-    fn stage_icon(&self) -> Option<&'static str> {
+    fn stage_icon(&self) -> Option<&str> {
         if let Some(channel) = &self.selected {
             if matches!(self.place, Place::Server(_)) {
-                return Some(match channel.kind {
-                    ChannelKind::Text => "hash",
-                    ChannelKind::Voice => "volume-2",
-                    ChannelKind::Board => "pencil",
-                });
+                return Some(channel_display_icon(channel.kind, channel.icon.as_deref()));
             }
         }
         match self.place {
@@ -2372,6 +2399,8 @@ impl App {
             if create {
                 self.channel_category = Some(category_id);
                 self.channel_name.clear();
+                self.channel_icon = None;
+                self.channel_edit_id = None;
                 self.channel_is_voice = false;
                 self.open_modal(Modal::CreateChannel);
             }
@@ -2381,11 +2410,7 @@ impl App {
                 if collapsed && !selected && !joined {
                     continue;
                 }
-                let icon_name = match channel.kind {
-                    ChannelKind::Text => "hash",
-                    ChannelKind::Voice => "volume-2",
-                    ChannelKind::Board => "pencil",
-                };
+                let icon_name = channel_display_icon(channel.kind, channel.icon.as_deref());
                 let (left, right) =
                     self.channel_row(ui, &format!("ch{}", channel.id), Some(icon_name), &channel.name, selected);
                 if left {
@@ -3622,6 +3647,7 @@ impl App {
                     Modal::Invite => self.modal_invite(ui, display),
                     Modal::Nickname => self.modal_nickname(ui, display),
                     Modal::CreateChannel => self.modal_create_channel(ui, display),
+                    Modal::EditChannel => self.modal_edit_channel(ui, display),
                     Modal::CreateCategory => self.modal_create_category(ui, display),
                     Modal::Roles => self.modal_roles(ui, display),
                     Modal::MemberRoles => self.modal_member_roles(ui, display),
@@ -4019,6 +4045,71 @@ impl App {
         (min, max)
     }
 
+    fn channel_icon_picker_height(&self) -> f32 {
+        let cols = 8usize;
+        // Default tile plus every curated Lucide choice.
+        let tiles = CHANNEL_ICON_CHOICES.len() + 1;
+        let rows = tiles.div_ceil(cols).max(1);
+        20.0 + rows as f32 * 36.0 + 8.0
+    }
+
+    /// Lucide picker: Default (kind glyph) plus curated channel icons. Returns true if changed.
+    fn draw_channel_icon_picker(&mut self, ui: &Ui, origin: [f32; 2], width: f32, kind: ChannelKind) -> bool {
+        skin::field_label(ui, self.bold_font, origin, "Channel icon", false, None);
+        let y = origin[1] + 20.0;
+        let cols = 8usize;
+        let cell = 32.0;
+        let gap = 4.0;
+        let default_name = channel_default_icon(kind);
+        let mut changed = false;
+        let mut tiles: Vec<(Option<&str>, &str)> = vec![(None, default_name)];
+        for name in CHANNEL_ICON_CHOICES {
+            tiles.push((Some(*name), *name));
+        }
+        for (index, (value, preview)) in tiles.into_iter().enumerate() {
+            let col = index % cols;
+            let row = index / cols;
+            let x = origin[0] + col as f32 * (cell + gap);
+            let top = y + row as f32 * (cell + gap);
+            let min = [x, top];
+            let max = [x + cell, top + cell];
+            ui.set_cursor_screen_pos(min);
+            let id = match value {
+                None => "##channel-icon-default".to_string(),
+                Some(name) => format!("##channel-icon-{name}"),
+            };
+            if ui.invisible_button(id, [cell, cell]) {
+                self.channel_icon = value.map(str::to_string);
+                changed = true;
+            }
+            let hovered = ui.is_item_hovered();
+            let selected = self.channel_icon.as_deref() == value;
+            let fill = if selected {
+                ROW_SELECTED
+            } else if hovered {
+                ROW_HOVER
+            } else {
+                INPUT_BG
+            };
+            skin::rect(ui, min, max, fill, 4.0);
+            skin::image(
+                ui,
+                self.icon(preview),
+                [min[0] + 8.0, min[1] + 8.0],
+                16.0,
+                if selected { WHITE } else { TEXT_SECONDARY },
+            );
+            if hovered {
+                let tip = if value.is_none() { "Default" } else { preview };
+                skin::item_tooltip(ui, self.semibold_font, tip);
+            }
+        }
+        let _ = width;
+        let rows = (CHANNEL_ICON_CHOICES.len() + 1).div_ceil(cols).max(1);
+        let _end = y + rows as f32 * (cell + gap);
+        changed
+    }
+
     fn modal_create_channel(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
         let category = self
             .channel_category
@@ -4027,7 +4118,8 @@ impl App {
         let category_name = category
             .and_then(|id| self.layout.iter().find(|layout| layout.category.id == id))
             .map(|layout| format!("in {}", layout.category.name));
-        let body_h = 20.0 + 2.0 * 68.0 + 16.0 + 20.0 + INPUT_H + 24.0;
+        let icon_h = self.channel_icon_picker_height();
+        let body_h = 20.0 + 2.0 * 68.0 + 16.0 + 20.0 + INPUT_H + 16.0 + icon_h + 24.0;
         let (body, min, max) = self.modal_frame(ui, display, "Create Channel", category_name.as_deref(), true, body_h, MODAL_FOOTER_H);
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         let semi = self.semibold_font;
@@ -4069,25 +4161,123 @@ impl App {
         skin::field_label(ui, self.bold_font, [body[0], y], "Channel name", false, None);
         let field_min = [body[0], y + 20.0];
         skin::rect(ui, field_min, [field_min[0] + inner_w, field_min[1] + INPUT_H], INPUT_BG, INPUT_RADIUS);
-        let prefix = if self.channel_is_voice { "volume-2" } else { "hash" };
+        let kind = if self.channel_is_voice {
+            ChannelKind::Voice
+        } else {
+            ChannelKind::Text
+        };
+        let prefix = channel_display_icon(kind, self.channel_icon.as_deref());
         skin::image(ui, self.icon(prefix), [field_min[0] + 10.0, field_min[1] + 12.0], 16.0, TEXT_NORMAL);
         self.focus_modal_field(ui);
         let enter = skin::input(ui, "##channel-name", &mut self.channel_name, "new-channel", [field_min[0] + 28.0, field_min[1]], inner_w - 28.0, INPUT_H, FONT_MD, false);
+        y = field_min[1] + INPUT_H + 16.0;
+        self.draw_channel_icon_picker(ui, [body[0], y], inner_w, kind);
         let enabled = !self.channel_name.trim().is_empty();
         let (cancel, create) = self.modal_footer(ui, max, min[0], "Cancel", "Create Channel", Tone::Brand, enabled);
         if cancel {
             self.modal = None;
         } else if (create || enter) && enabled {
             if let (Place::Server(server_id), Some(category_id)) = (self.place, category) {
-                let kind = if self.channel_is_voice { ChannelKind::Voice } else { ChannelKind::Text };
                 let name = self.channel_name.trim().to_string();
-                if self.note(self.client.create_channel(server_id, category_id, &name, kind)).is_some() {
+                let icon = self.channel_icon.clone();
+                if self
+                    .note(self.client.create_channel(
+                        server_id,
+                        category_id,
+                        &name,
+                        kind,
+                        icon.as_deref(),
+                    ))
+                    .is_some()
+                {
                     self.channel_name.clear();
+                    self.channel_icon = None;
                     self.modal = None;
                     self.reload_layout();
                 }
             } else {
                 self.status = "create a category first".into();
+            }
+        }
+        (min, max)
+    }
+
+    fn modal_edit_channel(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let channel = self.channel_edit_id.and_then(|id| {
+            self.layout
+                .iter()
+                .flat_map(|category| category.channels.iter())
+                .find(|channel| channel.id == id)
+                .cloned()
+        });
+        let kind = channel
+            .as_ref()
+            .map(|channel| channel.kind)
+            .unwrap_or(if self.channel_is_voice {
+                ChannelKind::Voice
+            } else {
+                ChannelKind::Text
+            });
+        let subtitle = channel.as_ref().map(|channel| match channel.kind {
+            ChannelKind::Text => "Text channel".to_string(),
+            ChannelKind::Voice => "Voice channel".to_string(),
+            ChannelKind::Board => "Board channel".to_string(),
+        });
+        let icon_h = self.channel_icon_picker_height();
+        let body_h = 20.0 + INPUT_H + 16.0 + icon_h + 24.0;
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Edit Channel",
+            subtitle.as_deref(),
+            true,
+            body_h,
+            MODAL_FOOTER_H,
+        );
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        skin::field_label(ui, self.bold_font, body, "Channel name", false, None);
+        let field_min = [body[0], body[1] + 20.0];
+        skin::rect(ui, field_min, [field_min[0] + inner_w, field_min[1] + INPUT_H], INPUT_BG, INPUT_RADIUS);
+        let prefix = channel_display_icon(kind, self.channel_icon.as_deref());
+        skin::image(ui, self.icon(prefix), [field_min[0] + 10.0, field_min[1] + 12.0], 16.0, TEXT_NORMAL);
+        self.focus_modal_field(ui);
+        let enter = skin::input(
+            ui,
+            "##edit-channel-name",
+            &mut self.channel_name,
+            "channel-name",
+            [field_min[0] + 28.0, field_min[1]],
+            inner_w - 28.0,
+            INPUT_H,
+            FONT_MD,
+            false,
+        );
+        let picker_y = field_min[1] + INPUT_H + 16.0;
+        self.draw_channel_icon_picker(ui, [body[0], picker_y], inner_w, kind);
+        let enabled = !self.channel_name.trim().is_empty() && self.channel_edit_id.is_some();
+        let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", "Save Changes", Tone::Brand, enabled);
+        if cancel {
+            self.modal = None;
+            self.channel_edit_id = None;
+        } else if (save || enter) && enabled {
+            if let (Place::Server(server_id), Some(channel_id)) = (self.place, self.channel_edit_id) {
+                let name = self.channel_name.trim().to_string();
+                let icon = self.channel_icon.clone();
+                if let Some(updated) = self.note(self.client.update_channel(
+                    server_id,
+                    channel_id,
+                    &name,
+                    icon.as_deref(),
+                )) {
+                    if self.selected.as_ref().is_some_and(|channel| channel.id == channel_id) {
+                        self.selected = Some(updated);
+                    }
+                    self.channel_name.clear();
+                    self.channel_icon = None;
+                    self.channel_edit_id = None;
+                    self.modal = None;
+                    self.reload_layout();
+                }
             }
         }
         (min, max)
@@ -6869,6 +7059,7 @@ impl App {
             "phone-off", "settings", "chevron-down", "chevron-up", "plus", "hash", "volume-2", "users", "search", "paperclip",
             "x", "user", "log-out", "pencil", "trash-2", "reply", "check", "chevron-right", "circle-plus", "folder-plus",
             "message-circle", "phone", "user-plus", "signal", "ellipsis", "minus",
+            "image", "file-text", "sticky-note", "circle", "square", "type", "mouse-pointer-2",
         ] {
             if let Ok(rgba) = rasterize_lucide(name, 32, [255, 255, 255]) {
                 if let Some(shot) = upload_rgba(imgui, 32, 32, &rgba) {

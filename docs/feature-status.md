@@ -12,7 +12,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Friends list + friend requests | Working — accepting (or completing a mutual request) opens that friend's DM |
 | Create server, invite join, member list, server nickname | Working |
 | Guild roles (@everyone, color, hoist, permissions, assign from the member menu) | Working — kick and ban stay deferred |
-| Text + voice channels in categories (Manage Channels; owner has every permission) | Working |
+| Text + voice channels in categories (Manage Channels; owner has every permission; optional Lucide channel icons) | Working |
 | Drawing board channels (shapes, stickies, images, files, realtime ops) | Working |
 | Send / reply / edit / delete / search messages | Working |
 | Reddit-style reply threading (nested replies, collapse, inline composer) | Working — text channels + DMs; `reply_to` is the parent pointer; BA-72 clarity: stronger guides, chevron fold, Reply link, distinct inline composer |
