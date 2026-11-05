@@ -73,7 +73,7 @@ Health: `/v1/health`.
 - Each message may set `reply_to` to another message in the **same** channel or DM (`messages.reply_to`, indexed). That is the parent pointer for nested comment trees.
 - The API still returns a flat list ordered by id. The client builds a depth-first tree (`comment_tree_rows` in `logic.rs`): roots first, children nested under parents, orphans (missing parent) treated as roots.
 - Collapse/expand is **client-local** (not persisted). Deleting a parent still clears children's `reply_to` (existing contract); those messages become roots.
-- UI: bottom composer posts top-level only; **Reply** (toolbar or always-visible text link) opens an accented inline composer under that comment. Indent is 32 px per depth with per-level thread guides, an L-connector to the child, and a chevron fold control; leaf rows keep Discord-like avatar / time / hover toolbar polish.
+- UI: bottom composer posts top-level only; **Reply** (toolbar or always-visible text link) opens an accented inline composer under that comment. Indent is 24 px per depth with thin vertical thread gutters (no L-hooks), circular (−)/(+) fold controls, and line-click collapse; leaf rows keep Discord-like avatar / time / hover toolbar polish.
 
 Contract tests live in `crates/banter-server/tests/foundation.rs`. Client tree helpers are covered in `crates/banter/tests/client.rs`.
 

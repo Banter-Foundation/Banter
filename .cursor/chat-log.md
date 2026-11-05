@@ -913,3 +913,11 @@ Report PR URL + nesting rules.
 
 ### Summary
 Implemented per-user nested server-rail folders with hex colors, Postgres migration (renumbered to 005 after channel icons 004), API, and rail UX. Opened PR; merging after Owl said so.
+
+## 2026-11-05 00:11:39 +0000 — BA-82 Reddit-style reply thread lines
+
+Owl wants Banter's reply/message thread lines to look exactly like Reddit (dark mode), matching the reference screenshot.
+Agent: Branch `cursor/reddit-thread-lines-cd5c` from `origin/main`. Removed L-connectors; thin vertical gutters; circular (−)/(+) collapse; line hover brighten + click collapse via ancestor_ids. Tests first (theme + comment_tree). cargo check + comment_tree/theme reddit_ tests passed. PR opened; do not merge until Owl says so.
+
+### Summary
+Visual/interaction fidelity for thread lines + collapse chrome only; reply tree semantics from #22/#34 unchanged.

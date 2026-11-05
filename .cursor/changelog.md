@@ -519,3 +519,12 @@ The server rail can group servers into nested folders. Each folder has an option
 - Client: rail tree with folder icons, context menus, create/rename/recolor modal (hex + RGB sliders)
 - Nesting rules: per-user; folders under folders up to depth 8; delete promotes children; cycles rejected; invalid hex rejected
 - Tests: foundation `server_folders_nest_hex_color_collapse_and_delete`, client `server_folders`, migrate `005_server_folders`
+
+## 2026-11-05 00:11:39 +0000 [ubuntu] — BA-82 Reddit-style reply thread lines
+
+- Match collapse chrome + vertical gutters to Reddit dark-mode reference (no L-hooks)
+- Theme: 24 px indent, 1 px muted blue-gray guides, circular (−)/(+) fold, line-hit hover/click
+- `CommentRow.ancestor_ids` maps each guide to the branch it collapses
+- Drop DrawListMut before fold/line hit targets (dear-imgui #31 lesson)
+- Tests: theme reddit_* helpers; comment_tree ancestor chain
+

@@ -90,17 +90,24 @@ pub const RAIL_SEPARATOR_W: f32 = 32.0;
 pub const RAIL_SEPARATOR_H: f32 = 2.0;
 pub const RAIL_PILL_W: f32 = 4.0;
 
-// Reddit-style comment threads in text chat / DMs.
-/// Horizontal step per nesting depth (wide enough that depth reads at a glance).
-pub const COMMENT_INDENT: f32 = 32.0;
+// Reddit-style comment threads in text chat / DMs (BA-82 thread lines).
+/// Fixed horizontal step per nesting depth (~20–30 px like Reddit dark mode).
+pub const COMMENT_INDENT: f32 = 24.0;
 pub const COMMENT_MAX_VISUAL_DEPTH: u32 = 12;
-/// Gutter for the fold control sitting on the innermost thread guide.
-pub const COMMENT_COLLAPSE_W: f32 = 22.0;
-/// Hit target for collapse / expand (kept smaller than the 32 px toolbar tools).
-pub const COMMENT_FOLD_HIT: f32 = 20.0;
-pub const COMMENT_GUIDE_THICK: f32 = 2.0;
-/// Horizontal stub from the deepest guide toward the avatar (parent → child).
-pub const COMMENT_CONNECTOR_W: f32 = 12.0;
+/// Left pad before the depth-0 collapse column (matches chat row inset).
+pub const COMMENT_LEFT_PAD: f32 = 16.0;
+/// Gutter width for one collapse circle + vertical guide column.
+pub const COMMENT_COLLAPSE_W: f32 = 18.0;
+/// Radius of the circular (−) collapse control.
+pub const COMMENT_FOLD_RADIUS: f32 = 7.0;
+/// Hit box for the collapse circle (slightly larger than the drawn circle).
+pub const COMMENT_FOLD_HIT: f32 = 16.0;
+/// Top padding from the row origin down to the collapse circle.
+pub const COMMENT_FOLD_PAD_Y: f32 = 4.0;
+/// Thin solid vertical gutters only — no L-hooks or rounded connectors.
+pub const COMMENT_GUIDE_THICK: f32 = 1.0;
+/// Click / hover half-width around a vertical thread guide.
+pub const COMMENT_LINE_HIT_W: f32 = 10.0;
 /// Extra space before a new root comment so threads scan as blocks.
 pub const COMMENT_ROW_GAP_ROOT: f32 = 12.0;
 /// Tighter gap between nested replies inside one thread.
@@ -111,11 +118,32 @@ pub const COMMENT_INLINE_HEADER_H: f32 = 22.0;
 pub const COMMENT_INLINE_INPUT_H: f32 = 40.0;
 pub const COMMENT_INLINE_FOOTER_H: f32 = 30.0;
 pub const COMMENT_INLINE_ACCENT_W: f32 = 3.0;
-/// Thread guide (muted rail). Hover / active uses `COMMENT_THREAD_HOVER`.
-pub const COMMENT_THREAD_LINE: [f32; 4] = hex(0x6D6F78);
-pub const COMMENT_THREAD_HOVER: [f32; 4] = hex(0xB5BAC1);
+/// Muted blue-gray guide on dark chat (Reddit dark mode). Hover brightens.
+pub const COMMENT_THREAD_LINE: [f32; 4] = hex(0x343C42);
+pub const COMMENT_THREAD_HOVER: [f32; 4] = hex(0x818384);
 /// Inline reply composer fill — darker than the bottom top-level bar (`COMPOSER_BG`).
 pub const COMMENT_INLINE_BG: [f32; 4] = hex(0x2B2D31);
+
+/// Screen X of the vertical thread guide / collapse circle center at `depth` (0 = root).
+pub fn comment_thread_guide_x(content_left: f32, depth: u32) -> f32 {
+    content_left + COMMENT_INDENT * depth as f32 + COMMENT_COLLAPSE_W * 0.5
+}
+
+/// Collapse circle only when the node has nested replies.
+pub fn comment_shows_collapse(child_count: usize) -> bool {
+    child_count > 0
+}
+
+/// Own-row branch line: from the bottom of the collapse circle to the row bottom.
+pub fn comment_own_branch_line_y(row_top: f32, row_h: f32) -> (f32, f32) {
+    let circle_bottom = row_top + COMMENT_FOLD_PAD_Y + COMMENT_FOLD_RADIUS * 2.0;
+    (circle_bottom, row_top + row_h)
+}
+
+/// True when `pointer_x` is close enough to click / hover a vertical guide at `guide_x`.
+pub fn comment_thread_line_hit(guide_x: f32, pointer_x: f32) -> bool {
+    (pointer_x - guide_x).abs() <= COMMENT_LINE_HIT_W * 0.5
+}
 
 // Channel list.
 pub const CHANNEL_ROW_H: f32 = 32.0;

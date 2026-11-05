@@ -2936,12 +2936,13 @@ impl App {
             }
             let visual_depth = row.depth.min(COMMENT_MAX_VISUAL_DEPTH);
             let indent = COMMENT_INDENT * visual_depth as f32;
-            let collapse_gutter = if row.child_count > 0 || row.depth > 0 {
+            let shows_fold = comment_shows_collapse(row.child_count);
+            let collapse_gutter = if shows_fold || row.depth > 0 {
                 COMMENT_COLLAPSE_W
             } else {
                 0.0
             };
-            let avatar_x = 16.0 + indent + collapse_gutter;
+            let avatar_x = COMMENT_LEFT_PAD + indent + collapse_gutter;
             let text_x = avatar_x + 40.0 + 16.0;
             let text_w = (width - text_x - 24.0).max(40.0);
             let name = message
@@ -2987,47 +2988,80 @@ impl App {
                     mouse,
                 );
             }
-            // Nested depth guides: one vertical rail per ancestor level, plus an L stub to the avatar.
-            // Drop DrawListMut before fold / tool hit targets — they acquire the same window draw list.
-            if visual_depth > 0 || row.child_count > 0 {
-                {
-                    let draw = ui.get_window_draw_list();
-                    for level in 1..=visual_depth.max(if row.child_count > 0 { 1 } else { 0 }) {
-                        let guide_x = origin[0] + 16.0 + COMMENT_INDENT * (level.saturating_sub(1) as f32) + COMMENT_COLLAPSE_W * 0.5;
-                        let color = if level == visual_depth.max(1) {
-                            COMMENT_THREAD_LINE
-                        } else {
-                            with_alpha(COMMENT_THREAD_LINE, 0.55)
-                        };
-                        draw.add_line([guide_x, origin[1]], [guide_x, origin[1] + row_h], color)
-                            .thickness(COMMENT_GUIDE_THICK)
-                            .build();
-                    }
-                    if visual_depth > 0 {
-                        let deep = origin[0] + 16.0 + COMMENT_INDENT * (visual_depth.saturating_sub(1) as f32) + COMMENT_COLLAPSE_W * 0.5;
-                        let stub_y = origin[1] + 22.0;
-                        draw.add_line([deep, stub_y], [deep + COMMENT_CONNECTOR_W, stub_y], COMMENT_THREAD_LINE)
-                            .thickness(COMMENT_GUIDE_THICK)
-                            .build();
-                    }
-                }
-                if row.child_count > 0 {
-                    let fold_level = if visual_depth == 0 { 1 } else { visual_depth };
-                    let guide_x = origin[0]
-                        + 16.0
-                        + COMMENT_INDENT * (fold_level.saturating_sub(1) as f32)
-                        + COMMENT_COLLAPSE_W * 0.5;
-                    let tip = if row.collapsed {
-                        format!("Expand {} replies", row.child_count)
+            // Reddit dark-mode thread lines: straight vertical gutters only (no L-hooks).
+            // Drop DrawListMut before fold / line hit targets — they acquire the same window draw list (#31).
+            let content_left = origin[0] + COMMENT_LEFT_PAD;
+            let pointer = ui.mouse_pos();
+            let pointer_in_row = pointer[1] >= origin[1] && pointer[1] <= origin[1] + row_h;
+            {
+                let draw = ui.get_window_draw_list();
+                // Ancestor guides: one muted vertical line per depth, full row height.
+                for (level, _) in row.ancestor_ids.iter().enumerate() {
+                    let depth = level as u32;
+                    let guide_x = comment_thread_guide_x(content_left, depth);
+                    let hot_line = pointer_in_row && comment_thread_line_hit(guide_x, pointer[0]);
+                    let color = if hot_line {
+                        COMMENT_THREAD_HOVER
                     } else {
-                        format!("Collapse {} replies", row.child_count)
+                        COMMENT_THREAD_LINE
                     };
-                    if self.comment_fold_control(
-                        ui,
-                        message.id,
-                        [guide_x - COMMENT_FOLD_HIT * 0.5, origin[1] + 2.0],
-                        row.collapsed,
-                        &tip,
+                    draw.add_line([guide_x, origin[1]], [guide_x, origin[1] + row_h], color)
+                        .thickness(COMMENT_GUIDE_THICK)
+                        .build();
+                }
+                // Own branch line starts under this row's collapse circle when expanded.
+                if shows_fold && !row.collapsed {
+                    let guide_x = comment_thread_guide_x(content_left, visual_depth);
+                    let (line_y0, line_y1) = comment_own_branch_line_y(origin[1], row_h);
+                    let hot_line = pointer_in_row
+                        && pointer[1] >= line_y0
+                        && comment_thread_line_hit(guide_x, pointer[0]);
+                    let color = if hot_line {
+                        COMMENT_THREAD_HOVER
+                    } else {
+                        COMMENT_THREAD_LINE
+                    };
+                    draw.add_line([guide_x, line_y0], [guide_x, line_y1], color)
+                        .thickness(COMMENT_GUIDE_THICK)
+                        .build();
+                }
+            }
+            // Line-click collapses the branch that owns that guide (Reddit).
+            for (level, &ancestor_id) in row.ancestor_ids.iter().enumerate() {
+                let guide_x = comment_thread_guide_x(content_left, level as u32);
+                let hit_x = guide_x - COMMENT_LINE_HIT_W * 0.5;
+                ui.set_cursor_screen_pos([hit_x, origin[1]]);
+                if ui.invisible_button(
+                    format!("thread-line-{ancestor_id}-{}", message.id),
+                    [COMMENT_LINE_HIT_W, row_h],
+                ) {
+                    *collapse = Some(ancestor_id);
+                }
+                if ui.is_item_hovered() {
+                    skin::item_tooltip(ui, self.semibold_font, "Collapse thread");
+                }
+            }
+            if shows_fold {
+                let guide_x = comment_thread_guide_x(content_left, visual_depth);
+                let fold_min = [
+                    guide_x - COMMENT_FOLD_HIT * 0.5,
+                    origin[1] + COMMENT_FOLD_PAD_Y,
+                ];
+                let tip = if row.collapsed {
+                    format!("Expand {} replies", row.child_count)
+                } else {
+                    format!("Collapse {} replies", row.child_count)
+                };
+                if self.comment_fold_control(ui, message.id, fold_min, row.collapsed, &tip) {
+                    *collapse = Some(message.id);
+                }
+                if !row.collapsed {
+                    let (line_y0, line_y1) = comment_own_branch_line_y(origin[1], row_h);
+                    let hit_h = (line_y1 - line_y0).max(1.0);
+                    ui.set_cursor_screen_pos([guide_x - COMMENT_LINE_HIT_W * 0.5, line_y0]);
+                    if ui.invisible_button(
+                        format!("thread-own-{}-{}", message.id, message.id),
+                        [COMMENT_LINE_HIT_W, hit_h],
                     ) {
                         *collapse = Some(message.id);
                     }
@@ -5603,27 +5637,31 @@ impl App {
         clicked
     }
 
-    /// Compact fold control on a thread guide: chevron shows collapsed vs expanded.
+    /// Reddit-style circular collapse control: (−) expanded, (+) collapsed.
     fn comment_fold_control(&self, ui: &Ui, message_id: i64, min: [f32; 2], collapsed: bool, tip: &str) -> bool {
         let size = COMMENT_FOLD_HIT;
         ui.set_cursor_screen_pos(min);
         let clicked = ui.invisible_button(format!("fold-{message_id}"), [size, size]);
         let hovered = ui.is_item_hovered();
-        let icon = if collapsed { "chevron-right" } else { "chevron-down" };
+        let icon = if collapsed { "plus" } else { "minus" };
         {
             let draw = ui.get_window_draw_list();
-            let fill = if hovered {
-                with_alpha(COMMENT_THREAD_HOVER, 0.25)
+            let center = [min[0] + size * 0.5, min[1] + size * 0.5];
+            let rim = if hovered {
+                COMMENT_THREAD_HOVER
             } else {
-                with_alpha(COMMENT_THREAD_LINE, 0.20)
+                COMMENT_THREAD_LINE
             };
-            draw.add_rect(min, [min[0] + size, min[1] + size], fill)
-                .rounding(4.0)
+            // Subtle fill so the circle reads on dark chat without looking loud.
+            draw.add_circle(center, COMMENT_FOLD_RADIUS, with_alpha(rim, 0.18))
                 .filled(true)
                 .build();
+            draw.add_circle(center, COMMENT_FOLD_RADIUS, rim)
+                .thickness(1.0)
+                .build();
             if let Some(texture) = self.icon(icon) {
-                let pad = 3.0;
-                let tint = if hovered { COMMENT_THREAD_HOVER } else { TEXT_SECONDARY };
+                let pad = size * 0.28;
+                let tint = if hovered { COMMENT_THREAD_HOVER } else { MUTED };
                 draw.add_image(
                     texture,
                     [min[0] + pad, min[1] + pad],
