@@ -353,6 +353,49 @@ pub fn friendly_device_error(device: &str) -> Option<&'static str> {
     }
 }
 
+/// Voice-bar / settings notice for WASAPI speaker or per-app loopback failures (BA-92).
+/// Raw Windows text such as `The parameter is incorrect. (0x80070057)` stays in `detail` / stderr only.
+pub fn media_wasapi_notice(label: &str, raw: &str) -> String {
+    use banter_server::{BanterIssue, ERR_VC_LOOPBACK};
+    let message = format!("couldn't capture audio from {label}");
+    BanterIssue::new(ERR_VC_LOOPBACK, message)
+        .with_detail(raw)
+        .user_text()
+}
+
+/// Mic / speakers / camera open failure as a `BANTER_VC_DEVICE_FAILED` notice (BA-92).
+pub fn media_device_notice(device: &str, raw: &str) -> String {
+    use banter_server::{BanterIssue, ERR_VC_DEVICE};
+    let message = friendly_device_error(device).unwrap_or("Banter could not open that audio or video device.");
+    BanterIssue::new(ERR_VC_DEVICE, message)
+        .with_detail(raw)
+        .user_text()
+}
+
+/// Capture format for `VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK` (Microsoft ApplicationLoopback sample).
+/// GetMixFormat is unsupported on that virtual device and returns `E_INVALIDARG` (0x80070057).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessLoopbackFormat {
+    pub format_tag: u16,
+    pub channels: u16,
+    pub sample_rate: u32,
+    pub bits_per_sample: u16,
+    pub block_align: u16,
+    pub avg_bytes_per_sec: u32,
+}
+
+/// WAVE_FORMAT_PCM stereo 44.1 kHz 16-bit — same numbers as the Windows ApplicationLoopback sample.
+pub fn process_loopback_format() -> ProcessLoopbackFormat {
+    ProcessLoopbackFormat {
+        format_tag: 1,
+        channels: 2,
+        sample_rate: 44_100,
+        bits_per_sample: 16,
+        block_align: 4,
+        avg_bytes_per_sec: 44_100 * 4,
+    }
+}
+
 /// Same rule as the server: 1 to 32 characters after trimming, no control characters.
 pub fn display_name_error(draft: &str) -> Option<&'static str> {
     let name = draft.trim();

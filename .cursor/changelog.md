@@ -620,3 +620,13 @@ Live hosts answering only `{"ok":true}` left newer clients talking to pre–PR #
 
 - `docker build --pull -t banter-server:local .` succeeded (`d0530f12d92e`). The image contains `/usr/local/bin/banter-server`.
 - A published tag still works when `BANTER_IMAGE` is set and the pull succeeds. The script then sets `BANTER_PULL_POLICY=never` so Compose does not rebuild over it.
+
+## 2026-11-04 23:27:11 -06:00 [Winter] — Fix voice 0x80070057 WASAPI loopback (BA-92)
+
+Guild Voice Connected showed a red `The parameter is incorrect. (0x80070057)` while Owl had screen share and Brave app-audio enabled. Process loopback called `GetMixFormat` on `VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK` (unsupported) and initialized with no `LOOPBACK` flag. Failures could surface as a raw Windows HRESULT under the green Connected label.
+
+- Process loopback uses the Microsoft ApplicationLoopback PCM format (44.1 kHz stereo 16-bit) with `AUDCLNT_STREAMFLAGS_LOOPBACK | AUTOCONVERTPCM`
+- `start_process` / `start_render` wait for open success/failure instead of swallowing pump errors
+- Voice-bar notices use `BANTER_VC_LOOPBACK_FAILED` / `BANTER_VC_DEVICE_FAILED` (PR #50 catalog); raw HRESULT stays in detail/stderr
+- Docs: `docs/errors.md`; tests: `errcode_loopback`, `wasapi_loopback_errors`
+
