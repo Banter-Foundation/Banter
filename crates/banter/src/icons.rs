@@ -59,6 +59,7 @@ fn lucide_svg(name: &str) -> Option<&'static str> {
         "message-circle" => include_str!("../assets/lucide/message-circle.svg"),
         "mic" => include_str!("../assets/lucide/mic.svg"),
         "mic-off" => include_str!("../assets/lucide/mic-off.svg"),
+        "minus" => include_str!("../assets/lucide/minus.svg"),
         "monitor" => include_str!("../assets/lucide/monitor.svg"),
         "monitor-off" => include_str!("../assets/lucide/monitor-off.svg"),
         "mouse-pointer-2" => include_str!("../assets/lucide/mouse-pointer-2.svg"),
