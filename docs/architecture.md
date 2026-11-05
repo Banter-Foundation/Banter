@@ -16,7 +16,7 @@ Banter/
 | Module | Responsibility |
 | --- | --- |
 | `main.rs` | Entry → `banter::run()` |
-| `platform.rs` | Main GLFW window plus optional shared-context **Banter Settings** window; OpenGL 3.3, Dear ImGui docking + glow renderer, clipboard, input, embedded-server bootstrap; UI present rate follows the current monitor (VSync `Sync(1)`, reapplied when the window moves or the mode Hz changes) |
+| `platform.rs` | Main GLFW window plus optional shared-context **Banter Settings** window; OpenGL 3.3, Dear ImGui docking + glow renderer (separate ImGui context per OS window via suspend/activate), clipboard, input, embedded-server bootstrap; UI present rate follows the current monitor (VSync `Sync(1)`, reapplied when the window moves or the mode Hz changes) |
 | `ui.rs` | Signed-in Discord-like shell, sign-in/register, modals, chat, voice stage, 1:1 DM call stage, friends/DMs; `draw_main` vs `draw_settings_window` |
 | `theme.rs` | Skin metrics and colors (temporary Discord dark theme) |
 | `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |
@@ -31,7 +31,7 @@ Banter/
 | `icons.rs` | Lucide SVG → texture |
 | `session` / prefs | Voice, stream, and `dev-server.json` live under the data dir, not in git |
 
-Flow: `platform::run` loads `dev-server.json` and the saved session token, applies `startup_local_policy` (skip local for Remote; start local only when logged in on Local; otherwise reuse a running loopback or ask for remote), opens the window, builds `ui::App` against the chosen API base, then frames ImGui each tick. When User Settings is open, a second GLFW window titled **Banter Settings** is created (shared GL context) and drawn on its own pass so the main shell is not covered by an overlay. Closing that window (chrome, Escape, or the in-UI X) clears settings state and focuses the main window. Developer settings (and the sign-in Server options overlay) can reconnect the client mid-session and start local when the user picks Local.
+Flow: `platform::run` loads `dev-server.json` and the saved session token, applies `startup_local_policy` (skip local for Remote; start local only when logged in on Local; otherwise reuse a running loopback or ask for remote), opens the window, builds `ui::App` against the chosen API base, then frames ImGui each tick. When User Settings is open, a second GLFW window titled **Banter Settings** is created (shared GL context) with its **own Dear ImGui context** (main is suspended for that pass) so input is not shared with the shell. Closing that window (chrome, Escape, or the in-UI X) clears settings state and focuses the main window. Developer settings (and the sign-in Server options overlay) can reconnect the client mid-session and start local when the user picks Local.
 
 The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, members). Panels are not treated as free-floating docks for day-to-day use even though docking is enabled and `banter-dock.ini` is written.
 

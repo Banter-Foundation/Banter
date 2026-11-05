@@ -953,3 +953,15 @@ Agent: Root cause — Settings event queue can carry client input while GLFW foc
 
 ### Summary
 Settings ImGui should receive clicks/keys/Escape/X again; do not merge until Owl confirms on Windows.
+
+
+## 2026-11-05 BA-86 Settings ImGui still dead after #48
+
+Owl: After #48 on main, Settings ImGui still does nothing (opens; OS chrome may close; in-window controls dead). Re-diagnose from latest main without assuming #48's theory was complete. Prefer robust multi-window input (separate ImGui context, etc.). Open PR; do not merge until Owl confirms. Use gh; no GitHub MCP if flaky. Prior ba85/ba84 notes. Task BA-86.
+
+Agent: Root cause — one ImGui context with two NewFrames across two GLFW windows cannot reliably own mouse/focus IO (sibling Focus/mouse clears, WantCapture, Windows shared-GLFW focus lies). Fixed with a dedicated Settings SuspendedContext + GlowRenderer; main suspends for that pass; Settings always feeds its own window. Branch cursor/fix-settings-imgui-context-eba2. Report internal/ba86-settings-imgui-context.md.
+
+### Summary
+Settings ImGui uses its own context so clicks/keys/Escape/X should work; do not merge until Owl confirms on Windows.
+
+Agent: PR #49 opened (ManagePullRequest; gh createPullRequest scope missing). Do not merge until Owl confirms.
