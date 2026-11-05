@@ -324,6 +324,54 @@ pub fn voice_flags_retry_ready(
     }
 }
 
+/// How long the client waits between websocket reconnect attempts.
+pub const RECONNECT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Notice strip copy while the realtime socket is down and retries are scheduled.
+pub const RECONNECTING_STATUS: &str = "Reconnecting…";
+
+/// Voice or DM call the client should rejoin after a successful reconnect.
+///
+/// The server drops guild voice seats and ends DM calls when the websocket closes,
+/// so the client must re-join over HTTP once the socket is back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceRejoinIntent {
+    GuildChannel(i64),
+    DirectCall(i64),
+}
+
+/// Capture rejoin intent from the client's local seat before tearing down realtime.
+///
+/// Guild voice wins over a DM call. Ringing and active DM calls both count — the
+/// server ends the call on disconnect, so either side restarts with `start_call`.
+pub fn capture_voice_rejoin_intent(
+    voice_channel: Option<i64>,
+    call_dm: Option<(i64, banter_server::CallPhase)>,
+) -> Option<VoiceRejoinIntent> {
+    if let Some(channel_id) = voice_channel {
+        return Some(VoiceRejoinIntent::GuildChannel(channel_id));
+    }
+    call_dm.map(|(dm_id, _)| VoiceRejoinIntent::DirectCall(dm_id))
+}
+
+/// True when a scheduled reconnect attempt should run.
+///
+/// `next_at = None` means reconnect is not armed. `Some(at)` is ready when `now >= at`.
+pub fn reconnect_retry_ready(
+    next_at: Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> bool {
+    match next_at {
+        None => false,
+        Some(at) => now >= at,
+    }
+}
+
+/// Next attempt time after a failed (or just-started) reconnect cycle.
+pub fn next_reconnect_at(now: std::time::Instant) -> std::time::Instant {
+    now + RECONNECT_INTERVAL
+}
+
 /// Open-mic frames quieter than this RMS are not sent. Push-to-talk does not use this gate.
 pub const OPEN_MIC_RMS: f32 = 180.0;
 
@@ -2111,6 +2159,54 @@ mod voice_roster_tests {
             voice_occupancy_line(&["Ada".into(), "Bob".into()]),
             "Ada, Bob are in voice"
         );
+    }
+}
+
+#[cfg(test)]
+mod reconnect_tests {
+    use super::{
+        capture_voice_rejoin_intent, next_reconnect_at, reconnect_retry_ready, VoiceRejoinIntent,
+        RECONNECT_INTERVAL, RECONNECTING_STATUS,
+    };
+    use banter_server::CallPhase;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn reconnect_interval_is_thirty_seconds() {
+        assert_eq!(RECONNECT_INTERVAL, Duration::from_secs(30));
+        assert_eq!(RECONNECTING_STATUS, "Reconnecting…");
+    }
+
+    #[test]
+    fn reconnect_retry_waits_until_scheduled_instant() {
+        let now = Instant::now();
+        assert!(!reconnect_retry_ready(None, now));
+        assert!(!reconnect_retry_ready(Some(now + Duration::from_secs(1)), now));
+        assert!(reconnect_retry_ready(Some(now), now));
+        assert!(reconnect_retry_ready(Some(now - Duration::from_millis(1)), now));
+    }
+
+    #[test]
+    fn next_reconnect_schedules_thirty_seconds_out() {
+        let now = Instant::now();
+        assert_eq!(next_reconnect_at(now).saturating_duration_since(now), RECONNECT_INTERVAL);
+    }
+
+    #[test]
+    fn rejoin_intent_prefers_guild_voice_over_dm_call() {
+        assert_eq!(
+            capture_voice_rejoin_intent(Some(42), Some((9, CallPhase::Active))),
+            Some(VoiceRejoinIntent::GuildChannel(42))
+        );
+        assert_eq!(
+            capture_voice_rejoin_intent(None, Some((9, CallPhase::Active))),
+            Some(VoiceRejoinIntent::DirectCall(9))
+        );
+        assert_eq!(
+            capture_voice_rejoin_intent(None, Some((9, CallPhase::Ringing))),
+            Some(VoiceRejoinIntent::DirectCall(9))
+        );
+        assert_eq!(capture_voice_rejoin_intent(None, None), None);
     }
 }
 

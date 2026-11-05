@@ -44,8 +44,9 @@ use crate::logic::{
     save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible, speaking_from_level,
     stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge, stream_resolution_label,
     stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,     voice_flags_retry_ready, apply_voice_roster, voice_occupancy_line,
+    capture_voice_rejoin_intent, next_reconnect_at, reconnect_retry_ready, VoiceRejoinIntent,
     chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day,
-    window_size_label, window_size_presets, OPEN_MIC_RMS,
+    window_size_label, window_size_presets, OPEN_MIC_RMS, RECONNECTING_STATUS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
@@ -419,6 +420,10 @@ pub(crate) struct App {
     remote_video: HashMap<(i64, u8), Shot>,
     realtime: Option<Realtime>,
     media: Option<Media>,
+    /// When set, the websocket is down and the next connect attempt runs at this instant.
+    reconnect_at: Option<Instant>,
+    /// Guild VC or DM call to rejoin after a successful reconnect (server clears seats on drop).
+    pending_voice_rejoin: Option<VoiceRejoinIntent>,
     last_poll: Instant,
     last_activity: Instant,
     styled: bool,
@@ -659,6 +664,8 @@ impl App {
             remote_video: HashMap::new(),
             realtime: None,
             media: None,
+            reconnect_at: None,
+            pending_voice_rejoin: None,
             last_poll: Instant::now(),
             last_activity: Instant::now(),
             styled: false,
@@ -2465,6 +2472,8 @@ impl App {
     }
 
     fn end_voice_or_call(&mut self) {
+        // Explicit hang-up cancels any post-reconnect rejoin.
+        self.pending_voice_rejoin = None;
         if self.voice_channel.is_some() {
             self.leave_voice();
             return;
@@ -2476,7 +2485,9 @@ impl App {
         } else {
             self.note(self.client.end_call(call.dm_id)).is_some()
         };
-        if ended {
+        if ended || self.reconnect_at.is_some() {
+            // While reconnecting the server already ended the call; clear local UI anyway.
+            self.call = None;
             self.end_media_place();
         }
     }
@@ -5479,7 +5490,8 @@ impl App {
             let offerer = self.voice_channel.is_some() || self.call.as_ref().is_some_and(|call| call.caller == me);
             media.set_session(place.filter(|_| in_place), me, offerer);
         }
-        if in_place && self.flags != self.sent_flags {
+        // Skip flag posts while the websocket is down — the server already cleared the seat.
+        if in_place && self.reconnect_at.is_none() && self.flags != self.sent_flags {
             let now = Instant::now();
             if voice_flags_retry_ready(self.flags_failed_at, now, Duration::from_secs(2)) {
                 match self.client.set_flags(self.flags) {
@@ -5718,9 +5730,80 @@ impl App {
         self.realtime = Some(realtime);
     }
 
+    /// Drop the dead socket/media, keep local voice/call for UI, and schedule reconnect.
+    fn begin_reconnect(&mut self, notice: String) {
+        if self.pending_voice_rejoin.is_none() {
+            let call = self.call.as_ref().map(|call| (call.dm_id, call.phase));
+            self.pending_voice_rejoin = capture_voice_rejoin_intent(self.voice_channel, call);
+        }
+        self.media = None;
+        self.realtime = None;
+        self.reconnect_at = Some(next_reconnect_at(Instant::now()));
+        self.status = if notice.is_empty() {
+            RECONNECTING_STATUS.to_string()
+        } else {
+            format!("{RECONNECTING_STATUS} ({notice})")
+        };
+    }
+
+    fn clear_reconnect_state(&mut self) {
+        self.reconnect_at = None;
+        self.pending_voice_rejoin = None;
+    }
+
+    /// Attempt a websocket reconnect when the scheduled wait has elapsed.
+    fn tick_reconnect(&mut self) {
+        if self.account.is_none() || self.client.token().is_none() {
+            self.clear_reconnect_state();
+            return;
+        }
+        if self.reconnect_at.is_none() {
+            return;
+        }
+        if self.status.is_empty() || !self.status.starts_with(RECONNECTING_STATUS) {
+            self.status = RECONNECTING_STATUS.to_string();
+        }
+        if self.realtime.as_ref().is_some_and(|realtime| realtime.is_connected()) {
+            return;
+        }
+        if !reconnect_retry_ready(self.reconnect_at, Instant::now()) {
+            return;
+        }
+        // Drop a hung handshake so the next connect can start cleanly.
+        self.media = None;
+        self.realtime = None;
+        self.connect_live();
+        // Handshake runs on the socket thread; failure/success is observed in `pump_events`.
+        // Schedule the next attempt so a hung or failed connect still retries every 30s.
+        self.reconnect_at = Some(next_reconnect_at(Instant::now()));
+        self.status = RECONNECTING_STATUS.to_string();
+    }
+
+    /// Socket is live again — clear the banner and rejoin the prior voice seat or DM call.
+    fn finish_reconnect(&mut self) {
+        self.reconnect_at = None;
+        if self.status.starts_with(RECONNECTING_STATUS) {
+            self.status.clear();
+        }
+        let Some(intent) = self.pending_voice_rejoin.take() else {
+            return;
+        };
+        match intent {
+            VoiceRejoinIntent::GuildChannel(channel_id) => {
+                self.join_voice_channel(channel_id);
+            }
+            VoiceRejoinIntent::DirectCall(dm_id) => {
+                // Server ended the call on disconnect; start a fresh ring to the same DM.
+                self.call = None;
+                self.start_call(dm_id);
+            }
+        }
+    }
+
     fn logout(&mut self) {
         let _ = self.client.logout();
         let _ = clear_token(&self.data_dir);
+        self.clear_reconnect_state();
         self.media = None;
         self.realtime = None;
         self.client.set_token(None);
@@ -6093,10 +6176,16 @@ impl App {
     }
 
     fn pump_events(&mut self) {
+        self.tick_reconnect();
         let Some(realtime) = &self.realtime else { return };
         let events = realtime.take_events();
         if let Some(error) = realtime.take_error() {
-            self.status = error;
+            self.begin_reconnect(error);
+            return;
+        }
+        let recovering = self.reconnect_at.is_some() || self.pending_voice_rejoin.is_some();
+        if recovering && realtime.is_connected() {
+            self.finish_reconnect();
         }
         for event in events {
             if let Some(media) = &self.media {
@@ -8252,7 +8341,10 @@ impl App {
     }
 
     fn leave_voice(&mut self) {
-        if self.note(self.client.leave_voice()).is_some() {
+        self.pending_voice_rejoin = None;
+        let left = self.note(self.client.leave_voice()).is_some();
+        // Server already dropped the seat on websocket close; still clear local UI while reconnecting.
+        if left || self.reconnect_at.is_some() {
             self.voice_channel = None;
             self.voice_members.clear();
             self.drop_self_from_rosters(None);
@@ -10288,6 +10380,7 @@ impl App {
         }
 
         // Drop media against the previous host without waiting on it.
+        self.clear_reconnect_state();
         self.voice_channel = None;
         self.voice_members.clear();
         self.voice_rosters.clear();
@@ -10396,6 +10489,7 @@ impl App {
         self.version_warn.clear();
         self.settings_error = notice.to_string();
         self.status = notice.to_string();
+        self.clear_reconnect_state();
         self.voice_channel = None;
         self.voice_members.clear();
         self.voice_rosters.clear();
