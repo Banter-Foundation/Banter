@@ -1018,3 +1018,14 @@ Agent: PR #51 opened (ManagePullRequest). Do not merge until Owl says so.
 
 Agent: Process loopback GetMixFormat/Initialize was the invalid-parameter path under Voice Connected with Brave app audio + screen. Fixed to MS ApplicationLoopback format + LOOPBACK flags; BANTER_VC_LOOPBACK_FAILED / BANTER_VC_DEVICE_FAILED on the voice bar. Branch cursor/fix-voice-0x80070057-b647. Do not merge until Owl says so.
 
+
+## 2026-11-05 BA-94 Remove text formatting toolbar
+
+Owl: remove the text formatting toolbar (BFMD B/I/U/S bar in the composer / reply UI — `draw_format_toolbar` in `crates/banter/src/ui.rs` and related). Remove the toolbar UI; keep BFMD parsing/rendering if messages can still contain style commands (or paste). Don’t gut BFMD itself unless the toolbar is the only entry point and Owl only wanted chrome gone. Branch + PR from main; do not merge until Owl says so. Use gh. Prefs: preferences.md. Context: docs/bfmd.md. Task: Remove text formatting toolbar (BA-94).
+
+Agent: Removed composer and inline-reply B/I/U/S chrome plus pending-flag scaffolding. Left `bfmd` / `bfmd_paint` and message-row rendering intact. Branch cursor/remove-format-toolbar-c871. Do not merge until Owl says so.
+
+### Summary
+Composer and reply boxes no longer show the B/I/U/S bar; BFMD in message bodies still parses and paints.
+
+Agent: PR #56 opened. Do not merge until Owl says so.

@@ -25,7 +25,7 @@ use dear_imgui_rs::{
 };
 
 use crate::api::{ApiError, Client, MemberView};
-use crate::bfmd::{self, Flag as BfmdFlag};
+use crate::bfmd;
 use crate::bfmd_paint;
 use crate::icons::rasterize_lucide;
 use crate::layout::discord_shell_columns;
@@ -73,59 +73,6 @@ struct PresenceInfo {
     custom_status: Option<String>,
 }
 
-/// Pending BFMD emphasis while a composer draft is still empty.
-#[derive(Clone, Copy, Debug, Default)]
-struct BfmdPending {
-    bold: bool,
-    italic: bool,
-    underline: bool,
-    strike: bool,
-}
-
-impl BfmdPending {
-    fn toggle(&mut self, flag: BfmdFlag) {
-        match flag {
-            BfmdFlag::Bold => self.bold = !self.bold,
-            BfmdFlag::Italic => self.italic = !self.italic,
-            BfmdFlag::Underline => self.underline = !self.underline,
-            BfmdFlag::Strike => self.strike = !self.strike,
-        }
-    }
-
-    fn is_on(&self, flag: BfmdFlag) -> bool {
-        match flag {
-            BfmdFlag::Bold => self.bold,
-            BfmdFlag::Italic => self.italic,
-            BfmdFlag::Underline => self.underline,
-            BfmdFlag::Strike => self.strike,
-        }
-    }
-
-    fn any(&self) -> bool {
-        self.bold || self.italic || self.underline || self.strike
-    }
-
-    fn apply_to(&self, source: &str) -> String {
-        if !self.any() || bfmd::plain_text(source).is_empty() {
-            return source.to_string();
-        }
-        let end = bfmd::plain_text(source).len();
-        let mut out = source.to_string();
-        if self.bold {
-            out = bfmd::apply_flag(&out, 0, end, BfmdFlag::Bold, true);
-        }
-        if self.italic {
-            out = bfmd::apply_flag(&out, 0, end, BfmdFlag::Italic, true);
-        }
-        if self.underline {
-            out = bfmd::apply_flag(&out, 0, end, BfmdFlag::Underline, true);
-        }
-        if self.strike {
-            out = bfmd::apply_flag(&out, 0, end, BfmdFlag::Strike, true);
-        }
-        out
-    }
-}
 use crate::websocket_url;
 
 /// Draws the active field as `*` without Dear ImGui's password flag, so copy and paste still work.
@@ -382,10 +329,6 @@ pub(crate) struct App {
     reply_to: Option<i64>,
     /// Draft text for the inline reply box (separate from the bottom top-level composer).
     reply_draft: String,
-    /// Style flags chosen while the composer was empty; applied once text appears.
-    composer_pending: BfmdPending,
-    /// Same pending flags for the inline reply draft.
-    reply_pending: BfmdPending,
     /// Locally collapsed comment threads (Reddit fold); not persisted.
     collapsed_comments: HashSet<i64>,
     editing: Option<i64>,
@@ -623,8 +566,6 @@ impl App {
             settings_styled: false,
             reply_to: None,
             reply_draft: String::new(),
-            composer_pending: BfmdPending::default(),
-            reply_pending: BfmdPending::default(),
             collapsed_comments: HashSet::new(),
             editing: None,
             pending_file: None,
@@ -3795,10 +3736,9 @@ impl App {
             if replying_here {
                 let box_x = origin[0] + text_x;
                 let box_w = (width - text_x - 24.0).max(160.0);
-                const FORMAT_H: f32 = 28.0;
                 let box_top = row_end + 4.0;
                 let box_h =
-                    COMMENT_INLINE_HEADER_H + FORMAT_H + COMMENT_INLINE_INPUT_H + COMMENT_INLINE_FOOTER_H;
+                    COMMENT_INLINE_HEADER_H + COMMENT_INLINE_INPUT_H + COMMENT_INLINE_FOOTER_H;
                 ui.set_cursor_screen_pos([box_x, box_top]);
                 ui.dummy([box_w, box_h]);
                 skin::rect_corners(
@@ -3828,12 +3768,7 @@ impl App {
                     BLURPLE_TEXT,
                     &header,
                 );
-                let toolbar_y = box_top + COMMENT_INLINE_HEADER_H;
-                if let Some(flag) = self.draw_format_toolbar(ui, [box_x + 8.0, toolbar_y], box_w - 16.0, true)
-                {
-                    self.apply_reply_flag(flag);
-                }
-                let input_y = toolbar_y + FORMAT_H;
+                let input_y = box_top + COMMENT_INLINE_HEADER_H;
                 skin::rect_corners(
                     ui,
                     [box_x + 8.0, input_y],
@@ -3858,7 +3793,6 @@ impl App {
                 if submit {
                     *inline_submit = true;
                 }
-                self.flush_reply_pending();
                 let footer_y = input_y + COMMENT_INLINE_INPUT_H + 4.0;
                 let cancel_w = 72.0;
                 let send_w = 72.0;
@@ -4008,110 +3942,12 @@ impl App {
 
     fn composer_footer_h(&self) -> f32 {
         // Replies use an inline composer under the parent comment (Reddit). Bottom strip is edit/file/reply-hint.
-        // Format toolbar (B/I/U/S) sits above the input bar.
         let strip = if self.editing.is_some() || self.pending_file.is_some() || self.reply_to.is_some() {
             34.0
         } else {
             0.0
         };
-        const FORMAT_H: f32 = 28.0;
-        8.0 + strip + FORMAT_H + COMPOSER_H + COMPOSER_BOTTOM
-    }
-
-    /// Apply a BFMD flag to the whole composer draft (selection APIs are limited with ImGui InputText).
-    fn apply_composer_flag(&mut self, flag: BfmdFlag) {
-        let plain = bfmd::plain_text(&self.composer);
-        if plain.is_empty() {
-            self.composer_pending.toggle(flag);
-            return;
-        }
-        let end = plain.len();
-        self.composer = bfmd::toggle_flag(&self.composer, 0, end, flag);
-        self.composer_pending = BfmdPending::default();
-    }
-
-    fn apply_reply_flag(&mut self, flag: BfmdFlag) {
-        let plain = bfmd::plain_text(&self.reply_draft);
-        if plain.is_empty() {
-            self.reply_pending.toggle(flag);
-            return;
-        }
-        let end = plain.len();
-        self.reply_draft = bfmd::toggle_flag(&self.reply_draft, 0, end, flag);
-        self.reply_pending = BfmdPending::default();
-    }
-
-    fn flush_composer_pending(&mut self) {
-        if self.composer_pending.any() && !bfmd::plain_text(&self.composer).is_empty() {
-            self.composer = self.composer_pending.apply_to(&self.composer);
-            self.composer_pending = BfmdPending::default();
-        }
-    }
-
-    fn flush_reply_pending(&mut self) {
-        if self.reply_pending.any() && !bfmd::plain_text(&self.reply_draft).is_empty() {
-            self.reply_draft = self.reply_pending.apply_to(&self.reply_draft);
-            self.reply_pending = BfmdPending::default();
-        }
-    }
-
-    fn draw_format_toolbar(&mut self, ui: &Ui, origin: [f32; 2], width: f32, reply: bool) -> Option<BfmdFlag> {
-        let labels = [
-            ("B", BfmdFlag::Bold, "Bold"),
-            ("I", BfmdFlag::Italic, "Italic"),
-            ("U", BfmdFlag::Underline, "Underline"),
-            ("S", BfmdFlag::Strike, "Strikethrough"),
-        ];
-        let mut clicked = None;
-        let mut x = origin[0];
-        let y = origin[1];
-        for (label, flag, tip) in labels {
-            let id = if reply {
-                format!("{label}##fmt-reply")
-            } else {
-                format!("{label}##fmt")
-            };
-            ui.set_cursor_screen_pos([x, y]);
-            let pending = if reply { self.reply_pending } else { self.composer_pending };
-            let source = if reply { &self.reply_draft } else { &self.composer };
-            let runs = bfmd::parse(source).runs;
-            let active = if bfmd::plain_text(source).is_empty() {
-                pending.is_on(flag)
-            } else {
-                !runs.is_empty()
-                    && runs.iter().all(|r| match flag {
-                        BfmdFlag::Bold => r.style.bold,
-                        BfmdFlag::Italic => r.style.italic,
-                        BfmdFlag::Underline => r.style.underline,
-                        BfmdFlag::Strike => r.style.strike,
-                    })
-            };
-            let color = if active { BLURPLE_TEXT } else { TEXT_SECONDARY };
-            let font = match flag {
-                BfmdFlag::Bold => self.bold_font,
-                BfmdFlag::Italic => self.italic_font,
-                _ => None,
-            };
-            let pressed = {
-                let _font = ui.push_font_with_size(font, FONT_SM);
-                let _col = ui.push_style_color(StyleColor::Text, color);
-                let _hov = ui.push_style_color(StyleColor::ButtonHovered, ICON_HOVER_BG);
-                let _act = ui.push_style_color(StyleColor::ButtonActive, ICON_HOVER_BG);
-                let _bg = ui.push_style_color(StyleColor::Button, skin::CLEAR);
-                ui.button_with_size(&id, [24.0, 24.0])
-            };
-            if ui.is_item_hovered() {
-                skin::item_tooltip(ui, self.semibold_font, tip);
-            }
-            if pressed {
-                clicked = Some(flag);
-            }
-            x += 28.0;
-            if x > origin[0] + width - 24.0 {
-                break;
-            }
-        }
-        clicked
+        8.0 + strip + COMPOSER_H + COMPOSER_BOTTOM
     }
 
     /// Rounded message bar for top-level posts: upload button, `Message #channel` placeholder,
@@ -4149,11 +3985,6 @@ impl App {
             }
             y += 34.0;
         }
-        // BFMD format toolbar (bold / italic / underline / strike).
-        if let Some(flag) = self.draw_format_toolbar(ui, [bar_x, y], bar_w, false) {
-            self.apply_composer_flag(flag);
-        }
-        y += 28.0;
         let corners = if strip.is_some() { DrawFlags::ROUND_BOTTOM } else { DrawFlags::ROUND_ALL };
         skin::rect_corners(ui, [bar_x, y], [bar_x + bar_w, y + COMPOSER_H], COMPOSER_BG, COMPOSER_RADIUS, corners);
         let input_x = if self.editing.is_none() {
@@ -4185,7 +4016,6 @@ impl App {
             ui.set_next_item_width((bar_x + bar_w - 16.0 - input_x).max(40.0));
             ui.input_text("##composer", &mut self.composer).hint(hint).enter_returns_true(true).build()
         };
-        self.flush_composer_pending();
         if submit {
             self.submit_composer(target);
         }
@@ -5325,7 +5155,6 @@ impl App {
     }
 
     fn submit_composer(&mut self, target: ChatTarget) {
-        self.flush_composer_pending();
         let body = self.composer.clone();
         if self.consume_debug_command(&body) {
             return;
@@ -5334,7 +5163,6 @@ impl App {
             if let Some(message) = self.note(self.client.edit_message(id, &body)) {
                 upsert_message(&mut self.messages, message);
                 self.composer.clear();
-                self.composer_pending = BfmdPending::default();
                 self.editing = None;
             }
             return;
@@ -5351,7 +5179,6 @@ impl App {
             }
             self.chat_jump = true;
             self.composer.clear();
-            self.composer_pending = BfmdPending::default();
             self.pending_file = None;
         }
     }
@@ -5361,7 +5188,6 @@ impl App {
         let Some(parent) = self.reply_to else {
             return;
         };
-        self.flush_reply_pending();
         let body = self.reply_draft.clone();
         if self.consume_debug_command(&body) {
             return;
@@ -5377,7 +5203,6 @@ impl App {
             }
             self.chat_jump = true;
             self.reply_draft.clear();
-            self.reply_pending = BfmdPending::default();
             self.reply_to = None;
             self.pending_file = None;
             // Expand the parent so the new reply is visible.
@@ -5391,9 +5216,7 @@ impl App {
             return false;
         }
         self.composer.clear();
-        self.composer_pending = BfmdPending::default();
         self.reply_draft.clear();
-        self.reply_pending = BfmdPending::default();
         self.editing = None;
         self.reply_to = None;
         self.pending_file = None;

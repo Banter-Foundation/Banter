@@ -630,14 +630,6 @@ Guild Voice Connected showed a red `The parameter is incorrect. (0x80070057)` wh
 - Voice-bar notices use `BANTER_VC_LOOPBACK_FAILED` / `BANTER_VC_DEVICE_FAILED` (PR #50 catalog); raw HRESULT stays in detail/stderr
 - Docs: `docs/errors.md`; tests: `errcode_loopback`, `wasapi_loopback_errors`
 
-## 2026-11-05 00:50:00 -0500 [ubuntu] — Show who is in a voice channel
-
-People in a server could not see that someone had joined a voice channel until they joined it too. The server only told the people already in that channel, and the client only drew that list under the channel it had joined. Opening a server also had no snapshot of who was already there.
-
-- `ServerEvent::Voice` goes to every member of the server, including mute, camera, screen, and talking updates, and when someone leaves voice for a direct call.
-- `GET /v1/servers/{id}/voice` returns every voice channel, including empty ones.
-- The channel list and the unjoined voice stage use that roster.
-
 ## 2026-11-05 00:35:00 -0500 [ubuntu] — Keep the mic off the screen encoder
 
 Screen H.264 was encoded on the same thread as Opus, so a slow share held the next voice packet and the shared queue dropped it. Wayland also scaled every PipeWire buffer on the compositor thread.
@@ -645,3 +637,19 @@ Screen H.264 was encoded on the same thread as Opus, so a slow share held the ne
 - `banter-audio` encodes the microphone and stream audio. `banter-video` encodes camera and screen. Each has its own queue. A full video queue drops a picture, not Opus.
 - The largest simulcast layer is encoded first.
 - The PipeWire callback copies the newest frame. The screen thread scales it when that frame is published.
+
+## 2026-11-05 05:46:54 +00:00 [ubuntu] — Remove text formatting toolbar (BA-94)
+
+Owl asked to remove the BFMD B/I/U/S format toolbar from the composer and inline reply UI. Keep BFMD parse/render so pasted or typed style commands still work.
+
+- `ui.rs`: drop `draw_format_toolbar`, `BfmdPending`, and related apply/flush helpers; reclaim the 28 px toolbar slot in the bottom composer and inline reply box
+- Docs: `.cursor/features.md`, `docs/feature-status.md`
+- BFMD modules (`bfmd.rs`, `bfmd_paint.rs`) and conformance tests unchanged
+
+## 2026-11-05 00:50:00 -0500 [ubuntu] — Show who is in a voice channel
+
+People in a server could not see that someone had joined a voice channel until they joined it too. The server only told the people already in that channel, and the client only drew that list under the channel it had joined. Opening a server also had no snapshot of who was already there.
+
+- `ServerEvent::Voice` goes to every member of the server, including mute, camera, screen, and talking updates, and when someone leaves voice for a direct call.
+- `GET /v1/servers/{id}/voice` returns every voice channel, including empty ones.
+- The channel list and the unjoined voice stage use that roster.
