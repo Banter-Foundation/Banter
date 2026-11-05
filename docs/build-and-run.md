@@ -113,7 +113,7 @@ cargo test -p banter
 
 Server foundation tests in `crates/banter-server/tests/foundation.rs` are the API contract — do not weaken them. Client coverage includes session, mute/deafen, push-to-talk, media helpers, settings layout rules, and theme metrics.
 
-**CI:** Linux Actions runs the full `banter-server` / `banter` suites against a `postgres:16` service. Windows Actions runs **`--lib` unit tests only** (no Postgres service), so sqlx/store integration contracts are Linux-only in CI.
+**CI:** Linux Actions runs the full `banter-server` / `banter` suites against a `postgres:16` service (installs Opus/ALSA/X11/GLFW/Wayland/PipeWire/V4L2 headers). Windows Actions runs **`--lib` unit tests only** (no Postgres service), so sqlx/store integration contracts are Linux-only in CI. The guild-voice SFU RTP loopback unit test is ignored on Windows Actions (no forwarded microphone RTP on that runner) and still runs on Linux.
 
 ## Container image (Podman / Docker)
 
@@ -133,4 +133,4 @@ If host port `3970` is taken, publish another (see the setup guide) and point **
 
 Guild voice also needs the slot’s UDP range (`40000-40049` on `banter-a`, `40100-40149` on `banter-b`). `BANTER_ADVERTISE_IP` defaults to `127.0.0.1` for a desktop on this machine. Set it to the host’s reachable address when the client is elsewhere, and open that UDP range. Direct calls do not use it.
 
-Pre-release artifacts: [Version-1-test-10](https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-10). Do not move older release tags.
+Pre-release artifacts: [Version-1-test-11](https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-11). Do not move older release tags.
