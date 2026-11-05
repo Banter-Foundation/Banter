@@ -1,6 +1,6 @@
 //! Client contracts. These were written before the desktop UI and stay as written.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use std::collections::HashSet;
 
@@ -62,6 +62,19 @@ fn test_db_url() -> String {
     });
     let sep = if base.contains('?') { '&' } else { '?' };
     format!("{base}{sep}options=-csearch_path%3D{schema}")
+}
+
+/// Poll `/v1/health` until the spawned test server accepts connections.
+/// CI under parallel load often needs more than the old 2.5s (50×50ms) window.
+fn wait_until_http_ready(base: &str) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if ureq::get(&format!("{base}/v1/health")).call().is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("server did not open {base}");
 }
 
 #[test]
@@ -480,15 +493,7 @@ fn client_can_register_and_send_a_message() {
     let db_url = test_db_url();
     let server = std::thread::spawn(move || banter_server::serve(&serve_addr, &serve_dir, &db_url));
     let base = format!("http://{addr}");
-    let mut ready = false;
-    for _ in 0..50 {
-        if ureq::get(&format!("{base}/v1/health")).call().is_ok() {
-            ready = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert!(ready, "server did not open {base}");
+    wait_until_http_ready(&base);
 
     let mut client = Client::new(&base);
     let session = client.register("ada", "Ada", "password1").unwrap();
@@ -630,12 +635,7 @@ fn second_client_receives_voice_and_a_live_quality_switch() {
     let db_url = test_db_url();
     let server = std::thread::spawn(move || banter_server::serve(&serve_addr, &serve_dir, &db_url));
     let base = format!("http://{addr}");
-    for _ in 0..50 {
-        if ureq::get(&format!("{base}/v1/health")).call().is_ok() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_until_http_ready(&base);
 
     let mut ada = Client::new(&base);
     ada.register("ada", "Ada", "password1").unwrap();
@@ -789,15 +789,7 @@ fn accepting_a_friend_then_opening_their_dm_works() {
     let db_url = test_db_url();
     let server = std::thread::spawn(move || banter_server::serve(&serve_addr, &serve_dir, &db_url));
     let base = format!("http://{addr}");
-    let mut ready = false;
-    for _ in 0..50 {
-        if ureq::get(&format!("{base}/v1/health")).call().is_ok() {
-            ready = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert!(ready, "server did not open {base}");
+    wait_until_http_ready(&base);
 
     let mut ada = Client::new(&base);
     ada.register("ada", "Ada", "password1").unwrap();
