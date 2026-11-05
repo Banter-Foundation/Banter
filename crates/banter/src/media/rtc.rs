@@ -282,6 +282,7 @@ fn video_encode_loop(
     let mut camera_gen = 0u64;
     let mut screen_gen = 0u64;
     let mut ticks = 0u32;
+    let mut screen_idle_ticks = 0u32;
     let mut reported = Instant::now();
     let mut user_mark = 0u64;
     let mut stream_mark = 0u64;
@@ -296,6 +297,17 @@ fn video_encode_loop(
                 highest_first(qos.active_layers(MediaKind::Screen, wanted_of(&control, MediaKind::Screen).as_deref(), peer_cap(&control, MediaKind::Screen))),
             )
         };
+        // Drop idle encoders so the next publish starts on a fresh IDR instead of
+        // P-frames that reference a GOP remotes never saw (camera toggle / Go Live restart).
+        if camera_layers.is_empty() {
+            camera_enc.clear();
+        }
+        if screen_layers.is_empty() {
+            screen_enc.clear();
+            screen_idle_ticks = screen_idle_ticks.saturating_add(1);
+        } else {
+            screen_idle_ticks = 0;
+        }
         encode_video(&control, &video_tx, &camera, &mut camera_enc, &mut camera_gen, MediaKind::Camera, false, &camera_layers);
         encode_video(&control, &video_tx, &screen, &mut screen_enc, &mut screen_gen, MediaKind::Screen, true, &screen_layers);
         let ms = encode_started.elapsed().as_secs_f32() * 1000.0;
@@ -304,9 +316,14 @@ fn video_encode_loop(
         let mut qos = qos.lock().expect("qos");
         if ticks % 25 == 0 {
             let drops = control.congested_drops.swap(0, Ordering::Relaxed);
-            let targets = qos.observe(if drops > 0 { 0.08 } else { 0.0 }, 30, 1.0);
+            // ~0.5s with no screen layers and no queue pressure: treat Go Live as stopped and
+            // clear ScreenStop so a quick restart is not held down by the old climb.
+            if screen_idle_ticks >= 100 && drops == 0 && !qos.targets().screen_published {
+                qos.reset_ladder();
+            } else {
+                let _ = qos.observe(if drops > 0 { 0.08 } else { 0.0 }, 30, 1.0);
+            }
             *control.ladder.lock().expect("ladder") = qos.step().label().to_string();
-            let _ = targets;
         }
         if reported.elapsed() >= Duration::from_secs(1) {
             publish_qos(&control, &qos, &mut user_mark, &mut stream_mark, &mut camera_mark, &mut screen_mark);

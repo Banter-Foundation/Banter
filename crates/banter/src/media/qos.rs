@@ -49,6 +49,14 @@ impl SenderQos {
         self.ladder.targets()
     }
 
+    /// Clear a stuck ScreenStop so a new Go Live is not held down by an old congestion climb.
+    pub fn reset_ladder(&mut self) {
+        self.ladder = CongestionLadder::new();
+        self.loss = 0.0;
+        self.rtt_ms = 0;
+        self.jitter_ms = 0;
+    }
+
     /// Layers to encode: every requested layer at or below the ladder and the peer cap.
     pub fn active_layers(&self, track: MediaKind, wanted: Option<&[LayerId]>, peer_cap: LayerId) -> Vec<LayerId> {
         let sender_max = match track {
@@ -147,5 +155,19 @@ mod tests {
         let layer = qos.active_layer(MediaKind::Camera, Some(&[LayerId::Full, LayerId::Half]), LayerId::Full);
         assert_eq!(layer, LayerId::Half);
         assert_eq!(qos.active_layer(MediaKind::Camera, Some(&[]), LayerId::Full), LayerId::Off);
+    }
+
+    #[test]
+    fn reset_ladder_restores_screen_publish_after_screen_stop() {
+        let mut qos = SenderQos::new();
+        for _ in 0..LADDER_DOWN_TICKS * 8 {
+            qos.observe(0.5, 400, 0.1);
+        }
+        assert_eq!(qos.step(), LadderStep::ScreenStop);
+        assert!(!qos.targets().screen_published);
+        qos.reset_ladder();
+        assert_eq!(qos.step(), LadderStep::Nominal);
+        assert!(qos.targets().screen_published);
+        assert!(!qos.active_layers(MediaKind::Screen, None, LayerId::Full).is_empty());
     }
 }
