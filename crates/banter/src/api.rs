@@ -10,7 +10,7 @@ use base64::engine::general_purpose::STANDARD;
 use banter_server::{
     format_banter_notice, Account, BanterVersionReport, CallSnapshot, Category, CategoryLayout, Channel,
     ChannelKind, ChatTarget, CosmeticItem, DirectChat, Friend, FriendRequest, GuildRole, Mention, Message,
-    Presence, ProfilePatch, ServerDebug, ServerFolder, ServerFolderPatch, ServerHome, ServerRail,
+    PluginInfo, Presence, ProfilePatch, ServerDebug, ServerFolder, ServerFolderPatch, ServerHome, ServerRail,
     ServerRailServer, ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember, VoiceRoster, ERR_HTTP_PARSE,
     ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
 };
@@ -386,6 +386,27 @@ impl Client {
                 "position": position,
             }),
         )
+    }
+
+    pub fn list_plugins(&self, server_id: i64) -> Result<Vec<PluginInfo>, ApiError> {
+        self.get_json(&format!("/v1/servers/{server_id}/plugins"))
+    }
+
+    pub fn remove_plugin(&self, server_id: i64, plugin_id: &str) -> Result<(), ApiError> {
+        let path = format!("/v1/servers/{server_id}/plugins/{plugin_id}");
+        self.call_empty("DELETE", &path, self.auth(http().delete(&self.url(&path))))
+    }
+
+    pub fn install_plugin(&self, server_id: i64, zip_bytes: &[u8]) -> Result<PluginInfo, ApiError> {
+        let path = format!("/v1/servers/{server_id}/plugins");
+        let start = Instant::now();
+        let request = self.auth(http().post(&self.url(&path))).set("Content-Type", "application/zip");
+        let response = request.send_bytes(zip_bytes).map_err(|err| self.http_error("POST", &path, err))?;
+        let value = response.into_json().map_err(|err| {
+            ApiError::from_issue(ERR_HTTP_PARSE, "couldn't read the server reply", Some(err.to_string()))
+        })?;
+        profiler::record_http("POST", &path, start.elapsed(), zip_bytes.len(), 0);
+        Ok(value)
     }
 
     pub fn create_server(&self, name: &str) -> Result<ServerHome, ApiError> {

@@ -14,6 +14,7 @@ fn settings_menu_lists_account_voice_then_developer() {
         [
             SettingsSection::Account,
             SettingsSection::Voice,
+            SettingsSection::Mods,
             SettingsSection::Developer,
         ]
     );

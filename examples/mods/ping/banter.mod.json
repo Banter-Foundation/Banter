@@ -1,0 +1,9 @@
+{
+  "id": "ping",
+  "name": "Ping",
+  "version": "1.0.0",
+  "banter": "1",
+  "entry": "main.luau",
+  "permissions": ["log", "storage", "ui"],
+  "memory_mb": 8
+}

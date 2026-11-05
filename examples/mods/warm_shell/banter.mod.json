@@ -1,0 +1,9 @@
+{
+  "id": "warm_shell",
+  "name": "Warm Shell",
+  "version": "1.0.0",
+  "banter": "1",
+  "entry": "main.luau",
+  "permissions": ["ui"],
+  "memory_mb": 8
+}

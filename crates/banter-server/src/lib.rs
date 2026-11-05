@@ -10,6 +10,9 @@
 //! guild roles are implemented. See `docs/foundation.md`.
 
 mod badges;
+mod bots;
+mod plugins;
+mod script;
 mod channel_icons;
 mod codec;
 mod cosmetics;
@@ -43,11 +46,16 @@ pub use error::BanterError;
 pub use folders::{folder_color_ok, folder_depth, would_cycle, MAX_SERVER_FOLDERS, MAX_SERVER_FOLDER_DEPTH};
 pub use live::Live;
 pub use model::*;
+pub use bots::{call_is_null, event_gate, known_intent, EventGate, INTENTS};
+pub use plugins::{
+    ident_ok, inspect_plugin_zip, parse_manifest, parse_version, plugin_kind_ok, zip_files, PluginInfo, PluginManifest,
+};
 pub use roles::{
     combine_permissions, grants_only_held, has_permission, next_role_position, role_color_ok, top_hoisted_role,
     top_role_color, EVERYONE_NAME, EVERYONE_PERMISSIONS, MAX_GUILD_ROLES, PERM_ADMINISTRATOR, PERM_CREATE_INVITE,
-    PERM_MANAGE_CHANNELS, PERM_MANAGE_ROLES, ROLE_PERMISSION_MASK,
+    PERM_MANAGE_BOTS, PERM_MANAGE_CHANNELS, PERM_MANAGE_PLUGINS, PERM_MANAGE_ROLES, ROLE_PERMISSION_MASK,
 };
+pub use script::{export_allowed, memory_warning, run_client_script, Addon, Limits, RunReport, Widget};
 pub use room::{
     attach_publish_tracks, inbound_rtp_layer, inbound_rtp_layer_for_packet, mids_by_track, publish_offer_sdp,
     rewrite_advertised_candidate, rewrite_forward_rtp, sample_bytes, simulcast_extensions, PublishTracks, CAMERA_SSRC_Q,

@@ -406,11 +406,17 @@ pub const AUDIO_FRAME_SAMPLES: usize = 960;
 pub enum SettingsSection {
     Account,
     Voice,
+    Mods,
     Developer,
 }
 
-pub fn settings_sections() -> [SettingsSection; 3] {
-    [SettingsSection::Account, SettingsSection::Voice, SettingsSection::Developer]
+pub fn settings_sections() -> [SettingsSection; 4] {
+    [
+        SettingsSection::Account,
+        SettingsSection::Voice,
+        SettingsSection::Mods,
+        SettingsSection::Developer,
+    ]
 }
 
 /// Which Banter API the desktop client should talk to.
@@ -1646,6 +1652,8 @@ pub enum ContextMenuAction {
         server_id: i64,
         folder_id: Option<i64>,
     },
+    /// Open the picker for packages in the data directory's `plugins` folder.
+    AddPlugin { server_id: i64 },
 }
 
 fn menu_item(id: &'static str, label: &'static str, tone: ContextMenuTone, action: ContextMenuAction) -> ContextMenuEntry {
@@ -1790,7 +1798,7 @@ pub fn plan_member_groups(rows: &[(bool, Option<(i64, String)>)]) -> Vec<(String
 /// Lucide name shown in the sidebar / header for a channel.
 ///
 /// Custom icons that Banter does not recognize fall back to the kind glyph.
-pub fn channel_display_icon<'a>(kind: ChannelKind, icon: Option<&'a str>) -> &'a str {
+pub fn channel_display_icon<'a>(kind: &ChannelKind, icon: Option<&'a str>) -> &'a str {
     match icon.map(str::trim).filter(|name| !name.is_empty() && is_channel_icon(name)) {
         Some(name) => name,
         None => channel_default_icon(kind),
@@ -1798,11 +1806,12 @@ pub fn channel_display_icon<'a>(kind: ChannelKind, icon: Option<&'a str>) -> &'a
 }
 
 /// Kind default when no custom Lucide icon is set.
-pub fn channel_default_icon(kind: ChannelKind) -> &'static str {
+pub fn channel_default_icon(kind: &ChannelKind) -> &'static str {
     match kind {
         ChannelKind::Text => "hash",
         ChannelKind::Voice => "volume-2",
         ChannelKind::Board => "pencil",
+        ChannelKind::Plugin(_) => "hash",
     }
 }
 
@@ -1935,6 +1944,15 @@ pub fn server_rail_item_menu(
             },
         ));
     }
+    if !entries.is_empty() {
+        entries.push(ContextMenuEntry::Separator);
+    }
+    entries.push(menu_item(
+        "ctx-add-plugin",
+        "Plugins",
+        ContextMenuTone::Normal,
+        ContextMenuAction::AddPlugin { server_id },
+    ));
     entries
 }
 

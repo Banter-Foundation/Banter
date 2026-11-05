@@ -13,7 +13,8 @@ use banter_server::{
     Account, BadgeItem, CallPhase, CallSnapshot, CategoryLayout, Channel, ChannelKind, ChatTarget,
     ClientSignal, CosmeticItem, CosmeticKind, DirectChat, Friend, FriendRequest, GuildRole, LayerId,
     LayerPreferences, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MediaKind, MediaPlace, Mention, Message,
-    PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_CHANNELS, PERM_MANAGE_ROLES, Presence,
+    PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_BOTS, PERM_MANAGE_CHANNELS, PERM_MANAGE_PLUGINS,
+    PERM_MANAGE_ROLES, Presence,
     ProfileActivityInput, ProfileConnectionInput, ProfilePatch, ProfileWidgetInput, ProfileWidgetKind,
     ProfileWishlistInput, ServerDebug, ServerFolderPatch, ServerRail, ServerSummary, UserProfile,
     VoiceFlags, VoiceMember, CHANNEL_ICON_CHOICES, has_permission, top_hoisted_role, top_role_color,
@@ -136,6 +137,10 @@ enum Modal {
     ServerFolder,
     /// Chat file attach is gated off (BA-61); shows Owl's exact unavailable copy.
     UploadsUnavailable,
+    /// Install a package from the data directory's `plugins` folder onto one server.
+    AddPlugin,
+    /// Permission list, then the file warning when the plugin checked `io` or `os`.
+    PluginAllow,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -189,6 +194,12 @@ pub(crate) struct App {
     editing_folder: Option<i64>,
     folder_mode: FolderModalMode,
     folder_error: String,
+    plugin_server: Option<i64>,
+    plugin_pending: Option<String>,
+    plugin_confirm_step: u8,
+    plugin_notice: String,
+    local_plugins: Vec<crate::plugins::LocalPlugin>,
+    installed_plugins: Vec<(String, String, String)>,
     dms: Vec<DirectChat>,
     mentions: Vec<Mention>,
     presence: HashMap<i64, PresenceInfo>,
@@ -234,6 +245,8 @@ pub(crate) struct App {
     role_channels: bool,
     role_manage: bool,
     role_invite: bool,
+    role_plugins: bool,
+    role_bots: bool,
     editing_role: Option<i64>,
     role_error: String,
     assign_user: Option<i64>,
@@ -401,6 +414,7 @@ pub(crate) struct App {
     delivered: HashMap<(i64, MediaKind), LayerId>,
     quality_for: Option<(i64, MediaKind)>,
     quality_draft: f32,
+    mods: crate::mods::ModHost,
 }
 
 impl App {
@@ -418,6 +432,8 @@ impl App {
                 }
             }
         }
+        crate::plugins::ensure_plugin_samples(&data_dir);
+        let mods = crate::mods::ModHost::open(&data_dir);
         let mut app = Self {
             base,
             data_dir,
@@ -478,6 +494,12 @@ impl App {
             editing_folder: None,
             folder_mode: FolderModalMode::Create,
             folder_error: String::new(),
+            plugin_server: None,
+            plugin_pending: None,
+            plugin_confirm_step: 0,
+            plugin_notice: String::new(),
+            local_plugins: Vec::new(),
+            installed_plugins: Vec::new(),
             guild_roles: Vec::new(),
             role_name: String::new(),
             role_color: String::new(),
@@ -486,6 +508,8 @@ impl App {
             role_channels: false,
             role_manage: false,
             role_invite: false,
+            role_plugins: false,
+            role_bots: false,
             editing_role: None,
             role_error: String::new(),
             assign_user: None,
@@ -619,6 +643,7 @@ impl App {
             delivered: HashMap::new(),
             quality_for: None,
             quality_draft: 1.0,
+            mods,
         };
         app.load_saved();
         if app.account.is_some() {
@@ -850,6 +875,7 @@ impl App {
             self.user_acted = false;
             self.last_activity = Instant::now();
         }
+        self.mods.tick();
         self.draw_shell(ui);
         self.draw_server_dropdown(ui);
         self.draw_context_menu(ui);
@@ -936,12 +962,15 @@ impl App {
             .build(|| {
                 // The chat header spans the stage and the member list, as in Discord.
                 let body_h = (size[1] - HEADER_H).max(0.0);
-                let header_bg = if media_stage { CALL_BG } else { STAGE_BG };
-                self.paint_column(ui, "rail", [columns.rail_x, 0.0], [columns.rail_w, size[1]], RAIL_BG);
-                self.paint_column(ui, "sidebar", [columns.sidebar_x, 0.0], [columns.sidebar_w, size[1]], SIDEBAR_BG);
+                let rail = self.mods.shell_color("rail_bg").map(hex).unwrap_or(RAIL_BG);
+                let sidebar = self.mods.shell_color("sidebar_bg").map(hex).unwrap_or(SIDEBAR_BG);
+                let stage = self.mods.shell_color("stage_bg").map(hex).unwrap_or(STAGE_BG);
+                let header_bg = if media_stage { CALL_BG } else { stage };
+                self.paint_column(ui, "rail", [columns.rail_x, 0.0], [columns.rail_w, size[1]], rail);
+                self.paint_column(ui, "sidebar", [columns.sidebar_x, 0.0], [columns.sidebar_w, size[1]], sidebar);
                 let header_w = columns.stage_w + columns.members_w;
                 self.paint_column(ui, "stage-header", [columns.stage_x, 0.0], [header_w, HEADER_H], header_bg);
-                self.paint_column(ui, "stage", [columns.stage_x, HEADER_H], [columns.stage_w, body_h], STAGE_BG);
+                self.paint_column(ui, "stage", [columns.stage_x, HEADER_H], [columns.stage_w, body_h], stage);
                 if columns.members_w > 0.0 {
                     self.paint_column(ui, "members", [columns.members_x, HEADER_H], [columns.members_w, body_h], SIDEBAR_BG);
                 }
@@ -1713,6 +1742,7 @@ impl App {
             "ctx-copy-channel-id" | "ctx-copy-msg-id" => "hash",
             "ctx-create-folder" | "ctx-create-subfolder" | "ctx-move-folder" | "ctx-remove-folder" => "folder",
             "ctx-recolor-folder" => "circle-plus",
+            "ctx-add-plugin" => "puzzle",
             _ => return None,
         };
         self.icon(name)
@@ -1879,6 +1909,85 @@ impl App {
                     self.refresh_shell();
                 }
             }
+            ContextMenuAction::AddPlugin { server_id } => {
+                self.open_add_plugin(server_id);
+            }
+        }
+    }
+
+    fn open_add_plugin(&mut self, server_id: i64) {
+        self.plugin_server = Some(server_id);
+        self.plugin_pending = None;
+        self.plugin_confirm_step = 0;
+        self.plugin_notice.clear();
+        self.local_plugins = crate::plugins::local_plugins(&self.data_dir.join("plugins"));
+        self.installed_plugins = self
+            .client
+            .list_plugins(server_id)
+            .map(|rows| rows.into_iter().map(|row| (row.id, row.name, row.version)).collect())
+            .unwrap_or_default();
+        self.open_modal(Modal::AddPlugin);
+    }
+
+    fn begin_plugin_allow(&mut self, id: &str) {
+        self.plugin_pending = Some(id.to_string());
+        self.plugin_confirm_step = 0;
+        self.open_modal(Modal::PluginAllow);
+    }
+
+    fn allow_plugin(&mut self) {
+        let Some(id) = self.plugin_pending.clone() else {
+            return;
+        };
+        let invasive = self
+            .local_plugins
+            .iter()
+            .find(|plugin| plugin.id == id)
+            .map(|plugin| !crate::plugins::plugin_file_lines(&plugin.permissions).is_empty())
+            .unwrap_or(false);
+        if self.plugin_confirm_step == 0 && invasive {
+            self.plugin_confirm_step = 1;
+            return;
+        }
+        self.install_local_plugin(&id);
+        self.plugin_pending = None;
+        self.plugin_confirm_step = 0;
+        self.open_modal(Modal::AddPlugin);
+    }
+
+    fn install_local_plugin(&mut self, id: &str) {
+        let Some(server_id) = self.plugin_server else {
+            return;
+        };
+        let Some(plugin) = self.local_plugins.iter().find(|plugin| plugin.id == id && plugin.failed.is_none()) else {
+            return;
+        };
+        let zip = plugin.zip.clone();
+        let name = plugin.name.clone();
+        let version = plugin.version.clone();
+        let usage = crate::plugins::plugin_usage(&plugin.id);
+        if self.note(self.client.install_plugin(server_id, &zip)).is_some() {
+            self.installed_plugins.retain(|(installed_id, _, _)| installed_id != id);
+            self.installed_plugins.push((id.to_string(), name.clone(), version));
+            self.plugin_notice = format!("{name} is on this server. {usage} Remove takes it off.");
+            self.status = self.plugin_notice.clone();
+        }
+    }
+
+    fn remove_server_plugin(&mut self, id: &str) {
+        let Some(server_id) = self.plugin_server else {
+            return;
+        };
+        let name = self
+            .installed_plugins
+            .iter()
+            .find(|(installed_id, _, _)| installed_id == id)
+            .map(|(_, name, _)| name.clone())
+            .unwrap_or_else(|| id.to_string());
+        if self.note(self.client.remove_plugin(server_id, id)).is_some() {
+            self.installed_plugins.retain(|(installed_id, _, _)| installed_id != id);
+            self.plugin_notice = format!("{name} was removed from this server. New messages stay as you wrote them.");
+            self.status = self.plugin_notice.clone();
         }
     }
 
@@ -2434,7 +2543,30 @@ impl App {
                 skin::item_tooltip(ui, semi, "Start Voice Call");
             }
         }
+        self.paint_mod_header(ui, origin, width);
         header_rule(ui);
+    }
+
+    fn paint_mod_header(&mut self, ui: &Ui, origin: [f32; 2], width: f32) {
+        let widgets = self.mods.header_widgets();
+        if widgets.is_empty() {
+            return;
+        }
+        let mut x = origin[0] + width - 16.0;
+        for widget in widgets.iter().rev() {
+            let text = widget.label.clone();
+            let id = widget.id.clone();
+            let size = skin::text_size(ui, self.semibold_font, FONT_SM, &text);
+            x -= size[0] + 16.0;
+            ui.set_cursor_screen_pos([x, origin[1] + (HEADER_H - 24.0) * 0.5]);
+            if widget.kind == "button" {
+                if ui.button(format!("{text}##{id}")) {
+                    self.mods.click(&id);
+                }
+            } else {
+                skin::text_in_row(ui, self.semibold_font, FONT_SM, x, origin[1], HEADER_H, TEXT, &text);
+            }
+        }
     }
 
     fn draw_header_search(&mut self, ui: &Ui, min: [f32; 2]) {
@@ -2546,7 +2678,7 @@ impl App {
     fn stage_icon(&self) -> Option<&str> {
         if let Some(channel) = &self.selected {
             if matches!(self.place, Place::Server(_)) {
-                return Some(channel_display_icon(channel.kind, channel.icon.as_deref()));
+                return Some(channel_display_icon(&channel.kind, channel.icon.as_deref()));
             }
         }
         match self.place {
@@ -3172,7 +3304,7 @@ impl App {
                 if collapsed && !selected && !joined {
                     continue;
                 }
-                let icon_name = channel_display_icon(channel.kind, channel.icon.as_deref());
+                let icon_name = channel_display_icon(&channel.kind, channel.icon.as_deref());
                 let (left, right) =
                     self.channel_row(ui, &format!("ch{}", channel.id), Some(icon_name), &channel.name, selected);
                 if left {
@@ -4349,6 +4481,8 @@ impl App {
                     Modal::MemberRoles => self.modal_member_roles(ui, display),
                     Modal::ServerFolder => self.modal_server_folder(ui, display),
                     Modal::UploadsUnavailable => self.modal_uploads_unavailable(ui, display),
+                    Modal::AddPlugin => self.modal_add_plugin(ui, display),
+                    Modal::PluginAllow => self.modal_plugin_allow(ui, display),
                 };
                 if self.modal_frames > 0 && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
                     let mouse = ui.mouse_pos();
@@ -4657,6 +4791,154 @@ impl App {
     }
 
     /// Notice when the composer attach control (or any other chat upload path) is used.
+    fn modal_add_plugin(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let folder = self.data_dir.join("plugins");
+        let subtitle = format!("Add a package from {}, or remove one that is already on this server.", folder.display());
+        let list_h = (self.local_plugins.len().max(1) as f32 * 52.0).min(280.0);
+        let notice = self.plugin_notice.clone();
+        let notice_h = if notice.is_empty() { 0.0 } else { 40.0 };
+        let (body, min, max) = self.modal_frame(ui, display, "Plugins", Some(&subtitle), true, list_h + notice_h + 8.0, 0.0);
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        let plugins = self.local_plugins.clone();
+        let installed = self.installed_plugins.clone();
+        let mut chosen = None;
+        let mut removed = None;
+        if !notice.is_empty() {
+            skin::text(ui, None, FONT_SM, body, TEXT, &notice);
+        }
+        ui.set_cursor_screen_pos([body[0], body[1] + notice_h]);
+        ui.child_window("local-plugins").size([inner_w, list_h]).build(ui, || {
+            if plugins.is_empty() && installed.is_empty() {
+                skin::text(ui, None, FONT_SM, ui.cursor_screen_pos(), MUTED, "No plugins in that folder, and none on this server.");
+                return;
+            }
+            for plugin in &plugins {
+                let origin = ui.cursor_screen_pos();
+                ui.dummy([inner_w, 48.0]);
+                let next = ui.cursor_screen_pos();
+                skin::text(ui, self.semibold_font, FONT_SM, origin, TEXT, &plugin.name);
+                let installed_version = installed.iter().find(|(id, _, _)| id == &plugin.id).map(|(_, _, version)| version.as_str());
+                let newer = installed_version.is_some_and(|version| crate::plugins::plugin_version_is_newer(&plugin.version, version));
+                let detail = if let Some(reason) = &plugin.failed {
+                    reason.clone()
+                } else {
+                    crate::plugins::plugin_usage(&plugin.id).to_string()
+                };
+                skin::text(ui, None, FONT_XS, [origin[0], origin[1] + 18.0], MUTED, &detail);
+                let on_server = installed_version.is_some();
+                let can_add = plugin.failed.is_none() && (!on_server || newer);
+                if on_server
+                    && skin::button(
+                        ui,
+                        &format!("remove-plugin-{}", plugin.id),
+                        "Remove",
+                        Tone::Danger,
+                        [origin[0] + inner_w - 80.0, origin[1] + 8.0],
+                        [72.0, 32.0],
+                        true,
+                        self.semibold_font,
+                    )
+                {
+                    removed = Some(plugin.id.clone());
+                }
+                if can_add {
+                    let add_x = if on_server { origin[0] + inner_w - 160.0 } else { origin[0] + inner_w - 88.0 };
+                    let label = if newer { "Update" } else { "Add" };
+                    if skin::button(
+                        ui,
+                        &format!("add-plugin-{}", plugin.id),
+                        label,
+                        Tone::Brand,
+                        [add_x, origin[1] + 8.0],
+                        [72.0, 32.0],
+                        true,
+                        self.semibold_font,
+                    ) {
+                        chosen = Some(plugin.id.clone());
+                    }
+                }
+                ui.set_cursor_screen_pos(next);
+            }
+            for (id, name, version) in &installed {
+                if plugins.iter().any(|plugin| plugin.id == *id) {
+                    continue;
+                }
+                let origin = ui.cursor_screen_pos();
+                ui.dummy([inner_w, 48.0]);
+                let next = ui.cursor_screen_pos();
+                skin::text(ui, self.semibold_font, FONT_SM, origin, TEXT, name);
+                skin::text(ui, None, FONT_XS, [origin[0], origin[1] + 18.0], MUTED, &format!("On this server · {version}"));
+                if skin::button(
+                    ui,
+                    &format!("remove-installed-{id}"),
+                    "Remove",
+                    Tone::Danger,
+                    [origin[0] + inner_w - 80.0, origin[1] + 8.0],
+                    [72.0, 32.0],
+                    true,
+                    self.semibold_font,
+                ) {
+                    removed = Some(id.clone());
+                }
+                ui.set_cursor_screen_pos(next);
+            }
+        });
+        if let Some(id) = removed {
+            self.remove_server_plugin(&id);
+        } else if let Some(id) = chosen {
+            self.begin_plugin_allow(&id);
+        }
+        (min, max)
+    }
+
+    fn modal_plugin_allow(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let pending = self.plugin_pending.clone();
+        let plugin = pending.as_ref().and_then(|id| self.local_plugins.iter().find(|plugin| plugin.id == *id)).cloned();
+        let Some(plugin) = plugin else {
+            let (body, min, max) = self.modal_frame(ui, display, "Add Plugin", None, true, 24.0, 0.0);
+            let _ = body;
+            return (min, max);
+        };
+        let second = self.plugin_confirm_step == 1;
+        let mut lines = if second {
+            crate::plugins::plugin_file_lines(&plugin.permissions)
+        } else {
+            let mut lines = crate::plugins::plugin_server_lines(&plugin.permissions);
+            if lines.is_empty() {
+                lines.push("This plugin asks for nothing.".into());
+            }
+            lines.push(crate::plugins::plugin_usage(&plugin.id).to_string());
+            lines
+        };
+        if lines.is_empty() {
+            lines.push("Allow this plugin to run on this server.".into());
+        }
+        let body_h = lines.len() as f32 * 22.0 + 8.0;
+        let subtitle = if second {
+            "Banter is not responsible for addons that modify your files."
+        } else {
+            "Allow this plugin to run on this server?"
+        };
+        let (body, min, max) = self.modal_frame(ui, display, &plugin.name, Some(subtitle), true, body_h, MODAL_FOOTER_H);
+        let mut y = body[1];
+        for (index, line) in lines.iter().enumerate() {
+            if second && index == 0 && line.starts_with("Banter is not responsible") {
+                continue;
+            }
+            skin::text(ui, None, FONT_SM, [body[0], y], TEXT, line);
+            y += 22.0;
+        }
+        let (cancel, allow) = self.modal_footer(ui, max, min[0], "Cancel", "Allow", Tone::Brand, true);
+        if cancel {
+            self.plugin_pending = None;
+            self.plugin_confirm_step = 0;
+            self.open_modal(Modal::AddPlugin);
+        } else if allow {
+            self.allow_plugin();
+        }
+        (min, max)
+    }
+
     fn modal_uploads_unavailable(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
         let (_body, min, max) = self.modal_frame(
             ui,
@@ -4675,7 +4957,7 @@ impl App {
     }
 
     fn modal_roles(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
-        let body_h = 112.0 + 20.0 + INPUT_H + 12.0 + 20.0 + INPUT_H + 12.0 + 22.0 * 4.0 + 72.0;
+        let body_h = 112.0 + 20.0 + INPUT_H + 12.0 + 20.0 + INPUT_H + 12.0 + 22.0 * 6.0 + 72.0;
         let (body, min, max) = self.modal_frame(ui, display, "Server Roles", Some("Color, hoist, and permissions"), true, body_h, MODAL_FOOTER_H);
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         let roles = self.guild_roles.clone();
@@ -4725,6 +5007,12 @@ impl App {
         y += 22.0;
         ui.set_cursor_screen_pos([body[0], y]);
         ui.checkbox("Manage roles", &mut self.role_manage);
+        y += 22.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.checkbox("Manage plugins", &mut self.role_plugins);
+        y += 22.0;
+        ui.set_cursor_screen_pos([body[0], y]);
+        ui.checkbox("Manage bots", &mut self.role_bots);
         y += 22.0;
         ui.set_cursor_screen_pos([body[0], y]);
         ui.checkbox("Administrator", &mut self.role_admin);
@@ -4839,7 +5127,7 @@ impl App {
     }
 
     /// Lucide picker: Default (kind glyph) plus curated channel icons. Returns true if changed.
-    fn draw_channel_icon_picker(&mut self, ui: &Ui, origin: [f32; 2], width: f32, kind: ChannelKind) -> bool {
+    fn draw_channel_icon_picker(&mut self, ui: &Ui, origin: [f32; 2], width: f32, kind: &ChannelKind) -> bool {
         skin::field_label(ui, self.bold_font, origin, "Channel icon", false, None);
         let y = origin[1] + 20.0;
         let cols = 8usize;
@@ -4951,12 +5239,12 @@ impl App {
         } else {
             ChannelKind::Text
         };
-        let prefix = channel_display_icon(kind, self.channel_icon.as_deref());
+        let prefix = channel_display_icon(&kind, self.channel_icon.as_deref());
         skin::image(ui, self.icon(prefix), [field_min[0] + 10.0, field_min[1] + 12.0], 16.0, TEXT_NORMAL);
         self.focus_modal_field(ui);
         let enter = skin::input(ui, "##channel-name", &mut self.channel_name, "new-channel", [field_min[0] + 28.0, field_min[1]], inner_w - 28.0, INPUT_H, FONT_MD, false);
         y = field_min[1] + INPUT_H + 16.0;
-        self.draw_channel_icon_picker(ui, [body[0], y], inner_w, kind);
+        self.draw_channel_icon_picker(ui, [body[0], y], inner_w, &kind);
         let enabled = !self.channel_name.trim().is_empty();
         let (cancel, create) = self.modal_footer(ui, max, min[0], "Cancel", "Create Channel", Tone::Brand, enabled);
         if cancel {
@@ -4997,16 +5285,17 @@ impl App {
         });
         let kind = channel
             .as_ref()
-            .map(|channel| channel.kind)
+            .map(|channel| channel.kind.clone())
             .unwrap_or(if self.channel_is_voice {
                 ChannelKind::Voice
             } else {
                 ChannelKind::Text
             });
-        let subtitle = channel.as_ref().map(|channel| match channel.kind {
+        let subtitle = channel.as_ref().map(|channel| match &channel.kind {
             ChannelKind::Text => "Text channel".to_string(),
             ChannelKind::Voice => "Voice channel".to_string(),
             ChannelKind::Board => "Board channel".to_string(),
+            ChannelKind::Plugin(kind) => kind.clone(),
         });
         let icon_h = self.channel_icon_picker_height();
         let body_h = 20.0 + INPUT_H + 16.0 + icon_h + 24.0;
@@ -5023,7 +5312,7 @@ impl App {
         skin::field_label(ui, self.bold_font, body, "Channel name", false, None);
         let field_min = [body[0], body[1] + 20.0];
         skin::rect(ui, field_min, [field_min[0] + inner_w, field_min[1] + INPUT_H], INPUT_BG, INPUT_RADIUS);
-        let prefix = channel_display_icon(kind, self.channel_icon.as_deref());
+        let prefix = channel_display_icon(&kind, self.channel_icon.as_deref());
         skin::image(ui, self.icon(prefix), [field_min[0] + 10.0, field_min[1] + 12.0], 16.0, TEXT_NORMAL);
         self.focus_modal_field(ui);
         let enter = skin::input(
@@ -5038,7 +5327,7 @@ impl App {
             false,
         );
         let picker_y = field_min[1] + INPUT_H + 16.0;
-        self.draw_channel_icon_picker(ui, [body[0], picker_y], inner_w, kind);
+        self.draw_channel_icon_picker(ui, [body[0], picker_y], inner_w, &kind);
         let enabled = !self.channel_name.trim().is_empty() && self.channel_edit_id.is_some();
         let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", "Save Changes", Tone::Brand, enabled);
         if cancel {
@@ -5581,6 +5870,8 @@ impl App {
         self.role_channels = false;
         self.role_manage = false;
         self.role_invite = false;
+        self.role_plugins = false;
+        self.role_bots = false;
         self.role_error.clear();
     }
 
@@ -5593,6 +5884,8 @@ impl App {
         self.role_channels = role.permissions & PERM_MANAGE_CHANNELS != 0;
         self.role_manage = role.permissions & PERM_MANAGE_ROLES != 0;
         self.role_invite = role.permissions & PERM_CREATE_INVITE != 0;
+        self.role_plugins = role.permissions & PERM_MANAGE_PLUGINS != 0;
+        self.role_bots = role.permissions & PERM_MANAGE_BOTS != 0;
         self.role_error.clear();
     }
 
@@ -5606,6 +5899,12 @@ impl App {
         }
         if self.role_manage {
             bits |= PERM_MANAGE_ROLES;
+        }
+        if self.role_plugins {
+            bits |= PERM_MANAGE_PLUGINS;
+        }
+        if self.role_bots {
+            bits |= PERM_MANAGE_BOTS;
         }
         if self.role_admin {
             bits |= PERM_ADMINISTRATOR;
@@ -5678,7 +5977,7 @@ impl App {
     }
 
     fn voice_selected(&self) -> bool {
-        self.selected.as_ref().map(|channel| channel.kind) == Some(ChannelKind::Voice)
+        self.selected.as_ref().is_some_and(|channel| channel.kind.is_voice())
     }
 
     /// Center stage shows the Discord-style 1:1 call view for the open DM that owns the call.
@@ -5772,7 +6071,9 @@ impl App {
             | ServerEvent::RtcIce { .. }
             | ServerEvent::SubscribeLayer { .. }
             | ServerEvent::WantedLayers { .. }
-            | ServerEvent::BoardChanged { .. } => {}
+            | ServerEvent::BoardChanged { .. }
+            | ServerEvent::Ready { .. }
+            | ServerEvent::PluginSync { .. } => {}
         }
     }
 
@@ -7843,6 +8144,9 @@ impl App {
             self.devices_ready = false;
             self.refresh_cameras();
         }
+        if section == SettingsSection::Mods {
+            self.mods.reload();
+        }
     }
 
     fn voice_settings_visible(&self) -> bool {
@@ -8035,6 +8339,7 @@ impl App {
                     match self.settings.section() {
                         SettingsSection::Account => self.draw_account_settings(ui, layout.content_w),
                         SettingsSection::Voice => self.draw_voice_settings(ui, layout.content_w),
+                        SettingsSection::Mods => self.draw_mods_settings(ui, layout.content_w),
                         SettingsSection::Developer => self.draw_developer_settings(ui, layout.content_w),
                     }
                     ui.dummy([layout.content_w, 80.0]);
@@ -8064,12 +8369,21 @@ impl App {
                 let (id, icon, label) = match section {
                     SettingsSection::Account => ("settings-account", "user", "My Account"),
                     SettingsSection::Voice => ("settings-voice", "headphones", "Voice & Video"),
+                    SettingsSection::Mods => unreachable!("mods is under its own heading"),
                     SettingsSection::Developer => unreachable!("developer is under its own heading"),
                 };
                 if nav_row(ui, id, self.icon(icon), label, self.settings.section() == section) {
                     self.select_settings(section);
                 }
                 ui.dummy([0.0, 4.0]);
+            }
+            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
+            settings_divider(ui, ui.content_region_avail()[0]);
+            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
+            settings_form_label(ui, self.bold_font, "MODS");
+            ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
+            if nav_row(ui, "settings-mods", self.icon("puzzle"), "Mods", self.settings.section() == SettingsSection::Mods) {
+                self.select_settings(SettingsSection::Mods);
             }
             ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
             settings_divider(ui, ui.content_region_avail()[0]);
@@ -8113,6 +8427,107 @@ impl App {
         let label_w = ui.calc_text_size("ESC")[0];
         draw.add_text([center[0] - label_w * 0.5, origin[1] + size + 6.0], MUTED, "ESC");
         clicked
+    }
+
+    fn draw_mods_settings(&mut self, ui: &Ui, width: f32) {
+        self.mods.reload();
+        settings_page_title(ui, self.bold_font, "Mods");
+        ui.text_colored(
+            MUTED,
+            "Mods run on this computer only. Enabled mods run from top to bottom. The last one wins a shared shell color.",
+        );
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "FOLDER");
+        ui.text(self.data_dir.join("mods").display().to_string());
+        ui.text_colored(MUTED, "Each mod is a folder with banter.mod.json. This page reloads when you open it.");
+        settings_spacer(ui);
+
+        let rows = self.mods.rows();
+        if rows.is_empty() {
+            ui.text_colored(MUTED, "No mods installed.");
+            return;
+        }
+        let enabled: Vec<_> = rows.iter().filter(|row| row.enabled).cloned().collect();
+        let available: Vec<_> = rows.iter().filter(|row| !row.enabled).cloned().collect();
+
+        settings_form_label(ui, self.bold_font, "LOAD ORDER");
+        if enabled.is_empty() {
+            ui.text_colored(MUTED, "No mods are enabled.");
+        }
+        for (index, row) in enabled.iter().enumerate() {
+            self.draw_mod_card(ui, width, row, Some((index, enabled.len())));
+        }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "INSTALLED");
+        if available.is_empty() {
+            ui.text_colored(MUTED, "Every installed mod is in the load order.");
+        }
+        for row in &available {
+            self.draw_mod_card(ui, width, row, None);
+        }
+        if !self.settings_error.is_empty() {
+            settings_spacer(ui);
+            ui.text_colored(DANGER, &self.settings_error);
+        }
+    }
+
+    fn draw_mod_card(&mut self, ui: &Ui, width: f32, row: &crate::mods::ModRow, place: Option<(usize, usize)>) {
+        let _title = ui.push_font_with_size(self.semibold_font, FONT_MD);
+        ui.text(&row.name);
+        drop(_title);
+        let detail = format!("{} · {} MB", row.id, row.memory_mb);
+        ui.text_colored(MUTED, detail);
+        if let Some(reason) = &row.failed {
+            ui.text_colored(DANGER, format!("This mod did not load. {reason}"));
+        }
+        if let Some(hard) = &row.hard {
+            ui.text_colored(DANGER, format!("Stopped: {hard}"));
+        }
+        for soft in &row.soft {
+            ui.text_colored(DANGER, soft);
+        }
+        if let Some(warning) = &row.warning {
+            ui.text_colored(MUTED, warning);
+        }
+        if row.failed.is_none() {
+            let mut on = row.enabled;
+            if settings_toggle_row(ui, &format!("mod-enabled-{}", row.id), "Enabled", &mut on, width) {
+                let before = self.mods.rows().iter().filter(|item| item.enabled).count();
+                self.mods.set_enabled(&row.id, on);
+                let after = self.mods.rows().iter().filter(|item| item.enabled).count();
+                if on && after == before {
+                    self.settings_error = "32 mods are already enabled.".into();
+                } else {
+                    self.settings_error.clear();
+                }
+            }
+        }
+        if row.enabled && row.failed.is_none() {
+            let mut unlocked = row.unlocked;
+            if settings_toggle_row(
+                ui,
+                &format!("mod-unlock-{}", row.id),
+                "Unlock process rate",
+                &mut unlocked,
+                width,
+            ) {
+                self.mods.set_unlocked(&row.id, unlocked);
+            }
+            ui.text_colored(MUTED, "Off stops this mod after 1,000,000 instructions or 50 ms. On applies only on this computer.");
+            if let Some((index, len)) = place {
+                ui.dummy([0.0, 4.0]);
+                if index > 0 && settings_text_button(ui, &format!("mod-up-{}", row.id), "Move up") {
+                    self.mods.move_by(&row.id, true);
+                }
+                if index > 0 && index + 1 < len {
+                    ui.same_line();
+                }
+                if index + 1 < len && settings_text_button(ui, &format!("mod-down-{}", row.id), "Move down") {
+                    self.mods.move_by(&row.id, false);
+                }
+            }
+        }
+        settings_divider(ui, width);
     }
 
     fn draw_developer_settings(&mut self, ui: &Ui, width: f32) {
@@ -10066,6 +10481,15 @@ fn settings_form_label(ui: &Ui, bold: Option<FontId>, text: &str) {
 
 fn settings_spacer(ui: &Ui) {
     ui.dummy([0.0, 12.0]);
+}
+
+fn settings_text_button(ui: &Ui, id: &str, label: &str) -> bool {
+    let origin = ui.cursor_screen_pos();
+    let size = ui.calc_text_size(label);
+    let clicked = ui.invisible_button(id, [size[0], 22.0]);
+    let color = if ui.is_item_hovered() { WHITE } else { BLURPLE };
+    ui.get_window_draw_list().add_text([origin[0], origin[1] + (22.0 - size[1]) * 0.5], color, label);
+    clicked
 }
 
 fn settings_divider(ui: &Ui, width: f32) {

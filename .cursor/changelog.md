@@ -621,6 +621,18 @@ Live hosts answering only `{"ok":true}` left newer clients talking to pre–PR #
 - `docker build --pull -t banter-server:local .` succeeded (`d0530f12d92e`). The image contains `/usr/local/bin/banter-server`.
 - A published tag still works when `BANTER_IMAGE` is set and the pull succeeds. The script then sets `BANTER_PULL_POLICY=never` so Compose does not rebuild over it.
 
+## 2026-11-05 00:07:27 -05:00 [ubuntu] — Modding runtime
+
+Mods, plugins, and bots now run from the modding spec. A missing permission returns nil, a missing bot intent returns JSON null, and a plugin can be server-only.
+
+### Changelog
+- Features: Luau host with permission nils, memory cap, and the per-mod process-rate lock; Settings → Mods load order, header widgets, and shell colors; plugin zip install with `client` none/optional/required; bot accounts, tokens, guild accept, and intent filtering
+- Other: migration `006_modding`; foundation and migration tests still pass
+
+## 2026-11-05 00:24:48 -05:00 [ubuntu] — Mods settings area
+
+Settings has its own Mods section. The page lists the mods folder, the load order, and installed mods that are off, with enable, process-rate unlock, and move up or down.
+
 ## 2026-11-04 23:27:11 -06:00 [Winter] — Fix voice 0x80070057 WASAPI loopback (BA-92)
 
 Guild Voice Connected showed a red `The parameter is incorrect. (0x80070057)` while Owl had screen share and Brave app-audio enabled. Process loopback called `GetMixFormat` on `VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK` (unsupported) and initialized with no `LOOPBACK` flag. Failures could surface as a raw Windows HRESULT under the green Connected label.
@@ -638,6 +650,14 @@ Screen H.264 was encoded on the same thread as Opus, so a slow share held the ne
 - The largest simulcast layer is encoded first.
 - The PipeWire callback copies the newest frame. The screen thread scales it when that frame is published.
 
+## 2026-11-05 00:38:37 -05:00 [ubuntu] — Sample mods and plugins
+
+`examples/` has three client mods and three plugin packages that match the host APIs that already run.
+
+## 2026-11-05 00:41:40 -05:00 [ubuntu] — Sample mods in the data directory
+
+Settings → Mods reads `~/.local/share/Banter/mods`. The three sample mods are installed there, and a data directory with no mods folder receives them on startup. The Mods page rescans while it is open.
+
 ## 2026-11-05 05:46:54 +00:00 [ubuntu] — Remove text formatting toolbar (BA-94)
 
 Owl asked to remove the BFMD B/I/U/S format toolbar from the composer and inline reply UI. Keep BFMD parse/render so pasted or typed style commands still work.
@@ -653,3 +673,15 @@ People in a server could not see that someone had joined a voice channel until t
 - `ServerEvent::Voice` goes to every member of the server, including mute, camera, screen, and talking updates, and when someone leaves voice for a direct call.
 - `GET /v1/servers/{id}/voice` returns every voice channel, including empty ones.
 - The channel list and the unjoined voice stage use that roster.
+
+## 2026-11-05 00:52:24 -05:00 [ubuntu] — Add Plugin from the local plugins folder
+
+Right-click a server and choose Add Plugin. The list is the folders and zip files in the data directory's `plugins` folder, next to `mods`. Choosing one uploads that package to the server.
+
+## 2026-11-05 01:03:49 -05:00 [ubuntu] — Plugin allow dialog and visible Welcome
+
+Adding a plugin asks before it runs and says what it will do. Welcome 1.1.0 changes every new channel message on that server to test.
+
+## 2026-11-05 01:08:42 -05:00 [ubuntu] — Remove a plugin from a server
+
+Right-click a server and choose Plugins. Each plugin already on that server has Remove. Removing it unloads the script and deletes the install, so new messages are left alone.

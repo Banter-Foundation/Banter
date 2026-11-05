@@ -1,6 +1,6 @@
 # Modding
 
-Specification for three ways to extend Banter. The desktop client and `banter-server` do not load these packages yet. This document is the contract for that work.
+Specification for three ways to extend Banter. The desktop client loads mods from its data directory. `banter-server` loads plugin packages and bot accounts. This document is the contract for that work.
 
 | Doc | What it covers |
 | --- | --- |
@@ -36,7 +36,7 @@ flowchart LR
 
 ## Shared rules
 
-Banter today: desktop client in [crates/banter](../../crates/banter), server in [crates/banter-server](../../crates/banter-server). Auth is `Authorization: Bearer <token>`. Errors are JSON `{"error": "<sentence>", "code": "<snake_case>"}`. Websocket frames are JSON text. Server pushes use `ServerEvent` (`kind` tag) in [crates/banter-server/src/model.rs](../../crates/banter-server/src/model.rs). Client pushes use `ClientSignal` the same way. `channels.kind` is already `TEXT`. The Rust enum currently accepts only `text`, `voice`, and `board`.
+Banter today: desktop client in [crates/banter](../../crates/banter), server in [crates/banter-server](../../crates/banter-server). Auth is `Authorization: Bearer <token>`. Errors are JSON `{"error": "<sentence>", "code": "<snake_case>"}`. Websocket frames are JSON text. Server pushes use `ServerEvent` (`kind` tag) in [crates/banter-server/src/model.rs](../../crates/banter-server/src/model.rs). Client pushes use `ClientSignal` the same way. `channels.kind` is `TEXT`. Built-in kinds are `text`, `voice`, and `board`. A plugin kind is stored as `<plugin id>.<name>`. Public channel create still accepts only the three built-in kinds.
 
 ### Who runs what
 

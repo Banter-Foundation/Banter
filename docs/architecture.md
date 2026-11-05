@@ -94,7 +94,7 @@ Contract tests live in `crates/banter-server/tests/foundation.rs`. Client tree h
 
 ## Modding
 
-Client mods, server plugins, and external bots are specified and not loaded by this build. The contract is [modding/modding.md](modding/modding.md), with [mods](modding/mods.md), [plugins](modding/plugins.md), and [bots](modding/bots.md).
+Client mods, server plugins, and external bots follow [modding/modding.md](modding/modding.md), with [mods](modding/mods.md), [plugins](modding/plugins.md), and [bots](modding/bots.md). The client runs enabled mods in Settings order. The server installs plugin zips and bot accounts, and a missing bot intent returns JSON null.
 
 ## Auth note (not finished)
 

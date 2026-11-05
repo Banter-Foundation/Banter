@@ -32,6 +32,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "005_server_folders",
         include_str!("migrations/005_server_folders.sql"),
     ),
+    (
+        "006_modding",
+        include_str!("migrations/006_modding.sql"),
+    ),
 ];
 
 /// Transaction-scoped advisory lock so concurrent boots serialize migrate.
