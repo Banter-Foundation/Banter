@@ -569,3 +569,11 @@ Settings opened and drew but ignored clicks/Escape/X and could not close cleanly
 - Bug fixes: per-pass ImGui focus from `receive_pointer`; Settings input when focused or hovered; poll mouse buttons on the Settings surface; destroy shared Settings GLFW window by clearing `is_shared` before Drop
 - Other: platform tests for focus contract and shared-window destroy; settings close/Escape desire tests
 
+
+## 2026-11-05 03:52:43 +0000 [ubuntu] — Banter Settings ImGui input still dead after #47 (BA-85)
+
+After #47, Win11 OS chrome close worked but nav/toggles/in-UI X/Escape stayed dead. Shared Settings GLFW can queue CursorPos/MouseButton/Key while `is_focused`/`is_hovered` lie and main stays focused; BA-84 only routed on focus/hover, so ImGui never saw those events. Dual NewFrame also emitted Focus(false) on the main pass first, clearing key/mouse durations before Settings ran.
+
+### Changelog
+- Bug fixes: route Settings ImGui IO when its event queue has client input or the cursor is inside content; run Settings NewFrame first; do not emit Focus(false) on the sibling main pass; feed mouse buttons from the queue again; poll Escape
+- Other: platform tests for queue/cursor routing contracts
