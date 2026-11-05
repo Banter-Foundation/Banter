@@ -162,12 +162,6 @@ pub fn add_http_out(bytes: u64) {
     }
 }
 
-pub fn record_http(in_bytes: u64, out_bytes: u64) {
-    note_http_request();
-    add_http_in(in_bytes);
-    add_http_out(out_bytes);
-}
-
 pub fn record_ws_in(bytes: u64) {
     let t = traffic();
     t.ws_in.fetch_add(bytes, Ordering::Relaxed);
@@ -307,7 +301,9 @@ mod tests {
     #[test]
     fn traffic_totals_and_rates_track_in_and_out() {
         clear_for_test();
-        record_http(100, 200);
+        note_http_request();
+        add_http_in(100);
+        add_http_out(200);
         record_ws_in(40);
         record_ws_out(60);
         record_media_in(1_000);
@@ -326,7 +322,8 @@ mod tests {
         assert_eq!(first.media_packets_in, 1);
         assert_eq!(first.media_packets_out, 2);
         std::thread::sleep(std::time::Duration::from_millis(20));
-        record_http(50, 0);
+        note_http_request();
+        add_http_in(50);
         let second = traffic_snapshot();
         assert_eq!(second.http_in, 150);
         assert_eq!(second.http_out, 200);
