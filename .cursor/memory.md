@@ -1,4 +1,5 @@
 # Session memory
+- 2026-11-05 BA-91: Version system + checker. `banter-server` `version.rs` (`BANTER_VERSION`, `PROTOCOL`, min floors); health/version JSON; client blocks stale hosts with `BANTER_SERVER_TOO_OLD` / `BANTER_CLIENT_TOO_OLD` / `BANTER_VERSION_UNREACHABLE`. Docs: `docs/version.md`. Branch `cursor/version-system-checker-dae0`. Do not merge until Owl says so.
 
 - 2026-11-05 BA-87 / BA-88: Opaque stage toast `request failed` was empty-body HTTP fallback on `POST /v1/voice/flags` after a successful join. Shared catalog in `banter-server` `errcode.rs` (`BanterIssue`, `BANTER_*` codes); client voice join/leave/flags + WS connect/drop use it; flags sync backs off 2s. Docs: `docs/errors.md`. Branch `cursor/voice-request-failed-32e1`. Do not merge until Owl says so.
 - 2026-11-04 BA-81: Home rail control uses Lucide home icon and opens a customizable Home landing (Friends / DMs / Servers / Recent). Layout in `home.json` under the Banter data dir (same pattern as voice.json). Branch `cursor/home-icon-customizable-5216`. Do not merge until Owl says so.

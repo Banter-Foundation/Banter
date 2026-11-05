@@ -29,6 +29,13 @@ pub const ERR_WS_CONNECT: &str = "BANTER_WS_CONNECT_FAILED";
 /// Websocket dropped after connect.
 pub const ERR_WS_DROPPED: &str = "BANTER_WS_DROPPED";
 
+/// Remote Banter host is older than this client needs (BA-91).
+pub const ERR_SERVER_TOO_OLD: &str = "BANTER_SERVER_TOO_OLD";
+/// This client is older than the remote host requires (BA-91).
+pub const ERR_CLIENT_TOO_OLD: &str = "BANTER_CLIENT_TOO_OLD";
+/// Health/version probe could not reach the server (BA-91).
+pub const ERR_VERSION_UNREACHABLE: &str = "BANTER_VERSION_UNREACHABLE";
+
 /// One Banter failure: stable code, short user string, optional technical detail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BanterIssue {

@@ -11,6 +11,7 @@ Local desktop chat. The window is GLFW and OpenGL 3.3. The interface is Dear ImG
 | [docs/docker-setup.md](docs/docker-setup.md) | Podman/Docker server image setup |
 | [docs/architecture.md](docs/architecture.md) | Crates, modules, voice/camera/stream notes |
 | [docs/errors.md](docs/errors.md) | Stable `BANTER_*` error codes, toast pattern, voice/media first |
+| [docs/version.md](docs/version.md) | Release label + protocol floors; client version checker |
 | [docs/feature-status.md](docs/feature-status.md) | What works vs deferred (honest) |
 | [docs/foundation.md](docs/foundation.md) | Chosen foundation slice + deferred list |
 | [docs/contributing.md](docs/contributing.md) | Branches, worktrees, commits, changelog |

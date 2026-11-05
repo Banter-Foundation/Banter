@@ -41,7 +41,8 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 | --- | --- |
 | `main.rs` | Resolve `listen_addr`, print data dir, `serve` |
 | `lib.rs` | `DEFAULT_ADDR`, `listen_addr`, `default_data_dir` / `resolve_data_dir`, re-exports |
-| `http.rs` | Axum router: auth, friends, servers, channels, messages, DMs/calls, voice join/leave/flags, profile customization, `/v1/ws` |
+| `http.rs` | Axum router: auth, friends, servers, channels, messages, DMs/calls, voice join/leave/flags, profile customization, `/v1/health` + `/v1/version`, `/v1/ws` |
+| `version.rs` | Banter release label (`Version-*`), numeric `protocol` / min floors, client↔server check helpers, `BANTER_*` version error codes (BA-91) |
 | `store.rs` | PostgreSQL persistence (`schema.sql` via sqlx), including profile cosmetics and board widgets |
 | `cosmetics.rs` | Banter-owned cosmetics catalog (nameplates, decorations, display-name styles, effects, frames) |
 | `badges.rs` | Banter-owned profile badge catalog (shapes/colors for the Discord-style badge row) |
@@ -67,7 +68,7 @@ Chat: channel/DM messages, send/edit/delete, attachments. Message `body` is BFMD
 Calls: DM call start/accept/decline/end.  
 Voice: join, leave, flags.  
 Realtime: `/v1/ws`.  
-Health: `/v1/health`.
+Health / version: `/v1/health` and `/v1/version` return `ok`, Banter release `version`, numeric `protocol`, and `min_client_protocol`. The client probes health on connect and blocks when the host’s protocol is below its floor (or when the host omits protocol — treated as `0`, i.e. pre–version-system). Soft-warns when labels differ but protocol matches. See [version.md](version.md).
 
 ### Message threading (Reddit parity)
 

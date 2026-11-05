@@ -27,8 +27,11 @@ Shared types live in `banter_server::errcode` (`BanterIssue`, `ERR_*` constants)
 | `BANTER_HTTP_STATUS` | server returned HTTP {status} | Non-2xx with empty/non-catalog body |
 | `BANTER_HTTP_TRANSPORT` | couldn't reach the Banter server | Timeout, connection refused, DNS |
 | `BANTER_HTTP_PARSE` | couldn't read the server reply | Bad JSON / body |
+| `BANTER_SERVER_TOO_OLD` | this Banter server is too old… | Host protocol missing or below client floor (BA-91) |
+| `BANTER_CLIENT_TOO_OLD` | this Banter client is too old… | Client protocol below host `min_client_protocol` (BA-91) |
+| `BANTER_VERSION_UNREACHABLE` | couldn't reach the Banter server to check its version | Health probe failed when a host was required (BA-91) |
 
-Server domain codes (examples): `BANTER_NOT_VOICE_CHANNEL`, `BANTER_STORAGE`, `BANTER_INVALID_CREDENTIALS`. Full list: `BanterError::code()`.
+Server domain codes (examples): `BANTER_NOT_VOICE_CHANNEL`, `BANTER_STORAGE`, `BANTER_INVALID_CREDENTIALS`. Full list: `BanterError::code()`. See also [version.md](version.md).
 
 ## Pattern for new call sites
 
