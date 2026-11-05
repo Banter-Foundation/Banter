@@ -354,6 +354,20 @@ pub(crate) struct App {
     invite_copied: bool,
     icons: HashMap<String, Shot>,
     icons_ready: bool,
+    /// GPU resources for the dedicated Banter Settings ImGui context (BA-86).
+    /// Swapped into the active `icons` / `avatars` / … fields while that surface draws.
+    settings_icons: HashMap<String, Shot>,
+    settings_icons_ready: bool,
+    settings_avatars: HashMap<i64, Shot>,
+    settings_avatar_rev: HashMap<i64, i64>,
+    settings_avatar_miss: HashMap<i64, i64>,
+    settings_crop_preview: Option<Shot>,
+    settings_crop_preview_key: [i32; 3],
+    settings_local_camera: Option<Shot>,
+    settings_font_backup: Option<(Option<FontId>, Option<FontId>, Option<FontId>, Option<FontId>)>,
+    /// Last local camera RGBA mirrored for the Settings ImGui context upload.
+    settings_camera_rgba: Option<(u32, u32, Vec<u8>)>,
+    settings_styled: bool,
     /// Parent message for an inline Reddit-style reply composer (`None` = top-level only).
     reply_to: Option<i64>,
     /// Draft text for the inline reply box (separate from the bottom top-level composer).
@@ -581,6 +595,17 @@ impl App {
             invite_copied: false,
             icons: HashMap::new(),
             icons_ready: false,
+            settings_icons: HashMap::new(),
+            settings_icons_ready: false,
+            settings_avatars: HashMap::new(),
+            settings_avatar_rev: HashMap::new(),
+            settings_avatar_miss: HashMap::new(),
+            settings_crop_preview: None,
+            settings_crop_preview_key: [0, 0, 0],
+            settings_local_camera: None,
+            settings_font_backup: None,
+            settings_camera_rgba: None,
+            settings_styled: false,
             reply_to: None,
             reply_draft: String::new(),
             composer_pending: BfmdPending::default(),
@@ -716,10 +741,110 @@ impl App {
         }
         let frames = self.media.as_ref().map(|media| media.take_video()).unwrap_or_default();
         for frame in frames {
+            // Keep a CPU copy so the Settings ImGui context can upload the same preview.
+            if frame.sender.is_none() && frame.kind == MediaKind::Camera {
+                if let Some((width, height, rgba)) = frame.rgba.as_ref() {
+                    self.settings_camera_rgba = Some((*width, *height, rgba.clone()));
+                }
+            }
             self.install_video(imgui, frame);
         }
         self.install_avatars(imgui);
         self.refresh_crop_preview(imgui);
+    }
+
+    /// Swap App draw resources onto the Banter Settings ImGui context's GPU maps/fonts.
+    pub(crate) fn begin_settings_surface(
+        &mut self,
+        bold: Option<FontId>,
+        semibold: Option<FontId>,
+        italic: Option<FontId>,
+        bold_italic: Option<FontId>,
+    ) {
+        assert!(
+            self.settings_font_backup.is_none(),
+            "begin_settings_surface must not nest"
+        );
+        self.settings_font_backup = Some((
+            self.bold_font,
+            self.semibold_font,
+            self.italic_font,
+            self.bold_italic_font,
+        ));
+        self.bold_font = bold;
+        self.semibold_font = semibold;
+        self.italic_font = italic;
+        self.bold_italic_font = bold_italic;
+        std::mem::swap(&mut self.icons, &mut self.settings_icons);
+        std::mem::swap(&mut self.icons_ready, &mut self.settings_icons_ready);
+        std::mem::swap(&mut self.avatars, &mut self.settings_avatars);
+        std::mem::swap(&mut self.avatar_rev, &mut self.settings_avatar_rev);
+        std::mem::swap(&mut self.avatar_miss, &mut self.settings_avatar_miss);
+        std::mem::swap(&mut self.crop_preview, &mut self.settings_crop_preview);
+        std::mem::swap(&mut self.crop_preview_key, &mut self.settings_crop_preview_key);
+        std::mem::swap(&mut self.local_camera, &mut self.settings_local_camera);
+    }
+
+    pub(crate) fn end_settings_surface(&mut self) {
+        let Some((bold, semibold, italic, bold_italic)) = self.settings_font_backup.take() else {
+            panic!("end_settings_surface without begin_settings_surface");
+        };
+        self.bold_font = bold;
+        self.semibold_font = semibold;
+        self.italic_font = italic;
+        self.bold_italic_font = bold_italic;
+        std::mem::swap(&mut self.icons, &mut self.settings_icons);
+        std::mem::swap(&mut self.icons_ready, &mut self.settings_icons_ready);
+        std::mem::swap(&mut self.avatars, &mut self.settings_avatars);
+        std::mem::swap(&mut self.avatar_rev, &mut self.settings_avatar_rev);
+        std::mem::swap(&mut self.avatar_miss, &mut self.settings_avatar_miss);
+        std::mem::swap(&mut self.crop_preview, &mut self.settings_crop_preview);
+        std::mem::swap(&mut self.crop_preview_key, &mut self.settings_crop_preview_key);
+        std::mem::swap(&mut self.local_camera, &mut self.settings_local_camera);
+    }
+
+    /// Prepare textures on the Settings ImGui context. Call only while `begin_settings_surface` is active.
+    pub(crate) fn prepare_settings(&mut self, imgui: &mut Context) {
+        if !self.settings_styled {
+            apply_discord_style(imgui.style_mut());
+            self.settings_styled = true;
+        }
+        self.ensure_icons(imgui);
+        self.flush_shots(imgui);
+        self.install_avatars(imgui);
+        self.refresh_crop_preview(imgui);
+        if let Some((width, height, rgba)) = self.settings_camera_rgba.take() {
+            let shot = if camera_preview_mirrored() {
+                mirrored_camera_rgba(imgui, width, height, &rgba)
+            } else {
+                upload_rgba(imgui, width, height, &rgba)
+            };
+            if let Some(shot) = shot {
+                replace_shot(imgui, &mut self.local_camera, shot);
+            }
+        }
+    }
+
+    /// Drop Settings-context textures when the Banter Settings OS window closes.
+    pub(crate) fn release_settings_gpu(&mut self, imgui: &mut Context) {
+        for (_, shot) in self.settings_icons.drain() {
+            let _ = imgui.remove_texture(shot.texture);
+        }
+        self.settings_icons_ready = false;
+        for (_, shot) in self.settings_avatars.drain() {
+            let _ = imgui.remove_texture(shot.texture);
+        }
+        self.settings_avatar_rev.clear();
+        self.settings_avatar_miss.clear();
+        if let Some(shot) = self.settings_crop_preview.take() {
+            let _ = imgui.remove_texture(shot.texture);
+        }
+        self.settings_crop_preview_key = [0, 0, 0];
+        if let Some(shot) = self.settings_local_camera.take() {
+            let _ = imgui.remove_texture(shot.texture);
+        }
+        self.settings_camera_rgba = None;
+        self.settings_styled = false;
     }
 
     /// True while User Settings should be shown in the dedicated Banter Settings OS window.

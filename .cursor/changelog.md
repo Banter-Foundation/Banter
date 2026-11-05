@@ -577,3 +577,11 @@ After #47, Win11 OS chrome close worked but nav/toggles/in-UI X/Escape stayed de
 ### Changelog
 - Bug fixes: route Settings ImGui IO when its event queue has client input or the cursor is inside content; run Settings NewFrame first; do not emit Focus(false) on the sibling main pass; feed mouse buttons from the queue again; poll Escape
 - Other: platform tests for queue/cursor routing contracts
+
+## 2026-11-05 04:17:12 +0000 [ubuntu] — Banter Settings own ImGui context (BA-86)
+
+After #47+#48 on main, Settings still drew with dead ImGui (OS chrome could close). Dual NewFrame on one ImGui context kept poisoning input despite focus/queue routing. Banter Settings now has its own Dear ImGui context (suspend/activate) and always feeds that window's GLFW input into it.
+
+### Changelog
+- Bug fixes: separate ImGui context + GlowRenderer for Banter Settings; own-window IO always; main suspends while Settings runs; Settings GPU maps/fonts swapped for that pass
+- Other: platform tests for suspend/activate independence and main pointer suppress while Settings focused; architecture note
