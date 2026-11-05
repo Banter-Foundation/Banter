@@ -415,6 +415,28 @@ Commit, push, report SHA/URL and how to use it.
 
 Synced main to 6d2471d, branched `cursor/dev-server-settings-0674`. Added User Settings → Developer with Local/Remote, `dev-server.json` persistence, reconnect on apply, and docs/changelog updates. Tests written first in `dev_server.rs`.
 
+## 2026-11-03 14:45:00 -06:00 — UI theme layout agent
+
+## User
+
+Create a dedicated Banter branch for UI theme and layout work. Do not fight Dev server settings agent (bc-27efca44-b2d9-56e2-bbbb-45f0327a0674) on D:\Projects\Banter if it's dirty — use a new worktree.
+
+Rules: Never touch E:. Clear commits/docs. Prefer D:\Projects\Banter-ui-theme (or similar) worktree from origin/main.
+
+Tasks:
+1) git fetch; create branch e.g. `ui-theme-layout` from origin/main in a fresh worktree under D:\Projects.
+2) Scaffold theme/layout foundation only as needed so the branch is ready for ongoing work: keep Discord-temp skin workable; add clear module boundaries / docs for theme tokens and layout regions so later agents can iterate. Don't redesign the whole app in this pass unless scaffolding requires tiny stubs.
+3) Document the branch purpose in README or docs/ and .cursor/changelog with a clear commit message.
+4) Push the branch to origin. Do not merge to main unless Owl asks.
+
+Report: branch name, worktree path, commit SHA, push URL.
+
+Project store: C:\Users\Winter\AppData\Local\Cursor\AgentStores\cursor_agent_stores\bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5\files\ ↔ /cursor/stores/self/
+
+## Summary
+
+Primary Banter checkout was dirty on cursor/dev-server-settings-0674. Created worktree D:\Projects\Banter-ui-theme on branch cursor/ui-theme-layout-cf5e from origin/main. Added layout.rs module boundaries, docs/ui-theme-layout.md, changelog, and layout tests. Discord-temp skin left workable. Rebased onto main after Developer settings (`5d5915c`). Did not merge to main.
+
 ## 2026-11-03 15:18:54 -06:00 — Folder consolidate to Project Banter
 
 Owl: all Banter project files must live under `D:\Projects\Project Banter` (exact path, space in name). Move/consolidate from existing Banter trees into that folder without losing git history. Prefer create primary checkout there, migrate worktrees under `worktrees\`, update agent notes. Never touch E:. Don't kill Owl's running Banter if possible — relocate carefully; restart from new path if needed. Push nothing destructive. Write Project store preference note at internal/project-banter-folder.md.
@@ -977,3 +999,42 @@ Agent: Confirmed `banter.exe` PID 32668 on `D:\Projects\Project Banter\target\de
 ### Summary
 
 Live guild VC broken by stale remote server (pre-test-7); client attach healthy; ops upgrade needed on deploy host.
+
+## 2026-11-04 23:27:11 -06:00 — BA-92 voice 0x80070057
+
+Agent: Process loopback GetMixFormat/Initialize was the invalid-parameter path under Voice Connected with Brave app audio + screen. Fixed to MS ApplicationLoopback format + LOOPBACK flags; BANTER_VC_LOOPBACK_FAILED / BANTER_VC_DEVICE_FAILED on the voice bar. Branch cursor/fix-voice-0x80070057-b647. Do not merge until Owl says so.
+
+## 2026-11-05 BA-87 / BA-88 Voice request failed + error catalog
+
+Owl: Voice Connected but red `request failed` toast (screenshot). Find which request failed; fix or surface a real error. Also own BA-88: small shared error catalog (stable codes + user text + optional detail); apply to voice path at minimum. Prefer one PR. Do not merge until Owl says so. Use gh; no GitHub MCP if needed.
+
+Agent: Root cause — client `http_error` collapsed empty HTTP bodies to literal `request failed`; while in voice, `finish_voice_flags` retries `POST /v1/voice/flags` every frame after join forces a flags sync. Join already succeeded so the green Voice Connected bar stayed. Fixed catalog + voice wrap + backoff. Branch cursor/voice-request-failed-32e1.
+
+### Summary
+Toast shows `couldn't update voice state (BANTER_VC_FLAGS_FAILED)` (or server message + code) instead of opaque `request failed`; pattern documented in docs/errors.md.
+
+Agent: PR #50 opened (ManagePullRequest). Do not merge until Owl says so.
+
+Owl: merge all. #50 already on main.
+
+## 2026-11-05 BA-91 Version system and version checker
+
+Owl: Version system + version checker. Live direct.galaticserver.com:3970 was stale pre–PR #19 while client was newer — silent VC. Fingerprint cosmetics vs badges 404. Expose client+server version via API and About/settings if natural; on connect compare and warn/block with BANTER_* codes (coordinate with #50 or reimplement minimally); prefer min protocol / feature revision over equal strings. PR from main; do not merge until Owl says so. Use gh. Task BA-91.
+
+Agent: Implemented shared BanterVersion + protocol floors in banter-server version.rs; extended /v1/health and /v1/version; client probes on open/auth/reconnect and blocks with BANTER_SERVER_TOO_OLD / BANTER_CLIENT_TOO_OLD / BANTER_VERSION_UNREACHABLE; Developer settings shows versions. Branch cursor/version-system-checker-dae0. Rebased onto main after #50; version codes live in errcode.rs with the BA-88 catalog.
+
+### Summary
+Newer clients refuse hosts without protocol (or below floor) instead of connecting into silent VC against a stale server.
+
+Agent: PR #51 opened (ManagePullRequest). Do not merge until Owl says so.
+
+## 2026-11-05 BA-94 Remove text formatting toolbar
+
+Owl: remove the text formatting toolbar (BFMD B/I/U/S bar in the composer / reply UI — `draw_format_toolbar` in `crates/banter/src/ui.rs` and related). Remove the toolbar UI; keep BFMD parsing/rendering if messages can still contain style commands (or paste). Don’t gut BFMD itself unless the toolbar is the only entry point and Owl only wanted chrome gone. Branch + PR from main; do not merge until Owl says so. Use gh. Prefs: preferences.md. Context: docs/bfmd.md. Task: Remove text formatting toolbar (BA-94).
+
+Agent: Removed composer and inline-reply B/I/U/S chrome plus pending-flag scaffolding. Left `bfmd` / `bfmd_paint` and message-row rendering intact. Branch cursor/remove-format-toolbar-c871. Do not merge until Owl says so.
+
+### Summary
+Composer and reply boxes no longer show the B/I/U/S bar; BFMD in message bodies still parses and paints.
+
+Agent: PR #56 opened. Do not merge until Owl says so.

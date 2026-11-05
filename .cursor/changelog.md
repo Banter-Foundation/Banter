@@ -138,6 +138,16 @@ User Settings gains a Developer section so the desktop client can switch between
 - Switching reconnects HTTP and WebSocket; a token that fails on the new host clears the local session so you can sign in again
 - Docs: overview, build-and-run, architecture, feature-status, README; tests in `crates/banter/tests/dev_server.rs` written first (8 passed) alongside client 26 and settings 18
 
+## 2026-11-03 14:45:00 -06:00 [Winter] — UI theme and layout branch scaffold
+
+Opened dedicated branch `cursor/ui-theme-layout-cf5e` in worktree `D:\Projects\Banter-ui-theme` from `origin/main` so theme/layout work does not fight the dirty Dev Settings checkout at `D:\Projects\Banter`. Scaffold only: Discord-temp skin stays workable. Rebased onto main after Developer settings landed (`5d5915c`).
+
+- New `crates/banter/src/layout.rs`: named `Region`s, `ShellColumns`, `shell_columns` (theme-token widths); `discord_shell_columns` kept as alias
+- Moved shell column math out of `logic.rs`; `theme` / `skin` module docs point at the boundaries
+- Docs: `docs/ui-theme-layout.md`; README, architecture, contributing, and design notes updated
+- Tests first: `crates/banter/tests/layout.rs` (region names, theme-backed columns, rect helpers)
+- Verified: `cargo test -p banter --test layout --test theme` — layout 5 passed, theme 16 passed (`CARGO_TARGET_DIR=D:\Projects\Banter-ui-theme\target`)
+
 ## 2026-11-03 15:18:54 -06:00 [Winter] — Consolidate under Project Banter
 
 Moved the primary Banter checkout from `D:\Projects\Banter` to `D:\Projects\Project Banter` (exact path; space in the name) without rewriting git history. Linked worktrees were remapped under `D:\Projects\Project Banter\worktrees\` and repaired with `git worktree repair`. `/worktrees/` is gitignored in the primary tree. Docs and agent notes now point at the new root. Never touched `E:`. Owl's previous `banter-server` was stopped for the move and restarted from the new `target\debug` path.
@@ -585,3 +595,61 @@ After #47+#48 on main, Settings still drew with dead ImGui (OS chrome could clos
 ### Changelog
 - Bug fixes: separate ImGui context + GlowRenderer for Banter Settings; own-window IO always; main suspends while Settings runs; Settings GPU maps/fonts swapped for that pass
 - Other: platform tests for suspend/activate independence and main pointer suppress while Settings focused; architecture note
+
+## 2026-11-05 04:44:56 +0000 [ubuntu] — Voice request failed notice + error catalog (BA-87 / BA-88)
+
+The red stage toast showed opaque `request failed` while Voice Connected. That string was the client fallback for an empty HTTP error body on `POST /v1/voice/flags` (flags sync after join). Introduced a shared `BanterIssue` catalog and surface real codes/messages for voice join/leave/flags and WS connect/drop, with a 2s flags retry backoff.
+
+### Changelog
+- Bug fixes: never toast bare `request failed`; voice flags/join/leave wrap with `BANTER_VC_*`; parse server `code`; backoff flags republish
+- New features: shared error catalog (`errcode.rs`, `docs/errors.md`); server `BanterError::code()` uses `BANTER_*` tokens
+- Other: api_errors + errcode tests; architecture/README links
+
+## 2026-11-05 05:05:04 +0000 [ubuntu] — Version system and version checker (BA-91)
+
+Live hosts answering only `{"ok":true}` left newer clients talking to pre–PR #19 SFU builds with silent VC. Added a Banter release label plus numeric protocol on health/version, and a client checker that blocks stale/incompatible hosts with `BANTER_*` codes (protocol floors, not equal strings).
+
+### Changelog
+- New features: `version.rs` (`BANTER_VERSION`, `PROTOCOL`, min floors); `GET /v1/health` + `/v1/version` payload; client check on connect / auth / Developer reconnect; Developer settings version lines
+- Bug fixes: refuse pre–version-system and too-old servers before silent feature mismatch
+- Other: `docs/version.md`; server + client version contract tests; architecture/README links; version `BANTER_*` codes live in `errcode.rs` with the BA-88 catalog
+
+## 2026-11-05 00:06:30 -0500 [ubuntu] — Compose builds the current server
+
+`ghcr.io/snowedinowl/banter:latest` is still `version-1-test-8`, so Compose no longer uses that tag by default. `docker compose up --build` compiles `banter-server:local` from this checkout. The deploy script does the same when `BANTER_IMAGE` is unset, and if a registry pull fails it builds that local image instead.
+
+- `docker build --pull -t banter-server:local .` succeeded (`d0530f12d92e`). The image contains `/usr/local/bin/banter-server`.
+- A published tag still works when `BANTER_IMAGE` is set and the pull succeeds. The script then sets `BANTER_PULL_POLICY=never` so Compose does not rebuild over it.
+
+## 2026-11-04 23:27:11 -06:00 [Winter] — Fix voice 0x80070057 WASAPI loopback (BA-92)
+
+Guild Voice Connected showed a red `The parameter is incorrect. (0x80070057)` while Owl had screen share and Brave app-audio enabled. Process loopback called `GetMixFormat` on `VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK` (unsupported) and initialized with no `LOOPBACK` flag. Failures could surface as a raw Windows HRESULT under the green Connected label.
+
+- Process loopback uses the Microsoft ApplicationLoopback PCM format (44.1 kHz stereo 16-bit) with `AUDCLNT_STREAMFLAGS_LOOPBACK | AUTOCONVERTPCM`
+- `start_process` / `start_render` wait for open success/failure instead of swallowing pump errors
+- Voice-bar notices use `BANTER_VC_LOOPBACK_FAILED` / `BANTER_VC_DEVICE_FAILED` (PR #50 catalog); raw HRESULT stays in detail/stderr
+- Docs: `docs/errors.md`; tests: `errcode_loopback`, `wasapi_loopback_errors`
+
+## 2026-11-05 00:35:00 -0500 [ubuntu] — Keep the mic off the screen encoder
+
+Screen H.264 was encoded on the same thread as Opus, so a slow share held the next voice packet and the shared queue dropped it. Wayland also scaled every PipeWire buffer on the compositor thread.
+
+- `banter-audio` encodes the microphone and stream audio. `banter-video` encodes camera and screen. Each has its own queue. A full video queue drops a picture, not Opus.
+- The largest simulcast layer is encoded first.
+- The PipeWire callback copies the newest frame. The screen thread scales it when that frame is published.
+
+## 2026-11-05 05:46:54 +00:00 [ubuntu] — Remove text formatting toolbar (BA-94)
+
+Owl asked to remove the BFMD B/I/U/S format toolbar from the composer and inline reply UI. Keep BFMD parse/render so pasted or typed style commands still work.
+
+- `ui.rs`: drop `draw_format_toolbar`, `BfmdPending`, and related apply/flush helpers; reclaim the 28 px toolbar slot in the bottom composer and inline reply box
+- Docs: `.cursor/features.md`, `docs/feature-status.md`
+- BFMD modules (`bfmd.rs`, `bfmd_paint.rs`) and conformance tests unchanged
+
+## 2026-11-05 00:50:00 -0500 [ubuntu] — Show who is in a voice channel
+
+People in a server could not see that someone had joined a voice channel until they joined it too. The server only told the people already in that channel, and the client only drew that list under the channel it had joined. Opening a server also had no snapshot of who was already there.
+
+- `ServerEvent::Voice` goes to every member of the server, including mute, camera, screen, and talking updates, and when someone leaves voice for a direct call.
+- `GET /v1/servers/{id}/voice` returns every voice channel, including empty ones.
+- The channel list and the unjoined voice stage use that roster.

@@ -18,12 +18,13 @@ Banter/
 | `main.rs` | Entry → `banter::run()` |
 | `platform.rs` | Main GLFW window plus optional shared-context **Banter Settings** window; OpenGL 3.3, Dear ImGui docking + glow renderer (separate ImGui context per OS window via suspend/activate), clipboard, input, embedded-server bootstrap; UI present rate follows the current monitor (VSync `Sync(1)`, reapplied when the window moves or the mode Hz changes) |
 | `ui.rs` | Signed-in Discord-like shell, sign-in/register, modals, chat, voice stage, 1:1 DM call stage, friends/DMs; `draw_main` vs `draw_settings_window` |
-| `theme.rs` | Skin metrics and colors (temporary Discord dark theme) |
+| `theme.rs` | Theme tokens: colors, sizes, radii, fonts (temporary Discord dark theme) |
+| `layout.rs` | Named shell regions and column geometry (`ShellColumns`, `shell_columns`) — see [ui-theme-layout.md](ui-theme-layout.md) |
 | `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |
 | `settings.rs` | User Settings rules and `SettingsState` (OS-window host desire, layout, mic test, keybinds) — kept drawable-free for unit tests |
 | `profile.rs` | Discord-parity profile card + customization editor state (`ProfileCard`, cosmetics drafts, board tabs, media drafts, editor slots) plus view/editor layout contracts (`profile_view_layout`, `profile_editor_layout`) — drawable-free for unit tests |
 | `profile_paint.rs` | Procedural Banter-owned paint for nameplates, decorations, frames, effects, badges, and board game cards |
-| `api.rs` | HTTP client (`ureq`) for `/v1/*` |
+| `api.rs` | HTTP client (`ureq`) for `/v1/*`; maps failures to catalog codes (voice join/leave/flags first) |
 | `realtime.rs` | WebSocket client for presence, chat events, and WebRTC signaling |
 | `session.rs` | Load/save/clear `client-session.json`; `persist_login` honors Stay signed in |
 | `media.rs` (+ `media/encode.rs`, `rtc.rs`, …) | Mic/speakers (cpal), camera (nokhwa), screen share (xcap), I420→H.264 encode, WebRTC publish/subscribe |
@@ -33,7 +34,7 @@ Banter/
 
 Flow: `platform::run` loads `dev-server.json` and the saved session token, applies `startup_local_policy` (skip local for Remote; start local only when logged in on Local; otherwise reuse a running loopback or ask for remote), opens the window, builds `ui::App` against the chosen API base, then frames ImGui each tick. When User Settings is open, a second GLFW window titled **Banter Settings** is created (shared GL context) with its **own Dear ImGui context** (main is suspended for that pass) so input is not shared with the shell. Closing that window (chrome, Escape, or the in-UI X) clears settings state and focuses the main window. Developer settings (and the sign-in Server options overlay) can reconnect the client mid-session and start local when the user picks Local.
 
-The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, members). Panels are not treated as free-floating docks for day-to-day use even though docking is enabled and `banter-dock.ini` is written.
+The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, members). Panels are not treated as free-floating docks for day-to-day use even though docking is enabled and `banter-dock.ini` is written. Theme tokens, region names, and how to iterate on this shell are documented in [ui-theme-layout.md](ui-theme-layout.md). Branch `cursor/ui-theme-layout-cf5e` / worktree `D:\Projects\Banter-ui-theme` is the dedicated line for that work.
 
 ## Server (`banter-server`)
 
@@ -41,14 +42,16 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 | --- | --- |
 | `main.rs` | Resolve `listen_addr`, print data dir, `serve` |
 | `lib.rs` | `DEFAULT_ADDR`, `listen_addr`, `default_data_dir` / `resolve_data_dir`, re-exports |
-| `http.rs` | Axum router: auth, friends, servers, channels, messages, DMs/calls, voice join/leave/flags, profile customization, `/v1/ws` |
+| `http.rs` | Axum router: auth, friends, servers, channels, messages, DMs/calls, voice join/leave/flags, profile customization, `/v1/health` + `/v1/version`, `/v1/ws` |
+| `version.rs` | Banter release label (`Version-*`), numeric `protocol` / min floors, client↔server check helpers, `BANTER_*` version error codes (BA-91) |
 | `store.rs` | PostgreSQL persistence (`schema.sql` via sqlx), including profile cosmetics and board widgets |
 | `cosmetics.rs` | Banter-owned cosmetics catalog (nameplates, decorations, display-name styles, effects, frames) |
 | `badges.rs` | Banter-owned profile badge catalog (shapes/colors for the Discord-style badge row) |
 | `live.rs` | In-memory presence, voice membership, calls, WebSocket fan-out |
 | `model.rs` | Shared types (accounts, channels, messages, voice flags, profile widgets, …) |
 | `codec.rs` | Shared Opus/H.264 SDP contract (profile, RIDs, STUN/TURN helpers) |
-| `error.rs` | `BanterError` → HTTP responses |
+| `error.rs` | `BanterError` → HTTP responses (`error` + `BANTER_*` `code`) |
+| `errcode.rs` | Shared catalog: `BanterIssue`, `ERR_*` codes, `format_banter_notice` (see [errors.md](errors.md)) |
 
 ### Persistence vs memory
 
@@ -66,7 +69,7 @@ Chat: channel/DM messages, send/edit/delete, attachments. Message `body` is BFMD
 Calls: DM call start/accept/decline/end.  
 Voice: join, leave, flags.  
 Realtime: `/v1/ws`.  
-Health: `/v1/health`.
+Health / version: `/v1/health` and `/v1/version` return `ok`, Banter release `version`, numeric `protocol`, and `min_client_protocol`. The client probes health on connect and blocks when the host’s protocol is below its floor (or when the host omits protocol — treated as `0`, i.e. pre–version-system). Soft-warns when labels differ but protocol matches. See [version.md](version.md).
 
 ### Message threading (Reddit parity)
 
@@ -80,6 +83,7 @@ Contract tests live in `crates/banter-server/tests/foundation.rs`. Client tree h
 ## Voice, camera, and stream (high level)
 
 - Joining a voice channel (or starting a DM call) registers membership on the server and opens media paths on the client.
+- Everyone in that server sees who is in each voice channel. `GET /v1/servers/{id}/voice` is the snapshot (empty channels included). Joins, leaves, disconnects, flag changes, and leaving voice for a direct call push `Voice` to every member of the server. People who are not members of the server do not get that roster.
 - Voice-channel SFU forward stamps each packet with the forward track’s negotiated SSRC/payload type and strips inbound RTP header extensions before `write_rtp` (publisher SSRCs are not valid on those senders).
 - **Mute / deafen / push-to-talk** are client flags also pushed to the server; PTT defaults to **V** (ignored while a text field is focused) plus a Talk button. F1–F12 are available as keybinds.
 - **Camera:** local preview is mirrored RGBA; outbound is I420 → H.264 over WebRTC (not JPEG spray). Open prefers ~`1280x720` (or nearest available), FPS near 30, device MJPEG on ties — not the device’s absolute highest mode. Device MJPEG is only the webcam capture format.

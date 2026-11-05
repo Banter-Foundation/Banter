@@ -843,6 +843,13 @@ pub struct VoiceMember {
     pub flags: VoiceFlags,
 }
 
+/// Who is in one voice channel. Empty `members` means the channel is clear.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceRoster {
+    pub channel_id: i64,
+    pub members: Vec<VoiceMember>,
+}
+
 /// Realtime events pushed over the websocket. Media is UDP, not a binary frame.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

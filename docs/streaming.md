@@ -52,6 +52,10 @@ Receive tries a hardware decoder when one is present: NVDEC or VA-API through ff
 
 OpenH264’s high-level settings do not expose temporal layers, so the capture interval is the frame-rate cap.
 
+Microphone Opus runs on `banter-audio` with its own queue. Screen and camera H.264 run on `banter-video`. A slow screen frame does not hold the next voice packet, and a full video queue drops a picture instead of an Opus packet. The largest simulcast layer is encoded first.
+
+On Wayland the PipeWire callback only copies the newest desktop buffer. The screen thread scales that copy when it is time to publish, so the compositor is not blocked on a pixel walk of frames that will be dropped.
+
 ## Bots
 
 A bot subscribes the same way a person does: join the voice channel, offer the four tracks, and send `SubscribeLayer` for the publisher and track it wants. There is no separate bot API.

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use banter_server::{ClientSignal, ServerEvent};
+use banter_server::{format_banter_notice, ClientSignal, ServerEvent, ERR_WS_CONNECT, ERR_WS_DROPPED};
 
 use crate::profiler;
 
@@ -82,7 +82,9 @@ fn run(
     let mut socket = match tungstenite::connect(&url) {
         Ok((socket, _)) => socket,
         Err(err) => {
-            *error.lock().expect("error lock") = Some(format!("realtime connection failed: {err}"));
+            *error.lock().expect("error lock") =
+                Some(format_banter_notice(ERR_WS_CONNECT, "couldn't connect realtime"));
+            let _ = err;
             return;
         }
     };
@@ -110,7 +112,9 @@ fn run(
                 if err.kind() == ErrorKind::TimedOut || err.kind() == ErrorKind::WouldBlock => {}
             Err(tungstenite::Error::ConnectionClosed) => break,
             Err(err) => {
-                *error.lock().expect("error lock") = Some(format!("realtime connection dropped: {err}"));
+                *error.lock().expect("error lock") =
+                    Some(format_banter_notice(ERR_WS_DROPPED, "realtime connection dropped"));
+                let _ = err;
                 break;
             }
         }

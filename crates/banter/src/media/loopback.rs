@@ -14,14 +14,16 @@ use std::time::Duration;
 use windows::Win32::Media::Audio::{
     ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation, IActivateAudioInterfaceCompletionHandler,
     IActivateAudioInterfaceCompletionHandler_Impl, IAudioCaptureClient, IAudioClient, AUDIOCLIENT_ACTIVATION_PARAMS,
-    AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
-    DEVICE_STATE_ACTIVE, IMMDeviceEnumerator, MMDeviceEnumerator, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
-    VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX, WAVEFORMATEXTENSIBLE, eConsole, eRender,
+    AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+    AUDCLNT_STREAMFLAGS_LOOPBACK, DEVICE_STATE_ACTIVE, IMMDeviceEnumerator, MMDeviceEnumerator,
+    PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX,
+    WAVEFORMATEXTENSIBLE, eConsole, eRender,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemAlloc, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ};
 use windows::core::{implement, Interface, IUnknown, HRESULT, PROPVARIANT};
 
 use crate::logic::resample_mono_i16;
+use crate::settings::process_loopback_format;
 
 pub struct Loop {
     stop: Arc<AtomicBool>,
@@ -44,29 +46,55 @@ pub fn render_devices() -> Vec<String> {
 pub fn start_render(id: String, name: String, pcm: Arc<Mutex<std::collections::HashMap<String, VecDeque<i16>>>>) -> Result<Loop, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let thread = thread::Builder::new()
         .name("banter-loopback".into())
         .spawn(move || {
-            if let Err(err) = unsafe { pump_render(&name, &id, &pcm, &stop_thread) } {
+            if let Err(err) = unsafe { pump_render(&name, &id, &pcm, &stop_thread, ready_tx) } {
                 let _ = err;
             }
         })
         .map_err(|err| err.to_string())?;
-    Ok(Loop { stop, thread: Some(thread) })
+    match ready_rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(Ok(())) => Ok(Loop { stop, thread: Some(thread) }),
+        Ok(Err(err)) => {
+            stop.store(true, Ordering::Relaxed);
+            let _ = thread.join();
+            Err(err)
+        }
+        Err(_) => {
+            stop.store(true, Ordering::Relaxed);
+            let _ = thread.join();
+            Err("speaker loopback timed out".into())
+        }
+    }
 }
 
 pub fn start_process(id: String, pid: u32, pcm: Arc<Mutex<std::collections::HashMap<String, VecDeque<i16>>>>) -> Result<Loop, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let thread = thread::Builder::new()
         .name("banter-app-audio".into())
         .spawn(move || {
-            if let Err(err) = unsafe { pump_process(pid, &id, &pcm, &stop_thread) } {
+            if let Err(err) = unsafe { pump_process(pid, &id, &pcm, &stop_thread, ready_tx) } {
                 let _ = err;
             }
         })
         .map_err(|err| err.to_string())?;
-    Ok(Loop { stop, thread: Some(thread) })
+    match ready_rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(Ok(())) => Ok(Loop { stop, thread: Some(thread) }),
+        Ok(Err(err)) => {
+            stop.store(true, Ordering::Relaxed);
+            let _ = thread.join();
+            Err(err)
+        }
+        Err(_) => {
+            stop.store(true, Ordering::Relaxed);
+            let _ = thread.join();
+            Err("process loopback timed out".into())
+        }
+    }
 }
 
 unsafe fn com_mta() {
@@ -116,22 +144,64 @@ fn property_string(value: &PROPVARIANT) -> String {
     String::new()
 }
 
-unsafe fn pump_render(name: &str, id: &str, pcm: &Mutex<std::collections::HashMap<String, VecDeque<i16>>>, stop: &AtomicBool) -> Result<(), String> {
+unsafe fn pump_render(
+    name: &str,
+    id: &str,
+    pcm: &Mutex<std::collections::HashMap<String, VecDeque<i16>>>,
+    stop: &AtomicBool,
+    ready: std::sync::mpsc::Sender<Result<(), String>>,
+) -> Result<(), String> {
     com_mta();
-    let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None::<&IUnknown>, CLSCTX_ALL).map_err(|err| err.to_string())?;
-    let device = find_render(&enumerator, name)?;
-    let client: IAudioClient = device.Activate(CLSCTX_ALL, None).map_err(|err| err.to_string())?;
-    let format = client.GetMixFormat().map_err(|err| err.to_string())?;
-    let started = client.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 0, 0, format, None);
-    if started.is_err() {
-        CoTaskMemFree(Some(format as *const std::ffi::c_void));
-        return Err("could not open speaker loopback".into());
-    }
-    let capture: IAudioCaptureClient = client.GetService().map_err(|err| {
-        CoTaskMemFree(Some(format as *const std::ffi::c_void));
-        err.to_string()
+    let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None::<&IUnknown>, CLSCTX_ALL).map_err(|err| {
+        let message = err.to_string();
+        let _ = ready.send(Err(message.clone()));
+        message
     })?;
-    client.Start().map_err(|err| err.to_string())?;
+    let device = match find_render(&enumerator, name) {
+        Ok(device) => device,
+        Err(err) => {
+            let _ = ready.send(Err(err.clone()));
+            return Err(err);
+        }
+    };
+    let client: IAudioClient = match device.Activate(CLSCTX_ALL, None) {
+        Ok(client) => client,
+        Err(err) => {
+            let message = err.to_string();
+            let _ = ready.send(Err(message.clone()));
+            return Err(message);
+        }
+    };
+    let format = match client.GetMixFormat() {
+        Ok(format) => format,
+        Err(err) => {
+            let message = err.to_string();
+            let _ = ready.send(Err(message.clone()));
+            return Err(message);
+        }
+    };
+    if let Err(err) = client.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 0, 0, format, None) {
+        CoTaskMemFree(Some(format as *const std::ffi::c_void));
+        let message = err.to_string();
+        let _ = ready.send(Err(message.clone()));
+        return Err(message);
+    }
+    let capture: IAudioCaptureClient = match client.GetService() {
+        Ok(capture) => capture,
+        Err(err) => {
+            CoTaskMemFree(Some(format as *const std::ffi::c_void));
+            let message = err.to_string();
+            let _ = ready.send(Err(message.clone()));
+            return Err(message);
+        }
+    };
+    if let Err(err) = client.Start() {
+        CoTaskMemFree(Some(format as *const std::ffi::c_void));
+        let message = err.to_string();
+        let _ = ready.send(Err(message.clone()));
+        return Err(message);
+    }
+    let _ = ready.send(Ok(()));
     let result = pump_capture(&client, &capture, format, id, pcm, stop);
     let _ = client.Stop();
     CoTaskMemFree(Some(format as *const std::ffi::c_void));
@@ -190,8 +260,31 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for ProcessHandler {
     }
 }
 
-unsafe fn pump_process(pid: u32, id: &str, pcm: &Mutex<std::collections::HashMap<String, VecDeque<i16>>>, stop: &AtomicBool) -> Result<(), String> {
+fn process_loopback_wave_format() -> WAVEFORMATEX {
+    let spec = process_loopback_format();
+    WAVEFORMATEX {
+        wFormatTag: spec.format_tag,
+        nChannels: spec.channels,
+        nSamplesPerSec: spec.sample_rate,
+        nAvgBytesPerSec: spec.avg_bytes_per_sec,
+        nBlockAlign: spec.block_align,
+        wBitsPerSample: spec.bits_per_sample,
+        cbSize: 0,
+    }
+}
+
+unsafe fn pump_process(
+    pid: u32,
+    id: &str,
+    pcm: &Mutex<std::collections::HashMap<String, VecDeque<i16>>>,
+    stop: &AtomicBool,
+    ready: std::sync::mpsc::Sender<Result<(), String>>,
+) -> Result<(), String> {
     com_mta();
+    let fail = |ready: &std::sync::mpsc::Sender<Result<(), String>>, message: String| -> Result<(), String> {
+        let _ = ready.send(Err(message.clone()));
+        Err(message)
+    };
     let mut params = AUDIOCLIENT_ACTIVATION_PARAMS::default();
     params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
     params.Anonymous.ProcessLoopbackParams.TargetProcessId = pid;
@@ -199,7 +292,7 @@ unsafe fn pump_process(pid: u32, id: &str, pcm: &Mutex<std::collections::HashMap
     let bytes = std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>();
     let memory = CoTaskMemAlloc(bytes);
     if memory.is_null() {
-        return Err("could not allocate process loopback parameters".into());
+        return fail(&ready, "could not allocate process loopback parameters".into());
     }
     std::ptr::copy_nonoverlapping(&params as *const _ as *const u8, memory as *mut u8, bytes);
     let raw = windows::core::imp::PROPVARIANT {
@@ -222,26 +315,37 @@ unsafe fn pump_process(pid: u32, id: &str, pcm: &Mutex<std::collections::HashMap
         done: AtomicBool::new(false),
     });
     let handler: IActivateAudioInterfaceCompletionHandler = ProcessHandler(Arc::clone(&slot)).into();
-    let operation = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, &IAudioClient::IID, Some(&activation), &handler).map_err(|err| err.to_string())?;
-    let _ = operation;
+    if let Err(err) = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, &IAudioClient::IID, Some(&activation), &handler) {
+        return fail(&ready, err.to_string());
+    }
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !slot.done.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));
     }
     if let Some(err) = slot.error.lock().expect("loopback error").clone() {
-        return Err(err);
+        return fail(&ready, err);
     }
-    let client = slot.client.lock().expect("loopback client").take().ok_or_else(|| "process loopback did not start".to_string())?;
-    let format = client.GetMixFormat().map_err(|err| err.to_string())?;
-    client.Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 0, 0, format, None).map_err(|err| {
-        CoTaskMemFree(Some(format as *const std::ffi::c_void));
-        err.to_string()
-    })?;
-    let capture: IAudioCaptureClient = client.GetService().map_err(|err| err.to_string())?;
-    client.Start().map_err(|err| err.to_string())?;
-    let result = pump_capture(&client, &capture, format, id, pcm, stop);
+    let client = match slot.client.lock().expect("loopback client").take() {
+        Some(client) => client,
+        None => return fail(&ready, "process loopback did not start".into()),
+    };
+    // GetMixFormat is unsupported on VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK and returns E_INVALIDARG
+    // (0x80070057). Use the Microsoft ApplicationLoopback PCM format with LOOPBACK + AUTOCONVERTPCM.
+    let format = process_loopback_wave_format();
+    let flags = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM;
+    if let Err(err) = client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 0, 0, &format, None) {
+        return fail(&ready, err.to_string());
+    }
+    let capture: IAudioCaptureClient = match client.GetService() {
+        Ok(capture) => capture,
+        Err(err) => return fail(&ready, err.to_string()),
+    };
+    if let Err(err) = client.Start() {
+        return fail(&ready, err.to_string());
+    }
+    let _ = ready.send(Ok(()));
+    let result = pump_capture(&client, &capture, &format, id, pcm, stop);
     let _ = client.Stop();
-    CoTaskMemFree(Some(format as *const std::ffi::c_void));
     result
 }
 

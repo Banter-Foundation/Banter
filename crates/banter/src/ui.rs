@@ -25,23 +25,24 @@ use dear_imgui_rs::{
 };
 
 use crate::api::{ApiError, Client, MemberView};
-use crate::bfmd::{self, Flag as BfmdFlag};
+use crate::bfmd;
 use crate::bfmd_paint;
 use crate::icons::rasterize_lucide;
+use crate::layout::discord_shell_columns;
 use crate::logic::{
     CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry, ContextMenuTone, DevServerPrefs, HomeLayout,
     HomeRecentEntry, HomeRecentKind, HomeSectionId, MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget,
     SettingsSection, StreamDefaults, StreamFps, StreamResolution, VideoPrefs, VoicePrefs, api_base_for,
     camera_preview_mirrored, channel_context_menu, channel_default_icon, channel_display_icon, clamp_context_menu_pos,
     clamp_window_size, comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution,
-    discord_shell_columns, encode_jpeg_rgba, folder_context_menu, fps_block, fps_from_key, fps_key,
-    grouped_mix_sources, hardware_encoder_block, home_section_is_visible, home_section_label, insert_mention,
-    is_debug_command, lerp_size, load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba,
-    move_home_section, parse_folder_color, password_blocks_copy, plan_member_groups, password_is_masked,
-    push_home_recent, push_to_talk_held, rail_tree_rows, remove_message, resolution_block, resolution_from_key,
-    resolution_key, save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible,
-    speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
-    stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,
+    encode_jpeg_rgba, folder_context_menu, fps_block, fps_from_key, fps_key, grouped_mix_sources,
+    hardware_encoder_block, home_section_is_visible, home_section_label, insert_mention, is_debug_command, lerp_size,
+    load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, move_home_section,
+    parse_folder_color, password_blocks_copy, plan_member_groups, password_is_masked, push_home_recent,
+    push_to_talk_held, rail_tree_rows, remove_message, resolution_block, resolution_from_key, resolution_key,
+    save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible, speaking_from_level,
+    stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge, stream_resolution_label,
+    stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,     voice_flags_retry_ready, apply_voice_roster, voice_occupancy_line,
     chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day,
     window_size_label, window_size_presets, OPEN_MIC_RMS,
 };
@@ -72,59 +73,6 @@ struct PresenceInfo {
     custom_status: Option<String>,
 }
 
-/// Pending BFMD emphasis while a composer draft is still empty.
-#[derive(Clone, Copy, Debug, Default)]
-struct BfmdPending {
-    bold: bool,
-    italic: bool,
-    underline: bool,
-    strike: bool,
-}
-
-impl BfmdPending {
-    fn toggle(&mut self, flag: BfmdFlag) {
-        match flag {
-            BfmdFlag::Bold => self.bold = !self.bold,
-            BfmdFlag::Italic => self.italic = !self.italic,
-            BfmdFlag::Underline => self.underline = !self.underline,
-            BfmdFlag::Strike => self.strike = !self.strike,
-        }
-    }
-
-    fn is_on(&self, flag: BfmdFlag) -> bool {
-        match flag {
-            BfmdFlag::Bold => self.bold,
-            BfmdFlag::Italic => self.italic,
-            BfmdFlag::Underline => self.underline,
-            BfmdFlag::Strike => self.strike,
-        }
-    }
-
-    fn any(&self) -> bool {
-        self.bold || self.italic || self.underline || self.strike
-    }
-
-    fn apply_to(&self, source: &str) -> String {
-        if !self.any() || bfmd::plain_text(source).is_empty() {
-            return source.to_string();
-        }
-        let end = bfmd::plain_text(source).len();
-        let mut out = source.to_string();
-        if self.bold {
-            out = bfmd::apply_flag(&out, 0, end, BfmdFlag::Bold, true);
-        }
-        if self.italic {
-            out = bfmd::apply_flag(&out, 0, end, BfmdFlag::Italic, true);
-        }
-        if self.underline {
-            out = bfmd::apply_flag(&out, 0, end, BfmdFlag::Underline, true);
-        }
-        if self.strike {
-            out = bfmd::apply_flag(&out, 0, end, BfmdFlag::Strike, true);
-        }
-        out
-    }
-}
 use crate::websocket_url;
 
 /// Draws the active field as `*` without Dear ImGui's password flag, so copy and paste still work.
@@ -250,6 +198,7 @@ pub(crate) struct App {
     selected: Option<Channel>,
     messages: Vec<Message>,
     voice_members: Vec<VoiceMember>,
+    voice_rosters: HashMap<i64, Vec<VoiceMember>>,
     voice_channel: Option<i64>,
     call: Option<CallSnapshot>,
     mute: MuteMemory,
@@ -258,6 +207,8 @@ pub(crate) struct App {
     screen: bool,
     flags: VoiceFlags,
     sent_flags: VoiceFlags,
+    /// Last failed `POST /v1/voice/flags` time; backs off retries so the notice is not spammed.
+    flags_failed_at: Option<Instant>,
     v_held: bool,
     talk_held: bool,
     user_acted: bool,
@@ -299,6 +250,12 @@ pub(crate) struct App {
     home_editing: bool,
     settings: SettingsState,
     settings_error: String,
+    /// Last successful health report's version label (empty if unknown / unreachable).
+    server_version_label: String,
+    /// Last successful health report's protocol (None if host omitted it).
+    server_protocol: Option<u32>,
+    /// Soft mismatch notice when protocols match but release labels differ.
+    version_warn: String,
     /// Local vs remote API target from User Settings → Developer.
     dev_server: DevServerPrefs,
     /// Server options panel on the sign-in / register screen.
@@ -372,10 +329,6 @@ pub(crate) struct App {
     reply_to: Option<i64>,
     /// Draft text for the inline reply box (separate from the bottom top-level composer).
     reply_draft: String,
-    /// Style flags chosen while the composer was empty; applied once text appears.
-    composer_pending: BfmdPending,
-    /// Same pending flags for the inline reply draft.
-    reply_pending: BfmdPending,
     /// Locally collapsed comment threads (Reddit fold); not persisted.
     collapsed_comments: HashSet<i64>,
     editing: Option<i64>,
@@ -490,6 +443,7 @@ impl App {
             selected: None,
             messages: Vec::new(),
             voice_members: Vec::new(),
+            voice_rosters: HashMap::new(),
             voice_channel: None,
             call: None,
             mute: MuteMemory::new(),
@@ -498,6 +452,7 @@ impl App {
             screen: false,
             flags: VoiceFlags::default(),
             sent_flags: VoiceFlags::default(),
+            flags_failed_at: None,
             v_held: false,
             talk_held: false,
             user_acted: false,
@@ -544,6 +499,9 @@ impl App {
             home_editing: false,
             settings: SettingsState::new(),
             settings_error: String::new(),
+            server_version_label: String::new(),
+            server_protocol: None,
+            version_warn: String::new(),
             dev_server: DevServerPrefs::default(),
             login_options: false,
             login_options_frames: 0,
@@ -608,8 +566,6 @@ impl App {
             settings_styled: false,
             reply_to: None,
             reply_draft: String::new(),
-            composer_pending: BfmdPending::default(),
-            reply_pending: BfmdPending::default(),
             collapsed_comments: HashSet::new(),
             editing: None,
             pending_file: None,
@@ -666,9 +622,18 @@ impl App {
         };
         app.load_saved();
         if app.account.is_some() {
-            app.display_name = app.account.as_ref().map(|account| account.display_name.clone()).unwrap_or_default();
-            app.refresh_shell();
-            app.connect_live();
+            if app.apply_version_check(true) {
+                app.display_name = app
+                    .account
+                    .as_ref()
+                    .map(|account| account.display_name.clone())
+                    .unwrap_or_default();
+                app.refresh_shell();
+                app.connect_live();
+            }
+        } else {
+            // Reachable but incompatible hosts should surface before sign-in.
+            let _ = app.apply_version_check(false);
         }
         app
     }
@@ -1322,6 +1287,9 @@ impl App {
     }
 
     fn submit_auth(&mut self) {
+        if !self.apply_version_check(true) {
+            return;
+        }
         let result = if self.register_mode {
             self.client.register(&self.username, &self.register_display, &self.password)
         } else {
@@ -2357,6 +2325,7 @@ impl App {
             self.call = Some(call);
             self.voice_channel = None;
             self.voice_members.clear();
+            self.drop_self_from_rosters(None);
             // Keep (or open) the DM so the center stage can show the 1:1 call view.
             if !matches!(self.place, Place::Direct(id) if id == dm_id) {
                 self.open_dm(dm_id);
@@ -2369,6 +2338,7 @@ impl App {
             self.call = Some(call);
             self.voice_channel = None;
             self.voice_members.clear();
+            self.drop_self_from_rosters(None);
             if !matches!(self.place, Place::Direct(id) if id == dm_id) {
                 self.open_dm(dm_id);
             }
@@ -3173,7 +3143,7 @@ impl App {
 
     fn draw_channels(&mut self, ui: &Ui, server_id: i64) {
         let layout = self.layout.clone();
-        let voice_members = self.voice_members.clone();
+        let voice_rosters = self.voice_rosters.clone();
         let can_manage = self.can_permission(PERM_MANAGE_CHANNELS);
         let selected_id = self.selected.as_ref().map(|channel| channel.id);
         ui.dummy([0.0, 4.0]);
@@ -3229,9 +3199,11 @@ impl App {
                         mouse,
                     );
                 }
-                if joined {
-                    for member in &voice_members {
-                        self.draw_voice_member(ui, member);
+                if channel.kind == ChannelKind::Voice {
+                    if let Some(members) = voice_rosters.get(&channel.id) {
+                        for member in members {
+                            self.draw_voice_member(ui, channel.id, member);
+                        }
                     }
                 }
             }
@@ -3764,10 +3736,9 @@ impl App {
             if replying_here {
                 let box_x = origin[0] + text_x;
                 let box_w = (width - text_x - 24.0).max(160.0);
-                const FORMAT_H: f32 = 28.0;
                 let box_top = row_end + 4.0;
                 let box_h =
-                    COMMENT_INLINE_HEADER_H + FORMAT_H + COMMENT_INLINE_INPUT_H + COMMENT_INLINE_FOOTER_H;
+                    COMMENT_INLINE_HEADER_H + COMMENT_INLINE_INPUT_H + COMMENT_INLINE_FOOTER_H;
                 ui.set_cursor_screen_pos([box_x, box_top]);
                 ui.dummy([box_w, box_h]);
                 skin::rect_corners(
@@ -3797,12 +3768,7 @@ impl App {
                     BLURPLE_TEXT,
                     &header,
                 );
-                let toolbar_y = box_top + COMMENT_INLINE_HEADER_H;
-                if let Some(flag) = self.draw_format_toolbar(ui, [box_x + 8.0, toolbar_y], box_w - 16.0, true)
-                {
-                    self.apply_reply_flag(flag);
-                }
-                let input_y = toolbar_y + FORMAT_H;
+                let input_y = box_top + COMMENT_INLINE_HEADER_H;
                 skin::rect_corners(
                     ui,
                     [box_x + 8.0, input_y],
@@ -3827,7 +3793,6 @@ impl App {
                 if submit {
                     *inline_submit = true;
                 }
-                self.flush_reply_pending();
                 let footer_y = input_y + COMMENT_INLINE_INPUT_H + 4.0;
                 let cancel_w = 72.0;
                 let send_w = 72.0;
@@ -3977,110 +3942,12 @@ impl App {
 
     fn composer_footer_h(&self) -> f32 {
         // Replies use an inline composer under the parent comment (Reddit). Bottom strip is edit/file/reply-hint.
-        // Format toolbar (B/I/U/S) sits above the input bar.
         let strip = if self.editing.is_some() || self.pending_file.is_some() || self.reply_to.is_some() {
             34.0
         } else {
             0.0
         };
-        const FORMAT_H: f32 = 28.0;
-        8.0 + strip + FORMAT_H + COMPOSER_H + COMPOSER_BOTTOM
-    }
-
-    /// Apply a BFMD flag to the whole composer draft (selection APIs are limited with ImGui InputText).
-    fn apply_composer_flag(&mut self, flag: BfmdFlag) {
-        let plain = bfmd::plain_text(&self.composer);
-        if plain.is_empty() {
-            self.composer_pending.toggle(flag);
-            return;
-        }
-        let end = plain.len();
-        self.composer = bfmd::toggle_flag(&self.composer, 0, end, flag);
-        self.composer_pending = BfmdPending::default();
-    }
-
-    fn apply_reply_flag(&mut self, flag: BfmdFlag) {
-        let plain = bfmd::plain_text(&self.reply_draft);
-        if plain.is_empty() {
-            self.reply_pending.toggle(flag);
-            return;
-        }
-        let end = plain.len();
-        self.reply_draft = bfmd::toggle_flag(&self.reply_draft, 0, end, flag);
-        self.reply_pending = BfmdPending::default();
-    }
-
-    fn flush_composer_pending(&mut self) {
-        if self.composer_pending.any() && !bfmd::plain_text(&self.composer).is_empty() {
-            self.composer = self.composer_pending.apply_to(&self.composer);
-            self.composer_pending = BfmdPending::default();
-        }
-    }
-
-    fn flush_reply_pending(&mut self) {
-        if self.reply_pending.any() && !bfmd::plain_text(&self.reply_draft).is_empty() {
-            self.reply_draft = self.reply_pending.apply_to(&self.reply_draft);
-            self.reply_pending = BfmdPending::default();
-        }
-    }
-
-    fn draw_format_toolbar(&mut self, ui: &Ui, origin: [f32; 2], width: f32, reply: bool) -> Option<BfmdFlag> {
-        let labels = [
-            ("B", BfmdFlag::Bold, "Bold"),
-            ("I", BfmdFlag::Italic, "Italic"),
-            ("U", BfmdFlag::Underline, "Underline"),
-            ("S", BfmdFlag::Strike, "Strikethrough"),
-        ];
-        let mut clicked = None;
-        let mut x = origin[0];
-        let y = origin[1];
-        for (label, flag, tip) in labels {
-            let id = if reply {
-                format!("{label}##fmt-reply")
-            } else {
-                format!("{label}##fmt")
-            };
-            ui.set_cursor_screen_pos([x, y]);
-            let pending = if reply { self.reply_pending } else { self.composer_pending };
-            let source = if reply { &self.reply_draft } else { &self.composer };
-            let runs = bfmd::parse(source).runs;
-            let active = if bfmd::plain_text(source).is_empty() {
-                pending.is_on(flag)
-            } else {
-                !runs.is_empty()
-                    && runs.iter().all(|r| match flag {
-                        BfmdFlag::Bold => r.style.bold,
-                        BfmdFlag::Italic => r.style.italic,
-                        BfmdFlag::Underline => r.style.underline,
-                        BfmdFlag::Strike => r.style.strike,
-                    })
-            };
-            let color = if active { BLURPLE_TEXT } else { TEXT_SECONDARY };
-            let font = match flag {
-                BfmdFlag::Bold => self.bold_font,
-                BfmdFlag::Italic => self.italic_font,
-                _ => None,
-            };
-            let pressed = {
-                let _font = ui.push_font_with_size(font, FONT_SM);
-                let _col = ui.push_style_color(StyleColor::Text, color);
-                let _hov = ui.push_style_color(StyleColor::ButtonHovered, ICON_HOVER_BG);
-                let _act = ui.push_style_color(StyleColor::ButtonActive, ICON_HOVER_BG);
-                let _bg = ui.push_style_color(StyleColor::Button, skin::CLEAR);
-                ui.button_with_size(&id, [24.0, 24.0])
-            };
-            if ui.is_item_hovered() {
-                skin::item_tooltip(ui, self.semibold_font, tip);
-            }
-            if pressed {
-                clicked = Some(flag);
-            }
-            x += 28.0;
-            if x > origin[0] + width - 24.0 {
-                break;
-            }
-        }
-        clicked
+        8.0 + strip + COMPOSER_H + COMPOSER_BOTTOM
     }
 
     /// Rounded message bar for top-level posts: upload button, `Message #channel` placeholder,
@@ -4118,11 +3985,6 @@ impl App {
             }
             y += 34.0;
         }
-        // BFMD format toolbar (bold / italic / underline / strike).
-        if let Some(flag) = self.draw_format_toolbar(ui, [bar_x, y], bar_w, false) {
-            self.apply_composer_flag(flag);
-        }
-        y += 28.0;
         let corners = if strip.is_some() { DrawFlags::ROUND_BOTTOM } else { DrawFlags::ROUND_ALL };
         skin::rect_corners(ui, [bar_x, y], [bar_x + bar_w, y + COMPOSER_H], COMPOSER_BG, COMPOSER_RADIUS, corners);
         let input_x = if self.editing.is_none() {
@@ -4154,7 +4016,6 @@ impl App {
             ui.set_next_item_width((bar_x + bar_w - 16.0 - input_x).max(40.0));
             ui.input_text("##composer", &mut self.composer).hint(hint).enter_returns_true(true).build()
         };
-        self.flush_composer_pending();
         if submit {
             self.submit_composer(target);
         }
@@ -4162,9 +4023,12 @@ impl App {
 
     fn join_voice_channel(&mut self, channel_id: i64) {
         if let Some(members) = self.note(self.client.join_voice(channel_id)) {
+            self.drop_self_from_rosters(Some(channel_id));
+            apply_voice_roster(&mut self.voice_rosters, channel_id, members.clone());
             self.voice_members = members;
             self.voice_channel = Some(channel_id);
             self.call = None;
+            self.flags_failed_at = None;
             self.sent_flags = VoiceFlags { muted: !self.flags.muted, ..self.flags };
         }
     }
@@ -4180,10 +4044,16 @@ impl App {
         let semi = self.semibold_font;
         if !joined {
             if let Some(channel) = channel {
+                let names: Vec<String> = self
+                    .voice_rosters
+                    .get(&channel.id)
+                    .map(|members| members.iter().map(|member| self.name_of(member.user_id)).collect())
+                    .unwrap_or_default();
+                let line = voice_occupancy_line(&names);
                 let center_x = origin[0] + width * 0.5;
                 let title_y = origin[1] + height * 0.4;
                 skin::text_centered(ui, semi, FONT_XL, center_x, title_y, TEXT, &channel.name);
-                skin::text_centered(ui, None, FONT_MD, center_x, title_y + 36.0, TEXT_SECONDARY, "No one is currently in voice");
+                skin::text_centered(ui, None, FONT_MD, center_x, title_y + 36.0, TEXT_SECONDARY, &line);
                 if skin::button(ui, "join-voice", "Join Voice", Tone::Green, [center_x - 60.0, title_y + 72.0], [120.0, BUTTON_H], true, semi) {
                     self.join_voice_channel(channel.id);
                 }
@@ -5268,14 +5138,23 @@ impl App {
             media.set_session(place.filter(|_| in_place), me, offerer);
         }
         if in_place && self.flags != self.sent_flags {
-            if self.note(self.client.set_flags(self.flags)).is_some() {
-                self.sent_flags = self.flags;
+            let now = Instant::now();
+            if voice_flags_retry_ready(self.flags_failed_at, now, Duration::from_secs(2)) {
+                match self.client.set_flags(self.flags) {
+                    Ok(()) => {
+                        self.sent_flags = self.flags;
+                        self.flags_failed_at = None;
+                    }
+                    Err(err) => {
+                        self.status = err.to_string();
+                        self.flags_failed_at = Some(now);
+                    }
+                }
             }
         }
     }
 
     fn submit_composer(&mut self, target: ChatTarget) {
-        self.flush_composer_pending();
         let body = self.composer.clone();
         if self.consume_debug_command(&body) {
             return;
@@ -5284,7 +5163,6 @@ impl App {
             if let Some(message) = self.note(self.client.edit_message(id, &body)) {
                 upsert_message(&mut self.messages, message);
                 self.composer.clear();
-                self.composer_pending = BfmdPending::default();
                 self.editing = None;
             }
             return;
@@ -5301,7 +5179,6 @@ impl App {
             }
             self.chat_jump = true;
             self.composer.clear();
-            self.composer_pending = BfmdPending::default();
             self.pending_file = None;
         }
     }
@@ -5311,7 +5188,6 @@ impl App {
         let Some(parent) = self.reply_to else {
             return;
         };
-        self.flush_reply_pending();
         let body = self.reply_draft.clone();
         if self.consume_debug_command(&body) {
             return;
@@ -5327,7 +5203,6 @@ impl App {
             }
             self.chat_jump = true;
             self.reply_draft.clear();
-            self.reply_pending = BfmdPending::default();
             self.reply_to = None;
             self.pending_file = None;
             // Expand the parent so the new reply is visible.
@@ -5341,9 +5216,7 @@ impl App {
             return false;
         }
         self.composer.clear();
-        self.composer_pending = BfmdPending::default();
         self.reply_draft.clear();
-        self.reply_pending = BfmdPending::default();
         self.editing = None;
         self.reply_to = None;
         self.pending_file = None;
@@ -5475,6 +5348,9 @@ impl App {
         self.status.clear();
         self.settings.close();
         self.share_open = false;
+        self.voice_channel = None;
+        self.voice_members.clear();
+        self.voice_rosters.clear();
         self.end_media_place();
     }
 
@@ -5536,9 +5412,10 @@ impl App {
                 })
                 .collect();
         }
-        if let Place::Server(_) = self.place {
+        if let Place::Server(server_id) = self.place {
             self.reload_layout();
             self.reload_members();
+            self.reload_voice_rosters(server_id);
         }
     }
 
@@ -5558,6 +5435,7 @@ impl App {
         });
         self.reload_layout();
         self.reload_members();
+        self.reload_voice_rosters(server_id);
         if let Some(member) = self.members.iter().find(|member| Some(member.user_id) == self.account.as_ref().map(|account| account.id)) {
             self.nickname = member.nickname.clone().unwrap_or_default();
         }
@@ -5863,6 +5741,7 @@ impl App {
             }
             ServerEvent::FriendRequest { .. } | ServerEvent::FriendsChanged => self.refresh_shell(),
             ServerEvent::Voice { channel_id, members } => {
+                apply_voice_roster(&mut self.voice_rosters, channel_id, members.clone());
                 if self.voice_channel == Some(channel_id) {
                     self.voice_members = members;
                 }
@@ -5872,6 +5751,8 @@ impl App {
                 if Some(call.caller) == me || Some(call.callee) == me {
                     if call.phase == CallPhase::Active {
                         self.voice_channel = None;
+                        self.voice_members.clear();
+                        self.drop_self_from_rosters(None);
                     }
                     let dm_id = call.dm_id;
                     self.call = Some(call);
@@ -7972,7 +7853,62 @@ impl App {
         if self.note(self.client.leave_voice()).is_some() {
             self.voice_channel = None;
             self.voice_members.clear();
+            self.drop_self_from_rosters(None);
+            self.flags_failed_at = None;
             self.end_media_place();
+        }
+    }
+
+    /// Drop the local user from sidebar rosters. `keep` is the channel they just joined.
+    fn drop_self_from_rosters(&mut self, keep: Option<i64>) {
+        let Some(me) = self.account.as_ref().map(|account| account.id) else {
+            return;
+        };
+        let stale: Vec<i64> = self
+            .voice_rosters
+            .iter()
+            .filter_map(|(channel_id, members)| {
+                if Some(*channel_id) != keep && members.iter().any(|member| member.user_id == me) {
+                    Some(*channel_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for channel_id in stale {
+            let remaining = self
+                .voice_rosters
+                .get(&channel_id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|member| member.user_id != me)
+                .collect();
+            apply_voice_roster(&mut self.voice_rosters, channel_id, remaining);
+        }
+    }
+
+    fn reload_voice_rosters(&mut self, server_id: i64) {
+        let Some(rows) = self.note(self.client.server_voice(server_id)) else {
+            return;
+        };
+        let mine: Vec<i64> = self
+            .layout
+            .iter()
+            .flat_map(|category| category.channels.iter())
+            .filter(|channel| channel.kind == ChannelKind::Voice)
+            .map(|channel| channel.id)
+            .collect();
+        for channel_id in mine {
+            self.voice_rosters.remove(&channel_id);
+        }
+        for row in rows {
+            apply_voice_roster(&mut self.voice_rosters, row.channel_id, row.members);
+        }
+        if let Some(channel_id) = self.voice_channel {
+            if let Some(members) = self.voice_rosters.get(&channel_id) {
+                self.voice_members = members.clone();
+            }
         }
     }
 
@@ -8229,6 +8165,33 @@ impl App {
         ui.text(&self.base);
         settings_spacer(ui);
         ui.text_colored(MUTED, &format!("Local default is {}.", local_api_base()));
+        settings_spacer(ui);
+
+        settings_form_label(ui, self.bold_font, "VERSION");
+        ui.text(&format!(
+            "Client {} (protocol {})",
+            crate::client_version(),
+            crate::client_protocol()
+        ));
+        settings_spacer(ui);
+        let server_line = match (self.server_version_label.as_str(), self.server_protocol) {
+            ("", None) => "Server unknown (health not checked yet)".to_string(),
+            ("", Some(protocol)) => format!("Server (no label, protocol {protocol})"),
+            (label, None) => format!("Server {label} (no protocol — treat as too old)"),
+            (label, Some(protocol)) => format!("Server {label} (protocol {protocol})"),
+        };
+        ui.text(&server_line);
+        ui.text_colored(
+            MUTED,
+            &format!(
+                "Client needs server protocol {}+.",
+                crate::min_server_protocol()
+            ),
+        );
+        if !self.version_warn.is_empty() {
+            settings_spacer(ui);
+            ui.text_colored(MUTED, &self.version_warn);
+        }
 
         if !self.settings_error.is_empty() {
             settings_spacer(ui);
@@ -9045,11 +9008,14 @@ impl App {
     }
 
     /// Someone in the joined voice channel, listed under it: 24 px avatar, name, then state icons.
-    fn draw_voice_member(&self, ui: &Ui, member: &VoiceMember) {
+    fn draw_voice_member(&self, ui: &Ui, channel_id: i64, member: &VoiceMember) {
         let name = self.name_of(member.user_id);
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
-        ui.invisible_button(format!("voice-member-{}", member.user_id), [width, VOICE_MEMBER_H]);
+        ui.invisible_button(
+            format!("voice-member-{channel_id}-{}", member.user_id),
+            [width, VOICE_MEMBER_H],
+        );
         let hovered = ui.is_item_hovered();
         let min = [origin[0] + 32.0, origin[1] + 2.0];
         let max = [origin[0] + width - ROW_INSET, origin[1] + VOICE_MEMBER_H - 2.0];
@@ -9406,6 +9372,7 @@ impl App {
         // Drop media against the previous host without waiting on it.
         self.voice_channel = None;
         self.voice_members.clear();
+        self.voice_rosters.clear();
         self.end_media_place();
         self.media = None;
         self.realtime = None;
@@ -9426,6 +9393,14 @@ impl App {
         self.selected = None;
         self.messages.clear();
         self.place = Place::Home;
+
+        if !self.apply_version_check(true) {
+            self.client.set_token(None);
+            let _ = clear_token(&self.data_dir);
+            self.account = None;
+            self.display_name.clear();
+            return;
+        }
 
         if let Some(token) = token {
             self.client.set_token(Some(token));
@@ -9456,6 +9431,76 @@ impl App {
             } else {
                 self.status.clear();
             }
+        }
+    }
+
+    /// Probe `/v1/health` and compare protocol floors. Returns false when the client must not stay connected.
+    ///
+    /// When `require_reachable` is false, a transport failure is ignored (startup may still be asking for a remote).
+    fn apply_version_check(&mut self, require_reachable: bool) -> bool {
+        match self.client.health() {
+            Ok(report) => {
+                self.server_version_label = report.version.clone().unwrap_or_default();
+                self.server_protocol = report.protocol;
+                match banter_server::check_remote_version(&report) {
+                    banter_server::VersionCheck::Compatible { warn } => {
+                        self.version_warn = warn.unwrap_or_default();
+                        true
+                    }
+                    banter_server::VersionCheck::Block { code, message } => {
+                        let notice = banter_server::format_version_notice(code, &message);
+                        self.drop_session_for_version(&notice);
+                        false
+                    }
+                }
+            }
+            Err(err) => {
+                self.server_version_label.clear();
+                self.server_protocol = None;
+                self.version_warn.clear();
+                if !require_reachable {
+                    return true;
+                }
+                match banter_server::unreachable_version_check(err.to_string()) {
+                    banter_server::VersionCheck::Block { code, message } => {
+                        let notice = banter_server::format_version_notice(code, &message);
+                        self.settings_error = notice.clone();
+                        self.status = notice;
+                        false
+                    }
+                    banter_server::VersionCheck::Compatible { .. } => true,
+                }
+            }
+        }
+    }
+
+    fn drop_session_for_version(&mut self, notice: &str) {
+        self.version_warn.clear();
+        self.settings_error = notice.to_string();
+        self.status = notice.to_string();
+        self.voice_channel = None;
+        self.voice_members.clear();
+        self.voice_rosters.clear();
+        self.end_media_place();
+        self.media = None;
+        self.realtime = None;
+        if self.account.is_some() || self.client.token().is_some() {
+            self.client.set_token(None);
+            let _ = clear_token(&self.data_dir);
+            self.account = None;
+            self.display_name.clear();
+            self.friends.clear();
+            self.incoming.clear();
+            self.outgoing.clear();
+            self.servers.clear();
+            self.dms.clear();
+            self.mentions.clear();
+            self.presence.clear();
+            self.layout.clear();
+            self.members.clear();
+            self.selected = None;
+            self.messages.clear();
+            self.place = Place::Home;
         }
     }
 

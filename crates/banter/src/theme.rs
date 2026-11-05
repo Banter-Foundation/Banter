@@ -1,7 +1,18 @@
-//! Shared metrics and colors for the temporary Discord skin.
+//! Theme tokens for the temporary Discord skin.
 //!
 //! Values follow Discord's desktop dark theme. Every screen reads its sizes, radii,
 //! font sizes, and colors from here so columns and rows line up across the window.
+//! Do not hard-code colors or pixel sizes in `ui.rs` — add a token here instead.
+//!
+//! Token groups (search these section comments):
+//! - **Backgrounds** — rail / sidebar / stage / panel / input fills
+//! - **Text and icons** — primary, muted, links, placeholders
+//! - **Accents** — blurple, green, danger, status
+//! - **Columns and bars** — `RAIL_W`, `SIDEBAR_W`, `MEMBERS_W`, header / user / voice heights
+//! - **Server rail / channel list / member list / chat / call / floating / type scale**
+//!
+//! Column geometry and named regions live in [`crate::layout`]. Draw helpers live in `skin`.
+//! Branch purpose: `docs/ui-theme-layout.md`.
 
 /// `0xRRGGBB` as normalized RGBA.
 pub const fn hex(rgb: u32) -> [f32; 4] {

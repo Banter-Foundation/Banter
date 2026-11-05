@@ -14,6 +14,7 @@ mod api;
 pub mod bfmd;
 mod bfmd_paint;
 mod icons;
+pub mod layout;
 mod logic;
 mod media;
 mod platform;
@@ -27,10 +28,15 @@ mod skin;
 pub mod theme;
 mod ui;
 
-pub use api::{Client, websocket_url};
-pub use banter_server::{ServerFolder, ServerRail, ServerRailServer, ServerSummary};
+pub use api::{websocket_url, ApiError, Client};
+pub use banter_server::{
+    format_banter_notice, ServerFolder, ServerRail, ServerRailServer, ServerSummary, ERR_HTTP_PARSE,
+    ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_DEVICE, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
+    ERR_VC_LOOPBACK, ERR_VC_PUBLISH, ERR_WS_CONNECT, ERR_WS_DROPPED,
+};
 pub use bfmd::{parse as parse_bfmd, plain_text as bfmd_plain_text, Flag as BfmdFlag};
 pub use icons::rasterize_lucide;
+pub use layout::{Region, ShellColumns, discord_shell_columns, shell_columns};
 pub use logic::*;
 pub use media::{
     camera_preview_rgba, current_camera_frame, decode_camera_frame, hardware_encoder_available,
@@ -39,6 +45,21 @@ pub use media::{
 pub use profile::*;
 pub use session::{clear_token, load_token, persist_login, save_token};
 pub use settings::*;
+
+/// This client's Banter release label (same constant as the embedded server).
+pub fn client_version() -> &'static str {
+    banter_server::BANTER_VERSION
+}
+
+/// This client's protocol revision.
+pub fn client_protocol() -> u32 {
+    banter_server::PROTOCOL
+}
+
+/// Oldest server protocol this client will accept.
+pub fn min_server_protocol() -> u32 {
+    banter_server::MIN_SERVER_PROTOCOL
+}
 
 pub fn run() -> Result<(), String> {
     platform::run()

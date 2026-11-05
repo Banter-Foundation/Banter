@@ -119,6 +119,7 @@ pub fn serve(addr: &str, data_dir: &std::path::Path, database_url: &str) -> Resu
 fn router(state: HttpState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/version", get(version))
         .route("/v1/debug", get(server_debug))
         .route("/v1/register", post(register))
         .route("/v1/login", post(login))
@@ -162,6 +163,7 @@ fn router(state: HttpState) -> Router {
             axum::routing::patch(update_channel),
         )
         .route("/v1/servers/{id}/layout", get(layout))
+        .route("/v1/servers/{id}/voice", get(server_voice))
         .route("/v1/channels/{id}/messages", get(channel_messages))
         .route("/v1/channels/{id}/board", get(get_board))
         .route("/v1/channels/{id}/board/ops", post(apply_board_ops))
@@ -186,7 +188,11 @@ fn router(state: HttpState) -> Router {
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(json!({"ok": true}))
+    Json(crate::health_payload())
+}
+
+async fn version() -> Json<serde_json::Value> {
+    Json(crate::health_payload())
 }
 
 async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> Result<Json<ServerDebug>, BanterError> {
@@ -761,6 +767,22 @@ async fn layout(
     Ok(Json(state.store.layout(account.id, id).await?))
 }
 
+async fn server_voice(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+) -> Result<Json<Vec<VoiceRoster>>, BanterError> {
+    let channels = state.store.voice_channel_ids(account.id, id).await?;
+    let rosters = channels
+        .into_iter()
+        .map(|channel_id| VoiceRoster {
+            channel_id,
+            members: state.live.voice_channel_members(channel_id),
+        })
+        .collect();
+    Ok(Json(rosters))
+}
+
 #[derive(Deserialize)]
 struct ListQuery {
     limit: Option<u32>,
@@ -1039,7 +1061,9 @@ async fn join_voice(
 }
 
 async fn leave_voice(State(state): State<HttpState>, Auth(account): Auth) -> StatusCode {
-    state.live.leave_voice(account.id);
+    if let Some(channel_id) = state.live.leave_voice(account.id) {
+        state.live.publish_voice(&state.store, account.id, channel_id).await;
+    }
     crate::debuglog::record("info", format!("voice leave user {}", account.id));
     StatusCode::NO_CONTENT
 }
@@ -1049,7 +1073,9 @@ async fn set_flags(
     Auth(account): Auth,
     Json(flags): Json<VoiceFlags>,
 ) -> StatusCode {
-    state.live.set_flags(account.id, flags);
+    if let Some(channel_id) = state.live.set_flags(account.id, flags) {
+        state.live.publish_voice(&state.store, account.id, channel_id).await;
+    }
     StatusCode::NO_CONTENT
 }
 
@@ -1161,7 +1187,10 @@ async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
     }
     writer.abort();
     state.live.unregister_socket(user_id, socket_id);
-    state.live.disconnect(user_id);
+    let left = state.live.disconnect(user_id);
+    for channel_id in left {
+        state.live.publish_voice(&state.store, user_id, channel_id).await;
+    }
     crate::debuglog::record("info", format!("websocket disconnected user {user_id}"));
     if let Ok(audience) = state.store.related_user_ids(user_id).await {
         state.live.send_event(

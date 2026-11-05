@@ -526,39 +526,39 @@ fn device_loop(
                 if let Some(name) = source.id.strip_prefix("mic:") {
                     match open_input_queue(name, source.id.clone(), Arc::clone(&engine.source_pcm)) {
                         Ok(stream) => streams.push(stream),
-                        Err(err) => remember_error(&errors, format!("{}: {err}", source.name)),
+                        Err(err) => remember_loopback_error(&errors, &source.name, &err),
                     }
                 } else if let Some(name) = source.id.strip_prefix("loop:") {
                     #[cfg(windows)]
                     match loopback::start_render(source.id.clone(), name.to_string(), Arc::clone(&engine.source_pcm)) {
                         Ok(handle) => loops.push(handle),
-                        Err(err) => remember_error(&errors, format!("{}: {err}", source.name)),
+                        Err(err) => remember_loopback_error(&errors, &source.name, &err),
                     }
                     #[cfg(target_os = "linux")]
                     match loopback_linux::start_render(source.id.clone(), name.to_string(), Arc::clone(&engine.source_pcm)) {
                         Ok(handle) => loops.push(handle),
-                        Err(err) => remember_error(&errors, format!("{}: {err}", source.name)),
+                        Err(err) => remember_loopback_error(&errors, &source.name, &err),
                     }
                     #[cfg(not(any(windows, target_os = "linux")))]
                     {
                         let _ = name;
-                        remember_error(&errors, format!("{}: speaker loopback is not available on this system", source.name));
+                        remember_loopback_error(&errors, &source.name, "speaker loopback is not available on this system");
                     }
                 } else if let Some(pid) = source.id.strip_prefix("app:").and_then(|pid| pid.parse::<u32>().ok()) {
                     #[cfg(windows)]
                     match loopback::start_process(source.id.clone(), pid, Arc::clone(&engine.source_pcm)) {
                         Ok(handle) => loops.push(handle),
-                        Err(err) => remember_error(&errors, format!("{}: {err}", source.name)),
+                        Err(err) => remember_loopback_error(&errors, &source.name, &err),
                     }
                     #[cfg(target_os = "linux")]
                     match loopback_linux::start_process(source.id.clone(), pid, Arc::clone(&engine.source_pcm)) {
                         Ok(handle) => loops.push(handle),
-                        Err(err) => remember_error(&errors, format!("{}: {err}", source.name)),
+                        Err(err) => remember_loopback_error(&errors, &source.name, &err),
                     }
                     #[cfg(not(any(windows, target_os = "linux")))]
                     {
                         let _ = pid;
-                        remember_error(&errors, format!("{}: app audio is not available on this system", source.name));
+                        remember_loopback_error(&errors, &source.name, "app audio is not available on this system");
                     }
                 }
             }
@@ -844,10 +844,8 @@ fn add_i16(left: &[i16], right: &[i16]) -> Vec<i16> {
 fn device_failed(errors: &Mutex<Vec<String>>, device: &str, raw: &str) {
     eprintln!("{device}: {raw}");
     let mut list = errors.lock().expect("media errors");
-    match crate::settings::friendly_device_error(device) {
-        Some(message) => crate::settings::remember_device_error(&mut list, device, message),
-        None => crate::settings::remember_device_error(&mut list, device, raw),
-    }
+    let message = crate::settings::media_device_notice(device, raw);
+    crate::settings::remember_device_error(&mut list, device, &message);
 }
 
 fn device_recovered(errors: &Mutex<Vec<String>>, device: &str) {
@@ -860,6 +858,11 @@ fn remember_error(errors: &Mutex<Vec<String>>, message: String) {
         eprintln!("banter: {message}");
         list.push(message);
     }
+}
+
+fn remember_loopback_error(errors: &Mutex<Vec<String>>, label: &str, raw: &str) {
+    eprintln!("{label}: {raw}");
+    remember_error(errors, format!("{label}: {}", crate::settings::media_wasapi_notice(label, raw)));
 }
 
 fn camera_loop(
@@ -1259,9 +1262,9 @@ fn screen_loop(
                     cast_since = None;
                     continue;
                 }
-                if let Some(frame) = cast.take() {
-                    latest = Some(frame);
-                    fresh = true;
+                // Leave the raw frame in the portal slot until publish time.
+                // Scaling here would walk pixels the share is about to drop.
+                if cast.has_frame() {
                     cast_since = None;
                 } else if latest.is_none() && cast_since.is_some_and(|started| started.elapsed() > Duration::from_secs(3)) {
                     remember_error(&errors, "screen: the desktop sent no picture".into());
@@ -1289,15 +1292,13 @@ fn screen_loop(
                 }
             }
             #[cfg(target_os = "linux")]
-            Feed::Cast(_) => {
-                if !fresh {
+            Feed::Cast(cast) => {
+                let Some((width, height, rgba)) = cast.take_picture(edge) else {
                     thread::sleep(Duration::from_millis(2));
                     continue;
-                }
-                fresh = false;
+                };
                 next_encode = Instant::now() + Duration::from_millis(interval);
-                let Some((width, height, rgba)) = latest.as_ref() else { continue };
-                publish_screen(&pictures, &local, &engine, &mut keyed, rgba, *width, *height, edge);
+                publish_screen(&pictures, &local, &engine, &mut keyed, &rgba, width, height, edge);
             }
             Feed::Record { .. } => {
                 if !fresh {

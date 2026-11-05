@@ -153,19 +153,32 @@ impl Rtc {
         flags: Arc<AtomicU32>,
     ) -> Self {
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-        // Audio shares this queue with video. A tiny buffer dropped Opus under
-        // camera/screen load and made voice crackle when it worked at all.
-        let (media_tx, media_rx) = tokio::sync::mpsc::channel(64);
+        // Voice and video do not share a queue. A full video queue used to
+        // drop Opus, and H.264 on the voice thread held the next mic packet
+        // until the screen frame finished.
+        let (audio_tx, audio_rx) = tokio::sync::mpsc::channel(64);
+        let (video_tx, video_rx) = tokio::sync::mpsc::channel(16);
         let control = Arc::new(Control::new());
+        let qos = Arc::new(Mutex::new(SenderQos::new()));
         let stop = Arc::new(AtomicBool::new(false));
-        let encode = thread::Builder::new()
-            .name("banter-encode".into())
+        let audio = thread::Builder::new()
+            .name("banter-audio".into())
             .spawn({
                 let control = Arc::clone(&control);
+                let qos = Arc::clone(&qos);
                 let stop = Arc::clone(&stop);
-                move || encode_loop(stop, control, media_tx, user_pcm, stream_pcm, camera, screen)
+                move || audio_encode_loop(stop, control, qos, audio_tx, user_pcm, stream_pcm)
             })
-            .expect("encode thread");
+            .expect("audio encode thread");
+        let video = thread::Builder::new()
+            .name("banter-video".into())
+            .spawn({
+                let control = Arc::clone(&control);
+                let qos = Arc::clone(&qos);
+                let stop = Arc::clone(&stop);
+                move || video_encode_loop(stop, control, qos, video_tx, camera, screen)
+            })
+            .expect("video encode thread");
         let net = thread::Builder::new()
             .name("banter-rtc".into())
             .spawn({
@@ -178,14 +191,14 @@ impl Rtc {
                             return;
                         }
                     };
-                    runtime.block_on(run(cmd_rx, media_rx, signals, control, playback, remote, output_rate, flags));
+                    runtime.block_on(run(cmd_rx, audio_rx, video_rx, signals, control, playback, remote, output_rate, flags));
                 }
             })
             .expect("rtc thread");
         Self {
             cmd: cmd_tx,
             stop,
-            threads: vec![encode, net],
+            threads: vec![audio, video, net],
             session: Mutex::new(None),
         }
     }
@@ -215,18 +228,55 @@ impl Drop for Rtc {
     }
 }
 
-fn encode_loop(
+fn audio_encode_loop(
     stop: Arc<AtomicBool>,
     control: Arc<Control>,
-    media_tx: tokio::sync::mpsc::Sender<Outgoing>,
+    qos: Arc<Mutex<SenderQos>>,
+    audio_tx: tokio::sync::mpsc::Sender<Outgoing>,
     user_pcm: Arc<Mutex<VecDeque<i16>>>,
     stream_pcm: Arc<Mutex<VecDeque<i16>>>,
+) {
+    let mut user = OpusTrack::user_audio().ok();
+    let mut stream = OpusTrack::stream_audio().ok();
+    while !stop.load(Ordering::Relaxed) {
+        let mut sent = false;
+        if let Some(encoder) = user.as_mut() {
+            if let Some(frame) = take_frame(&user_pcm) {
+                sent = true;
+                if let Ok(packet) = encoder.encode(&frame) {
+                    control.user_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
+                    let _ = audio_tx.try_send(Outgoing::Audio { kind: MediaKind::UserAudio, bytes: packet });
+                }
+            }
+        }
+        let ratio = qos.lock().expect("qos").targets().stream_audio;
+        let stream_wanted = wanted_of(&control, MediaKind::StreamAudio);
+        if ratio > 0.0 && stream_wanted.map(|layers| !layers.is_empty()).unwrap_or(true) {
+            if let Some(encoder) = stream.as_mut() {
+                let _ = encoder.set_ratio(ratio);
+                if let Some(frame) = take_frame(&stream_pcm) {
+                    sent = true;
+                    if let Ok(packet) = encoder.encode(&frame) {
+                        control.stream_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
+                        let _ = audio_tx.try_send(Outgoing::Audio { kind: MediaKind::StreamAudio, bytes: packet });
+                    }
+                }
+            }
+        }
+        if !sent {
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+
+fn video_encode_loop(
+    stop: Arc<AtomicBool>,
+    control: Arc<Control>,
+    qos: Arc<Mutex<SenderQos>>,
+    video_tx: tokio::sync::mpsc::Sender<Outgoing>,
     camera: Arc<PictureSlot>,
     screen: Arc<PictureSlot>,
 ) {
-    let mut qos = SenderQos::new();
-    let mut user = OpusTrack::user_audio().ok();
-    let mut stream = OpusTrack::stream_audio().ok();
     let mut camera_enc: HashMap<LayerId, (u32, u32, LayerEncoder)> = HashMap::new();
     let mut screen_enc: HashMap<LayerId, (u32, u32, LayerEncoder)> = HashMap::new();
     let mut camera_gen = 0u64;
@@ -239,32 +289,19 @@ fn encode_loop(
     let mut screen_mark = 0u64;
     while !stop.load(Ordering::Relaxed) {
         let encode_started = Instant::now();
-        if let Some(encoder) = user.as_mut() {
-            if let Some(frame) = take_frame(&user_pcm) {
-                if let Ok(packet) = encoder.encode(&frame) {
-                    control.user_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
-                    offer(&media_tx, &control, Outgoing::Audio { kind: MediaKind::UserAudio, bytes: packet });
-                }
-            }
-        }
-        let ratio = qos.targets().stream_audio;
-        let stream_wanted = wanted_of(&control, MediaKind::StreamAudio);
-        if ratio > 0.0 && stream_wanted.map(|layers| !layers.is_empty()).unwrap_or(true) {
-            if let Some(encoder) = stream.as_mut() {
-                let _ = encoder.set_ratio(ratio);
-                if let Some(frame) = take_frame(&stream_pcm) {
-                    if let Ok(packet) = encoder.encode(&frame) {
-                        control.stream_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
-                        offer(&media_tx, &control, Outgoing::Audio { kind: MediaKind::StreamAudio, bytes: packet });
-                    }
-                }
-            }
-        }
-        encode_video(&control, &qos, &media_tx, &camera, &mut camera_enc, &mut camera_gen, MediaKind::Camera, false);
-        encode_video(&control, &qos, &media_tx, &screen, &mut screen_enc, &mut screen_gen, MediaKind::Screen, true);
+        let (camera_layers, screen_layers) = {
+            let qos = qos.lock().expect("qos");
+            (
+                highest_first(qos.active_layers(MediaKind::Camera, wanted_of(&control, MediaKind::Camera).as_deref(), peer_cap(&control, MediaKind::Camera))),
+                highest_first(qos.active_layers(MediaKind::Screen, wanted_of(&control, MediaKind::Screen).as_deref(), peer_cap(&control, MediaKind::Screen))),
+            )
+        };
+        encode_video(&control, &video_tx, &camera, &mut camera_enc, &mut camera_gen, MediaKind::Camera, false, &camera_layers);
+        encode_video(&control, &video_tx, &screen, &mut screen_enc, &mut screen_gen, MediaKind::Screen, true, &screen_layers);
         let ms = encode_started.elapsed().as_secs_f32() * 1000.0;
         control.encode_ms.store(ms.to_bits(), Ordering::Relaxed);
         ticks = ticks.wrapping_add(1);
+        let mut qos = qos.lock().expect("qos");
         if ticks % 25 == 0 {
             let drops = control.congested_drops.swap(0, Ordering::Relaxed);
             let targets = qos.observe(if drops > 0 { 0.08 } else { 0.0 }, 30, 1.0);
@@ -275,8 +312,18 @@ fn encode_loop(
             publish_qos(&control, &qos, &mut user_mark, &mut stream_mark, &mut camera_mark, &mut screen_mark);
             reported = Instant::now();
         }
-        thread::sleep(Duration::from_millis(5));
+        drop(qos);
+        let pause = Duration::from_millis(5).saturating_sub(encode_started.elapsed());
+        if !pause.is_zero() {
+            thread::sleep(pause);
+        }
     }
+}
+
+/// Full picture goes out before the smaller simulcast layers are encoded.
+fn highest_first(mut layers: Vec<LayerId>) -> Vec<LayerId> {
+    layers.sort_by_key(|layer| std::cmp::Reverse(layer.rank()));
+    layers
 }
 
 fn publish_qos(control: &Control, qos: &SenderQos, user_mark: &mut u64, stream_mark: &mut u64, camera_mark: &mut u64, screen_mark: &mut u64) {
@@ -336,11 +383,12 @@ fn layer_label(control: &Control) -> String {
     if parts.is_empty() { "all".into() } else { parts.join("  ") }
 }
 
-fn offer(tx: &tokio::sync::mpsc::Sender<Outgoing>, control: &Control, packet: Outgoing) {
+fn offer_video(tx: &tokio::sync::mpsc::Sender<Outgoing>, control: &Control, packet: Outgoing) {
     if tx.try_send(packet).is_ok() {
         return;
     }
-    // Prefer dropping video over Opus when the send path is congested.
+    // The voice queue is separate. A full video queue drops this picture and
+    // counts as congestion. It does not discard an Opus packet.
     control.congested_drops.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -362,21 +410,20 @@ fn peer_cap(control: &Control, kind: MediaKind) -> LayerId {
 
 fn encode_video(
     control: &Control,
-    qos: &SenderQos,
     tx: &tokio::sync::mpsc::Sender<Outgoing>,
     slot: &PictureSlot,
     encoders: &mut HashMap<LayerId, (u32, u32, LayerEncoder)>,
     seen: &mut u64,
     kind: MediaKind,
     screen: bool,
+    layers: &[LayerId],
 ) {
     let Some((generation, picture)) = slot.load_since(*seen) else { return };
     if generation == *seen {
         return;
     }
     *seen = generation;
-    let layers = qos.active_layers(kind, wanted_of(control, kind).as_deref(), peer_cap(control, kind));
-    for layer in layers {
+    for &layer in layers {
         let Some((scaled, width, height)) = super::encode::scale_i420(&picture.i420, picture.width, picture.height, layer) else {
             continue;
         };
@@ -414,14 +461,15 @@ fn encode_video(
             }
             let counter = if screen { &control.screen_bytes } else { &control.camera_bytes };
             counter.fetch_add(au.bytes.len() as u64, Ordering::Relaxed);
-            offer(tx, control, Outgoing::Video { kind, layer, bytes: au.bytes });
+            offer_video(tx, control, Outgoing::Video { kind, layer, bytes: au.bytes });
         }
     }
 }
 
 async fn run(
     mut cmds: UnboundedReceiver<Cmd>,
-    mut media_rx: tokio::sync::mpsc::Receiver<Outgoing>,
+    mut audio_rx: tokio::sync::mpsc::Receiver<Outgoing>,
+    mut video_rx: tokio::sync::mpsc::Receiver<Outgoing>,
     signals: Sender<ClientSignal>,
     control: Arc<Control>,
     playback: Arc<Mutex<VecDeque<f32>>>,
@@ -452,7 +500,7 @@ async fn run(
                 }
             }
         };
-        match run_call(place, me, offerer, &mut cmds, &mut media_rx, &signals, &control, Arc::clone(&playback), Arc::clone(&remote), Arc::clone(&output_rate), Arc::clone(&flags)).await {
+        match run_call(place, me, offerer, &mut cmds, &mut audio_rx, &mut video_rx, &signals, &control, Arc::clone(&playback), Arc::clone(&remote), Arc::clone(&output_rate), Arc::clone(&flags)).await {
             Ok(Some(Cmd::Stop)) | Ok(None) => return,
             Ok(Some(cmd)) => {
                 logged = false;
@@ -482,7 +530,8 @@ async fn run_call(
     me: i64,
     offerer: bool,
     cmds: &mut UnboundedReceiver<Cmd>,
-    media_rx: &mut tokio::sync::mpsc::Receiver<Outgoing>,
+    audio_rx: &mut tokio::sync::mpsc::Receiver<Outgoing>,
+    video_rx: &mut tokio::sync::mpsc::Receiver<Outgoing>,
     signals: &Sender<ClientSignal>,
     control: &Arc<Control>,
     playback: Arc<Mutex<VecDeque<f32>>>,
@@ -582,7 +631,11 @@ async fn run_call(
                     }
                 }
             }
-            packet = media_rx.recv() => {
+            packet = audio_rx.recv() => {
+                let Some(packet) = packet else { break };
+                write_packet(&tracks, packet, &mids).await;
+            }
+            packet = video_rx.recv() => {
                 let Some(packet) = packet else { break };
                 write_packet(&tracks, packet, &mids).await;
             }

@@ -27,7 +27,7 @@ The sign-in window is not docked. The password field is hidden as `*` until Show
 
 ## Discord skin metrics (ui-polish)
 
-All colors, sizes, radii, and font sizes come from `crates/banter/src/theme.rs`. Do not hard-code a color or pixel size in `ui.rs`; add a constant there instead. `crates/banter/src/skin.rs` holds the shared drawing helpers (text, buttons, inputs, menus, tooltips, shadow, checkbox).
+All colors, sizes, radii, and font sizes come from `crates/banter/src/theme.rs`. Do not hard-code a color or pixel size in `ui.rs`; add a constant there instead. `crates/banter/src/layout.rs` names shell regions and computes column rectangles from those tokens. `crates/banter/src/skin.rs` holds the shared drawing helpers (text, buttons, inputs, menus, tooltips, shadow, checkbox). Ongoing theme/layout work: branch `cursor/ui-theme-layout-cf5e`, worktree `D:\Projects\Banter-ui-theme`, guide `docs/ui-theme-layout.md`.
 
 - Columns: rail 72, sidebar 240, members 240. Header 48 with a 1 px shadow line. User panel 52, voice panel 96
 - Rail: 48 px icons, 8 px gap, 12 px top. Pill 4 px wide, 8 px on hover, 40 px selected. Radius 24 (circle) idle, 16 hover/selected

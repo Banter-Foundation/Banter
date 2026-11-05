@@ -82,7 +82,7 @@ Health check:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:3970/v1/health
-# -> { "ok": true }
+# Expect ok, version (Version-*), protocol, min_client_protocol — see docs/version.md
 ```
 
 ## Two clients on one machine
@@ -119,13 +119,14 @@ Server foundation tests in `crates/banter-server/tests/foundation.rs` are the AP
 
 Full walkthrough: **[docker-setup.md](docker-setup.md)**.
 
-Image: **`ghcr.io/snowedinowl/banter`**. The last tag that landed is `version-1-test-8`. `version-1-test-9` did not push. Older tags stay. Server only — not the desktop app.
+Image: Compose builds **`banter-server:local`** from this checkout. **`ghcr.io/snowedinowl/banter`** last landed at `version-1-test-8`. `version-1-test-9` did not push. Older tags stay. Server only — not the desktop app.
 
 ```powershell
 cd "D:\Projects\Project Banter"
-podman compose up -d
-# or: docker compose up -d
+podman compose up -d --build
+# or: docker compose up -d --build
 Invoke-RestMethod http://127.0.0.1:3970/v1/health
+# Expect ok, version (Version-*), protocol, min_client_protocol — see docs/version.md
 ```
 
 If host port `3970` is taken, publish another (see the setup guide) and point **User Settings → Developer → Remote** at that host port.

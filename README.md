@@ -10,10 +10,13 @@ Local desktop chat. The window is GLFW and OpenGL 3.3. The interface is Dear ImG
 | [docs/build-and-run.md](docs/build-and-run.md) | Windows/Linux build & run, tests |
 | [docs/docker-setup.md](docs/docker-setup.md) | Podman/Docker server image setup |
 | [docs/architecture.md](docs/architecture.md) | Crates, modules, voice/camera/stream notes |
+| [docs/errors.md](docs/errors.md) | Stable `BANTER_*` error codes, toast pattern, voice/media first |
+| [docs/version.md](docs/version.md) | Release label + protocol floors; client version checker |
 | [docs/feature-status.md](docs/feature-status.md) | What works vs deferred (honest) |
 | [docs/foundation.md](docs/foundation.md) | Chosen foundation slice + deferred list |
 | [docs/contributing.md](docs/contributing.md) | Branches, worktrees, commits, changelog |
 | [docs/current-build.md](docs/current-build.md) | Live observation notes from a recent docs pass |
+| [docs/ui-theme-layout.md](docs/ui-theme-layout.md) | Theme/layout module boundaries and shell regions |
 | [docs/modding/modding.md](docs/modding/modding.md) | Mods, plugins, and bots (specification; not loaded yet) |
 
 ## Run
@@ -54,17 +57,17 @@ An optional listen address can be passed as the first argument, and that argumen
 
 ## Server container
 
-Setup guide: **[docs/docker-setup.md](docs/docker-setup.md)**. Podman and Docker both run this image. The last image that landed on GHCR is `version-1-test-8`. `version-1-test-9` did not push. Compose default stays `:latest`.
+Setup guide: **[docs/docker-setup.md](docs/docker-setup.md)**. Podman and Docker both run this image. Compose builds `banter-server:local` from this checkout. The last image that landed on GHCR is `version-1-test-8`. `version-1-test-9` did not push.
 
 ```
 cd "D:\Projects\Project Banter"
-podman compose up -d
-# or: docker compose up -d
+podman compose up -d --build
+# or: docker compose up -d --build
 ```
 
 Inside the container the server binds `0.0.0.0` on port `3970` (`BANTER_BIND` / `BANTER_PORT`). Account data stays on the named volume `banter-data`. Point the desktop client at a published port with **User Settings → Developer → Remote**.
 
-Image: `ghcr.io/snowedinowl/banter:version-1-test-8` until a classic PAT with `write:packages` pushes a newer tag (compose default also accepts `:latest`). Desktop and server binaries for the current pre-release are [Version-1-test-10](https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-10).
+Image: Compose builds `banter-server:local` from this checkout. `ghcr.io/snowedinowl/banter:version-1-test-8` is the last tag that landed, until a classic PAT with `write:packages` pushes a newer one. Desktop and server binaries for the current pre-release are [Version-1-test-10](https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-10).
 
 Open the client twice to try voice between two accounts. They share one server. With **Stay signed in** checked, `client-session.json` stores one login for the next cold start; unchecked keeps the token in memory only for that run. Both clients can stay signed in during the same run because each keeps its token in memory.
 
