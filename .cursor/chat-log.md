@@ -989,3 +989,5 @@ Agent: Implemented shared BanterVersion + protocol floors in banter-server versi
 
 ### Summary
 Newer clients refuse hosts without protocol (or below floor) instead of connecting into silent VC against a stale server.
+
+Agent: PR #51 opened (ManagePullRequest). Do not merge until Owl says so.
