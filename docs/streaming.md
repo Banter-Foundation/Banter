@@ -36,7 +36,9 @@ If nobody wants a layer, the publisher is told to pause it (dynacast). The first
 
 ## Capture
 
-Microphones and speakers stay on the operating system’s normal devices. Desktop and application audio are a separate Opus track, not mixed into the microphone. Windows uses WASAPI loopback. Linux uses the PulseAudio sink monitor (`parec`) and, for one application, the PipeWire node for that process (`pw-cat`). The same `loop:` and `app:` source ids are used on both.
+Microphones and speakers stay on the operating system’s normal devices. Desktop and application audio are a separate Opus track, not mixed into the microphone. Windows uses WASAPI loopback. Linux uses the PulseAudio sink monitor (`parec`) and, for one application, the PipeWire node for that process (`pw-cat`). The same `loop:` and `app:` source ids are used on both. macOS has microphone and speakers through Core Audio; speaker loopback and per-app stream audio are not wired yet.
+
+On macOS, voice and screen share need Privacy & Security grants. Ship and run **`Banter.app`** (see `scripts/package-macos-app.sh`) so TCC can attribute Microphone, Camera, and Screen Recording to bundle id `foundation.banter.desktop`. A bare ad-hoc binary often never appears in those lists, so capture fails with no useful prompt. Banter calls `CGRequestScreenCaptureAccess` before the first Go Live.
 
 In Stream Select / stream options, checkable mix sources are grouped: **Audio channels** (`mic:` and `loop:` system devices) and **Apps** (`app:` process loopback). Several can stay on and mix into one stream-audio track; each keeps its own volume.
 

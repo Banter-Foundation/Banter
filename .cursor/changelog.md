@@ -692,3 +692,12 @@ Shipped pre-release Version-1-test-11 from main `8e1efdc` (+ `BANTER_VERSION` bu
 
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-11
 - Assets: Banter-windows-version-1-test-11.zip, Banter-linux-version-1-test-11.zip, Banter-macos-arm-version-1-test-11.zip, banter-server.exe, banter-server-linux, banter-server-macos-arm
+
+## 2026-11-05 07:35:00 +0000 [ubuntu] — macOS voice and screen share TCC
+
+Bare `banter-macos-arm` never appeared under Privacy & Security, so Microphone / Camera / Screen Recording stayed denied and voice plus Go Live looked broken.
+
+- Embed `crates/banter/macos/Info.plist` into the binary (`build.rs` `__info_plist` section)
+- Request Screen Recording via `CGRequestScreenCaptureAccess` before capture; clear System Settings errors
+- `scripts/package-macos-app.sh` wraps the binary as `Banter.app` (bundle id `foundation.banter.desktop`) and ad-hoc signs it
+- Docs: README, build-and-run, streaming, feature-status, overview

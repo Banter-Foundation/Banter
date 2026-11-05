@@ -43,6 +43,10 @@ cargo run -p banter
 
 Data goes to `$XDG_DATA_HOME/Banter`, or `~/.local/share/Banter`, unless `BANTER_DATA` is set. Speaker loopback and per-app stream audio stay Windows-only for now; microphone, speakers, camera, and screen share work.
 
+### macOS (Apple Silicon)
+
+Run the packaged **`Banter.app`** from the pre-release zip (not a bare `banter-macos-arm` binary). The first mic, camera, or screen share prompts macOS Privacy & Security; enable Banter under **Microphone**, **Camera**, and **Screen Recording**, then quit and reopen Banter. Data goes to `~/Library/Application Support/Banter`. Speaker loopback / per-app stream audio are not available on macOS yet. Opening http links from the client is not implemented.
+
 ### Server
 
 By default the client uses Local mode (`127.0.0.1:3970`). If nothing is there, it starts the server in the background. **User Settings → Developer** switches between Local and a Remote host (`host`, `host:port`, or URL); the choice is saved in `dev-server.json` under the data directory.

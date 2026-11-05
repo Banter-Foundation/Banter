@@ -346,8 +346,20 @@ pub fn voice_bar_error_ys(panel_origin_y: f32, panel_h: f32, count: usize, line_
 /// because they name internals (for example nokhwa's "Not available on WASM") rather than what to do.
 pub fn friendly_device_error(device: &str) -> Option<&'static str> {
     match device {
-        "camera" => Some("Banter could not use this camera. Another app may be using it. Pick another camera or close that app."),
-        "microphone" => Some("Banter could not open this microphone. Pick another input device."),
+        "camera" => Some(
+            if cfg!(target_os = "macos") {
+                "Banter could not use this camera. Check System Settings → Privacy & Security → Camera for Banter, or pick another camera."
+            } else {
+                "Banter could not use this camera. Another app may be using it. Pick another camera or close that app."
+            },
+        ),
+        "microphone" => Some(
+            if cfg!(target_os = "macos") {
+                "Banter could not open this microphone. Check System Settings → Privacy & Security → Microphone for Banter, or pick another input."
+            } else {
+                "Banter could not open this microphone. Pick another input device."
+            },
+        ),
         "speakers" => Some("Banter could not open these speakers. Pick another output device."),
         _ => None,
     }
