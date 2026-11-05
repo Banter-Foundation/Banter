@@ -14,7 +14,7 @@ use crate::errcode::format_banter_notice;
 pub use crate::errcode::{ERR_CLIENT_TOO_OLD, ERR_SERVER_TOO_OLD, ERR_VERSION_UNREACHABLE};
 
 /// Human-facing Banter release label (bump when cutting a Version-1-test-N tag).
-pub const BANTER_VERSION: &str = "Version-1-test-11.2";
+pub const BANTER_VERSION: &str = "Version-1-test-11.3";
 
 /// Wire / feature protocol for this build.
 ///

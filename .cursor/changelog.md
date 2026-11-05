@@ -1,3 +1,9 @@
+## 2026-11-05 19:16:00 +00:00 [ubuntu] — Version-1-test-11.3 pre-release
+
+Shipped pre-release Version-1-test-11.3 from main after dismiss stream overlays on leave (#66), stream watch profile/voice indicators (#67), macOS Banter.app packaging (#68), and auto-reconnect every 30s with voice rejoin (#69). Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
+- Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-11.3
+
 ## 2026-11-05 13:35:00 -05:00 [ubuntu] — macOS Banter.app without Terminal
 
 Release zips had been shipping a bare `banter-macos-arm` Mach-O. Double-clicking that in Finder opens Terminal. Packaging now always wraps the client as `Banter.app` (`scripts/package-macos-app.sh` + `scripts/build-macos-release.sh`), with a CI layout check and a durable `macos-arm-release` workflow. `LSUIElement` stays unset (docked GUI app); the Terminal fix is the `.app` launch path, not an agent flag.
