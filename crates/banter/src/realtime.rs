@@ -17,6 +17,8 @@ pub struct Realtime {
     signals: Sender<ClientSignal>,
     events: Arc<Mutex<Vec<ServerEvent>>>,
     error: Arc<Mutex<Option<String>>>,
+    /// Set once the TCP/websocket handshake succeeds; cleared when the socket ends.
+    connected: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -26,17 +28,20 @@ impl Realtime {
         let (signal_tx, signal_rx) = mpsc::channel();
         let events = Arc::new(Mutex::new(Vec::new()));
         let error = Arc::new(Mutex::new(None));
+        let connected = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
         let thread = thread::spawn({
             let events = Arc::clone(&events);
             let error = Arc::clone(&error);
+            let connected = Arc::clone(&connected);
             let stop = Arc::clone(&stop);
-            move || run(url, signal_rx, events, error, stop)
+            move || run(url, signal_rx, events, error, connected, stop)
         });
         Self {
             signals: signal_tx,
             events,
             error,
+            connected,
             stop,
             thread: Some(thread),
         }
@@ -61,6 +66,11 @@ impl Realtime {
     pub fn take_error(&self) -> Option<String> {
         self.error.lock().expect("error lock").take()
     }
+
+    /// True after the websocket handshake succeeds and until the socket drops.
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for Realtime {
@@ -72,11 +82,23 @@ impl Drop for Realtime {
     }
 }
 
+fn mark_dropped(error: &Mutex<Option<String>>, connected: &AtomicBool, stop: &AtomicBool) {
+    connected.store(false, Ordering::Relaxed);
+    if stop.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut slot = error.lock().expect("error lock");
+    if slot.is_none() {
+        *slot = Some(format_banter_notice(ERR_WS_DROPPED, "realtime connection dropped"));
+    }
+}
+
 fn run(
     url: String,
     signal_rx: Receiver<ClientSignal>,
     events: Arc<Mutex<Vec<ServerEvent>>>,
     error: Arc<Mutex<Option<String>>>,
+    connected: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
 ) {
     let mut socket = match tungstenite::connect(&url) {
@@ -88,6 +110,7 @@ fn run(
             return;
         }
     };
+    connected.store(true, Ordering::Relaxed);
     if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = socket.get_mut() {
         let _ = tcp.set_read_timeout(Some(Duration::from_millis(40)));
         let _ = tcp.set_nodelay(true);
@@ -106,14 +129,19 @@ fn run(
             Ok(tungstenite::Message::Ping(payload)) => {
                 let _ = socket.send(tungstenite::Message::Pong(payload));
             }
-            Ok(tungstenite::Message::Close(_)) => break,
+            Ok(tungstenite::Message::Close(_)) => {
+                mark_dropped(&error, &connected, &stop);
+                break;
+            }
             Ok(_) => {}
             Err(tungstenite::Error::Io(err))
                 if err.kind() == ErrorKind::TimedOut || err.kind() == ErrorKind::WouldBlock => {}
-            Err(tungstenite::Error::ConnectionClosed) => break,
+            Err(tungstenite::Error::ConnectionClosed) => {
+                mark_dropped(&error, &connected, &stop);
+                break;
+            }
             Err(err) => {
-                *error.lock().expect("error lock") =
-                    Some(format_banter_notice(ERR_WS_DROPPED, "realtime connection dropped"));
+                mark_dropped(&error, &connected, &stop);
                 let _ = err;
                 break;
             }
@@ -127,12 +155,17 @@ fn run(
                     };
                     profiler::record_ws_tx(text.len());
                     if socket.send(tungstenite::Message::Text(text.into())).is_err() {
+                        mark_dropped(&error, &connected, &stop);
                         return;
                     }
                 }
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return,
+                Err(TryRecvError::Disconnected) => {
+                    mark_dropped(&error, &connected, &stop);
+                    return;
+                }
             }
         }
     }
+    connected.store(false, Ordering::Relaxed);
 }
