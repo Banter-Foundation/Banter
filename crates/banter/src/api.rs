@@ -96,6 +96,14 @@ fn http() -> &'static ureq::Agent {
     AGENT.get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_millis(800)).build())
 }
 
+/// Longer timeout for register/login. Those endpoints run Argon2 on the server;
+/// 800 ms is enough for polls but fails under CI load (`timed out reading response`
+/// on `/v1/register`). Matches the foundation suite's 5 s HTTP client.
+fn http_auth() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_secs(5)).build())
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct MemberView {
     pub user_id: i64,
@@ -166,7 +174,7 @@ impl Client {
         password: &str,
     ) -> Result<Session, ApiError> {
         let session: Session = self.send_json(
-            http().post(&self.url("/v1/register")),
+            http_auth().post(&self.url("/v1/register")),
             serde_json::json!({
                 "username": username,
                 "display_name": display_name,
@@ -179,7 +187,7 @@ impl Client {
 
     pub fn login(&mut self, username: &str, password: &str) -> Result<Session, ApiError> {
         let session: Session = self.send_json(
-            http().post(&self.url("/v1/login")),
+            http_auth().post(&self.url("/v1/login")),
             serde_json::json!({ "username": username, "password": password }),
         )?;
         self.token = Some(session.token.clone());
