@@ -69,4 +69,5 @@ The **embedded** server started by the desktop app always uses `127.0.0.1:3970`.
 - [Foundation / deferred list](foundation.md)
 - [Contributing](contributing.md)
 - [Current build notes](current-build.md) (what was observed on a live machine)
+- [Modding](modding/modding.md) (mods, plugins, and bots; specification only)
 - Root [README](../README.md)
