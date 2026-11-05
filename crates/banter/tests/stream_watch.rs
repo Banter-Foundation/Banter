@@ -2,8 +2,9 @@
 
 use banter::{
     cycle_streamer, resolve_focused_streamer, stream_chrome_alpha, stream_popout_default_size,
-    streaming_user_ids, STREAM_CHROME_FADE_SECS, STREAM_CHROME_HIDE_ALPHA, STREAM_CHROME_IDLE_SECS,
-    STREAM_POPOUT_DEFAULT_H, STREAM_POPOUT_DEFAULT_W, STREAM_POPOUT_WINDOW_TITLE,
+    stream_watch_avatar_x, streaming_user_ids, STREAM_CHROME_FADE_SECS, STREAM_CHROME_HIDE_ALPHA,
+    STREAM_CHROME_IDLE_SECS, STREAM_POPOUT_DEFAULT_H, STREAM_POPOUT_DEFAULT_W,
+    STREAM_POPOUT_WINDOW_TITLE, STREAM_WATCH_AVATAR_PITCH,
 };
 
 #[test]
@@ -34,4 +35,11 @@ fn fullscreen_chrome_stays_up_until_idle_then_fades() {
     assert_eq!(stream_chrome_alpha(0.0, true), 1.0);
     assert!(stream_chrome_alpha(STREAM_CHROME_IDLE_SECS + STREAM_CHROME_FADE_SECS, true) <= STREAM_CHROME_HIDE_ALPHA);
     assert_eq!(stream_chrome_alpha(30.0, false), 1.0);
+}
+
+#[test]
+fn stream_watch_profile_icons_space_on_a_row() {
+    assert_eq!(STREAM_WATCH_AVATAR_PITCH, 40.0);
+    assert_eq!(stream_watch_avatar_x(12.0, 0), 12.0);
+    assert_eq!(stream_watch_avatar_x(12.0, 3), 12.0 + 3.0 * STREAM_WATCH_AVATAR_PITCH);
 }
