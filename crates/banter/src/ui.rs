@@ -5563,6 +5563,12 @@ impl App {
                 if let Some(view) = self.debug_view.clone() {
                     ui.separator();
                     ui.text_colored(TEXT_SECONDARY, "Stats");
+                    let version = if view.version.is_empty() {
+                        "unknown".to_string()
+                    } else {
+                        view.version.clone()
+                    };
+                    ui.text(format!("version {}    protocol {}", version, view.protocol));
                     ui.text(format!(
                         "uptime {}    rss {}",
                         format_uptime(view.uptime_ms),

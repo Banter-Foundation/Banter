@@ -327,6 +327,8 @@ async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> R
     let (pool_size, pool_idle) = state.store.pool_usage();
     let (media_slots, media_forwards) = crate::room::media_snapshot();
     Ok(Json(ServerDebug {
+        version: crate::BANTER_VERSION.to_string(),
+        protocol: crate::PROTOCOL,
         uptime_ms: crate::debuglog::uptime_ms(),
         rss_bytes: crate::debuglog::rss_bytes(),
         online: counts.online,

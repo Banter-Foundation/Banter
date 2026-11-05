@@ -1169,6 +1169,12 @@ pub struct ServerTraffic {
 /// Snapshot for the hidden server debug window. Any signed-in client can read it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerDebug {
+    /// Banter release label (`BANTER_VERSION`). Empty when an older host omits it.
+    #[serde(default)]
+    pub version: String,
+    /// Wire / feature protocol revision. `0` when an older host omits it.
+    #[serde(default)]
+    pub protocol: u32,
     pub uptime_ms: i64,
     pub rss_bytes: u64,
     pub online: i64,
@@ -1188,4 +1194,37 @@ pub struct ServerDebug {
     #[serde(default)]
     pub traffic: ServerTraffic,
     pub logs: Vec<DebugLogLine>,
+}
+
+#[cfg(test)]
+mod server_debug_tests {
+    use super::{ServerDebug, ServerTraffic};
+
+    #[test]
+    fn server_debug_deserializes_without_version_protocol_or_traffic() {
+        let json = r#"{
+            "uptime_ms": 1000,
+            "rss_bytes": 2048,
+            "online": 1,
+            "idle": 0,
+            "sockets": 1,
+            "voice_members": 0,
+            "voice_channels": 0,
+            "calls": 0,
+            "media_slots": 0,
+            "media_forwards": 0,
+            "users": 1,
+            "servers": 1,
+            "channels": 1,
+            "messages": 0,
+            "pool_size": 4,
+            "pool_idle": 4,
+            "logs": []
+        }"#;
+        let view: ServerDebug = serde_json::from_str(json).expect("legacy ServerDebug JSON");
+        assert_eq!(view.version, "");
+        assert_eq!(view.protocol, 0);
+        assert_eq!(view.traffic, ServerTraffic::default());
+        assert_eq!(view.uptime_ms, 1000);
+    }
 }

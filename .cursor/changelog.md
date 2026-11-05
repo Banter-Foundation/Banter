@@ -714,3 +714,15 @@ The hidden `/debugnow` window now shows HTTP, WebSocket, and SFU media bytes in 
 - `ServerTraffic` on `ServerDebug`; counters in `debuglog`, HTTP body middleware, WebSocket frames, and RTP forwards
 - Window section "Network (server in / out)" with HTTP / WS / Media rates and totals
 
+## 2026-11-05 02:52:35 -05:00 [ubuntu] — /debugnow shows server version
+
+The hidden `/debugnow` Stats section now shows the live server `BANTER_VERSION` label and protocol revision from `GET /v1/debug`.
+
+### Changelog
+- New features: server version + protocol on `/debugnow` / `GET /v1/debug`
+- Bug fixes: none
+- Other: none
+
+- `version` / `protocol` on `ServerDebug` (serde defaults for older hosts)
+- Stats line above uptime/rss: `version …    protocol …`
+

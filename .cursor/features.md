@@ -21,7 +21,7 @@
 - [*] Developer settings: Local (`127.0.0.1:3970`) or Remote host, persisted in `dev-server.json`. Client startup does not require local unless logged in on Local or the user picks Local; missing local asks for remote instead of hard-failing. Shows client/server Banter version + protocol; on connect the client blocks incompatible/stale hosts with `BANTER_SERVER_TOO_OLD` / `BANTER_CLIENT_TOO_OLD` / `BANTER_VERSION_UNREACHABLE` (BA-91).
 - [*] Version system: shared `BANTER_VERSION` label + numeric `protocol` on `GET /v1/health` and `GET /v1/version`; client compares protocol floors (not equal strings) so a newer client refuses a pre–version-system / too-old server.
 - [*] F3 profiler: FPS, RSS, HTTP/WebSocket bytes, frame sections, expensive ops
-- [*] Hidden composer command `/debugnow` (text channels and DMs) opens a server debug window with logs, live stats, and HTTP/WS/media in+out traffic. It is not listed in the UI and is not sent as a message.
+- [*] Hidden composer command `/debugnow` (text channels and DMs) opens a server debug window with logs, live stats (including server version + protocol), and HTTP/WS/media in+out traffic. It is not listed in the UI and is not sent as a message.
 - [*] Display settings: VSync, fullscreen, window resolution (saved in video.json). With VSync on, the client UI matches the current monitor’s refresh rate and reapplies when the window moves or the display mode changes (not stream capture FPS).
 
 ## Deferred
