@@ -24,6 +24,9 @@ pub struct Account {
     pub display_name: String,
     pub has_avatar: bool,
     pub avatar_rev: i64,
+    /// True for bot accounts. Ordinary users stay false when the field is absent.
+    #[serde(default)]
+    pub bot: bool,
 }
 
 /// Board widget kinds matching Discord's profile Board cards.
@@ -258,21 +261,39 @@ pub struct Category {
     pub position: i64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChannelKind {
     Text,
     Voice,
     Board,
+    /// Plugin kind stored as `<plugin id>.<name>`, for example `chess.match`.
+    Plugin(String),
 }
 
 impl ChannelKind {
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Text => "text",
             Self::Voice => "voice",
             Self::Board => "board",
+            Self::Plugin(kind) => kind.as_str(),
         }
+    }
+
+    pub fn is_text(&self) -> bool {
+        matches!(self, Self::Text)
+    }
+
+    pub fn is_voice(&self) -> bool {
+        matches!(self, Self::Voice)
+    }
+
+    pub fn is_board(&self) -> bool {
+        matches!(self, Self::Board)
+    }
+
+    pub fn is_plugin(&self) -> bool {
+        matches!(self, Self::Plugin(_))
     }
 
     pub fn parse(value: &str) -> Result<Self, BanterError> {
@@ -280,8 +301,24 @@ impl ChannelKind {
             "text" => Ok(Self::Text),
             "voice" => Ok(Self::Voice),
             "board" => Ok(Self::Board),
+            other if crate::plugins::plugin_kind_ok(other) => Ok(Self::Plugin(other.to_string())),
             _ => Err(BanterError::InvalidName),
         }
+    }
+}
+
+impl Serialize for ChannelKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ChannelKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        // Public create rejects plugin kinds in the store. Parsing them here lets
+        // layout responses and database rows round-trip the stored string.
+        ChannelKind::parse(&value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -296,6 +333,9 @@ pub struct Channel {
     /// Optional Lucide icon id. `None` means the client uses the kind default.
     #[serde(default)]
     pub icon: Option<String>,
+    /// Set when a plugin created this channel. That plugin is the only one that may delete it.
+    #[serde(default)]
+    pub created_by_plugin: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -313,6 +353,8 @@ pub struct Member {
     pub is_owner: bool,
     pub has_avatar: bool,
     pub avatar_rev: i64,
+    #[serde(default)]
+    pub bot: bool,
     #[serde(default)]
     pub roles: Vec<GuildRole>,
 }
@@ -360,6 +402,15 @@ pub struct Message {
     pub created_at: i64,
     pub edited_at: Option<i64>,
     pub attachments: Vec<Attachment>,
+    /// `user` for people and bots. `plugin` when `author_id` is empty and `plugin_id` is set.
+    #[serde(default = "user_author_kind")]
+    pub author_kind: String,
+    #[serde(default)]
+    pub plugin_id: Option<String>,
+}
+
+fn user_author_kind() -> String {
+    "user".to_string()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -917,6 +968,17 @@ pub enum ServerEvent {
         revision: i64,
         ops: Vec<BoardOp>,
         from: i64,
+    },
+    /// First frame on a bot websocket.
+    Ready {
+        bot: bool,
+        user: Account,
+    },
+    PluginSync {
+        server_id: i64,
+        plugin_id: String,
+        channel_id: i64,
+        state: Option<serde_json::Value>,
     },
 }
 

@@ -1,0 +1,14 @@
+{
+  "id": "notes",
+  "name": "Notes",
+  "version": "1.0.0",
+  "banter": "1",
+  "server_entry": "server/main.luau",
+  "client": "optional",
+  "client_entry": "client/main.luau",
+  "permissions": ["storage"],
+  "client_permissions": ["ui"],
+  "channel_kinds": [
+    { "name": "note", "label": "Note", "icon": "sticky-note" }
+  ]
+}

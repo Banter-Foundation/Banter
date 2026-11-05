@@ -47,8 +47,13 @@ fn folder_and_server_rail_menus_cover_nest_rename_color_delete() {
     assert_eq!(context_menu_labels(&top), ["Create Folder"]);
     assert!(context_menu_actions(&top).contains(&ContextMenuAction::CreateServerFolder { parent_id: None }));
 
+    let bare = server_rail_item_menu(4, None, &[]);
+    assert_eq!(context_menu_labels(&bare), ["Plugins"]);
+    assert!(context_menu_actions(&bare).contains(&ContextMenuAction::AddPlugin { server_id: 4 }));
+
     let in_folder = server_rail_item_menu(4, Some(9), &[("Games".into(), 9), ("FPS".into(), 12)]);
     assert!(context_menu_labels(&in_folder).contains(&"Remove from Folder"));
+    assert!(context_menu_labels(&in_folder).contains(&"Plugins"));
     assert!(context_menu_actions(&in_folder).contains(&ContextMenuAction::MoveServerToFolder {
         server_id: 4,
         folder_id: None

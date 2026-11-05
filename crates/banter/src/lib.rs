@@ -15,8 +15,10 @@ pub mod bfmd;
 mod bfmd_paint;
 mod icons;
 mod logic;
+mod mods;
 mod media;
 mod platform;
+mod plugins;
 mod profile;
 mod profile_paint;
 mod profiler;
@@ -32,6 +34,11 @@ pub use banter_server::{ServerFolder, ServerRail, ServerRailServer, ServerSummar
 pub use bfmd::{parse as parse_bfmd, plain_text as bfmd_plain_text, Flag as BfmdFlag};
 pub use icons::rasterize_lucide;
 pub use logic::*;
+pub use mods::{default_mod_order, disable_mod, enable_mod, memory_warning, move_mod, ModHost};
+pub use plugins::{
+    ensure_plugin_samples, local_plugins, plugin_file_lines, plugin_server_lines, plugin_usage, plugin_version_is_newer,
+    LocalPlugin,
+};
 pub use media::{
     camera_preview_rgba, current_camera_frame, decode_camera_frame, hardware_encoder_available,
     pick_preferred_camera_mode, preferred_camera_height, preferred_camera_width, CameraModeChoice,

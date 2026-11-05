@@ -9,10 +9,16 @@ pub const PERM_ADMINISTRATOR: i64 = 1 << 0;
 pub const PERM_MANAGE_CHANNELS: i64 = 1 << 1;
 pub const PERM_MANAGE_ROLES: i64 = 1 << 2;
 pub const PERM_CREATE_INVITE: i64 = 1 << 3;
+pub const PERM_MANAGE_PLUGINS: i64 = 1 << 4;
+pub const PERM_MANAGE_BOTS: i64 = 1 << 5;
 
 /// Bits a role editor is allowed to store.
-pub const ROLE_PERMISSION_MASK: i64 =
-    PERM_ADMINISTRATOR | PERM_MANAGE_CHANNELS | PERM_MANAGE_ROLES | PERM_CREATE_INVITE;
+pub const ROLE_PERMISSION_MASK: i64 = PERM_ADMINISTRATOR
+    | PERM_MANAGE_CHANNELS
+    | PERM_MANAGE_ROLES
+    | PERM_CREATE_INVITE
+    | PERM_MANAGE_PLUGINS
+    | PERM_MANAGE_BOTS;
 
 /// New servers grant invite on @everyone so joining still matches the old member invite.
 pub const EVERYONE_PERMISSIONS: i64 = PERM_CREATE_INVITE;

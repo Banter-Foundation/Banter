@@ -3,9 +3,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{FromRequestParts, Path, Query, State};
+use axum::extract::{FromRequestParts, Path, Query, Request, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -13,7 +14,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::model::ClientSignal;
@@ -54,7 +55,9 @@ impl IntoResponse for BanterError {
             | BanterError::AlreadyFriends
             | BanterError::RequestExists
             | BanterError::AlreadyMember
-            | BanterError::BoardConflict => StatusCode::CONFLICT,
+            | BanterError::BoardConflict
+            | BanterError::Conflict => StatusCode::CONFLICT,
+            BanterError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             BanterError::NotFound | BanterError::InvalidInvite => StatusCode::NOT_FOUND,
             BanterError::NotMember
             | BanterError::NotOwner
@@ -182,7 +185,103 @@ fn router(state: HttpState) -> Router {
         .route("/v1/voice/leave", post(leave_voice))
         .route("/v1/voice/flags", post(set_flags))
         .route("/v1/ws", get(ws))
+        .route("/v1/bots", get(list_bots).post(create_bot))
+        .route("/v1/bots/{id}/token", post(rotate_bot_token))
+        .route("/v1/servers/{id}/bots/{bot_id}", axum::routing::put(install_bot))
+        .route("/v1/servers/{id}/plugins", get(list_plugins).post(install_plugin))
+        .route("/v1/servers/{id}/plugins/{plugin_id}", axum::routing::delete(remove_plugin))
+        .route("/v1/servers/{id}/plugins/{plugin_id}/opt-in", post(opt_in_plugin))
+        .route_layer(middleware::from_fn_with_state(state.clone(), bot_gate))
         .with_state(state)
+}
+
+async fn bot_gate(State(state): State<HttpState>, req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    let method = req.method().clone();
+    let Some(intent) = intent_for(&method, &path) else {
+        return next.run(req).await;
+    };
+    let token = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let Some(token) = token else {
+        return next.run(req).await;
+    };
+    let Ok(account) = state.store.session_account(token).await else {
+        return next.run(req).await;
+    };
+    if !account.bot {
+        return next.run(req).await;
+    }
+    if let Some(retry_after_ms) = state.store.rates.lock().expect("rates").hit(
+        &format!("bot:{}", account.id),
+        50,
+        Duration::from_secs(10),
+    ) {
+        return rate_limited(retry_after_ms);
+    }
+    let server_id = if path.starts_with("/v1/messages") { None } else { server_id_from(&path) };
+    if state.store.bot_call_is_null(&account, intent, server_id).await.unwrap_or(false) {
+        return Json(Value::Null).into_response();
+    }
+    next.run(req).await
+}
+
+fn server_id_from(path: &str) -> Option<i64> {
+    let mut parts = path.split('/');
+    if parts.next() == Some("") && parts.next() == Some("v1") && parts.next() == Some("servers") {
+        parts.next()?.parse().ok()
+    } else {
+        None
+    }
+}
+
+fn intent_for(method: &Method, path: &str) -> Option<&'static str> {
+    if path.starts_with("/v1/messages") {
+        return Some(if *method == Method::POST { "send_messages" } else { "manage_messages" });
+    }
+    if path.starts_with("/v1/channels/") && path.ends_with("/messages") {
+        return Some("read_messages");
+    }
+    if path.starts_with("/v1/dms") {
+        return Some(if *method == Method::GET { "read_messages" } else { "send_messages" });
+    }
+    if path.starts_with("/v1/voice/") {
+        return Some("connect_voice");
+    }
+    if path.starts_with("/v1/friends") {
+        return Some("friends");
+    }
+    if path.contains("/roles") {
+        return Some("roles");
+    }
+    if path.contains("/plugins") {
+        return Some("plugins");
+    }
+    if path.contains("/board") {
+        return Some("board");
+    }
+    if path.contains("/call") {
+        return Some("calls");
+    }
+    if path == "/v1/debug" {
+        return Some("debug");
+    }
+    if path == "/v1/servers" {
+        return Some(if *method == Method::POST { "servers" } else { "view_channels" });
+    }
+    if path.contains("/layout") || path.contains("/members") || path.starts_with("/v1/users/") {
+        return Some("view_channels");
+    }
+    if path.starts_with("/v1/servers/") && *method == Method::POST {
+        return Some("servers");
+    }
+    if path.contains("/profile") || path.contains("/banner") || path.contains("/cosmetics") {
+        return Some("profile");
+    }
+    None
 }
 
 async fn health() -> Json<serde_json::Value> {
@@ -934,7 +1033,17 @@ async fn send_message(
     State(state): State<HttpState>,
     Auth(account): Auth,
     Json(body): Json<SendBody>,
-) -> Result<Json<Message>, BanterError> {
+) -> Result<Response, BanterError> {
+    let server_id = state.store.target_server(body.target).await?;
+    if state.store.bot_call_is_null(&account, "send_messages", server_id).await? {
+        return Ok(Json(serde_json::Value::Null).into_response());
+    }
+    if account.bot {
+        let key = format!("msg:{}:{}", account.id, server_id.unwrap_or(0));
+        if let Some(retry_after_ms) = state.store.rates.lock().expect("rates").hit(&key, 5, Duration::from_secs(5)) {
+            return Ok(rate_limited(retry_after_ms));
+        }
+    }
     let mut files = Vec::new();
     for file in &body.files {
         let bytes = STANDARD
@@ -943,9 +1052,36 @@ async fn send_message(
         files.push((file.filename.clone(), bytes));
     }
     let borrowed: Vec<(&str, &[u8])> = files.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice())).collect();
-    let message = state
+    let mut message = state
         .store
         .send_message(account.id, body.target, &body.body, body.reply_to, &borrowed).await?;
+    if let (Some(server_id), ChatTarget::Channel(channel_id)) = (server_id, body.target) {
+        let before = message.body.clone();
+        state.store.notify_plugin_message(server_id, channel_id, message.id, &before);
+        if let Ok(page) = state.store.messages(account.id, body.target, 20).await {
+            if let Some(updated) = page.into_iter().find(|item| item.id == message.id) {
+                message = updated;
+            }
+        }
+        let ids = state.store.target_user_ids(body.target).await?;
+        state.live.send_event(
+            &ids,
+            &ServerEvent::MessageCreated {
+                target: body.target,
+                message: message.clone(),
+            },
+        );
+        if message.body != before {
+            state.live.send_event(
+                &ids,
+                &ServerEvent::MessageEdited {
+                    target: body.target,
+                    message: message.clone(),
+                },
+            );
+        }
+        return Ok(Json(message).into_response());
+    }
     let ids = state.store.target_user_ids(body.target).await?;
     state.live.send_event(
         &ids,
@@ -954,7 +1090,112 @@ async fn send_message(
             message: message.clone(),
         },
     );
-    Ok(Json(message))
+    Ok(Json(message).into_response())
+}
+
+#[derive(Deserialize)]
+struct CreateBotBody {
+    username: String,
+    display_name: String,
+    #[serde(default)]
+    intents: Vec<String>,
+}
+
+async fn list_bots(State(state): State<HttpState>, Auth(account): Auth) -> Result<Json<Vec<serde_json::Value>>, BanterError> {
+    let bots = state.store.bots_owned(account.id).await?;
+    let body = bots
+        .into_iter()
+        .map(|(account, intents)| json!({"account": account, "intents": intents, "interactions_url": Value::Null}))
+        .collect();
+    Ok(Json(body))
+}
+
+async fn create_bot(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Json(body): Json<CreateBotBody>,
+) -> Result<Json<Session>, BanterError> {
+    if account.bot {
+        return Err(BanterError::Invalid);
+    }
+    let session = state.store.create_bot(account.id, &body.username, &body.display_name, &body.intents).await?;
+    Ok(Json(session))
+}
+
+async fn rotate_bot_token(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, BanterError> {
+    let token = state.store.rotate_bot_token(account.id, id).await?;
+    Ok(Json(json!({"token": token})))
+}
+
+#[derive(Deserialize)]
+struct AcceptBotBody {
+    accept: bool,
+}
+
+async fn install_bot(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path((server_id, bot_id)): Path<(i64, i64)>,
+    Json(body): Json<AcceptBotBody>,
+) -> Result<StatusCode, BanterError> {
+    if !body.accept {
+        return Err(BanterError::Invalid);
+    }
+    state.store.install_bot(account.id, server_id, bot_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_plugins(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(server_id): Path<i64>,
+) -> Result<Json<Vec<crate::PluginInfo>>, BanterError> {
+    Ok(Json(state.store.plugins(account.id, server_id).await?))
+}
+
+async fn remove_plugin(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path((server_id, plugin_id)): Path<(i64, String)>,
+) -> Result<StatusCode, BanterError> {
+    state.store.remove_plugin(account.id, server_id, &plugin_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn install_plugin(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(server_id): Path<i64>,
+    body: Bytes,
+) -> Result<Json<crate::PluginInfo>, BanterError> {
+    Ok(Json(state.store.install_plugin(account.id, server_id, &body).await?))
+}
+
+#[derive(Deserialize)]
+struct OptInBody {
+    version: String,
+}
+
+async fn opt_in_plugin(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path((server_id, plugin_id)): Path<(i64, String)>,
+    Json(body): Json<OptInBody>,
+) -> Result<StatusCode, BanterError> {
+    state.store.opt_in_plugin(account.id, server_id, &plugin_id, &body.version).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn rate_limited(retry_after_ms: u64) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(json!({"error": "slow down", "code": "rate_limited", "retry_after_ms": retry_after_ms})),
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -1105,12 +1346,18 @@ async fn ws(
 ) -> Result<Response, BanterError> {
     let account = state.store.session_account(&query.token).await?;
     crate::debuglog::record("info", format!("websocket connected user {}", account.id));
-    Ok(upgrade.on_upgrade(move |socket| handle_socket(state, account.id, socket)))
+    Ok(upgrade.on_upgrade(move |socket| handle_socket(state, account, socket)))
 }
 
-async fn handle_socket(state: HttpState, user_id: i64, socket: WebSocket) {
+async fn handle_socket(state: HttpState, account: Account, socket: WebSocket) {
+    let user_id = account.id;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let socket_id = state.live.register_socket(user_id, tx);
+    if account.bot {
+        let intents = state.store.bot_intents(user_id).await.unwrap_or_default();
+        state.live.mark_bot_socket(socket_id, intents);
+        state.live.send_socket(user_id, socket_id, &ServerEvent::Ready { bot: true, user: account });
+    }
     let custom_status = state.store.custom_status(user_id).await.ok().flatten();
     state.live.connect(user_id, now_ms(), custom_status.clone());
     if let Ok(audience) = state.store.related_user_ids(user_id).await {

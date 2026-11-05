@@ -22,8 +22,11 @@ async-trait = "0.1"
 bytes = "1"
 rtc = "0.21"
 webrtc = "0.21"
+mlua = { version = "0.12.2", features = ["luau", "async", "send", "serialize"] }
+zip = { version = "9.3.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
+zip = { version = "9.3.0", default-features = false, features = ["deflate"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 ureq = { version = "2.12", features = ["json"] }

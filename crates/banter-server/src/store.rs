@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use argon2::{
@@ -25,8 +27,10 @@ use crate::roles::{
 };
 
 pub struct Store {
-    pool: PgPool,
-    root: PathBuf,
+    pub(crate) pool: PgPool,
+    pub(crate) root: PathBuf,
+    pub(crate) plugins: Mutex<HashMap<(i64, String), crate::script::Addon>>,
+    pub(crate) rates: Mutex<crate::bots::Rates>,
 }
 
 impl Store {
@@ -51,6 +55,8 @@ impl Store {
         Ok(Self {
             pool,
             root: root.to_path_buf(),
+            plugins: Mutex::new(HashMap::new()),
+            rates: Mutex::new(crate::bots::Rates::default()),
         })
     }
 
@@ -93,7 +99,10 @@ impl Store {
             return Err(BanterError::InvalidCredentials);
         };
         let id: i64 = row.get("id");
-        let hash: String = row.get("password_hash");
+        let hash: Option<String> = row.get("password_hash");
+        let Some(hash) = hash else {
+            return Err(BanterError::InvalidCredentials);
+        };
         verify_password(password, &hash)?;
         let token = random_token();
         sqlx::query("INSERT INTO sessions (token, user_id, created_at) VALUES ($1, $2, $3)")
@@ -110,6 +119,14 @@ impl Store {
     }
 
     pub async fn logout(&self, token: &str) -> Result<(), BanterError> {
+        let bot: Option<i64> = sqlx::query_scalar("SELECT user_id FROM bot_tokens WHERE token = $1")
+            .bind(token)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+        if bot.is_some() {
+            return Err(BanterError::Invalid);
+        }
         sqlx::query("DELETE FROM sessions WHERE token = $1")
             .bind(token)
             .execute(&self.pool)
@@ -120,6 +137,14 @@ impl Store {
 
     pub async fn session_account(&self, token: &str) -> Result<Account, BanterError> {
         let id: Option<i64> = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token = $1")
+            .bind(token)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+        if let Some(id) = id {
+            return account_by_id(&self.pool, id).await;
+        }
+        let id: Option<i64> = sqlx::query_scalar("SELECT user_id FROM bot_tokens WHERE token = $1")
             .bind(token)
             .fetch_optional(&self.pool)
             .await
@@ -990,6 +1015,9 @@ impl Store {
         if category_server != Some(server_id) {
             return Err(BanterError::NotFound);
         }
+        if kind.is_plugin() {
+            return Err(BanterError::InvalidName);
+        }
         let position: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE category_id = $1",
         )
@@ -1010,7 +1038,7 @@ impl Store {
         .fetch_one(&self.pool)
         .await
         .map_err(db_err)?;
-        if kind == ChannelKind::Board {
+        if kind.is_board() {
             insert_empty_board_scene(&self.pool, id).await?;
         }
         Ok(Channel {
@@ -1021,6 +1049,7 @@ impl Store {
             kind,
             position,
             icon,
+            created_by_plugin: None,
         })
     }
 
@@ -1061,6 +1090,7 @@ impl Store {
             kind: existing.kind,
             position: existing.position,
             icon,
+            created_by_plugin: existing.created_by_plugin,
         })
     }
 
@@ -1536,7 +1566,7 @@ impl Store {
         }
     }
 
-    async fn require_flag(&self, user_id: i64, server_id: i64, flag: i64) -> Result<(), BanterError> {
+    pub(crate) async fn require_flag(&self, user_id: i64, server_id: i64, flag: i64) -> Result<(), BanterError> {
         if !is_member(&self.pool, user_id, server_id).await? {
             return Err(BanterError::NotMember);
         }
@@ -1750,9 +1780,9 @@ impl Store {
     }
 }
 
-async fn account_by_id(pool: &PgPool, id: i64) -> Result<Account, BanterError> {
+pub(crate) async fn account_by_id(pool: &PgPool, id: i64) -> Result<Account, BanterError> {
     let row = sqlx::query(
-        "SELECT id, username, display_name, avatar_file, avatar_rev FROM users WHERE id = $1",
+        "SELECT id, username, display_name, avatar_file, avatar_rev, bot FROM users WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -1764,7 +1794,7 @@ async fn account_by_id(pool: &PgPool, id: i64) -> Result<Account, BanterError> {
 
 async fn account_by_username(pool: &PgPool, username: &str) -> Result<Account, BanterError> {
     let row = sqlx::query(
-        "SELECT id, username, display_name, avatar_file, avatar_rev FROM users WHERE username = $1",
+        "SELECT id, username, display_name, avatar_file, avatar_rev, bot FROM users WHERE username = $1",
     )
     .bind(username)
     .fetch_optional(pool)
@@ -1781,6 +1811,7 @@ fn map_account_row(row: &sqlx::postgres::PgRow) -> Account {
         display_name: row.get("display_name"),
         has_avatar: row.get::<Option<String>, _>("avatar_file").is_some(),
         avatar_rev: row.get("avatar_rev"),
+        bot: row.get("bot"),
     }
 }
 
@@ -2541,7 +2572,7 @@ async fn actor_ceiling(pool: &PgPool, user_id: i64, server_id: i64) -> Result<i6
     Ok(top)
 }
 
-async fn is_member(pool: &PgPool, user_id: i64, server_id: i64) -> Result<bool, BanterError> {
+pub(crate) async fn is_member(pool: &PgPool, user_id: i64, server_id: i64) -> Result<bool, BanterError> {
     let found: Option<bool> =
         sqlx::query_scalar("SELECT TRUE FROM memberships WHERE user_id = $1 AND server_id = $2")
             .bind(user_id)
@@ -2559,7 +2590,7 @@ async fn members_of(pool: &PgPool, server_id: i64) -> Result<Vec<Member>, Banter
         .await
         .map_err(db_err)?;
     let rows = sqlx::query(
-        "SELECT u.id, u.username, u.display_name, m.nickname, u.avatar_file, u.avatar_rev
+        "SELECT u.id, u.username, u.display_name, m.nickname, u.avatar_file, u.avatar_rev, u.bot
          FROM memberships m
          JOIN users u ON u.id = m.user_id
          WHERE m.server_id = $1
@@ -2581,6 +2612,7 @@ async fn members_of(pool: &PgPool, server_id: i64) -> Result<Vec<Member>, Banter
                 is_owner: user_id == owner,
                 has_avatar: row.get::<Option<String>, _>("avatar_file").is_some(),
                 avatar_rev: row.get("avatar_rev"),
+                bot: row.get("bot"),
                 roles: Vec::new(),
             }
         })
@@ -2764,7 +2796,7 @@ async fn layout_of(pool: &PgPool, server_id: i64) -> Result<Vec<CategoryLayout>,
             position: row.get("position"),
         };
         let channel_rows = sqlx::query(
-            "SELECT id, server_id, category_id, name, kind, position, icon
+            "SELECT id, server_id, category_id, name, kind, position, icon, created_by_plugin
              FROM channels WHERE category_id = $1 ORDER BY position, id",
         )
         .bind(category.id)
@@ -2786,12 +2818,13 @@ fn channel_from_row(row: &sqlx::postgres::PgRow) -> Channel {
         kind: ChannelKind::parse(&row.get::<String, _>("kind")).unwrap_or(ChannelKind::Text),
         position: row.get("position"),
         icon: row.get("icon"),
+        created_by_plugin: row.get("created_by_plugin"),
     }
 }
 
 async fn channel_by_id(pool: &PgPool, id: i64) -> Result<Channel, BanterError> {
     let row = sqlx::query(
-        "SELECT id, server_id, category_id, name, kind, position, icon FROM channels WHERE id = $1",
+        "SELECT id, server_id, category_id, name, kind, position, icon, created_by_plugin FROM channels WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -2841,7 +2874,7 @@ async fn require_text_access_tx(
     match target {
         ChatTarget::Channel(channel_id) => {
             let row = sqlx::query(
-                "SELECT id, server_id, category_id, name, kind, position, icon FROM channels WHERE id = $1",
+                "SELECT id, server_id, category_id, name, kind, position, icon, created_by_plugin FROM channels WHERE id = $1",
             )
             .bind(channel_id)
             .fetch_optional(&mut **tx)
@@ -2948,10 +2981,13 @@ async fn message_target_tx(
 
 async fn load_message(pool: &PgPool, message_id: i64) -> Result<Message, BanterError> {
     let row = sqlx::query(
-        "SELECT m.id, m.author_id, u.username, u.display_name, mem.nickname,
-                m.body, m.reply_to, m.created_at, m.edited_at
+        "SELECT m.id, COALESCE(m.author_id, 0) AS author_id,
+                COALESCE(u.username, m.plugin_id, '') AS username,
+                COALESCE(u.display_name, m.plugin_id, '') AS display_name,
+                mem.nickname, m.body, m.reply_to, m.created_at, m.edited_at,
+                m.author_kind, m.plugin_id
          FROM messages m
-         JOIN users u ON u.id = m.author_id
+         LEFT JOIN users u ON u.id = m.author_id
          LEFT JOIN channels c ON c.id = m.channel_id
          LEFT JOIN memberships mem ON mem.user_id = m.author_id AND mem.server_id = c.server_id
          WHERE m.id = $1",
@@ -2987,15 +3023,20 @@ async fn load_message(pool: &PgPool, message_id: i64) -> Result<Message, BanterE
         created_at: row.get("created_at"),
         edited_at: row.get("edited_at"),
         attachments,
+        author_kind: row.get("author_kind"),
+        plugin_id: row.get("plugin_id"),
     })
 }
 
 async fn load_message_tx(tx: &mut Transaction<'_, Postgres>, message_id: i64) -> Result<Message, BanterError> {
     let row = sqlx::query(
-        "SELECT m.id, m.author_id, u.username, u.display_name, mem.nickname,
-                m.body, m.reply_to, m.created_at, m.edited_at
+        "SELECT m.id, COALESCE(m.author_id, 0) AS author_id,
+                COALESCE(u.username, m.plugin_id, '') AS username,
+                COALESCE(u.display_name, m.plugin_id, '') AS display_name,
+                mem.nickname, m.body, m.reply_to, m.created_at, m.edited_at,
+                m.author_kind, m.plugin_id
          FROM messages m
-         JOIN users u ON u.id = m.author_id
+         LEFT JOIN users u ON u.id = m.author_id
          LEFT JOIN channels c ON c.id = m.channel_id
          LEFT JOIN memberships mem ON mem.user_id = m.author_id AND mem.server_id = c.server_id
          WHERE m.id = $1",
@@ -3031,6 +3072,8 @@ async fn load_message_tx(tx: &mut Transaction<'_, Postgres>, message_id: i64) ->
         created_at: row.get("created_at"),
         edited_at: row.get("edited_at"),
         attachments,
+        author_kind: row.get("author_kind"),
+        plugin_id: row.get("plugin_id"),
     })
 }
 
@@ -3253,7 +3296,7 @@ fn username_ok(name: &str) -> bool {
     !name.starts_with('.') && !name.ends_with('.') && !name.contains("..")
 }
 
-fn normalize_username(raw: &str) -> Result<String, BanterError> {
+pub(crate) fn normalize_username(raw: &str) -> Result<String, BanterError> {
     let name = raw.trim().to_lowercase();
     if username_ok(&name) {
         Ok(name)
@@ -3262,7 +3305,7 @@ fn normalize_username(raw: &str) -> Result<String, BanterError> {
     }
 }
 
-fn clean_display(raw: &str) -> Result<String, BanterError> {
+pub(crate) fn clean_display(raw: &str) -> Result<String, BanterError> {
     let name = raw.trim();
     let count = name.chars().count();
     if (1..=32).contains(&count) && !name.chars().any(|c| c.is_control()) {
@@ -3346,7 +3389,7 @@ fn invite_code() -> String {
         .collect()
 }
 
-fn random_token() -> String {
+pub(crate) fn random_token() -> String {
     let mut bytes = [0_u8; 32];
     rand::thread_rng().fill(&mut bytes);
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -3358,18 +3401,18 @@ fn random_token() -> String {
     out
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
 }
 
-fn db_err(err: sqlx::Error) -> BanterError {
+pub(crate) fn db_err(err: sqlx::Error) -> BanterError {
     BanterError::Storage(err.to_string())
 }
 
-fn constraint(err: sqlx::Error, unique: BanterError) -> BanterError {
+pub(crate) fn constraint(err: sqlx::Error, unique: BanterError) -> BanterError {
     if is_unique_violation(&err) {
         unique
     } else {

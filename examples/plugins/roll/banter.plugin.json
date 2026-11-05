@@ -1,0 +1,15 @@
+{
+  "id": "roll",
+  "name": "Roll",
+  "version": "1.0.0",
+  "banter": "1",
+  "server_entry": "server/main.luau",
+  "client": "none",
+  "permissions": ["commands", "messages"],
+  "commands": [
+    {
+      "name": "roll",
+      "description": "Roll a number from 1 to 6"
+    }
+  ]
+}

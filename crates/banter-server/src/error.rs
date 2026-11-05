@@ -69,6 +69,12 @@ pub enum BanterError {
     Storage(String),
     #[error("could not bind the server: {0}")]
     Bind(String),
+    #[error("that request is invalid")]
+    Invalid,
+    #[error("that version is not newer")]
+    Conflict,
+    #[error("slow down")]
+    RateLimited,
 }
 
 impl BanterError {
@@ -107,6 +113,9 @@ impl BanterError {
             Self::NotInCall => "not_in_call",
             Self::Storage(_) => "storage",
             Self::Bind(_) => "bind",
+            Self::Invalid => "invalid",
+            Self::Conflict => "conflict",
+            Self::RateLimited => "rate_limited",
         }
     }
 }

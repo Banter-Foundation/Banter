@@ -26,6 +26,8 @@ struct LiveInner {
     users: HashMap<i64, UserLive>,
     calls: HashMap<i64, CallSnapshot>,
     sockets: HashMap<i64, Vec<(u64, UnboundedSender<Outbound>)>>,
+    /// Bot sockets and the intents they may receive.
+    bot_sockets: HashMap<u64, Vec<String>>,
     next_socket: u64,
     forward: ForwardTable,
 }
@@ -41,6 +43,7 @@ impl Live {
                 users: HashMap::new(),
                 calls: HashMap::new(),
                 sockets: HashMap::new(),
+                bot_sockets: HashMap::new(),
                 next_socket: 1,
                 forward: ForwardTable::new(),
             }),
@@ -355,6 +358,15 @@ impl Live {
     }
 
     pub fn handle_signal(&self, user_id: i64, signal: ClientSignal) -> Result<(), BanterError> {
+        if self.bot_user(user_id) && matches!(
+            signal,
+            ClientSignal::RtcOffer { .. }
+                | ClientSignal::RtcAnswer { .. }
+                | ClientSignal::RtcIce { .. }
+                | ClientSignal::SubscribeLayer { .. }
+        ) {
+            return Ok(());
+        }
         let prepared = {
             let mut inner = self.lock();
             prepare_signal(&mut inner, user_id, signal)?
@@ -373,11 +385,31 @@ impl Live {
         id
     }
 
+    pub(crate) fn mark_bot_socket(&self, socket_id: u64, intents: Vec<String>) {
+        self.lock().bot_sockets.insert(socket_id, intents);
+    }
+
+    pub(crate) fn send_socket(&self, user_id: i64, socket_id: u64, event: &ServerEvent) {
+        let Ok(text) = serde_json::to_string(event) else {
+            return;
+        };
+        let inner = self.lock();
+        if let Some(list) = inner.sockets.get(&user_id) {
+            for (id, tx) in list {
+                if *id == socket_id {
+                    let _ = tx.send(Outbound::Text(text));
+                    break;
+                }
+            }
+        }
+    }
+
     pub(crate) fn unregister_socket(&self, user_id: i64, socket_id: u64) {
         let mut inner = self.lock();
         if let Some(list) = inner.sockets.get_mut(&user_id) {
             list.retain(|(id, _)| *id != socket_id);
         }
+        inner.bot_sockets.remove(&socket_id);
     }
 
     pub fn send_event(&self, user_ids: &[i64], event: &ServerEvent) {
@@ -387,8 +419,10 @@ impl Live {
         let inner = self.lock();
         for user_id in user_ids {
             if let Some(list) = inner.sockets.get(user_id) {
-                for (_, tx) in list {
-                    let _ = tx.send(Outbound::Text(text.clone()));
+                for (socket_id, tx) in list {
+                    if bot_allows(&inner.bot_sockets, *socket_id, event) {
+                        let _ = tx.send(Outbound::Text(text.clone()));
+                    }
                 }
             }
         }
@@ -402,6 +436,11 @@ impl Live {
         let mut ids: Vec<i64> = members.iter().map(|member| member.user_id).collect();
         ids.extend_from_slice(also);
         self.send_event(&ids, &ServerEvent::Voice { channel_id, members });
+    }
+
+    fn bot_user(&self, user_id: i64) -> bool {
+        let inner = self.lock();
+        inner.sockets.get(&user_id).is_some_and(|list| list.iter().any(|(id, _)| inner.bot_sockets.contains_key(id)))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, LiveInner> {
@@ -453,6 +492,17 @@ fn entry(inner: &mut LiveInner, user_id: i64) -> &mut UserLive {
         flags: VoiceFlags::default(),
         voice_channel: None,
     })
+}
+
+fn bot_allows(bots: &HashMap<u64, Vec<String>>, socket_id: u64, event: &ServerEvent) -> bool {
+    let Some(intents) = bots.get(&socket_id) else {
+        return true;
+    };
+    match crate::bots::event_gate(event) {
+        crate::bots::EventGate::Deliver => true,
+        crate::bots::EventGate::Drop => false,
+        crate::bots::EventGate::Need(intent) => intents.iter().any(|item| item == intent),
+    }
 }
 
 fn members_of(inner: &LiveInner, channel_id: i64) -> Vec<VoiceMember> {

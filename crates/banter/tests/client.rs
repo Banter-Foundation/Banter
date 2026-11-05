@@ -32,6 +32,8 @@ fn message(id: i64, body: &str, reply_to: Option<i64>) -> Message {
         created_at: 0,
         edited_at: None,
         attachments: Vec::new(),
+        author_kind: "user".into(),
+        plugin_id: None,
     }
 }
 
@@ -148,6 +150,7 @@ fn settings_menu_lists_account_then_voice() {
         [
             SettingsSection::Account,
             SettingsSection::Voice,
+            SettingsSection::Mods,
             SettingsSection::Developer,
         ]
     );
@@ -935,25 +938,25 @@ fn channel_context_menu_offers_invite_and_copy_for_foundation() {
 fn channel_display_icon_uses_custom_or_kind_default() {
     use banter_server::ChannelKind;
 
-    assert_eq!(banter::channel_display_icon(ChannelKind::Text, None), "hash");
+    assert_eq!(banter::channel_display_icon(&ChannelKind::Text, None), "hash");
     assert_eq!(
-        banter::channel_display_icon(ChannelKind::Voice, None),
+        banter::channel_display_icon(&ChannelKind::Voice, None),
         "volume-2"
     );
     assert_eq!(
-        banter::channel_display_icon(ChannelKind::Board, None),
+        banter::channel_display_icon(&ChannelKind::Board, None),
         "pencil"
     );
     assert_eq!(
-        banter::channel_display_icon(ChannelKind::Text, Some("mic")),
+        banter::channel_display_icon(&ChannelKind::Text, Some("mic")),
         "mic"
     );
     assert_eq!(
-        banter::channel_display_icon(ChannelKind::Text, Some("not-a-real-icon")),
+        banter::channel_display_icon(&ChannelKind::Text, Some("not-a-real-icon")),
         "hash"
     );
     assert_eq!(
-        banter::channel_display_icon(ChannelKind::Voice, Some("")),
+        banter::channel_display_icon(&ChannelKind::Voice, Some("")),
         "volume-2"
     );
 }
