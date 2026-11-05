@@ -113,7 +113,7 @@ cargo test -p banter
 
 Server foundation tests in `crates/banter-server/tests/foundation.rs` are the API contract — do not weaken them. Client coverage includes session, mute/deafen, push-to-talk, media helpers, settings layout rules, and theme metrics.
 
-**CI:** Linux Actions runs the full `banter-server` / `banter` suites against a `postgres:16` service. Windows Actions runs **`--lib` unit tests only** (no Postgres service), so sqlx/store integration contracts are Linux-only in CI.
+**CI:** Linux Actions runs the full `banter-server` / `banter` suites against a `postgres:16` service (installs Opus/ALSA/X11/GLFW/Wayland/PipeWire/V4L2 headers). Windows Actions runs **`--lib` unit tests only** (no Postgres service), so sqlx/store integration contracts are Linux-only in CI. The guild-voice SFU RTP loopback unit test is ignored on Windows Actions (no forwarded microphone RTP on that runner) and still runs on Linux.
 
 ## Container image (Podman / Docker)
 
