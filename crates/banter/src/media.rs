@@ -1262,9 +1262,9 @@ fn screen_loop(
                     cast_since = None;
                     continue;
                 }
-                if let Some(frame) = cast.take() {
-                    latest = Some(frame);
-                    fresh = true;
+                // Leave the raw frame in the portal slot until publish time.
+                // Scaling here would walk pixels the share is about to drop.
+                if cast.has_frame() {
                     cast_since = None;
                 } else if latest.is_none() && cast_since.is_some_and(|started| started.elapsed() > Duration::from_secs(3)) {
                     remember_error(&errors, "screen: the desktop sent no picture".into());
@@ -1292,15 +1292,13 @@ fn screen_loop(
                 }
             }
             #[cfg(target_os = "linux")]
-            Feed::Cast(_) => {
-                if !fresh {
+            Feed::Cast(cast) => {
+                let Some((width, height, rgba)) = cast.take_picture(edge) else {
                     thread::sleep(Duration::from_millis(2));
                     continue;
-                }
-                fresh = false;
+                };
                 next_encode = Instant::now() + Duration::from_millis(interval);
-                let Some((width, height, rgba)) = latest.as_ref() else { continue };
-                publish_screen(&pictures, &local, &engine, &mut keyed, rgba, *width, *height, edge);
+                publish_screen(&pictures, &local, &engine, &mut keyed, &rgba, width, height, edge);
             }
             Feed::Record { .. } => {
                 if !fresh {

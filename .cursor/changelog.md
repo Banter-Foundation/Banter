@@ -638,3 +638,10 @@ People in a server could not see that someone had joined a voice channel until t
 - `GET /v1/servers/{id}/voice` returns every voice channel, including empty ones.
 - The channel list and the unjoined voice stage use that roster.
 
+## 2026-11-05 00:35:00 -0500 [ubuntu] — Keep the mic off the screen encoder
+
+Screen H.264 was encoded on the same thread as Opus, so a slow share held the next voice packet and the shared queue dropped it. Wayland also scaled every PipeWire buffer on the compositor thread.
+
+- `banter-audio` encodes the microphone and stream audio. `banter-video` encodes camera and screen. Each has its own queue. A full video queue drops a picture, not Opus.
+- The largest simulcast layer is encoded first.
+- The PipeWire callback copies the newest frame. The screen thread scales it when that frame is published.

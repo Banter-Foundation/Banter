@@ -1,7 +1,8 @@
 //! xdg-desktop-portal ScreenCast. The compositor sends a PipeWire view stream.
 //!
-//! One slot holds the newest frame. Older frames are dropped in the stream
-//! callback, and the stored frame is already scaled to the share size.
+//! The stream callback only copies the newest frame. Scaling happens later, on
+//! the screen thread, when that frame is published. A pixel walk here stalls
+//! the compositor and makes the share late.
 
 use std::collections::HashMap;
 use std::os::fd::OwnedFd;
@@ -36,13 +37,22 @@ struct Latest {
     rgba: Vec<u8>,
 }
 
+/// Unscaled copy of one PipeWire buffer. The screen thread scales it.
+struct RawFrame {
+    width: u32,
+    height: u32,
+    stride: i32,
+    format: VideoFormat,
+    bytes: Vec<u8>,
+}
+
 struct StreamData {
     format: VideoInfoRaw,
     logged: bool,
 }
 
 pub struct CastStream {
-    latest: Arc<Mutex<Option<Latest>>>,
+    latest: Arc<Mutex<Option<RawFrame>>>,
     stop: Arc<AtomicBool>,
     fault: Arc<Mutex<Option<String>>>,
     quit: Option<channel::Sender<()>>,
@@ -87,8 +97,16 @@ impl CastStream {
         })
     }
 
-    pub fn take(&self) -> Option<(u32, u32, Vec<u8>)> {
-        self.latest.lock().expect("screencast frame").take().map(|frame| (frame.width, frame.height, frame.rgba))
+    /// True once the compositor has delivered a buffer that has not been taken.
+    pub fn has_frame(&self) -> bool {
+        self.latest.lock().expect("screencast frame").is_some()
+    }
+
+    /// Takes the newest raw frame and scales it to `edge` on this thread.
+    pub fn take_picture(&self, edge: u32) -> Option<(u32, u32, Vec<u8>)> {
+        let raw = self.latest.lock().expect("screencast frame").take()?;
+        let frame = sample_frame(&raw.bytes, raw.width, raw.height, raw.stride, raw.format, edge)?;
+        Some((frame.width, frame.height, frame.rgba))
     }
 
     pub fn take_fault(&self) -> Option<String> {
@@ -113,7 +131,7 @@ fn stream_loop(
     node: u32,
     max_edge: u32,
     fps: u32,
-    latest: Arc<Mutex<Option<Latest>>>,
+    latest: Arc<Mutex<Option<RawFrame>>>,
     stop: Arc<AtomicBool>,
     fault: Arc<Mutex<Option<String>>>,
     quit_rx: channel::Receiver<()>,
@@ -215,9 +233,9 @@ fn stream_loop(
                 return;
             }
             let frame = if let Some(bytes) = chunk_src.data() {
-                picture_from(bytes, offset, chunk_size, stride, &data.format, edge)
+                copy_frame(bytes, offset, chunk_size, stride, &data.format)
             } else if let Some(mapped) = map_memfd(chunk_src) {
-                picture_from(mapped.bytes(), offset, chunk_size, stride, &data.format, edge)
+                copy_frame(mapped.bytes(), offset, chunk_size, stride, &data.format)
             } else {
                 None
             };
@@ -287,17 +305,23 @@ impl Drop for Mmap {
     }
 }
 
-fn picture_from(bytes: &[u8], offset: usize, chunk_size: usize, stride: i32, format: &VideoInfoRaw, edge: u32) -> Option<Latest> {
+fn copy_frame(bytes: &[u8], offset: usize, chunk_size: usize, stride: i32, format: &VideoInfoRaw) -> Option<RawFrame> {
     let size = if chunk_size == 0 { bytes.len().saturating_sub(offset) } else { chunk_size };
     let end = offset.saturating_add(size).min(bytes.len());
     if end <= offset {
         return None;
     }
-    let size = format.size();
-    if size.width < 2 || size.height < 2 {
+    let dim = format.size();
+    if dim.width < 2 || dim.height < 2 {
         return None;
     }
-    sample_frame(&bytes[offset..end], size.width, size.height, stride, format.format(), edge)
+    Some(RawFrame {
+        width: dim.width,
+        height: dim.height,
+        stride,
+        format: format.format(),
+        bytes: bytes[offset..end].to_vec(),
+    })
 }
 
 fn map_memfd(data: &pipewire::spa::buffer::Data) -> Option<Mmap> {
