@@ -102,6 +102,16 @@ cargo run -p banter
 
 Data: `$XDG_DATA_HOME/Banter` or `~/.local/share/Banter`. Speaker loopback and per-app stream audio remain Windows-only; mic, speakers, camera, and screen share work.
 
+## macOS (Apple Silicon)
+
+```
+cargo build --release -p banter
+./scripts/package-macos-app.sh target/release/banter dist/macos version-1-dev
+open dist/macos/Banter.app
+```
+
+Always launch **`Banter.app`**. A bare binary has no stable bundle id, so System Settings cannot attribute Microphone / Camera / Screen Recording grants and those features stay silent. After the first prompt, enable Banter under **System Settings → Privacy & Security**, then quit and reopen the app. Data: `~/Library/Application Support/Banter`. Stream loopback / per-app audio stay Windows/Linux-only.
+
 ## Tests
 
 ```powershell

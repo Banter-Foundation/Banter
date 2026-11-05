@@ -17,7 +17,7 @@ The client talks to `http://127.0.0.1:3970` by default (Developer → Local). St
 - **Window / GL:** `glfw` 0.63, OpenGL **3.3** core profile, `glow` 0.18.
 - **UI:** Dear ImGui **docking** branch via `dear-imgui-rs` 0.22 and `dear-imgui-glow` 0.22. `ConfigFlags::DOCKING_ENABLE` is set before the first frame.
 - **Server HTTP:** Axum 0.8 (REST + `/v1/ws`), Tokio, sqlx (PostgreSQL).
-- **Client media:** `cpal` (mic/speakers), `nokhwa` (camera), `xcap` (screen/window capture). WASAPI loopback / per-app audio are Windows-only.
+- **Client media:** `cpal` (mic/speakers), `nokhwa` (camera), `xcap` (screen/window capture). WASAPI loopback / per-app audio are Windows-only; Linux has PipeWire/`parec` loopback. macOS needs `Banter.app` + Privacy & Security grants for mic/camera/screen.
 - **Icons:** Lucide SVGs under `crates/banter/assets/lucide`, rasterized at runtime.
 
 ## Data paths

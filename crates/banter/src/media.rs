@@ -8,6 +8,8 @@ mod encode;
 mod loopback_linux;
 #[cfg(target_os = "linux")]
 mod screencast;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod loopback;
 #[cfg(windows)]
@@ -512,7 +514,11 @@ fn device_loop(
                     streams.push(stream);
                     device_recovered(&errors, "microphone");
                 }
-                Err(err) => device_failed(&errors, "microphone", &err),
+                Err(err) => {
+                    #[cfg(target_os = "macos")]
+                    let err = format!("{err}; {}", macos::privacy_hint("microphone"));
+                    device_failed(&errors, "microphone", &err);
+                }
             }
             match open_output(&output_name, Arc::clone(&playback), Arc::clone(&flags), Arc::clone(&engine), Arc::clone(&output_rate)) {
                 Ok(stream) => {
@@ -998,11 +1004,23 @@ pub fn pick_preferred_camera_mode(modes: &[CameraModeChoice]) -> Option<CameraMo
 fn open_camera(index: u32) -> Result<nokhwa::Camera, String> {
     use nokhwa::pixel_format::RgbFormat;
     use nokhwa::utils::{CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution};
+    static CAMERA_DENIED: AtomicBool = AtomicBool::new(false);
     nokhwa::nokhwa_initialize(|granted| {
         if !granted {
+            CAMERA_DENIED.store(true, Ordering::Relaxed);
             eprintln!("camera permission was denied");
         }
     });
+    if CAMERA_DENIED.load(Ordering::Relaxed) {
+        #[cfg(target_os = "macos")]
+        {
+            return Err(macos::privacy_hint("camera"));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Err("camera permission was denied".into());
+        }
+    }
     // Open with a flexible request so we can list modes, then switch to ~720p (or nearest).
     let mut camera = nokhwa::Camera::new(
         CameraIndex::Index(index),
@@ -1321,6 +1339,8 @@ fn open_feed(
     edge: u32,
     interval_ms: u64,
 ) -> Result<Option<Feed>, String> {
+    #[cfg(target_os = "macos")]
+    macos::ensure_screen_recording()?;
     #[cfg(target_os = "linux")]
     if native_screen_picker() {
         let fps = (1000 / interval_ms.max(1)).clamp(1, 60) as u32;

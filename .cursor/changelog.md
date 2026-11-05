@@ -685,3 +685,12 @@ Adding a plugin asks before it runs and says what it will do. Welcome 1.1.0 chan
 ## 2026-11-05 01:08:42 -05:00 [ubuntu] — Remove a plugin from a server
 
 Right-click a server and choose Plugins. Each plugin already on that server has Remove. Removing it unloads the script and deletes the install, so new messages are left alone.
+
+## 2026-11-05 07:35:00 +0000 [ubuntu] — macOS voice and screen share TCC
+
+Bare `banter-macos-arm` never appeared under Privacy & Security, so Microphone / Camera / Screen Recording stayed denied and voice plus Go Live looked broken.
+
+- Embed `crates/banter/macos/Info.plist` into the binary (`build.rs` `__info_plist` section)
+- Request Screen Recording via `CGRequestScreenCaptureAccess` before capture; clear System Settings errors
+- `scripts/package-macos-app.sh` wraps the binary as `Banter.app` (bundle id `foundation.banter.desktop`) and ad-hoc signs it
+- Docs: README, build-and-run, streaming, feature-status, overview
