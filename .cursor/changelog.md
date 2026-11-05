@@ -1,3 +1,7 @@
+## 2026-11-05 16:30:00 -05:00 [ubuntu] — Purple Glow theme mod
+
+Sample client mod `purple_glow` restyles the Banter shell to a dark purple neon look (rail, sidebar, stage, channel rows, composer, accents) via `banter.theme.shell` / `banter.theme.set`. Host applies more shell tokens for members, rows, muted/text, and composer. Copy from `examples/mods/purple_glow` or enable from a fresh data dir seed. Docs: Settings → Mods.
+
 ## 2026-11-05 19:16:00 +00:00 [ubuntu] — Version-1-test-11.3 pre-release
 
 Shipped pre-release Version-1-test-11.3 from main after dismiss stream overlays on leave (#66), stream watch profile/voice indicators (#67), macOS Banter.app packaging (#68), and auto-reconnect every 30s with voice rejoin (#69). Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.

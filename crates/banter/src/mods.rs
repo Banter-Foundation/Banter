@@ -128,6 +128,11 @@ impl ModHost {
                 include_str!("../../../examples/mods/warm_shell/banter.mod.json"),
                 include_str!("../../../examples/mods/warm_shell/main.luau"),
             ),
+            (
+                "purple_glow",
+                include_str!("../../../examples/mods/purple_glow/banter.mod.json"),
+                include_str!("../../../examples/mods/purple_glow/main.luau"),
+            ),
         ];
         for (id, manifest, source) in samples {
             let folder = mods.join(id);
