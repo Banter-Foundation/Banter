@@ -745,3 +745,10 @@ Shipped pre-release Version-1-test-11.1 from main after `/debugnow` network traf
 
 The stage stream-options menu (chevron beside Screen) now shows the same resolution and frame-rate chips as Voice & Video → Screen share and Stream Select. Changing them while live still saves `stream.json` and applies through the existing `finish_voice_flags` → `set_stream_choice` path. Stage layout and call-bar chrome are unchanged.
 
+## 2026-11-05 11:44:53 -05:00 [ubuntu] — Version-1-test-11.2 pre-release
+
+Shipped pre-release Version-1-test-11.2 from main after mid-stream quality controls (#62), mute/deafen talking indicator fix (#63), and stream pop-out / cycle / fullscreen fade (#64). Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
+- Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-11.2
+- Assets: Banter-windows-version-1-test-11.2.zip, Banter-linux-version-1-test-11.2.zip, Banter-macos-arm-version-1-test-11.2.zip, banter-server.exe, banter-server-linux, banter-server-macos-arm
+
