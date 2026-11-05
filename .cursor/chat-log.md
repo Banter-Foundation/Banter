@@ -1038,3 +1038,9 @@ Agent: Removed composer and inline-reply B/I/U/S chrome plus pending-flag scaffo
 Composer and reply boxes no longer show the B/I/U/S bar; BFMD in message bodies still parses and paints.
 
 Agent: PR #56 opened. Do not merge until Owl says so.
+
+## 2026-11-05 06:49:00 +0000 — Version-1-test-11 pre-release
+
+Owl: Ship GitHub pre-release Version-1-test-11 from current main; Win+Linux(+mac if prior) artifacts; GHCR if possible; docs retarget via PR.
+
+Agent: Tagged `Version-1-test-11` at `dcbba80` (main `8e1efdc` + BANTER_VERSION bump). Built Linux locally; Windows and macOS arm64 via temporary Actions workflows. Published pre-release with six artifacts. Docker image built locally; GHCR push failed (banter-foundation: Create organization package denied; snowedinowl: 403). Docs retarget PR opened on `cursor/version-1-test-11-effc`. Scratch Win/macOS workflows removed from the PR tip (remain on the release tag commit only).
