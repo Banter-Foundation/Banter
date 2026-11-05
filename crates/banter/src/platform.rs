@@ -31,6 +31,7 @@ use crate::logic::{
     ui_swap_needs_update,
 };
 use crate::settings::{settings_window_default_size, SETTINGS_WINDOW_TITLE};
+use crate::stream_watch::{stream_popout_default_size, STREAM_POPOUT_WINDOW_TITLE};
 use crate::ui::App;
 
 pub(crate) fn run() -> Result<(), String> {
@@ -102,6 +103,7 @@ pub(crate) fn run() -> Result<(), String> {
     let mut applied_swap: Option<(bool, u32)> = None;
     let mut vsync_on = startup_video.vsync;
     let mut settings_host: Option<SettingsHost> = None;
+    let mut stream_popout_host: Option<StreamPopoutHost> = None;
 
     while !window.should_close() {
         glfw.poll_events();
@@ -120,9 +122,21 @@ pub(crate) fn run() -> Result<(), String> {
             imgui,
             &gl,
         )?;
+        imgui = sync_stream_popout_window(
+            &mut glfw,
+            &mut window,
+            &mut stream_popout_host,
+            &mut app,
+            imgui,
+            &gl,
+        )?;
 
         let main_events: Vec<_> = glfw::flush_messages(&events).map(|(_, event)| event).collect();
         let settings_events: Vec<_> = settings_host
+            .as_ref()
+            .map(|host| glfw::flush_messages(&host.events).map(|(_, event)| event).collect())
+            .unwrap_or_default();
+        let stream_events: Vec<_> = stream_popout_host
             .as_ref()
             .map(|host| glfw::flush_messages(&host.events).map(|(_, event)| event).collect())
             .unwrap_or_default();
@@ -142,9 +156,13 @@ pub(crate) fn run() -> Result<(), String> {
             .as_ref()
             .map(|host| host.window.is_focused())
             .unwrap_or(false);
-        // Main keeps pointer only when Settings is not the focused OS window.
-        // Settings has its own ImGui context and always reads its own GLFW window.
-        let main_receive = main_surface_receives_input(window.is_focused(), settings_focused);
+        let stream_focused = stream_popout_host
+            .as_ref()
+            .map(|host| host.window.is_focused())
+            .unwrap_or(false);
+        // Main keeps pointer only when no secondary Banter OS window is focused.
+        let main_receive =
+            main_surface_receives_input(window.is_focused(), settings_focused || stream_focused);
 
         {
             let _prepare = crate::profiler::scope_section(crate::profiler::Section::Prepare);
@@ -159,6 +177,16 @@ pub(crate) fn run() -> Result<(), String> {
                 .activate()
                 .map_err(|err| err.to_string())?;
             settings_result?;
+        }
+
+        if let Some(host) = stream_popout_host.as_mut() {
+            let suspended_main = imgui.suspend().map_err(|err| err.to_string())?;
+            let stream_result =
+                draw_stream_popout_surface(host, &gl, &mut window, &stream_events, &mut app, delta);
+            imgui = suspended_main
+                .activate()
+                .map_err(|err| err.to_string())?;
+            stream_result?;
         }
 
         draw_main_surface(
@@ -320,6 +348,14 @@ struct SettingsHost {
     fonts: UiFonts,
 }
 
+struct StreamPopoutHost {
+    window: glfw::PWindow,
+    events: glfw::GlfwReceiver<(f64, glfw::WindowEvent)>,
+    imgui: SuspendedContext,
+    renderer: GlowRenderer,
+    fonts: UiFonts,
+}
+
 fn sync_settings_window(
     glfw: &mut glfw::Glfw,
     main: &mut glfw::PWindow,
@@ -443,10 +479,196 @@ fn imgui_focus_for_surface(receive_pointer: bool) -> bool {
     receive_pointer
 }
 
-/// Main shell suppresses pointer while Banter Settings is the focused OS window so overlapping
-/// content-relative cursor coords do not ghost-hover the shell. Settings has its own ImGui context.
-fn main_surface_receives_input(main_focused: bool, settings_focused: bool) -> bool {
-    main_focused && !settings_focused
+/// Main shell suppresses pointer while a secondary Banter OS window (Settings or Stream) is
+/// focused so overlapping content-relative cursor coords do not ghost-hover the shell.
+fn main_surface_receives_input(main_focused: bool, secondary_focused: bool) -> bool {
+    main_focused && !secondary_focused
+}
+
+fn sync_stream_popout_window(
+    glfw: &mut glfw::Glfw,
+    main: &mut glfw::PWindow,
+    host: &mut Option<StreamPopoutHost>,
+    app: &mut App,
+    mut main_imgui: Context,
+    gl: &Rc<glow::Context>,
+) -> Result<Context, String> {
+    let want = app.stream_popout_os_window_desired();
+    if want {
+        if host.is_none() {
+            let (imgui, created) = create_stream_popout_window(glfw, main, main_imgui, gl)?;
+            main_imgui = imgui;
+            *host = Some(created);
+        }
+        if let Some(stream) = host.as_mut() {
+            if stream.window.should_close() {
+                app.notify_stream_popout_window_closed();
+                if let Some(closed) = host.take() {
+                    main_imgui = destroy_stream_popout_host(closed, main, main_imgui, app)?;
+                }
+                main.focus();
+            }
+        }
+    } else if let Some(closed) = host.take() {
+        main_imgui = destroy_stream_popout_host(closed, main, main_imgui, app)?;
+        // Keep focus on main unless Settings still wants it.
+        if !app.settings_os_window_desired() {
+            main.focus();
+        }
+    }
+    Ok(main_imgui)
+}
+
+fn destroy_stream_popout_host(
+    host: StreamPopoutHost,
+    main: &mut glfw::PWindow,
+    main_imgui: Context,
+    app: &mut App,
+) -> Result<Context, String> {
+    let StreamPopoutHost {
+        mut window,
+        events: _,
+        imgui,
+        renderer,
+        fonts: _,
+    } = host;
+
+    let suspended_main = main_imgui.suspend().map_err(|err| err.to_string())?;
+    let mut active = imgui.activate().map_err(|err| err.to_string())?;
+    app.release_stream_popout_gpu(&mut active);
+    drop(renderer);
+    drop(active);
+    let main_imgui = suspended_main.activate().map_err(|err| err.to_string())?;
+
+    main.make_current();
+    window.hide();
+    prepare_shared_settings_window_for_destroy(&mut window);
+    drop(window);
+    Ok(main_imgui)
+}
+
+fn create_stream_popout_window(
+    glfw: &mut glfw::Glfw,
+    main: &mut glfw::PWindow,
+    main_imgui: Context,
+    gl: &Rc<glow::Context>,
+) -> Result<(Context, StreamPopoutHost), String> {
+    let (width, height) = stream_popout_default_size();
+    glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
+    glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
+    glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
+    glfw.window_hint(glfw::WindowHint::Visible(true));
+    glfw.window_hint(glfw::WindowHint::Focused(true));
+    let (mut window, events) = main
+        .create_shared(
+            width as u32,
+            height as u32,
+            STREAM_POPOUT_WINDOW_TITLE,
+            glfw::WindowMode::Windowed,
+        )
+        .ok_or_else(|| "GLFW could not open the Banter Stream window.".to_string())?;
+    window.set_all_polling(true);
+    if let Some((x, y)) = window_origin(glfw, main) {
+        window.set_pos(x + 72, y + 72);
+    }
+    window.focus();
+    window.make_current();
+
+    let suspended_main = main_imgui.suspend().map_err(|err| err.to_string())?;
+    let mut stream_imgui = Context::create();
+    stream_imgui.set_clipboard_backend(GlfwClipboard);
+    let fonts = install_ui_fonts(&mut stream_imgui);
+    let renderer =
+        GlowRenderer::with_shared_context(Rc::clone(gl), &mut stream_imgui).map_err(|err| err.to_string())?;
+    let stream_imgui = stream_imgui.suspend().map_err(|err| err.to_string())?;
+    let main_imgui = suspended_main.activate().map_err(|err| err.to_string())?;
+
+    main.make_current();
+    Ok((
+        main_imgui,
+        StreamPopoutHost {
+            window,
+            events,
+            imgui: stream_imgui,
+            renderer,
+            fonts,
+        },
+    ))
+}
+
+fn draw_stream_popout_surface(
+    host: &mut StreamPopoutHost,
+    gl: &glow::Context,
+    main: &mut glfw::PWindow,
+    stream_events: &[glfw::WindowEvent],
+    app: &mut App,
+    delta: f64,
+) -> Result<(), String> {
+    let (sw, sh) = host.window.get_size();
+    let (fbw, fbh) = host.window.get_framebuffer_size();
+    if sw <= 0 || sh <= 0 {
+        return Ok(());
+    }
+    host.window.make_current();
+    unsafe {
+        gl.viewport(0, 0, fbw, fbh);
+    }
+
+    let StreamPopoutHost {
+        window,
+        imgui,
+        renderer,
+        fonts,
+        ..
+    } = host;
+    let fonts = UiFonts {
+        bold: fonts.bold,
+        semibold: fonts.semibold,
+        italic: fonts.italic,
+        bold_italic: fonts.bold_italic,
+    };
+
+    imgui
+        .try_with_active(|imgui| -> Result<(), String> {
+            feed_frame_io(
+                imgui,
+                window,
+                stream_events,
+                app,
+                sw,
+                sh,
+                fbw,
+                fbh,
+                delta,
+                /* receive_pointer */ true,
+            );
+            app.begin_stream_popout_surface(fonts.bold, fonts.semibold, fonts.italic, fonts.bold_italic);
+            let prepare_draw = (|| -> Result<(), String> {
+                app.prepare_stream_popout(imgui);
+                unsafe {
+                    gl.clear_color(0.12, 0.12, 0.14, 1.0);
+                    gl.clear(glow::COLOR_BUFFER_BIT);
+                }
+                {
+                    let ui = imgui.frame();
+                    app.draw_stream_popout_window(&ui);
+                }
+                let pending = imgui.render(renderer.renderer_consumer().map_err(|err| err.to_string())?);
+                renderer.render(pending).map_err(|err| err.to_string())?;
+                Ok(())
+            })();
+            app.end_stream_popout_surface();
+            prepare_draw
+        })
+        .map_err(|err| err.to_string())?;
+
+    window.swap_buffers();
+    main.make_current();
+    let (mfbw, mfbh) = main.get_framebuffer_size();
+    unsafe {
+        gl.viewport(0, 0, mfbw, mfbh);
+    }
+    Ok(())
 }
 
 fn feed_frame_io(

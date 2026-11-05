@@ -66,6 +66,10 @@ use crate::settings::{
     wrap_rows, SETTINGS_NAV_HEADING_GAP, SETTINGS_NAV_SECTION_GAP, SETTINGS_TOP_PAD,
 };
 use crate::skin::{self, MenuTone, Tone};
+use crate::stream_watch::{
+    cycle_streamer, resolve_focused_streamer, stream_chrome_alpha, streaming_user_ids,
+    STREAM_CHROME_HIDE_ALPHA, STREAM_POPOUT_WINDOW_TITLE,
+};
 use crate::theme::*;
 
 #[derive(Clone, Debug)]
@@ -311,6 +315,21 @@ pub(crate) struct App {
     screen_target: [f32; 2],
     screen_resize_at: Instant,
     video_popout: bool,
+    /// Separate Banter Stream OS window showing the focused share.
+    stream_popout: bool,
+    /// Stage theater mode: stream fills the window; chrome fades when the pointer idles.
+    stream_fullscreen: bool,
+    /// Preferred live streamer (`None` = first available).
+    focused_streamer: Option<i64>,
+    /// Last pointer/key activity used for fullscreen chrome fade.
+    stream_pointer_at: Instant,
+    /// CPU copy of the focused screen frame for the Banter Stream ImGui context.
+    stream_popout_rgba: Option<(u32, u32, Vec<u8>)>,
+    stream_popout_icons: HashMap<String, Shot>,
+    stream_popout_icons_ready: bool,
+    stream_popout_shot: Option<Shot>,
+    stream_popout_styled: bool,
+    stream_popout_font_backup: Option<(Option<FontId>, Option<FontId>, Option<FontId>, Option<FontId>)>,
     members_open: bool,
     bold_font: Option<FontId>,
     semibold_font: Option<FontId>,
@@ -564,6 +583,16 @@ impl App {
             screen_target: [0.0, 0.0],
             screen_resize_at: Instant::now(),
             video_popout: false,
+            stream_popout: false,
+            stream_fullscreen: false,
+            focused_streamer: None,
+            stream_pointer_at: Instant::now(),
+            stream_popout_rgba: None,
+            stream_popout_icons: HashMap::new(),
+            stream_popout_icons_ready: false,
+            stream_popout_shot: None,
+            stream_popout_styled: false,
+            stream_popout_font_backup: None,
             members_open: true,
             bold_font: None,
             semibold_font: None,
@@ -708,6 +737,7 @@ impl App {
 
     pub(crate) fn note_input(&mut self) {
         self.user_acted = true;
+        self.stream_pointer_at = Instant::now();
     }
 
     pub(crate) fn prepare(&mut self, imgui: &mut Context) {
@@ -737,6 +767,7 @@ impl App {
                     self.settings_camera_rgba = Some((*width, *height, rgba.clone()));
                 }
             }
+            self.maybe_keep_stream_popout_frame(&frame);
             self.install_video(imgui, frame);
         }
         self.install_avatars(imgui);
@@ -853,6 +884,17 @@ impl App {
         self.settings_error.clear();
     }
 
+    /// True while a stream should be shown in the dedicated Banter Stream OS window.
+    pub(crate) fn stream_popout_os_window_desired(&self) -> bool {
+        self.stream_popout && self.has_live_stream()
+    }
+
+    /// OS window chrome closed the Banter Stream pop-out.
+    pub(crate) fn notify_stream_popout_window_closed(&mut self) {
+        self.stream_popout = false;
+        self.stream_popout_rgba = None;
+    }
+
     /// Main Banter window. User Settings lives in a separate GLFW window so this shell stays usable.
     pub(crate) fn draw_main(&mut self, ui: &Ui) {
         if !ui.io().want_capture_keyboard() && ui.is_key_pressed(Key::F3) {
@@ -889,8 +931,18 @@ impl App {
         self.draw_profile_card(ui);
         self.draw_profiler(ui);
         self.draw_server_debug(ui);
+        if (self.stream_popout || self.stream_fullscreen) && !self.has_live_stream() {
+            self.stream_popout = false;
+            self.stream_fullscreen = false;
+            self.stream_popout_rgba = None;
+        }
+        if self.stream_fullscreen {
+            self.draw_stream_theater(ui);
+        }
         if ui.is_key_pressed(Key::Escape) {
-            if self.debug_open {
+            if self.stream_fullscreen {
+                self.stream_fullscreen = false;
+            } else if self.debug_open {
                 self.debug_open = false;
             } else if self.crop_open && !self.settings.is_open() {
                 self.crop_open = false;
@@ -8267,6 +8319,14 @@ impl App {
         self.camera = false;
         self.screen = false;
         self.share.stop();
+        self.close_stream_watch();
+    }
+
+    fn close_stream_watch(&mut self) {
+        self.stream_popout = false;
+        self.stream_fullscreen = false;
+        self.focused_streamer = None;
+        self.stream_popout_rgba = None;
     }
 
     fn open_share(&mut self) {
@@ -8290,10 +8350,11 @@ impl App {
         }
         for name in [
             "mic", "mic-off", "headphones", "headphone-off", "video", "video-off", "monitor", "monitor-off",
-            "phone-off", "settings", "chevron-down", "chevron-up", "plus", "hash", "volume-2", "users", "search", "paperclip",
-            "x", "user", "log-out", "pencil", "trash-2", "reply", "check", "chevron-right", "circle-plus", "folder",
-            "folder-plus", "message-circle", "phone", "user-plus", "signal", "ellipsis", "minus", "home",
-            "image", "file-text", "sticky-note", "circle", "square", "type", "mouse-pointer-2",
+            "phone-off", "settings", "chevron-down", "chevron-up", "chevron-left", "plus", "hash", "volume-2", "users",
+            "search", "paperclip", "x", "user", "log-out", "pencil", "trash-2", "reply", "check", "chevron-right",
+            "circle-plus", "folder", "folder-plus", "message-circle", "phone", "user-plus", "signal", "ellipsis",
+            "minus", "home", "image", "file-text", "sticky-note", "circle", "square", "type", "mouse-pointer-2",
+            "maximize", "minimize", "picture-in-picture-2",
         ] {
             if let Ok(rgba) = rasterize_lucide(name, 32, [255, 255, 255]) {
                 if let Some(shot) = upload_rgba(imgui, 32, 32, &rgba) {
@@ -9520,40 +9581,436 @@ impl App {
     }
 
     fn draw_featured_screen_at(&mut self, ui: &Ui, origin: [f32; 2], width: f32, height: f32) {
-        let featured = if self.screen {
-            self.local_screen.as_ref().map(|shot| (self.name_of(self.account.as_ref().map(|account| account.id).unwrap_or(0)), shot.texture, shot.size))
-        } else {
-            None
-        };
-        let featured = featured.or_else(|| {
-            self.voice_members.iter().find(|member| member.flags.screen).and_then(|member| {
-                self.remote_video.get(&(member.user_id, 3)).map(|shot| (self.name_of(member.user_id), shot.texture, shot.size))
-            })
-        });
         let max = [origin[0] + width, origin[1] + height];
         skin::rect(ui, origin, max, TILE_BG, TILE_RADIUS);
-        let Some((name, texture, size)) = featured else { return };
-        let shown = if self.screen_shown[0] > 1.0 { self.screen_shown } else { size };
-        let fitted = fit_inside(shown, width, height);
-        let x = origin[0] + (width - fitted[0]) * 0.5;
-        let y = origin[1] + (height - fitted[1]) * 0.5;
-        ui.get_window_draw_list().add_image_rounded(
-            texture,
-            [x, y],
-            [x + fitted[0], y + fitted[1]],
-            [0.0, 0.0],
-            [1.0, 1.0],
-            WHITE,
-            TILE_RADIUS,
-            DrawFlags::ROUND_ALL,
-        );
+        let Some(user_id) = self.focused_live_streamer() else { return };
+        let name = self.name_of(user_id);
+        if let Some((texture, size)) = self.stream_texture_for(user_id) {
+            let shown = if self.screen_shown[0] > 1.0 { self.screen_shown } else { size };
+            let fitted = fit_inside(shown, width, height);
+            let x = origin[0] + (width - fitted[0]) * 0.5;
+            let y = origin[1] + (height - fitted[1]) * 0.5;
+            ui.get_window_draw_list().add_image_rounded(
+                texture,
+                [x, y],
+                [x + fitted[0], y + fitted[1]],
+                [0.0, 0.0],
+                [1.0, 1.0],
+                WHITE,
+                TILE_RADIUS,
+                DrawFlags::ROUND_ALL,
+            );
+        }
+        // Theater mode draws its own fading chrome on top of the shell.
+        if self.stream_fullscreen {
+            return;
+        }
         self.name_tag(ui, [origin[0] + 8.0, max[1] - 8.0 - 24.0], &name, None, true);
-        if let Some(member) = self.voice_members.iter().find(|member| member.flags.screen).cloned() {
-            let me = self.account.as_ref().map(|account| account.id);
-            if Some(member.user_id) != me {
-                self.quality_control(ui, member.user_id, MediaKind::Screen, [origin[0] + 8.0, origin[1] + 8.0]);
+        self.draw_stream_watch_controls(ui, origin, width, 1.0);
+        let me = self.account.as_ref().map(|account| account.id);
+        if Some(user_id) != me {
+            self.quality_control(ui, user_id, MediaKind::Screen, [origin[0] + 8.0, origin[1] + 8.0]);
+        }
+    }
+
+    fn live_streamer_ids(&self) -> Vec<i64> {
+        let me = self.account.as_ref().map(|account| account.id);
+        let members: Vec<(i64, bool)> = if self.voice_channel.is_some() {
+            self.voice_members
+                .iter()
+                .map(|member| (member.user_id, member.flags.screen))
+                .collect()
+        } else if let Some(call) = &self.call {
+            let peer = if Some(call.caller) == me { call.callee } else { call.caller };
+            let mut rows = vec![(peer, false)];
+            if let Some(me) = me {
+                rows.push((me, self.screen));
+            }
+            // Remote screen flag is not on DM call members; infer from remote video / voice_members.
+            for member in &self.voice_members {
+                if let Some(row) = rows.iter_mut().find(|(id, _)| *id == member.user_id) {
+                    row.1 = member.flags.screen;
+                } else {
+                    rows.push((member.user_id, member.flags.screen));
+                }
+            }
+            // Any remote screen texture counts as live even if the roster flag lags.
+            for ((user_id, code), _) in &self.remote_video {
+                if *code == 3 {
+                    if let Some(row) = rows.iter_mut().find(|(id, _)| *id == *user_id) {
+                        row.1 = true;
+                    } else {
+                        rows.push((*user_id, true));
+                    }
+                }
+            }
+            rows
+        } else {
+            self.voice_members
+                .iter()
+                .map(|member| (member.user_id, member.flags.screen))
+                .collect()
+        };
+        streaming_user_ids(self.screen, me, &members)
+    }
+
+    fn focused_live_streamer(&self) -> Option<i64> {
+        resolve_focused_streamer(self.focused_streamer, &self.live_streamer_ids())
+    }
+
+    fn has_live_stream(&self) -> bool {
+        !self.live_streamer_ids().is_empty()
+    }
+
+    fn stream_texture_for(&self, user_id: i64) -> Option<(ManagedTextureId, [f32; 2])> {
+        let me = self.account.as_ref().map(|account| account.id);
+        if Some(user_id) == me {
+            return self.local_screen.as_ref().map(|shot| (shot.texture, shot.size));
+        }
+        self.remote_video
+            .get(&(user_id, 3))
+            .map(|shot| (shot.texture, shot.size))
+    }
+
+    fn maybe_keep_stream_popout_frame(&mut self, frame: &VideoFrame) {
+        if !self.stream_popout || frame.kind != MediaKind::Screen {
+            return;
+        }
+        let Some((width, height, rgba)) = frame.rgba.as_ref() else {
+            return;
+        };
+        let me = self.account.as_ref().map(|account| account.id);
+        let focus = self.focused_live_streamer();
+        let frame_user = frame.sender.or(me);
+        if frame_user == focus {
+            self.stream_popout_rgba = Some((*width, *height, rgba.clone()));
+        }
+    }
+
+    fn cycle_focused_streamer(&mut self) {
+        let live = self.live_streamer_ids();
+        self.focused_streamer = cycle_streamer(self.focused_streamer, &live);
+        self.stream_pointer_at = Instant::now();
+    }
+
+    /// Top-right watch controls on the featured stream: cycle, pop-out, fullscreen.
+    fn draw_stream_watch_controls(&mut self, ui: &Ui, origin: [f32; 2], width: f32, alpha: f32) {
+        let live = self.live_streamer_ids();
+        let mut buttons: Vec<(&str, &str, &str)> = Vec::new();
+        if live.len() > 1 {
+            buttons.push(("stream-cycle", "chevron-right", "Next Stream"));
+        }
+        buttons.push((
+            "stream-popout",
+            "picture-in-picture-2",
+            if self.stream_popout {
+                "Close Pop Out"
+            } else {
+                "Pop Out"
+            },
+        ));
+        buttons.push((
+            "stream-fullscreen",
+            if self.stream_fullscreen { "minimize" } else { "maximize" },
+            if self.stream_fullscreen {
+                "Exit Fullscreen"
+            } else {
+                "Fullscreen"
+            },
+        ));
+        let total_w = buttons.len() as f32 * STREAM_WATCH_BTN
+            + buttons.len().saturating_sub(1) as f32 * STREAM_WATCH_BTN_GAP;
+        let mut x = origin[0] + width - STREAM_WATCH_PAD - total_w;
+        let y = origin[1] + STREAM_WATCH_PAD;
+        let fill = [CONTROL_BG[0], CONTROL_BG[1], CONTROL_BG[2], CONTROL_BG[3] * alpha];
+        let hover = [CONTROL_HOVER[0], CONTROL_HOVER[1], CONTROL_HOVER[2], CONTROL_HOVER[3] * alpha];
+        let tint = [WHITE[0], WHITE[1], WHITE[2], alpha];
+        let semi = self.semibold_font;
+        for (id, icon, tip) in buttons {
+            ui.set_cursor_screen_pos([x, y]);
+            let clicked = ui.invisible_button(id, [STREAM_WATCH_BTN, STREAM_WATCH_BTN]);
+            let color = if ui.is_item_hovered() { hover } else { fill };
+            skin::rect(
+                ui,
+                [x, y],
+                [x + STREAM_WATCH_BTN, y + STREAM_WATCH_BTN],
+                color,
+                STREAM_WATCH_BTN * 0.5,
+            );
+            let inset = (STREAM_WATCH_BTN - STREAM_WATCH_ICON) * 0.5;
+            skin::image(
+                ui,
+                self.icon(icon),
+                [x + inset, y + inset],
+                STREAM_WATCH_ICON,
+                tint,
+            );
+            if alpha > 0.5 {
+                skin::item_tooltip(ui, semi, tip);
+            }
+            if clicked {
+                match id {
+                    "stream-cycle" => self.cycle_focused_streamer(),
+                    "stream-popout" => {
+                        self.stream_popout = !self.stream_popout;
+                        if !self.stream_popout {
+                            self.stream_popout_rgba = None;
+                        }
+                        self.stream_pointer_at = Instant::now();
+                    }
+                    "stream-fullscreen" => {
+                        self.stream_fullscreen = !self.stream_fullscreen;
+                        self.stream_pointer_at = Instant::now();
+                    }
+                    _ => {}
+                }
+            }
+            x += STREAM_WATCH_BTN + STREAM_WATCH_BTN_GAP;
+        }
+    }
+
+    /// Full-window theater view for the focused stream; chrome fades after pointer idle.
+    fn draw_stream_theater(&mut self, ui: &Ui) {
+        let display = ui.io().display_size();
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR
+            | WindowFlags::NO_SCROLL_WITH_MOUSE
+            | WindowFlags::NO_NAV;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, skin::CLEAR);
+        ui.window("##stream-theater")
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size(display, Condition::Always)
+            .build(|| {
+                let origin = [0.0, 0.0];
+                skin::rect(ui, origin, display, CALL_BG, 0.0);
+                let Some(user_id) = self.focused_live_streamer() else { return };
+                let name = self.name_of(user_id);
+                if let Some((texture, size)) = self.stream_texture_for(user_id) {
+                    let shown = if self.screen_shown[0] > 1.0 { self.screen_shown } else { size };
+                    let fitted = fit_inside(shown, display[0], display[1]);
+                    let x = (display[0] - fitted[0]) * 0.5;
+                    let y = (display[1] - fitted[1]) * 0.5;
+                    ui.get_window_draw_list().add_image(
+                        texture,
+                        [x, y],
+                        [x + fitted[0], y + fitted[1]],
+                        [0.0, 0.0],
+                        [1.0, 1.0],
+                        WHITE,
+                    );
+                }
+                let chrome = stream_chrome_alpha(
+                    self.stream_pointer_at.elapsed().as_secs_f32(),
+                    true,
+                );
+                if chrome > STREAM_CHROME_HIDE_ALPHA {
+                    self.name_tag(
+                        ui,
+                        [STREAM_WATCH_PAD, display[1] - STREAM_WATCH_PAD - 24.0],
+                        &name,
+                        None,
+                        true,
+                    );
+                    self.draw_stream_watch_controls(ui, origin, display[0], chrome);
+                }
+            });
+    }
+
+    /// Banter Stream OS window content (own ImGui context / textures).
+    pub(crate) fn draw_stream_popout_window(&mut self, ui: &Ui) {
+        let size = ui.io().display_size();
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR
+            | WindowFlags::NO_SCROLL_WITH_MOUSE;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, CALL_BG);
+        ui.window(STREAM_POPOUT_WINDOW_TITLE)
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size(size, Condition::Always)
+            .build(|| {
+                let origin = [0.0, 0.0];
+                skin::rect(ui, origin, size, CALL_BG, 0.0);
+                let name = self
+                    .focused_live_streamer()
+                    .map(|id| self.name_of(id))
+                    .unwrap_or_else(|| "Stream".to_string());
+                if let Some(shot) = self.stream_popout_shot.as_ref() {
+                    let fitted = fit_inside(shot.size, size[0], size[1]);
+                    let x = (size[0] - fitted[0]) * 0.5;
+                    let y = (size[1] - fitted[1]) * 0.5;
+                    ui.get_window_draw_list().add_image(
+                        shot.texture,
+                        [x, y],
+                        [x + fitted[0], y + fitted[1]],
+                        [0.0, 0.0],
+                        [1.0, 1.0],
+                        WHITE,
+                    );
+                }
+                let chrome = stream_chrome_alpha(
+                    self.stream_pointer_at.elapsed().as_secs_f32(),
+                    true,
+                );
+                if chrome > STREAM_CHROME_HIDE_ALPHA {
+                    self.name_tag(
+                        ui,
+                        [STREAM_WATCH_PAD, size[1] - STREAM_WATCH_PAD - 24.0],
+                        &name,
+                        None,
+                        true,
+                    );
+                    // Pop-out window: cycle + close pop-out (no nested OS fullscreen here).
+                    let live = self.live_streamer_ids();
+                    let mut x = size[0] - STREAM_WATCH_PAD - STREAM_WATCH_BTN;
+                    if live.len() > 1 {
+                        x -= STREAM_WATCH_BTN + STREAM_WATCH_BTN_GAP;
+                    }
+                    let y = STREAM_WATCH_PAD;
+                    let fill = [CONTROL_BG[0], CONTROL_BG[1], CONTROL_BG[2], CONTROL_BG[3] * chrome];
+                    let hover = [
+                        CONTROL_HOVER[0],
+                        CONTROL_HOVER[1],
+                        CONTROL_HOVER[2],
+                        CONTROL_HOVER[3] * chrome,
+                    ];
+                    let tint = [WHITE[0], WHITE[1], WHITE[2], chrome];
+                    if live.len() > 1 {
+                        ui.set_cursor_screen_pos([x, y]);
+                        if ui.invisible_button("popout-cycle", [STREAM_WATCH_BTN, STREAM_WATCH_BTN]) {
+                            self.cycle_focused_streamer();
+                        }
+                        let color = if ui.is_item_hovered() { hover } else { fill };
+                        skin::rect(
+                            ui,
+                            [x, y],
+                            [x + STREAM_WATCH_BTN, y + STREAM_WATCH_BTN],
+                            color,
+                            STREAM_WATCH_BTN * 0.5,
+                        );
+                        let inset = (STREAM_WATCH_BTN - STREAM_WATCH_ICON) * 0.5;
+                        skin::image(
+                            ui,
+                            self.icon("chevron-right"),
+                            [x + inset, y + inset],
+                            STREAM_WATCH_ICON,
+                            tint,
+                        );
+                        x += STREAM_WATCH_BTN + STREAM_WATCH_BTN_GAP;
+                    }
+                    ui.set_cursor_screen_pos([x, y]);
+                    if ui.invisible_button("popout-close", [STREAM_WATCH_BTN, STREAM_WATCH_BTN]) {
+                        self.stream_popout = false;
+                        self.stream_popout_rgba = None;
+                    }
+                    let color = if ui.is_item_hovered() { hover } else { fill };
+                    skin::rect(
+                        ui,
+                        [x, y],
+                        [x + STREAM_WATCH_BTN, y + STREAM_WATCH_BTN],
+                        color,
+                        STREAM_WATCH_BTN * 0.5,
+                    );
+                    let inset = (STREAM_WATCH_BTN - STREAM_WATCH_ICON) * 0.5;
+                    skin::image(
+                        ui,
+                        self.icon("x"),
+                        [x + inset, y + inset],
+                        STREAM_WATCH_ICON,
+                        tint,
+                    );
+                }
+            });
+    }
+
+    pub(crate) fn prepare_stream_popout(&mut self, imgui: &mut Context) {
+        if !self.stream_popout_styled {
+            apply_discord_style(imgui.style_mut());
+            self.stream_popout_styled = true;
+        }
+        if !self.stream_popout_icons_ready {
+            for name in [
+                "chevron-right",
+                "x",
+                "picture-in-picture-2",
+                "maximize",
+                "minimize",
+            ] {
+                if let Ok(rgba) = rasterize_lucide(name, 32, [255, 255, 255]) {
+                    if let Some(shot) = upload_rgba(imgui, 32, 32, &rgba) {
+                        self.stream_popout_icons.insert(name.to_string(), shot);
+                    }
+                }
+            }
+            self.stream_popout_icons_ready = true;
+        }
+        if let Some((width, height, rgba)) = self.stream_popout_rgba.take() {
+            if let Some(shot) = upload_rgba(imgui, width, height, &rgba) {
+                replace_shot(imgui, &mut self.stream_popout_shot, shot);
             }
         }
+    }
+
+    pub(crate) fn begin_stream_popout_surface(
+        &mut self,
+        bold: Option<FontId>,
+        semibold: Option<FontId>,
+        italic: Option<FontId>,
+        bold_italic: Option<FontId>,
+    ) {
+        assert!(
+            self.stream_popout_font_backup.is_none(),
+            "begin_stream_popout_surface must not nest"
+        );
+        self.stream_popout_font_backup = Some((
+            self.bold_font,
+            self.semibold_font,
+            self.italic_font,
+            self.bold_italic_font,
+        ));
+        self.bold_font = bold;
+        self.semibold_font = semibold;
+        self.italic_font = italic;
+        self.bold_italic_font = bold_italic;
+        std::mem::swap(&mut self.icons, &mut self.stream_popout_icons);
+        std::mem::swap(&mut self.icons_ready, &mut self.stream_popout_icons_ready);
+    }
+
+    pub(crate) fn end_stream_popout_surface(&mut self) {
+        let Some((bold, semibold, italic, bold_italic)) = self.stream_popout_font_backup.take() else {
+            panic!("end_stream_popout_surface without begin_stream_popout_surface");
+        };
+        self.bold_font = bold;
+        self.semibold_font = semibold;
+        self.italic_font = italic;
+        self.bold_italic_font = bold_italic;
+        std::mem::swap(&mut self.icons, &mut self.stream_popout_icons);
+        std::mem::swap(&mut self.icons_ready, &mut self.stream_popout_icons_ready);
+    }
+
+    pub(crate) fn release_stream_popout_gpu(&mut self, imgui: &mut Context) {
+        for (_, shot) in self.stream_popout_icons.drain() {
+            let _ = imgui.remove_texture(shot.texture);
+        }
+        self.stream_popout_icons_ready = false;
+        if let Some(shot) = self.stream_popout_shot.take() {
+            let _ = imgui.remove_texture(shot.texture);
+        }
+        self.stream_popout_rgba = None;
+        self.stream_popout_styled = false;
+        self.stream_popout_font_backup = None;
     }
 
     /// Bottom-left tile label: name, then a mute or deafen icon, and a red LIVE badge for a stream.

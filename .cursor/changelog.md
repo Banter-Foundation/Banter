@@ -1,3 +1,7 @@
+## 2026-11-05 10:25:23 -06:00 [Winter] — Stream watch pop-out, cycle, fullscreen fade
+
+Featured screen shares gain watch chrome: Pop Out opens a Banter Stream shared-GLFW window, Next Stream cycles live sharers, and Fullscreen fills the Banter window with chrome that fades after pointer idle and returns on mouse move (Escape exits). Logic in `stream_watch.rs`; metrics `STREAM_WATCH_*`. Left encoder quality / mid-stream refresh controls alone for the parallel worker.
+
 ## 2026-11-02 22:51:20 -06:00 [Winter] — Banter desktop foundation
 
 The local server keeps accounts, servers, channels, messages, and files in SQLite. The desktop client is a GLFW OpenGL window using Dear ImGui's docking branch. Voice, calls, and presence reset when the server process stops.

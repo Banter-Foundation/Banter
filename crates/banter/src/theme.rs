@@ -191,6 +191,12 @@ pub const TILE_AVATAR: f32 = 80.0;
 /// Large peer avatar while a 1:1 DM call is ringing (Discord-style center stage).
 pub const CALL_RING_AVATAR: f32 = 120.0;
 
+// Stream watch chrome (pop-out / cycle / fullscreen).
+pub const STREAM_WATCH_BTN: f32 = 36.0;
+pub const STREAM_WATCH_BTN_GAP: f32 = 8.0;
+pub const STREAM_WATCH_PAD: f32 = 10.0;
+pub const STREAM_WATCH_ICON: f32 = 20.0;
+
 // Floating surfaces.
 pub const TOOLTIP_PAD_X: f32 = 12.0;
 pub const TOOLTIP_PAD_Y: f32 = 8.0;
