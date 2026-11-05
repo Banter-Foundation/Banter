@@ -52,7 +52,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | BFMD parse / serialize (v1 commands) | Working — `crates/banter/src/bfmd.rs` + tests |
 | Persist BFMD in message `body` | Working — plain text unchanged |
 | Message-row ImGui render (runs) | Working — bold/italic/underline/strike/size/color/bg/hr |
-| Composer B/I/U/S toolbar | Working — toggles whole draft (ImGui selection limited) |
+| Composer B/I/U/S toolbar | Removed (BA-94) — chrome only; paste/typed BFMD still parses and renders |
 
 Authoritative language: [bfmd.md](bfmd.md). Not CommonMark.
 
