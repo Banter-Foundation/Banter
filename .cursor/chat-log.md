@@ -965,3 +965,5 @@ Agent: Root cause — one ImGui context with two NewFrames across two GLFW windo
 Settings ImGui uses its own context so clicks/keys/Escape/X should work; do not merge until Owl confirms on Windows.
 
 Agent: PR #49 opened (ManagePullRequest; gh createPullRequest scope missing). Do not merge until Owl confirms.
+
+Owl: merge it's fixed. Merged #49 via gh (`84b10e6`). No release.
