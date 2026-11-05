@@ -14,6 +14,7 @@ mod channel_icons;
 mod codec;
 mod cosmetics;
 mod debuglog;
+mod errcode;
 mod error;
 mod folders;
 mod http;
@@ -31,6 +32,10 @@ pub use codec::{sdp_fixture, sdp_matches_contract, stun_url, turn_server, H264_F
 pub use cosmetics::{
     cosmetics_catalog, display_name_style_color, CosmeticItem, CosmeticKind, DEFAULT_THEME_PRIMARY,
     DEFAULT_THEME_SECONDARY,
+};
+pub use errcode::{
+    format_banter_notice, BanterIssue, ERR_HTTP_PARSE, ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_FLAGS,
+    ERR_VC_JOIN, ERR_VC_LEAVE, ERR_VC_PUBLISH, ERR_WS_CONNECT, ERR_WS_DROPPED,
 };
 pub use error::BanterError;
 pub use folders::{folder_color_ok, folder_depth, would_cycle, MAX_SERVER_FOLDERS, MAX_SERVER_FOLDER_DEPTH};

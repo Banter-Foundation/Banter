@@ -27,8 +27,12 @@ mod skin;
 pub mod theme;
 mod ui;
 
-pub use api::{Client, websocket_url};
-pub use banter_server::{ServerFolder, ServerRail, ServerRailServer, ServerSummary};
+pub use api::{websocket_url, ApiError, Client};
+pub use banter_server::{
+    format_banter_notice, ServerFolder, ServerRail, ServerRailServer, ServerSummary, ERR_HTTP_PARSE,
+    ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE, ERR_VC_PUBLISH, ERR_WS_CONNECT,
+    ERR_WS_DROPPED,
+};
 pub use bfmd::{parse as parse_bfmd, plain_text as bfmd_plain_text, Flag as BfmdFlag};
 pub use icons::rasterize_lucide;
 pub use logic::*;

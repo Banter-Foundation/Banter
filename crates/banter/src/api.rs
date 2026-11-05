@@ -8,27 +8,82 @@ use base64::Engine;
 use crate::profiler;
 use base64::engine::general_purpose::STANDARD;
 use banter_server::{
-    Account, CallSnapshot, Category, CategoryLayout, Channel, ChannelKind, ChatTarget, CosmeticItem,
-    DirectChat, Friend, FriendRequest, GuildRole, Mention, Message, Presence, ProfilePatch, ServerDebug,
-    ServerFolder, ServerFolderPatch, ServerHome, ServerRail, ServerRailServer, ServerSummary, Session,
-    UserProfile, VoiceFlags, VoiceMember,
+    format_banter_notice, Account, CallSnapshot, Category, CategoryLayout, Channel, ChannelKind, ChatTarget,
+    CosmeticItem, DirectChat, Friend, FriendRequest, GuildRole, Mention, Message, Presence, ProfilePatch,
+    ServerDebug, ServerFolder, ServerFolderPatch, ServerHome, ServerRail, ServerRailServer, ServerSummary,
+    Session, UserProfile, VoiceFlags, VoiceMember, ERR_HTTP_PARSE, ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT,
+    ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
 };
 use serde::Deserialize;
 
+/// Client-side API failure with a catalog code (BA-88). Display is short user text + code.
 #[derive(Debug)]
 pub struct ApiError {
+    code: String,
     message: String,
+    detail: Option<String>,
+    server_code: Option<String>,
 }
 
 impl ApiError {
     fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        let message = message.into();
+        Self {
+            code: ERR_HTTP_PARSE.to_string(),
+            message: "couldn't complete that request".into(),
+            detail: Some(message),
+            server_code: None,
+        }
+    }
+
+    fn from_issue(code: &'static str, message: impl Into<String>, detail: Option<String>) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.into(),
+            detail,
+            server_code: None,
+        }
+    }
+
+    /// Relabel this failure for a specific call site (voice flags, join, …).
+    /// Keeps a server-provided message when present; otherwise uses the call-site text.
+    fn context(self, code: &'static str, message: impl Into<String>) -> Self {
+        let call_site = message.into();
+        let (message, detail) = if self.server_code.is_some() {
+            let detail = self.detail.or_else(|| Some(format!("{call_site} [{code}]")));
+            (self.message, detail)
+        } else {
+            let prior = self.detail.unwrap_or(self.message);
+            (call_site, Some(prior))
+        };
+        Self {
+            code: code.to_string(),
+            message,
+            detail,
+            server_code: self.server_code,
+        }
+    }
+
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
+    }
+
+    pub fn server_code(&self) -> Option<&str> {
+        self.server_code.as_deref()
     }
 }
 
 impl std::fmt::Display for ApiError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message)
+        formatter.write_str(&format_banter_notice(&self.code, &self.message))
     }
 }
 
@@ -73,6 +128,8 @@ struct InviteBody {
 #[derive(Deserialize)]
 struct ErrorBody {
     error: String,
+    #[serde(default)]
+    code: Option<String>,
 }
 
 pub struct Client {
@@ -176,7 +233,7 @@ impl Client {
             .set("Content-Type", "application/octet-stream")
             .send_bytes(bytes);
         profiler::record_http("POST", "/v1/me/avatar", start.elapsed(), bytes.len(), 0);
-        self.finish(result)
+        self.finish("POST", "/v1/me/avatar", result)
     }
 
     pub fn clear_avatar(&self) -> Result<(), ApiError> {
@@ -190,7 +247,7 @@ impl Client {
             .set("Content-Type", "application/octet-stream")
             .send_bytes(bytes);
         profiler::record_http("POST", "/v1/me/banner", start.elapsed(), bytes.len(), 0);
-        self.finish(result)
+        self.finish("POST", "/v1/me/banner", result)
     }
 
     pub fn clear_banner(&self) -> Result<(), ApiError> {
@@ -203,7 +260,7 @@ impl Client {
         let response = self
             .auth(http().get(&self.url(&path)))
             .call()
-            .map_err(|err| self.http_error(err))?;
+            .map_err(|err| self.http_error("GET", &path, err))?;
         let bytes = response
             .into_reader()
             .bytes()
@@ -219,7 +276,7 @@ impl Client {
         let response = self
             .auth(http().get(&self.url(&path)))
             .call()
-            .map_err(|err| self.http_error(err))?;
+            .map_err(|err| self.http_error("GET", &path, err))?;
         let bytes = response
             .into_reader()
             .bytes()
@@ -477,7 +534,7 @@ impl Client {
         if let Some(query) = query.map(str::trim).filter(|query| !query.is_empty()) {
             request = request.query("q", query);
         }
-        let response = request.call().map_err(|err| self.http_error(err))?;
+        let response = request.call().map_err(|err| self.http_error("GET", &path, err))?;
         let resp_hint = content_length(&response);
         let value = response.into_json().map_err(|err| ApiError::new(err.to_string()))?;
         profiler::record_http("GET", &path, start.elapsed(), 0, resp_hint);
@@ -529,7 +586,7 @@ impl Client {
         let response = self
             .auth(http().get(&self.url(&path)))
             .call()
-            .map_err(|err| self.http_error(err))?;
+            .map_err(|err| self.http_error("GET", &path, err))?;
         let bytes = response
             .into_reader()
             .bytes()
@@ -560,14 +617,18 @@ impl Client {
     }
 
     pub fn join_voice(&self, channel_id: i64) -> Result<Vec<VoiceMember>, ApiError> {
-        self.send_json(
+        self.send_json_at(
+            "POST",
+            "/v1/voice/join",
             self.auth(http().post(&self.url("/v1/voice/join"))),
             serde_json::json!({ "channel_id": channel_id }),
         )
+        .map_err(|err| err.context(ERR_VC_JOIN, "couldn't join voice"))
     }
 
     pub fn leave_voice(&self) -> Result<(), ApiError> {
         self.call_empty("POST", "/v1/voice/leave", self.auth(http().post(&self.url("/v1/voice/leave"))))
+            .map_err(|err| err.context(ERR_VC_LEAVE, "couldn't leave voice"))
     }
 
     pub fn set_flags(&self, flags: VoiceFlags) -> Result<(), ApiError> {
@@ -577,6 +638,7 @@ impl Client {
             self.auth(http().post(&self.url("/v1/voice/flags"))),
             serde_json::json!(flags),
         )
+        .map_err(|err| err.context(ERR_VC_FLAGS, "couldn't update voice state"))
     }
 
     pub fn start_call(&self, dm_id: i64) -> Result<CallSnapshot, ApiError> {
@@ -614,9 +676,14 @@ impl Client {
 
     fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
         let start = Instant::now();
-        let response = self.auth(http().get(&self.url(path))).call().map_err(|err| self.http_error(err))?;
+        let response = self
+            .auth(http().get(&self.url(path)))
+            .call()
+            .map_err(|err| self.http_error("GET", path, err))?;
         let resp_hint = content_length(&response);
-        let value = response.into_json().map_err(|err| ApiError::new(err.to_string()))?;
+        let value = response.into_json().map_err(|err| {
+            ApiError::from_issue(ERR_HTTP_PARSE, "couldn't read the server reply", Some(err.to_string()))
+        })?;
         profiler::record_http("GET", path, start.elapsed(), 0, resp_hint);
         Ok(value)
     }
@@ -626,14 +693,28 @@ impl Client {
         request: ureq::Request,
         body: serde_json::Value,
     ) -> Result<T, ApiError> {
-        let start = Instant::now();
-        let req_bytes = serde_json::to_vec(&body).map(|bytes| bytes.len()).unwrap_or(0);
         let method = request.method().to_string();
         let path = path_from_url(request.url());
-        let response = request.send_json(body).map_err(|err| self.http_error(err))?;
+        self.send_json_at(&method, &path, request, body)
+    }
+
+    fn send_json_at<T: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        path: &str,
+        request: ureq::Request,
+        body: serde_json::Value,
+    ) -> Result<T, ApiError> {
+        let start = Instant::now();
+        let req_bytes = serde_json::to_vec(&body).map(|bytes| bytes.len()).unwrap_or(0);
+        let response = request
+            .send_json(body)
+            .map_err(|err| self.http_error(method, path, err))?;
         let resp_hint = content_length(&response);
-        let value = response.into_json().map_err(|err| ApiError::new(err.to_string()))?;
-        profiler::record_http(&method, &path, start.elapsed(), req_bytes, resp_hint);
+        let value = response.into_json().map_err(|err| {
+            ApiError::from_issue(ERR_HTTP_PARSE, "couldn't read the server reply", Some(err.to_string()))
+        })?;
+        profiler::record_http(method, path, start.elapsed(), req_bytes, resp_hint);
         Ok(value)
     }
 
@@ -648,33 +729,54 @@ impl Client {
         let req_bytes = serde_json::to_vec(&body).map(|bytes| bytes.len()).unwrap_or(0);
         let result = request.send_json(body);
         profiler::record_http(method, path, start.elapsed(), req_bytes, 0);
-        self.finish(result)
+        self.finish(method, path, result)
     }
 
     fn call_empty(&self, method: &str, path: &str, request: ureq::Request) -> Result<(), ApiError> {
         let start = Instant::now();
         let result = request.call();
         profiler::record_http(method, path, start.elapsed(), 0, 0);
-        self.finish(result)
+        self.finish(method, path, result)
     }
 
-    fn finish(&self, result: Result<ureq::Response, ureq::Error>) -> Result<(), ApiError> {
-        result.map(|_| ()).map_err(|err| self.http_error(err))
+    fn finish(
+        &self,
+        method: &str,
+        path: &str,
+        result: Result<ureq::Response, ureq::Error>,
+    ) -> Result<(), ApiError> {
+        result.map(|_| ()).map_err(|err| self.http_error(method, path, err))
     }
 
-    fn http_error(&self, error: ureq::Error) -> ApiError {
+    fn http_error(&self, method: &str, path: &str, error: ureq::Error) -> ApiError {
         match error {
-            ureq::Error::Status(_, response) => {
+            ureq::Error::Status(status, response) => {
                 let body = response.into_string().unwrap_or_default();
                 if let Ok(parsed) = serde_json::from_str::<ErrorBody>(&body) {
-                    ApiError::new(parsed.error)
+                    ApiError {
+                        code: parsed
+                            .code
+                            .clone()
+                            .unwrap_or_else(|| ERR_HTTP_STATUS.to_string()),
+                        message: parsed.error,
+                        detail: Some(format!("{method} {path} → HTTP {status}")),
+                        server_code: parsed.code,
+                    }
                 } else if body.is_empty() {
-                    ApiError::new("request failed")
+                    ApiError::from_issue(
+                        ERR_HTTP_STATUS,
+                        format!("server returned HTTP {status}"),
+                        Some(format!("{method} {path} → HTTP {status} empty body")),
+                    )
                 } else {
-                    ApiError::new(body)
+                    ApiError::from_issue(
+                        ERR_HTTP_STATUS,
+                        format!("server returned HTTP {status}"),
+                        Some(format!("{method} {path} → HTTP {status}: {body}")),
+                    )
                 }
             }
-            other => ApiError::new(other.to_string()),
+            other => ApiError::from_issue(ERR_HTTP_TRANSPORT, "couldn't reach the Banter server", Some(other.to_string())),
         }
     }
 }

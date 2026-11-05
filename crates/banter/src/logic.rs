@@ -346,6 +346,19 @@ pub fn push_to_talk_held(key_held: bool, button_held: bool, text_input_active: b
     button_held || (key_held && !text_input_active)
 }
 
+/// After a failed `POST /v1/voice/flags`, wait `backoff` before trying again.
+/// `last_failure = None` means ready immediately.
+pub fn voice_flags_retry_ready(
+    last_failure: Option<std::time::Instant>,
+    now: std::time::Instant,
+    backoff: std::time::Duration,
+) -> bool {
+    match last_failure {
+        None => true,
+        Some(at) => now.saturating_duration_since(at) >= backoff,
+    }
+}
+
 /// Open-mic frames quieter than this RMS are not sent. Push-to-talk does not use this gate.
 pub const OPEN_MIC_RMS: f32 = 180.0;
 
