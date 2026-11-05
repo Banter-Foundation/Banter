@@ -13,6 +13,8 @@
 - [*] Attach a file from the composer is temporarily disabled (BA-61): the attach control opens a Banter dialog that says exactly `Currently Unavailable` instead of uploading.
 - [*] Discord-style right-click menus on messages, members/friends/DMs, and channels (foundation actions only; kick/ban stay deferred)
 - [*] Drop-in voice with mute, deafen, push-to-talk, camera, and screen share. Voice & Video settings and stream quality drive the engine and are saved on this PC. Resolution and frame rate are also on the stage stream-options chevron so they can change while live without opening Settings. Stream audio mix sources are grouped under Audio channels and Apps. Voice/media failures use stable `BANTER_*` codes on the red notice strip (not opaque `request failed` or raw WASAPI `0x80070057`); see `docs/errors.md` (BA-87 / BA-88 / BA-92).
+- [*] Stream watch (BAN-9): pop out a Banter Stream OS window, cycle between users who are currently sharing, and fullscreen theater with chrome that fades on idle and returns on mouse move.
+
 - [*] 1:1 direct messages that can start a call. Starting or accepting a call opens a Discord-style call stage in that DM (large avatar while ringing, two tiles when active, shared call controls).
 - [*] Presence and mentions
 - [*] GLFW + OpenGL window with Dear ImGui docking

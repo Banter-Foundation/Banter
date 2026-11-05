@@ -26,6 +26,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Drop-in voice: mute, deafen, PTT, connection panel | Working (SFU rewrite outbound SSRC/PT on forward; open-mic Opus timeline) |
 | Camera on/off with mirrored local RGBA preview (~720p prefer; device MJPEG OK) | Working (device-dependent); wire is WebRTC H.264; remotes receive after RID map + forward SSRC rewrite |
 | Screen share Go Live + quality / source switching | Working (WebRTC H.264 SFU/P2P; remotes receive after RID map + forward SSRC rewrite) |
+| Stream watch: pop-out window, cycle live streamers, fullscreen chrome fade | Working — Banter Stream OS window; featured-stage cycle/pop-out/fullscreen; fullscreen UI fades on idle and returns on mouse move |
 | 1:1 DMs + start a call | Working — phone icon opens a Discord-style call stage (ringing avatar / two tiles when active) |
 | User Settings: My Account (display name, About Me, custom status), Voice & Video, Developer (Local/Remote API, persisted) in a dedicated Banter Settings OS window | Working |
 | Embedded + standalone server, PostgreSQL data | Working |

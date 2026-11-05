@@ -44,6 +44,8 @@ In Stream Select / stream options, checkable mix sources are grouped: **Audio ch
 
 Camera and screen frames are I420, then H.264. Local previews are RGBA (mirrored for the local camera). Stream-select thumbnails may still be JPEG stills. The resolution and frame-rate pickers are caps. They live in User Settings → Voice & Video → Screen share, in Stream Select, and in the stage stream-options menu (chevron beside Screen) so a live share can change quality without opening Settings. A prewarm cutover reconfigures the encoder on the next keyframe.
 
+Viewers can **pop out** the focused share into a Banter Stream OS window, **cycle** among users who are currently sharing, and enter **fullscreen** theater where watch chrome fades after pointer idle and returns on mouse movement. Those controls do not change encoder resolution or capture FPS.
+
 Hardware encode is probed and used when the bitstream is Constrained Baseline:
 
 - Linux: `h264_nvenc` when `libnvidia-encode` is present, otherwise `h264_vaapi` when `/dev/dri/renderD128` and ffmpeg’s VA-API encoder exist.

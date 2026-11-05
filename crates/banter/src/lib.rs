@@ -27,6 +27,7 @@ mod realtime;
 mod session;
 mod settings;
 mod skin;
+mod stream_watch;
 pub mod theme;
 mod ui;
 
@@ -52,6 +53,7 @@ pub use media::{
 pub use profile::*;
 pub use session::{clear_token, load_token, persist_login, save_token};
 pub use settings::*;
+pub use stream_watch::*;
 
 /// This client's Banter release label (same constant as the embedded server).
 pub fn client_version() -> &'static str {
