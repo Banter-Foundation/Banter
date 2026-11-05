@@ -88,6 +88,10 @@ Contract tests live in `crates/banter-server/tests/foundation.rs`. Client tree h
 - Voice & stream prefs restore from `voice.json` / `stream.json`. Home landing layout restores from `home.json`. Developer Local/Remote restores from `dev-server.json`.
 - Text chat **inside** a voice channel is deferred; the server rejects that path until Owl says otherwise.
 
+## Modding
+
+Client mods, server plugins, and external bots are specified and not loaded by this build. The contract is [modding/modding.md](modding/modding.md), with [mods](modding/mods.md), [plugins](modding/plugins.md), and [bots](modding/bots.md).
+
 ## Auth note (not finished)
 
 Password + unique username work locally. Email, 2FA, Steam/Discord/Google OAuth, and `auth.json` secrets are designed but not the day-to-day path yet. OAuth redirects must not use raw IPs; Steam still needs a public http(s) hostname when that work resumes.

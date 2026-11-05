@@ -537,6 +537,29 @@ The top server-rail control (Discord-home spot) uses a Lucide home icon and open
 - Drop DrawListMut before fold/line hit targets (dear-imgui #31 lesson)
 - Tests: theme reddit_* helpers; comment_tree ancestor chain
 
+## 2026-11-04 21:39:07 -05:00 [ubuntu] — Modding, plugin, and bot API docs
+
+The extension API is written down and not implemented. The client and server still do not load mods, plugins, or bot accounts.
+
+- [docs/modding.md](../docs/modding.md): sandbox, permissions and intents, immediate-mode render function, soft errors, hard errors, warnings, and export
+- [docs/mods.md](../docs/mods.md), [docs/plugins.md](../docs/plugins.md), and [docs/bots.md](../docs/bots.md): the three references
+- Linked from the README, architecture, overview, and contributing docs
+
+## 2026-11-04 21:45:23 -05:00 [ubuntu] — Modding docs live under docs/modding
+
+The four specification pages moved into `docs/modding/` so the modding references sit together. README, architecture, overview, and contributing point at the new paths.
+
+## 2026-11-04 21:54:41 -05:00 [ubuntu] — Mod memory budget and per-mod process rate
+
+A mod declares `memory_mb`. Asking for more than 150 MB adds a warning before it loads. Each mod keeps its own process rate, locked at 1,000,000 instructions and 50 ms, unless that user turns the lock off for that mod.
+
+## 2026-11-04 21:58:22 -05:00 [ubuntu] — Mod theme and load order
+
+Mod widgets start on the Banter theme. A mod can replace that default, restyle the Banter window, and pass a theme table on a single element. Enabled mods load, render, and receive events in one list the user can reorder.
+
+## 2026-11-04 22:06:29 -05:00 [ubuntu] — Plugin client install choice
+
+A plugin manifest sets `client` to `none`, `optional`, or `required`. `none` is server only: members are not prompted and there is no client bundle. `optional` and `required` ship a client script the member accepts before it runs.
 
 ## 2026-11-05 03:31:46 +0000 [ubuntu] — Fix Banter Settings dead UI and close (BA-84)
 
@@ -545,3 +568,4 @@ Settings opened and drew but ignored clicks/Escape/X and could not close cleanly
 ### Changelog
 - Bug fixes: per-pass ImGui focus from `receive_pointer`; Settings input when focused or hovered; poll mouse buttons on the Settings surface; destroy shared Settings GLFW window by clearing `is_shared` before Drop
 - Other: platform tests for focus contract and shared-window destroy; settings close/Escape desire tests
+
