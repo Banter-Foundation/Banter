@@ -6,6 +6,15 @@
 //! The main and Settings surfaces share one ImGui context with two NewFrame passes
 //! per tick. Each pass must set `AppFocused` from that surface's `receive_pointer`
 //! (GLFW Focus events alone are transition-only and will starve Settings of input).
+//!
+//! On Windows, shared-context Settings can still get CursorPos/MouseButton/Key in its
+//! event queue while `is_focused` / `is_hovered` lie and the main window stays
+//! "focused". Routing must honor those queued events (and cursor-in-bounds), or ImGui
+//! sees a dead UI while OS chrome close still works via `should_close`. While both
+//! surfaces run in one tick, never emit `Focus(false)` on the sibling pass — that
+//! clears key/mouse durations and Settings runs second with broken click/key edges.
+//! Prefer the Settings NewFrame first when the host is open.
+//!
 //! Shared GLFW children also need `is_shared` cleared before Drop or the OS window
 //! leaks as a zombie and looks like it "will not close".
 
@@ -133,90 +142,191 @@ pub(crate) fn run() -> Result<(), String> {
             .as_ref()
             .map(|host| host.window.is_hovered())
             .unwrap_or(false);
-        // Prefer the Settings surface whenever it has OS focus or the cursor is over it.
-        // Otherwise a sticky main-window focus leaves Settings with a dead UI.
-        let settings_receive = settings_host.is_some()
-            && (settings_focused || settings_hovered || !window.is_focused());
-        let main_receive = window.is_focused() && !settings_focused && !settings_hovered;
+        let settings_cursor_inside = settings_host
+            .as_ref()
+            .map(|host| cursor_inside_window_content(&host.window))
+            .unwrap_or(false);
+        let settings_queue_has_input = settings_events_indicate_input(&settings_events);
+        // Prefer Settings whenever GLFW says so, the cursor is in its content, its event
+        // queue saw input (focus/hover can lie on shared Windows windows), or main lost focus.
+        let settings_receive = settings_surface_receives_input(
+            settings_host.is_some(),
+            settings_focused,
+            settings_hovered,
+            settings_cursor_inside,
+            settings_queue_has_input,
+            window.is_focused(),
+        );
+        let main_receive = main_surface_receives_input(
+            window.is_focused(),
+            settings_focused,
+            settings_hovered,
+            settings_cursor_inside,
+            settings_queue_has_input,
+        );
 
         {
             let _prepare = crate::profiler::scope_section(crate::profiler::Section::Prepare);
             app.prepare(&mut imgui);
         }
 
-        // --- Main Banter window ---
-        feed_frame_io(
-            &mut imgui,
-            &window,
-            &main_events,
-            &mut app,
-            width,
-            height,
-            framebuffer_width,
-            framebuffer_height,
-            delta,
-            main_receive,
-        );
-        app.set_v_held(window.get_key(glfw::Key::V) == glfw::Action::Press);
-        unsafe {
-            gl.clear_color(0.08, 0.08, 0.10, 1.0);
-            gl.clear(glow::COLOR_BUFFER_BIT);
+        // When Banter Settings is open, run its NewFrame first. Emitting Focus(false) on a
+        // preceding main pass clears ImGui key/mouse durations; Settings then misses click
+        // and Escape edges even after Focus(true). Sibling passes use FocusMode::Leave.
+        let settings_open = settings_host.is_some();
+        if settings_open {
+            draw_settings_surface(
+                &mut imgui,
+                &mut renderer,
+                &gl,
+                &mut window,
+                settings_host.as_mut().expect("settings host open"),
+                &settings_events,
+                &mut app,
+                delta,
+                settings_receive,
+                /* emit_focus */ true,
+            )?;
+            draw_main_surface(
+                &mut imgui,
+                &mut renderer,
+                &gl,
+                &mut window,
+                &main_events,
+                &mut app,
+                width,
+                height,
+                framebuffer_width,
+                framebuffer_height,
+                delta,
+                main_receive,
+                /* emit_focus */ false,
+            )?;
+        } else {
+            draw_main_surface(
+                &mut imgui,
+                &mut renderer,
+                &gl,
+                &mut window,
+                &main_events,
+                &mut app,
+                width,
+                height,
+                framebuffer_width,
+                framebuffer_height,
+                delta,
+                main_receive,
+                /* emit_focus */ true,
+            )?;
         }
-        {
-            let _draw = crate::profiler::scope_section(crate::profiler::Section::Draw);
-            let ui = imgui.frame();
-            app.draw_main(&ui);
-        }
-        {
-            let _gl = crate::profiler::scope_section(crate::profiler::Section::Gl);
-            let pending = imgui.render(renderer.renderer_consumer().map_err(|err| err.to_string())?);
-            renderer.render(pending).map_err(|err| err.to_string())?;
-        }
-        window.swap_buffers();
+    }
+    Ok(())
+}
 
-        // --- Dedicated Banter Settings window (shared GL context) ---
-        if let Some(host) = settings_host.as_mut() {
-            let (sw, sh) = host.window.get_size();
-            let (fbw, fbh) = host.window.get_framebuffer_size();
-            if sw > 0 && sh > 0 {
-                host.window.make_current();
-                // Match the drawable to this window before clear/draw. The glow pass also
-                // sets a viewport from draw data; this keeps clear from using the main size.
-                unsafe {
-                    gl.viewport(0, 0, fbw, fbh);
-                }
-                feed_frame_io(
-                    &mut imgui,
-                    &host.window,
-                    &settings_events,
-                    &mut app,
-                    sw,
-                    sh,
-                    fbw,
-                    fbh,
-                    delta,
-                    settings_receive,
-                );
-                unsafe {
-                    gl.clear_color(0.08, 0.08, 0.10, 1.0);
-                    gl.clear(glow::COLOR_BUFFER_BIT);
-                }
-                {
-                    let ui = imgui.frame();
-                    app.draw_settings_window(&ui);
-                }
-                {
-                    let pending = imgui.render(renderer.renderer_consumer().map_err(|err| err.to_string())?);
-                    renderer.render(pending).map_err(|err| err.to_string())?;
-                }
-                host.window.swap_buffers();
-                window.make_current();
-                let (mfbw, mfbh) = window.get_framebuffer_size();
-                unsafe {
-                    gl.viewport(0, 0, mfbw, mfbh);
-                }
-            }
-        }
+fn draw_main_surface(
+    imgui: &mut Context,
+    renderer: &mut GlowRenderer,
+    gl: &glow::Context,
+    window: &mut glfw::PWindow,
+    main_events: &[glfw::WindowEvent],
+    app: &mut App,
+    width: i32,
+    height: i32,
+    framebuffer_width: i32,
+    framebuffer_height: i32,
+    delta: f64,
+    receive_pointer: bool,
+    emit_focus: bool,
+) -> Result<(), String> {
+    window.make_current();
+    unsafe {
+        gl.viewport(0, 0, framebuffer_width, framebuffer_height);
+    }
+    feed_frame_io(
+        imgui,
+        window,
+        main_events,
+        app,
+        width,
+        height,
+        framebuffer_width,
+        framebuffer_height,
+        delta,
+        receive_pointer,
+        emit_focus,
+    );
+    app.set_v_held(window.get_key(glfw::Key::V) == glfw::Action::Press);
+    unsafe {
+        gl.clear_color(0.08, 0.08, 0.10, 1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+    }
+    {
+        let _draw = crate::profiler::scope_section(crate::profiler::Section::Draw);
+        let ui = imgui.frame();
+        app.draw_main(&ui);
+    }
+    {
+        let _gl = crate::profiler::scope_section(crate::profiler::Section::Gl);
+        let pending = imgui.render(renderer.renderer_consumer().map_err(|err| err.to_string())?);
+        renderer.render(pending).map_err(|err| err.to_string())?;
+    }
+    window.swap_buffers();
+    Ok(())
+}
+
+fn draw_settings_surface(
+    imgui: &mut Context,
+    renderer: &mut GlowRenderer,
+    gl: &glow::Context,
+    main: &mut glfw::PWindow,
+    host: &mut SettingsHost,
+    settings_events: &[glfw::WindowEvent],
+    app: &mut App,
+    delta: f64,
+    receive_pointer: bool,
+    emit_focus: bool,
+) -> Result<(), String> {
+    let (sw, sh) = host.window.get_size();
+    let (fbw, fbh) = host.window.get_framebuffer_size();
+    if sw <= 0 || sh <= 0 {
+        return Ok(());
+    }
+    host.window.make_current();
+    // Match the drawable to this window before clear/draw. The glow pass also
+    // sets a viewport from draw data; this keeps clear from using the main size.
+    unsafe {
+        gl.viewport(0, 0, fbw, fbh);
+    }
+    feed_frame_io(
+        imgui,
+        &host.window,
+        settings_events,
+        app,
+        sw,
+        sh,
+        fbw,
+        fbh,
+        delta,
+        receive_pointer,
+        emit_focus,
+    );
+    unsafe {
+        gl.clear_color(0.08, 0.08, 0.10, 1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+    }
+    {
+        let ui = imgui.frame();
+        app.draw_settings_window(&ui);
+    }
+    {
+        let pending = imgui.render(renderer.renderer_consumer().map_err(|err| err.to_string())?);
+        renderer.render(pending).map_err(|err| err.to_string())?;
+    }
+    host.window.swap_buffers();
+    main.make_current();
+    let (mfbw, mfbh) = main.get_framebuffer_size();
+    unsafe {
+        gl.viewport(0, 0, mfbw, mfbh);
     }
     Ok(())
 }
@@ -297,9 +407,77 @@ fn create_settings_window(
 
 /// Dual NewFrame (main + Banter Settings) shares one ImGui context. GLFW `Focus` events only
 /// fire on transitions, so the main pass can leave `AppFocused = false` and starve the settings
-/// pass of clicks/keys. Each surface pass must write focus from `receive_pointer` itself.
+/// pass of clicks/keys. Each receiving surface pass must write focus from `receive_pointer`.
 fn imgui_focus_for_surface(receive_pointer: bool) -> bool {
     receive_pointer
+}
+
+/// True when Banter Settings must own ImGui pointer/key IO for this tick.
+///
+/// Shared-context GLFW windows on Windows can deliver client input into the Settings event
+/// queue while `is_focused` / `is_hovered` stay false and the main window reports focused.
+/// Ignoring that queue (BA-84 only checked focus/hover) leaves ImGui dead while OS chrome
+/// close still works via `should_close`.
+fn settings_surface_receives_input(
+    settings_open: bool,
+    settings_focused: bool,
+    settings_hovered: bool,
+    settings_cursor_inside: bool,
+    settings_queue_has_input: bool,
+    main_focused: bool,
+) -> bool {
+    settings_open
+        && (settings_focused
+            || settings_hovered
+            || settings_cursor_inside
+            || settings_queue_has_input
+            || !main_focused)
+}
+
+/// Main shell receives pointer only when it is focused and Settings is not claiming input.
+fn main_surface_receives_input(
+    main_focused: bool,
+    settings_focused: bool,
+    settings_hovered: bool,
+    settings_cursor_inside: bool,
+    settings_queue_has_input: bool,
+) -> bool {
+    main_focused
+        && !settings_focused
+        && !settings_hovered
+        && !settings_cursor_inside
+        && !settings_queue_has_input
+}
+
+/// Cursor position relative to a window's content area falls inside its size.
+fn cursor_inside_content(cursor_x: f64, cursor_y: f64, width: i32, height: i32) -> bool {
+    width > 0
+        && height > 0
+        && cursor_x >= 0.0
+        && cursor_y >= 0.0
+        && cursor_x < width as f64
+        && cursor_y < height as f64
+}
+
+fn cursor_inside_window_content(window: &glfw::Window) -> bool {
+    let (cursor_x, cursor_y) = window.get_cursor_pos();
+    let (width, height) = window.get_size();
+    cursor_inside_content(cursor_x, cursor_y, width, height)
+}
+
+/// Client-area input in the Settings GLFW queue — stronger than focus/hover attribs.
+fn settings_events_indicate_input(events: &[glfw::WindowEvent]) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event,
+            glfw::WindowEvent::CursorPos(_, _)
+                | glfw::WindowEvent::CursorEnter(_)
+                | glfw::WindowEvent::MouseButton(_, _, _)
+                | glfw::WindowEvent::Scroll(_, _)
+                | glfw::WindowEvent::Key(_, _, _, _)
+                | glfw::WindowEvent::Char(_)
+        )
+    })
 }
 
 fn feed_frame_io(
@@ -313,6 +491,7 @@ fn feed_frame_io(
     framebuffer_height: i32,
     delta: f64,
     receive_pointer: bool,
+    emit_focus: bool,
 ) {
     let io = imgui.io_mut();
     io.set_display_size([width as f32, height as f32]);
@@ -321,7 +500,11 @@ fn feed_frame_io(
     let scale_y = framebuffer_height as f32 / height as f32;
     io.set_display_framebuffer_scale([scale_x, scale_y]);
     // Per-pass focus — do not rely on GLFW Focus events across the dual NewFrame.
-    io.add_focus_event(imgui_focus_for_surface(receive_pointer));
+    // When the sibling surface already ran (or will run) this tick, leave AppFocused alone
+    // instead of emitting Focus(false), which clears key/mouse durations.
+    if emit_focus {
+        io.add_focus_event(imgui_focus_for_surface(receive_pointer));
+    }
     if receive_pointer {
         let (cursor_x, cursor_y) = window.get_cursor_pos();
         io.add_mouse_pos_event([cursor_x as f32, cursor_y as f32]);
@@ -334,19 +517,19 @@ fn feed_frame_io(
             // Focus is owned by `imgui_focus_for_surface` above for the dual-pass.
             glfw::WindowEvent::Focus(_) => {}
             glfw::WindowEvent::CursorPos(_, _) if receive_pointer => app.note_input(),
-            glfw::WindowEvent::MouseButton(_, _, _) if receive_pointer => app.note_input(),
-            glfw::WindowEvent::Scroll(_, _)
+            glfw::WindowEvent::MouseButton(_, _, _)
+            | glfw::WindowEvent::Scroll(_, _)
             | glfw::WindowEvent::Key(_, _, _, _)
             | glfw::WindowEvent::Char(_)
                 if receive_pointer =>
             {
+                // Feed press/release from the queue (same-frame click pulses) and note activity.
                 feed_event(io, app, event.clone());
             }
             _ => {}
         }
     }
-    // Poll buttons each pass so Settings does not depend on a single queued click event
-    // surviving the main-window NewFrame that runs earlier in the same tick.
+    // Poll buttons each pass so a missed queue edge still reaches ImGui while the button is held.
     let press = |button| window.get_mouse_button(button) == glfw::Action::Press;
     if receive_pointer {
         io.add_mouse_button_event(MouseButton::Left, press(glfw::MouseButton::Button1));
@@ -372,11 +555,15 @@ fn feed_frame_io(
             Key::ModSuper,
             either_key_held(held(glfw::Key::LeftSuper), held(glfw::Key::RightSuper)),
         );
+        // Poll Escape so Settings close works even when the Key event was coalesced away
+        // (CursorPos can flood the glfw-rs channel) while GLFW still holds the key state.
+        io.add_key_event(Key::Escape, held(glfw::Key::Escape));
     } else {
         io.add_key_event(Key::ModCtrl, false);
         io.add_key_event(Key::ModShift, false);
         io.add_key_event(Key::ModAlt, false);
         io.add_key_event(Key::ModSuper, false);
+        io.add_key_event(Key::Escape, false);
     }
 }
 
@@ -864,8 +1051,9 @@ fn map_key(key: glfw::Key) -> Option<Key> {
 #[cfg(test)]
 mod tests {
     use super::{
-        imgui_focus_for_surface, prepare_shared_settings_window_for_destroy,
-        wayland_position_unavailable,
+        cursor_inside_content, imgui_focus_for_surface, main_surface_receives_input,
+        prepare_shared_settings_window_for_destroy, settings_events_indicate_input,
+        settings_surface_receives_input, wayland_position_unavailable,
     };
 
     #[test]
@@ -888,6 +1076,55 @@ mod tests {
             imgui_focus_for_surface(true),
             "Banter Settings pass must set ImGui AppFocused so controls and close work"
         );
+    }
+
+    #[test]
+    fn settings_receives_input_when_event_queue_has_client_input_even_if_focus_lies() {
+        // Regression BA-85: shared Settings on Windows can queue CursorPos/MouseButton/Key
+        // while is_focused/is_hovered are false and main stays focused. OS chrome close still
+        // worked (#47); ImGui stayed dead because receive_pointer ignored the queue.
+        assert!(
+            settings_surface_receives_input(true, false, false, false, true, true),
+            "queued Settings client input must own ImGui IO even when GLFW focus/hover lie"
+        );
+        assert!(
+            !main_surface_receives_input(true, false, false, false, true),
+            "main must not keep ImGui pointer while Settings queue has client input"
+        );
+    }
+
+    #[test]
+    fn settings_receives_input_when_cursor_is_inside_content_bounds() {
+        assert!(cursor_inside_content(10.0, 20.0, 800, 600));
+        assert!(!cursor_inside_content(-1.0, 20.0, 800, 600));
+        assert!(!cursor_inside_content(10.0, 600.0, 800, 600));
+        assert!(
+            settings_surface_receives_input(true, false, false, true, false, true),
+            "cursor inside Settings content must receive even if hover attrib is false"
+        );
+        assert!(!main_surface_receives_input(true, false, false, true, false));
+    }
+
+    #[test]
+    fn settings_events_indicate_input_ignores_focus_and_close_only() {
+        assert!(!settings_events_indicate_input(&[glfw::WindowEvent::Focus(true)]));
+        assert!(!settings_events_indicate_input(&[glfw::WindowEvent::Close]));
+        assert!(settings_events_indicate_input(&[glfw::WindowEvent::CursorPos(
+            1.0, 2.0
+        )]));
+        assert!(settings_events_indicate_input(&[
+            glfw::WindowEvent::MouseButton(
+                glfw::MouseButton::Button1,
+                glfw::Action::Press,
+                glfw::Modifiers::empty(),
+            )
+        ]));
+        assert!(settings_events_indicate_input(&[glfw::WindowEvent::Key(
+            glfw::Key::Escape,
+            0,
+            glfw::Action::Press,
+            glfw::Modifiers::empty(),
+        )]));
     }
 
     /// glfw-rs `create_shared` sets `Window.is_shared = true`, and `Drop` then frees the

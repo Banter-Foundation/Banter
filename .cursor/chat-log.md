@@ -944,3 +944,12 @@ Agent: Root cause — dual NewFrame starved Settings of ImGui AppFocused; glfw-r
 
 ### Summary
 Settings receives input again and closes via X / Escape / OS chrome; shared child window is actually destroyed.
+
+## 2026-11-05 BA-85 Settings ImGui still unresponsive after #47
+
+Owl: After #47 merge (6cad5bd), Settings closes via Win11 OS chrome but ImGui controls still do nothing. Dig settings multi-window frame loop from latest main; make Settings ImGui fully interactive. Open PR; do not merge until Owl confirms UI works. Use gh for PR; no GitHub MCP. Prior notes ba84-settings-window-fix.md. Task BA-85.
+
+Agent: Root cause — Settings event queue can carry client input while GLFW focus/hover attribs lie (and main stays focused), so receive_pointer stayed false and ImGui got nothing; OS close still worked via should_close. Also Focus(false) on the preceding main NewFrame cleared durations before Settings. Fixed routing (queue + cursor bounds), Settings-first pass, sibling Focus Leave, mouse queue feed + Escape poll. Branch cursor/fix-settings-imgui-input-6a69. Report internal/ba85-settings-imgui-input.md.
+
+### Summary
+Settings ImGui should receive clicks/keys/Escape/X again; do not merge until Owl confirms on Windows.
