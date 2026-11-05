@@ -520,6 +520,15 @@ The server rail can group servers into nested folders. Each folder has an option
 - Nesting rules: per-user; folders under folders up to depth 8; delete promotes children; cycles rejected; invalid hex rejected
 - Tests: foundation `server_folders_nest_hex_color_collapse_and_delete`, client `server_folders`, migrate `005_server_folders`
 
+## 2026-11-04 23:19:41 +00:00 [ubuntu] — Home icon and customizable Home page (BA-81)
+
+The top server-rail control (Discord-home spot) uses a Lucide home icon and opens a customizable Home landing instead of treating that button as a DM-only destination. Direct Messages remain in the sidebar and as a Home section.
+
+### Changelog
+- New features: Lucide `home` rail icon; Home landing with Friends / Direct Messages / Servers / Recent sections; Customize (show/hide + reorder); `home.json` persistence; Recent tracks opened DMs and servers
+- Bug fixes: none
+- Other: sidebar Friends still opens the full people list; Home tests in `crates/banter/tests/home.rs`
+
 ## 2026-11-05 00:11:39 +0000 [ubuntu] — BA-82 Reddit-style reply thread lines
 
 - Match collapse chrome + vertical gutters to Reddit dark-mode reference (no L-hooks)

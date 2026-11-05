@@ -1206,6 +1206,157 @@ pub fn fps_from_key(key: &str) -> StreamFps {
     }
 }
 
+/// How many recent Home destinations to keep in `home.json`.
+pub const HOME_RECENT_LIMIT: usize = 12;
+
+/// One arrangeable block on the customizable Home landing (BA-81).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HomeSectionId {
+    Friends,
+    DirectMessages,
+    Servers,
+    Recent,
+}
+
+/// Show/hide flags for each Home section. Missing fields fall back to shown.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HomeSectionVisibility {
+    pub friends: bool,
+    pub direct_messages: bool,
+    pub servers: bool,
+    pub recent: bool,
+}
+
+impl Default for HomeSectionVisibility {
+    fn default() -> Self {
+        Self {
+            friends: true,
+            direct_messages: true,
+            servers: true,
+            recent: true,
+        }
+    }
+}
+
+/// A destination opened from Home (or elsewhere) for the Recent section.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HomeRecentKind {
+    DirectMessage,
+    Server,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HomeRecentEntry {
+    pub kind: HomeRecentKind,
+    pub id: i64,
+}
+
+/// Customizable Home landing layout. Lives in `home.json` under the data directory.
+///
+/// Missing fields fall back to the defaults, so an older `home.json` keeps the rest of its choices.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HomeLayout {
+    pub sections: Vec<HomeSectionId>,
+    pub visible: HomeSectionVisibility,
+    pub recent: Vec<HomeRecentEntry>,
+}
+
+impl Default for HomeLayout {
+    fn default() -> Self {
+        Self {
+            sections: vec![
+                HomeSectionId::Friends,
+                HomeSectionId::DirectMessages,
+                HomeSectionId::Servers,
+                HomeSectionId::Recent,
+            ],
+            visible: HomeSectionVisibility::default(),
+            recent: Vec::new(),
+        }
+    }
+}
+
+impl HomeLayout {
+    /// Deduplicate section order and append any missing defaults so older files stay usable.
+    pub fn normalize(mut layout: Self) -> Self {
+        let defaults = HomeLayout::default().sections;
+        let mut seen = HashSet::new();
+        layout.sections.retain(|id| seen.insert(*id));
+        for id in defaults {
+            if !layout.sections.contains(&id) {
+                layout.sections.push(id);
+            }
+        }
+        if layout.recent.len() > HOME_RECENT_LIMIT {
+            layout.recent.truncate(HOME_RECENT_LIMIT);
+        }
+        layout
+    }
+}
+
+pub fn home_section_label(id: HomeSectionId) -> &'static str {
+    match id {
+        HomeSectionId::Friends => "Friends",
+        HomeSectionId::DirectMessages => "Direct Messages",
+        HomeSectionId::Servers => "Servers",
+        HomeSectionId::Recent => "Recent",
+    }
+}
+
+pub fn home_section_is_visible(layout: &HomeLayout, id: HomeSectionId) -> bool {
+    match id {
+        HomeSectionId::Friends => layout.visible.friends,
+        HomeSectionId::DirectMessages => layout.visible.direct_messages,
+        HomeSectionId::Servers => layout.visible.servers,
+        HomeSectionId::Recent => layout.visible.recent,
+    }
+}
+
+pub fn set_home_section_visible(layout: &mut HomeLayout, id: HomeSectionId, visible: bool) {
+    match id {
+        HomeSectionId::Friends => layout.visible.friends = visible,
+        HomeSectionId::DirectMessages => layout.visible.direct_messages = visible,
+        HomeSectionId::Servers => layout.visible.servers = visible,
+        HomeSectionId::Recent => layout.visible.recent = visible,
+    }
+}
+
+/// Sections in layout order that are currently shown.
+pub fn visible_home_sections(layout: &HomeLayout) -> Vec<HomeSectionId> {
+    layout
+        .sections
+        .iter()
+        .copied()
+        .filter(|id| home_section_is_visible(layout, *id))
+        .collect()
+}
+
+/// Move a section one step in layout order. Returns false when it cannot move further.
+pub fn move_home_section(layout: &mut HomeLayout, id: HomeSectionId, delta: i32) -> bool {
+    let Some(index) = layout.sections.iter().position(|section| *section == id) else {
+        return false;
+    };
+    let target = index as i32 + delta;
+    if target < 0 || target as usize >= layout.sections.len() {
+        return false;
+    }
+    layout.sections.swap(index, target as usize);
+    true
+}
+
+/// Push a recent destination to the front, dedupe by kind+id, and cap length.
+pub fn push_home_recent(layout: &mut HomeLayout, entry: HomeRecentEntry) {
+    layout.recent.retain(|item| !(item.kind == entry.kind && item.id == entry.id));
+    layout.recent.insert(0, entry);
+    if layout.recent.len() > HOME_RECENT_LIMIT {
+        layout.recent.truncate(HOME_RECENT_LIMIT);
+    }
+}
+
 /// Window and display choices. Missing fields fall back to the defaults.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

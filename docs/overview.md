@@ -36,11 +36,12 @@ Typical files under the data directory:
 - `avatars/`, `files/` — blobs
 - `client-session.json` — last login token when **Stay signed in** was checked (shared across clients on this machine; last writer wins on next launch). Unchecked sign-in leaves no file so relaunch asks for credentials again.
 - `voice.json`, `stream.json` — Voice & Video and Go Live preferences
+- `home.json` — customizable Home landing section order, visibility, and recent destinations
 - `dev-server.json` — Developer Local vs Remote API target and remote host
 - `banter-dock.ini` — Dear ImGui layout
 - `auth.json` — reserved for future secrets; never commit it
 
-Do not commit anything under the Banter data directory, nor `auth.json`, `client-session.json`, `voice.json`, `stream.json`, `dev-server.json`, or `.env`.
+Do not commit anything under the Banter data directory, nor `auth.json`, `client-session.json`, `voice.json`, `stream.json`, `home.json`, `dev-server.json`, or `.env`.
 
 ## Listen address
 

@@ -914,6 +914,19 @@ Report PR URL + nesting rules.
 ### Summary
 Implemented per-user nested server-rail folders with hex colors, Postgres migration (renumbered to 005 after channel icons 004), API, and rail UX. Opened PR; merging after Owl said so.
 
+## 2026-11-04 BA-81 Home icon and customizable home page
+
+Owl wants:
+1. The corner button (server rail Home / Discord-like home control) to use a **home icon**
+2. That control should go to a **customizable home page** (not just a fixed DM list if that’s all it is now — make Home a customizable landing surface)
+
+Clarification: the button is the existing Direct Messages button on the server rail (top corner / Discord-home spot), not a new control. Replace that DM button’s icon with a home icon, and make clicking it open the customizable home page (DMs can live as a section/widget on that home page, not as the sole destination of that button).
+
+Repo: Banter-Foundation/Banter, branch from latest main. Use gh / ManagePullRequest; no GitHub MCP. Open PR; do not merge until Owl says so.
+
+### Summary
+Rail corner control now uses Lucide home and opens a customizable Home landing. Sections Friends / Direct Messages / Servers / Recent can be shown, hidden, and reordered; layout persists in `home.json`. Sidebar Friends still opens the people list. PR opened; do not merge until Owl says so.
+
 ## 2026-11-05 00:11:39 +0000 — BA-82 Reddit-style reply thread lines
 
 Owl wants Banter's reply/message thread lines to look exactly like Reddit (dark mode), matching the reference screenshot.
@@ -921,3 +934,4 @@ Agent: Branch `cursor/reddit-thread-lines-cd5c` from `origin/main`. Removed L-co
 
 ### Summary
 Visual/interaction fidelity for thread lines + collapse chrome only; reply tree semantics from #22/#34 unchanged.
+

@@ -51,6 +51,7 @@ fn lucide_svg(name: &str) -> Option<&'static str> {
         "folder" => include_str!("../assets/lucide/folder.svg"),
         "folder-plus" => include_str!("../assets/lucide/folder-plus.svg"),
         "hash" => include_str!("../assets/lucide/hash.svg"),
+        "home" => include_str!("../assets/lucide/home.svg"),
         "headphone-off" => include_str!("../assets/lucide/headphone-off.svg"),
         "headphones" => include_str!("../assets/lucide/headphones.svg"),
         "image" => include_str!("../assets/lucide/image.svg"),
