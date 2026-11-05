@@ -7,13 +7,13 @@ use std::collections::HashSet;
 use banter::{
     CameraChoice, CaptureKind, Client, CommentRow, MixSource, MixSourceGroup, MuteMemory, ScreenShare, SettingsSection,
     StreamDefaults, StreamFps, StreamResolution, VoicePrefs, camera_preview_mirrored, clear_token, comment_descendant_count,
-    comment_tree_rows, default_stream_fps, default_stream_resolution, discord_shell_columns, either_key_held,
-    encode_jpeg_rgba, encode_jpeg_rgba_quality, equal_power_gains, fps_block, grouped_mix_sources, hardware_encoder_block,
-    load_json, load_token, mic_opus_frame, mirror_rgba, mix_equal_power, mix_source_group, open_dm_peer_after_friend_add,
-    open_mic_should_send, password_blocks_copy, password_is_masked, persist_login, push_to_talk_held, rasterize_lucide,
-    remove_message, resample_mono_i16, resolution_block, save_json, save_token, settings_sections, speaking_from_level,
-    stamp_cursor, stream_frame_rates, stream_frame_size, stream_interval_ms, stream_max_edge, stream_resolutions,
-    toggle_comment_collapsed, upsert_message, websocket_url,
+    comment_tree_rows, default_stream_fps, default_stream_resolution, discord_shell_columns, dismiss_stream_overlays,
+    either_key_held, encode_jpeg_rgba, encode_jpeg_rgba_quality, equal_power_gains, fps_block, grouped_mix_sources,
+    hardware_encoder_block, load_json, load_token, mic_opus_frame, mirror_rgba, mix_equal_power, mix_source_group,
+    open_dm_peer_after_friend_add, open_mic_should_send, password_blocks_copy, password_is_masked, persist_login,
+    push_to_talk_held, rasterize_lucide, remove_message, resample_mono_i16, resolution_block, save_json, save_token,
+    settings_sections, speaking_from_level, stamp_cursor, stream_frame_rates, stream_frame_size, stream_interval_ms,
+    stream_max_edge, stream_resolutions, toggle_comment_collapsed, upsert_message, websocket_url,
 };
 use banter_server::{
     ChannelKind, ChatTarget, ClientSignal, LayerId, MediaKind, MediaPlace, Message, ServerEvent, VoiceFlags, sdp_fixture,
@@ -219,6 +219,18 @@ fn screen_share_waits_for_go_live() {
     assert_eq!(share.live_target(), None);
     share.stop();
     assert!(!share.is_portal());
+}
+
+#[test]
+fn leave_or_stop_dismisses_stream_overlays() {
+    let mut share_open = true;
+    let mut stream_menu = true;
+    dismiss_stream_overlays(&mut share_open, &mut stream_menu);
+    assert!(!share_open);
+    assert!(!stream_menu);
+    dismiss_stream_overlays(&mut share_open, &mut stream_menu);
+    assert!(!share_open);
+    assert!(!stream_menu);
 }
 
 #[test]

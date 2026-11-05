@@ -42,7 +42,7 @@ On macOS, voice and screen share need Privacy & Security grants. Ship and run **
 
 In Stream Select / stream options, checkable mix sources are grouped: **Audio channels** (`mic:` and `loop:` system devices) and **Apps** (`app:` process loopback). Several can stay on and mix into one stream-audio track; each keeps its own volume.
 
-Camera and screen frames are I420, then H.264. Local previews are RGBA (mirrored for the local camera). Stream-select thumbnails may still be JPEG stills. The resolution and frame-rate pickers are caps. They live in User Settings → Voice & Video → Screen share, in Stream Select, and in the stage stream-options menu (chevron beside Screen) so a live share can change quality without opening Settings. A prewarm cutover reconfigures the encoder on the next keyframe.
+Camera and screen frames are I420, then H.264. Local previews are RGBA (mirrored for the local camera). Stream-select thumbnails may still be JPEG stills. The resolution and frame-rate pickers are caps. They live in User Settings → Voice & Video → Screen share, in Stream Select, and in the stage stream-options menu (chevron beside Screen) so a live share can change quality without opening Settings. A prewarm cutover reconfigures the encoder on the next keyframe. Leaving a voice channel or call (Disconnect, peer hang-up), or stopping the share, dismisses Stream Select and Stream options so those overlays cannot linger after the place ends.
 
 Viewers can **pop out** the focused share into a Banter Stream OS window, **cycle** among users who are currently sharing, and enter **fullscreen** theater where watch chrome fades after pointer idle and returns on mouse movement. Those controls do not change encoder resolution or capture FPS.
 

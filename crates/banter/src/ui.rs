@@ -36,7 +36,7 @@ use crate::logic::{
     SettingsSection, StreamDefaults, StreamFps, StreamResolution, VideoPrefs, VoicePrefs, api_base_for,
     camera_preview_mirrored, channel_context_menu, channel_default_icon, channel_display_icon, clamp_context_menu_pos,
     clamp_window_size, comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution,
-    encode_jpeg_rgba, folder_context_menu, fps_block, fps_from_key, fps_key, grouped_mix_sources,
+    dismiss_stream_overlays, encode_jpeg_rgba, folder_context_menu, fps_block, fps_from_key, fps_key, grouped_mix_sources,
     hardware_encoder_block, home_section_is_visible, home_section_label, insert_mention, is_debug_command, lerp_size,
     load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, move_home_section,
     parse_folder_color, password_blocks_copy, plan_member_groups, password_is_masked, push_home_recent,
@@ -4458,8 +4458,7 @@ impl App {
             return;
         }
         if self.share.is_live() {
-            self.share.stop();
-            self.save_stream();
+            self.stop_streaming();
             return;
         }
         if media::native_screen_picker() {
@@ -5445,8 +5444,7 @@ impl App {
         let in_place = self.voice_channel.is_some()
             || self.call.as_ref().is_some_and(|call| call.phase == CallPhase::Active);
         if self.media.as_ref().is_some_and(|media| media.take_capture_failure()) {
-            self.share.stop();
-            self.save_stream();
+            self.stop_streaming();
         }
         self.screen = self.share.is_live() && in_place;
         // voice_flags clears transmitting while muted/deafened (guild VC and DM calls).
@@ -6161,7 +6159,8 @@ impl App {
             }
             ServerEvent::CallEnded { dm_id } => {
                 if self.call.as_ref().map(|call| call.dm_id) == Some(dm_id) {
-                    self.call = None;
+                    // Peer hang-up / remote end: same cleanup as Disconnect (drops stream overlays).
+                    self.end_media_place();
                 }
             }
             ServerEvent::RtcOffer { .. }
@@ -8319,7 +8318,14 @@ impl App {
         self.camera = false;
         self.screen = false;
         self.share.stop();
+        dismiss_stream_overlays(&mut self.share_open, &mut self.stream_menu);
         self.close_stream_watch();
+    }
+
+    fn stop_streaming(&mut self) {
+        self.share.stop();
+        dismiss_stream_overlays(&mut self.share_open, &mut self.stream_menu);
+        self.save_stream();
     }
 
     fn close_stream_watch(&mut self) {
@@ -9367,8 +9373,7 @@ impl App {
                         true,
                         semi,
                     ) {
-                        self.share.stop();
-                        self.share_open = false;
+                        self.stop_streaming();
                     }
                     right -= 8.0;
                 }
@@ -10651,9 +10656,7 @@ impl App {
                 if self.share.is_live() {
                     ui.same_line();
                     if ui.button("Stop streaming") {
-                        self.share.stop();
-                        self.stream_menu = false;
-                        self.save_stream();
+                        self.stop_streaming();
                     }
                 }
             });
