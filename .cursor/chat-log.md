@@ -976,3 +976,5 @@ Agent: Root cause — client `http_error` collapsed empty HTTP bodies to literal
 
 ### Summary
 Toast shows `couldn't update voice state (BANTER_VC_FLAGS_FAILED)` (or server message + code) instead of opaque `request failed`; pattern documented in docs/errors.md.
+
+Agent: PR #50 opened (ManagePullRequest). Do not merge until Owl says so.
