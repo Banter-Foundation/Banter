@@ -57,7 +57,7 @@ pub struct CastStream {
     fault: Arc<Mutex<Option<String>>>,
     quit: Option<channel::Sender<()>>,
     thread: Option<JoinHandle<()>>,
-    /// The portal closes the cast when this bus connection drops.
+    /// Closed explicitly on drop so a second Go Live can create a new portal session.
     _portal: Portal,
 }
 
@@ -65,7 +65,7 @@ impl CastStream {
     /// Opens the system share dialog and starts the PipeWire stream.
     /// Blocks until the dialog is confirmed or dismissed.
     pub fn open(max_edge: u32, fps: u32) -> Result<Self, String> {
-        let cast = Portal::connect()?;
+        let mut cast = Portal::connect()?;
         let session = cast.create_session()?;
         cast.select_sources(&session)?;
         let started = cast.start(&session)?;
@@ -76,6 +76,7 @@ impl CastStream {
             .map(|stream| stream.0)
             .ok_or_else(|| "screen share was cancelled".to_string())?;
         let fd = cast.pipewire_fd(&session)?;
+        cast.attach_session(session);
         let latest = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
         let fault = Arc::new(Mutex::new(None));
@@ -517,6 +518,29 @@ fn token() -> String {
 
 struct Portal {
     proxy: Proxy<'static>,
+    session: Option<OwnedObjectPath>,
+}
+
+impl Drop for Portal {
+    fn drop(&mut self) {
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        // Close before the bus connection drops so the compositor releases the cast
+        // for the next Go Live instead of racing a stale session.
+        let path = session.as_str().to_string();
+        {
+            let Ok(session_proxy) = Proxy::new(
+                self.proxy.connection(),
+                "org.freedesktop.portal.Desktop",
+                path.as_str(),
+                "org.freedesktop.portal.Session",
+            ) else {
+                return;
+            };
+            let _ = session_proxy.call_method("Close", &());
+        }
+    }
 }
 
 #[derive(DeserializeDict, Type, Debug)]
@@ -530,7 +554,11 @@ impl Portal {
         let conn = zbus::blocking::Connection::session().map_err(|err| err.to_string())?;
         let proxy = Proxy::new(&conn, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.ScreenCast")
             .map_err(|err| err.to_string())?;
-        Ok(Self { proxy })
+        Ok(Self { proxy, session: None })
+    }
+
+    fn attach_session(&mut self, session: OwnedObjectPath) {
+        self.session = Some(session);
     }
 
     fn create_session(&self) -> Result<OwnedObjectPath, String> {

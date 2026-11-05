@@ -152,6 +152,8 @@ pub struct Media {
     stream_edge: Arc<AtomicU32>,
     stream_interval: Arc<AtomicU64>,
     stream_target: Arc<Mutex<Option<StreamPick>>>,
+    /// Bumped whenever the stream target changes so the capture thread can clear a sticky open failure.
+    stream_epoch: Arc<AtomicU64>,
     capture_failed: Arc<AtomicBool>,
     engine: Arc<Engine>,
     remote_pictures: Arc<Mutex<Vec<rtc::RemotePicture>>>,
@@ -188,6 +190,7 @@ impl Media {
         let stream_edge = Arc::new(AtomicU32::new(1280));
         let stream_interval = Arc::new(AtomicU64::new(33));
         let stream_target = Arc::new(Mutex::new(None));
+        let stream_epoch = Arc::new(AtomicU64::new(0));
         let capture_failed = Arc::new(AtomicBool::new(false));
         let output_rate = Arc::new(AtomicU32::new(48_000));
         let engine = Arc::new(Engine::new());
@@ -235,6 +238,7 @@ impl Media {
             let stream_edge = Arc::clone(&stream_edge);
             let stream_interval = Arc::clone(&stream_interval);
             let stream_target = Arc::clone(&stream_target);
+            let stream_epoch = Arc::clone(&stream_epoch);
             let capture_failed = Arc::clone(&capture_failed);
             let engine = Arc::clone(&engine);
             let screen_picture = Arc::clone(&screen_picture);
@@ -248,6 +252,7 @@ impl Media {
                     stream_edge,
                     stream_interval,
                     stream_target,
+                    stream_epoch,
                     capture_failed,
                     engine,
                     screen_picture,
@@ -279,6 +284,7 @@ impl Media {
             stream_edge,
             stream_interval,
             stream_target,
+            stream_epoch,
             capture_failed,
             engine,
             remote_pictures,
@@ -301,7 +307,13 @@ impl Media {
     }
 
     pub fn set_stream_choice(&self, target: Option<StreamPick>, max_edge: u32, interval_ms: u64) {
-        *self.stream_target.lock().expect("stream target") = target;
+        {
+            let mut slot = self.stream_target.lock().expect("stream target");
+            if *slot != target {
+                self.stream_epoch.fetch_add(1, Ordering::Relaxed);
+            }
+            *slot = target;
+        }
         self.stream_edge.store(max_edge, Ordering::Relaxed);
         self.stream_interval.store(interval_ms.max(1), Ordering::Relaxed);
     }
@@ -884,6 +896,9 @@ fn camera_loop(
     let mut camera: Option<nokhwa::Camera> = None;
     let mut opened: Option<u32> = None;
     let mut reported = false;
+    // Same contract as screen: first frame (and every size change) must be a keyframe so
+    // remotes can decode. A forever `key: false` leaves viewers on an empty bitstream.
+    let mut keyed: Option<(u32, u32)> = None;
     while !stop.load(Ordering::Relaxed) {
         let state = unpack(flags.load(Ordering::Relaxed));
         let send = in_place.load(Ordering::Relaxed) && should_send_camera(&state);
@@ -892,6 +907,7 @@ fn camera_loop(
             camera = None;
             opened = None;
             reported = false;
+            keyed = None;
             thread::sleep(Duration::from_millis(100));
             continue;
         }
@@ -901,6 +917,7 @@ fn camera_loop(
             camera = None;
             opened = None;
             reported = false;
+            keyed = None;
             *local.lock().expect("camera") = None;
             device_recovered(&errors, "camera");
         }
@@ -909,6 +926,7 @@ fn camera_loop(
                 Ok(device) => {
                     camera = Some(device);
                     opened = Some(choice.device_index());
+                    keyed = None;
                 }
                 Err(err) => {
                     if !reported {
@@ -928,7 +946,10 @@ fn camera_loop(
                     reported = false;
                 }
                 if send && width >= 2 && height >= 2 && !i420.is_empty() {
-                    pictures.store(rtc::RawPicture { width, height, i420, key: false });
+                    let key = picture_needs_key(&mut keyed, width, height);
+                    pictures.store(rtc::RawPicture { width, height, i420, key });
+                } else if !send {
+                    keyed = None;
                 }
                 *local.lock().expect("camera") = Some((choice.device_index(), preview_w, preview_h, preview_rgba));
             }
@@ -941,6 +962,13 @@ fn camera_loop(
         }
         thread::sleep(Duration::from_millis(33));
     }
+}
+
+/// True for the first picture at a size, so the encoder emits an IDR. Matching size → delta.
+fn picture_needs_key(keyed: &mut Option<(u32, u32)>, width: u32, height: u32) -> bool {
+    let key = *keyed != Some((width, height));
+    *keyed = Some((width, height));
+    key
 }
 
 /// Real camera names from the operating system. An empty list means none are available.
@@ -1193,6 +1221,7 @@ fn screen_loop(
     stream_edge: Arc<AtomicU32>,
     stream_interval: Arc<AtomicU64>,
     stream_target: Arc<Mutex<Option<StreamPick>>>,
+    stream_epoch: Arc<AtomicU64>,
     capture_failed: Arc<AtomicBool>,
     engine: Arc<Engine>,
     pictures: Arc<rtc::PictureSlot>,
@@ -1203,18 +1232,33 @@ fn screen_loop(
     let mut next_encode = Instant::now();
     let mut failed: Option<StreamPick> = None;
     let mut keyed: Option<(u32, u32)> = None;
+    let mut seen_epoch = stream_epoch.load(Ordering::Relaxed);
+    // After a feed is dropped, give the OS / portal a beat before reopening the same source.
+    let mut settle_until: Option<Instant> = None;
     // Only the Linux Cast feed reads this; Record/Still never need a cast timeout.
     #[cfg(target_os = "linux")]
     let mut cast_since: Option<Instant> = None;
     while !stop.load(Ordering::Relaxed) {
+        let epoch = stream_epoch.load(Ordering::Relaxed);
+        if epoch != seen_epoch {
+            // End → Go Live (or a source change) must be allowed to reopen even if the last
+            // open failed for the same StreamPick while the UI still showed live.
+            failed = None;
+            seen_epoch = epoch;
+        }
         let state = unpack(flags.load(Ordering::Relaxed));
         let enabled = in_place.load(Ordering::Relaxed) && should_send_screen(&state);
         let pick = if enabled { stream_target.lock().expect("stream target").clone() } else { None };
         let Some(pick) = pick else {
+            if feed.is_some() {
+                settle_until = Some(Instant::now() + Duration::from_millis(150));
+            }
             feed = None;
             latest = None;
             fresh = false;
             failed = None;
+            keyed = None;
+            *local.lock().expect("screen") = None;
             #[cfg(target_os = "linux")]
             {
                 cast_since = None;
@@ -1222,15 +1266,27 @@ fn screen_loop(
             thread::sleep(Duration::from_millis(40));
             continue;
         };
+        if let Some(until) = settle_until {
+            if Instant::now() < until {
+                thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+            settle_until = None;
+        }
         let edge = stream_edge.load(Ordering::Relaxed);
         let interval = stream_interval.load(Ordering::Relaxed).max(1);
-            if feed.as_ref().is_none_or(|(current, _)| *current != pick) {
+        if feed.as_ref().is_none_or(|(current, _)| *current != pick) {
+            let had_feed = feed.is_some();
             feed = None;
             latest = None;
             fresh = false;
             #[cfg(target_os = "linux")]
             {
                 cast_since = None;
+            }
+            if had_feed {
+                // xcap / PipeWire need the previous recorder gone before the next start.
+                thread::sleep(Duration::from_millis(100));
             }
             if failed == Some(pick) {
                 thread::sleep(Duration::from_millis(100));
@@ -1413,8 +1469,7 @@ fn publish_screen(
         return;
     }
     let i420 = encode::rgba_to_i420(&scaled, out_w, out_h);
-    let key = *keyed != Some((out_w, out_h));
-    *keyed = Some((out_w, out_h));
+    let key = picture_needs_key(keyed, out_w, out_h);
     if engine.show_preview.load(Ordering::Relaxed) {
         let preview = if out_w <= 1280 && out_h <= 1280 {
             (out_w, out_h, scaled)
@@ -1428,6 +1483,22 @@ fn publish_screen(
     }
     pictures.store(rtc::RawPicture { width: out_w, height: out_h, i420, key });
     crate::profiler::record_media("screen_capture", started.elapsed(), (out_w * out_h) as usize);
+}
+
+#[cfg(test)]
+mod picture_key_tests {
+    use super::picture_needs_key;
+
+    #[test]
+    fn first_frame_and_size_change_are_keyframes() {
+        let mut keyed = None;
+        assert!(picture_needs_key(&mut keyed, 1280, 720));
+        assert!(!picture_needs_key(&mut keyed, 1280, 720));
+        assert!(picture_needs_key(&mut keyed, 640, 360));
+        assert!(!picture_needs_key(&mut keyed, 640, 360));
+        keyed = None;
+        assert!(picture_needs_key(&mut keyed, 640, 360), "reopen after stop must key again");
+    }
 }
 
 fn capture_rgba(grabber: &Grabber, show_cursor: bool) -> Result<(u32, u32, Vec<u8>), String> {
