@@ -10148,8 +10148,9 @@ impl App {
     }
 
     fn draw_stream_menu(&mut self, ui: &Ui) {
-        let width = 280.0;
-        let height = 220.0;
+        // Tall enough for resolution / FPS chips while live; stage chrome stays unchanged.
+        let width = 320.0;
+        let height = 420.0;
         let x = self.stream_anchor[0];
         let y = (self.stream_anchor[1] - height - 8.0).max(8.0);
         ui.window("Stream options")
@@ -10159,6 +10160,10 @@ impl App {
             .build(|| {
                 ui.text("Stream options");
                 ui.child_window("stream-options-body").size([0.0, -36.0]).build(ui, || {
+                    // Same chips as Voice & Video / Stream Select; finish_voice_flags applies live.
+                    // Always visible so res/FPS are one click from the stage chevron while sharing.
+                    let quality_w = ui.content_region_avail()[0];
+                    self.draw_stream_quality(ui, quality_w);
                     if settings_panel(ui, "Bitrate") {
                         if ui.checkbox("Automatic bitrate", &mut self.stream.bitrate_auto) {
                             self.save_stream();

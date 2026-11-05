@@ -737,3 +737,7 @@ Shipped pre-release Version-1-test-11.1 from main after `/debugnow` network traf
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-11.1
 - Assets: Banter-windows-version-1-test-11.1.zip, Banter-linux-version-1-test-11.1.zip, Banter-macos-arm-version-1-test-11.1.zip, banter-server.exe, banter-server-linux, banter-server-macos-arm
 
+## 2026-11-05 16:22:00 +00:00 [ubuntu] — Mid-stream resolution and frame rate
+
+The stage stream-options menu (chevron beside Screen) now shows the same resolution and frame-rate chips as Voice & Video → Screen share and Stream Select. Changing them while live still saves `stream.json` and applies through the existing `finish_voice_flags` → `set_stream_choice` path. Stage layout and call-bar chrome are unchanged.
+
