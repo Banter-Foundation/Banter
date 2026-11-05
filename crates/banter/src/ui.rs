@@ -42,7 +42,7 @@ use crate::logic::{
     push_to_talk_held, rail_tree_rows, remove_message, resolution_block, resolution_from_key, resolution_key,
     save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible, speaking_from_level,
     stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge, stream_resolution_label,
-    stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections, voice_flags_retry_ready,
+    stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,     voice_flags_retry_ready, apply_voice_roster, voice_occupancy_line,
     chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day,
     window_size_label, window_size_presets, OPEN_MIC_RMS,
 };
@@ -251,6 +251,7 @@ pub(crate) struct App {
     selected: Option<Channel>,
     messages: Vec<Message>,
     voice_members: Vec<VoiceMember>,
+    voice_rosters: HashMap<i64, Vec<VoiceMember>>,
     voice_channel: Option<i64>,
     call: Option<CallSnapshot>,
     mute: MuteMemory,
@@ -499,6 +500,7 @@ impl App {
             selected: None,
             messages: Vec::new(),
             voice_members: Vec::new(),
+            voice_rosters: HashMap::new(),
             voice_channel: None,
             call: None,
             mute: MuteMemory::new(),
@@ -2382,6 +2384,7 @@ impl App {
             self.call = Some(call);
             self.voice_channel = None;
             self.voice_members.clear();
+            self.drop_self_from_rosters(None);
             // Keep (or open) the DM so the center stage can show the 1:1 call view.
             if !matches!(self.place, Place::Direct(id) if id == dm_id) {
                 self.open_dm(dm_id);
@@ -2394,6 +2397,7 @@ impl App {
             self.call = Some(call);
             self.voice_channel = None;
             self.voice_members.clear();
+            self.drop_self_from_rosters(None);
             if !matches!(self.place, Place::Direct(id) if id == dm_id) {
                 self.open_dm(dm_id);
             }
@@ -3198,7 +3202,7 @@ impl App {
 
     fn draw_channels(&mut self, ui: &Ui, server_id: i64) {
         let layout = self.layout.clone();
-        let voice_members = self.voice_members.clone();
+        let voice_rosters = self.voice_rosters.clone();
         let can_manage = self.can_permission(PERM_MANAGE_CHANNELS);
         let selected_id = self.selected.as_ref().map(|channel| channel.id);
         ui.dummy([0.0, 4.0]);
@@ -3254,9 +3258,11 @@ impl App {
                         mouse,
                     );
                 }
-                if joined {
-                    for member in &voice_members {
-                        self.draw_voice_member(ui, member);
+                if channel.kind == ChannelKind::Voice {
+                    if let Some(members) = voice_rosters.get(&channel.id) {
+                        for member in members {
+                            self.draw_voice_member(ui, channel.id, member);
+                        }
                     }
                 }
             }
@@ -4187,6 +4193,8 @@ impl App {
 
     fn join_voice_channel(&mut self, channel_id: i64) {
         if let Some(members) = self.note(self.client.join_voice(channel_id)) {
+            self.drop_self_from_rosters(Some(channel_id));
+            apply_voice_roster(&mut self.voice_rosters, channel_id, members.clone());
             self.voice_members = members;
             self.voice_channel = Some(channel_id);
             self.call = None;
@@ -4206,10 +4214,16 @@ impl App {
         let semi = self.semibold_font;
         if !joined {
             if let Some(channel) = channel {
+                let names: Vec<String> = self
+                    .voice_rosters
+                    .get(&channel.id)
+                    .map(|members| members.iter().map(|member| self.name_of(member.user_id)).collect())
+                    .unwrap_or_default();
+                let line = voice_occupancy_line(&names);
                 let center_x = origin[0] + width * 0.5;
                 let title_y = origin[1] + height * 0.4;
                 skin::text_centered(ui, semi, FONT_XL, center_x, title_y, TEXT, &channel.name);
-                skin::text_centered(ui, None, FONT_MD, center_x, title_y + 36.0, TEXT_SECONDARY, "No one is currently in voice");
+                skin::text_centered(ui, None, FONT_MD, center_x, title_y + 36.0, TEXT_SECONDARY, &line);
                 if skin::button(ui, "join-voice", "Join Voice", Tone::Green, [center_x - 60.0, title_y + 72.0], [120.0, BUTTON_H], true, semi) {
                     self.join_voice_channel(channel.id);
                 }
@@ -5511,6 +5525,9 @@ impl App {
         self.status.clear();
         self.settings.close();
         self.share_open = false;
+        self.voice_channel = None;
+        self.voice_members.clear();
+        self.voice_rosters.clear();
         self.end_media_place();
     }
 
@@ -5572,9 +5589,10 @@ impl App {
                 })
                 .collect();
         }
-        if let Place::Server(_) = self.place {
+        if let Place::Server(server_id) = self.place {
             self.reload_layout();
             self.reload_members();
+            self.reload_voice_rosters(server_id);
         }
     }
 
@@ -5594,6 +5612,7 @@ impl App {
         });
         self.reload_layout();
         self.reload_members();
+        self.reload_voice_rosters(server_id);
         if let Some(member) = self.members.iter().find(|member| Some(member.user_id) == self.account.as_ref().map(|account| account.id)) {
             self.nickname = member.nickname.clone().unwrap_or_default();
         }
@@ -5899,6 +5918,7 @@ impl App {
             }
             ServerEvent::FriendRequest { .. } | ServerEvent::FriendsChanged => self.refresh_shell(),
             ServerEvent::Voice { channel_id, members } => {
+                apply_voice_roster(&mut self.voice_rosters, channel_id, members.clone());
                 if self.voice_channel == Some(channel_id) {
                     self.voice_members = members;
                 }
@@ -5908,6 +5928,8 @@ impl App {
                 if Some(call.caller) == me || Some(call.callee) == me {
                     if call.phase == CallPhase::Active {
                         self.voice_channel = None;
+                        self.voice_members.clear();
+                        self.drop_self_from_rosters(None);
                     }
                     let dm_id = call.dm_id;
                     self.call = Some(call);
@@ -8008,8 +8030,62 @@ impl App {
         if self.note(self.client.leave_voice()).is_some() {
             self.voice_channel = None;
             self.voice_members.clear();
+            self.drop_self_from_rosters(None);
             self.flags_failed_at = None;
             self.end_media_place();
+        }
+    }
+
+    /// Drop the local user from sidebar rosters. `keep` is the channel they just joined.
+    fn drop_self_from_rosters(&mut self, keep: Option<i64>) {
+        let Some(me) = self.account.as_ref().map(|account| account.id) else {
+            return;
+        };
+        let stale: Vec<i64> = self
+            .voice_rosters
+            .iter()
+            .filter_map(|(channel_id, members)| {
+                if Some(*channel_id) != keep && members.iter().any(|member| member.user_id == me) {
+                    Some(*channel_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for channel_id in stale {
+            let remaining = self
+                .voice_rosters
+                .get(&channel_id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|member| member.user_id != me)
+                .collect();
+            apply_voice_roster(&mut self.voice_rosters, channel_id, remaining);
+        }
+    }
+
+    fn reload_voice_rosters(&mut self, server_id: i64) {
+        let Some(rows) = self.note(self.client.server_voice(server_id)) else {
+            return;
+        };
+        let mine: Vec<i64> = self
+            .layout
+            .iter()
+            .flat_map(|category| category.channels.iter())
+            .filter(|channel| channel.kind == ChannelKind::Voice)
+            .map(|channel| channel.id)
+            .collect();
+        for channel_id in mine {
+            self.voice_rosters.remove(&channel_id);
+        }
+        for row in rows {
+            apply_voice_roster(&mut self.voice_rosters, row.channel_id, row.members);
+        }
+        if let Some(channel_id) = self.voice_channel {
+            if let Some(members) = self.voice_rosters.get(&channel_id) {
+                self.voice_members = members.clone();
+            }
         }
     }
 
@@ -9109,11 +9185,14 @@ impl App {
     }
 
     /// Someone in the joined voice channel, listed under it: 24 px avatar, name, then state icons.
-    fn draw_voice_member(&self, ui: &Ui, member: &VoiceMember) {
+    fn draw_voice_member(&self, ui: &Ui, channel_id: i64, member: &VoiceMember) {
         let name = self.name_of(member.user_id);
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
-        ui.invisible_button(format!("voice-member-{}", member.user_id), [width, VOICE_MEMBER_H]);
+        ui.invisible_button(
+            format!("voice-member-{channel_id}-{}", member.user_id),
+            [width, VOICE_MEMBER_H],
+        );
         let hovered = ui.is_item_hovered();
         let min = [origin[0] + 32.0, origin[1] + 2.0];
         let max = [origin[0] + width - ROW_INSET, origin[1] + VOICE_MEMBER_H - 2.0];
@@ -9470,6 +9549,7 @@ impl App {
         // Drop media against the previous host without waiting on it.
         self.voice_channel = None;
         self.voice_members.clear();
+        self.voice_rosters.clear();
         self.end_media_place();
         self.media = None;
         self.realtime = None;
@@ -9577,6 +9657,7 @@ impl App {
         self.status = notice.to_string();
         self.voice_channel = None;
         self.voice_members.clear();
+        self.voice_rosters.clear();
         self.end_media_place();
         self.media = None;
         self.realtime = None;

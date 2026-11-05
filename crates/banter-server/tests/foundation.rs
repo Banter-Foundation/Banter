@@ -818,6 +818,37 @@ async fn voice_channel_is_drop_in_and_routes_media() {
     assert!(live.voice_channel_members(lounge.id).is_empty());
 }
 
+#[tokio::test]
+async fn voice_roster_reaches_members_who_are_not_in_the_channel() {
+    let store = open_store().await.0;
+    let ada = store.register("ada", "Ada", "password1").await.unwrap();
+    let bob = store.register("bob", "Bob", "password1").await.unwrap();
+    let cam = store.register("cam", "Cam", "password1").await.unwrap();
+    let home = store.create_server(ada.id, "Voice").await.unwrap();
+    let voice_id = home.categories[1].channels[0].id;
+    let code = store.create_invite(ada.id, home.server.id).await.unwrap();
+    store.join_invite(bob.id, &code).await.unwrap();
+
+    let live = Live::new();
+    live.join_server_voice(&store, ada.id, voice_id).await.unwrap();
+    let watchers = live.voice_watcher_ids(&store, ada.id, voice_id).await;
+    assert!(watchers.contains(&ada.id));
+    assert!(watchers.contains(&bob.id));
+
+    let channels = store.voice_channel_ids(bob.id, home.server.id).await.unwrap();
+    assert!(channels.contains(&voice_id));
+    let members = live.voice_channel_members(voice_id);
+    assert_eq!(members.len(), 1);
+    assert_eq!(members[0].user_id, ada.id);
+    assert!(store.voice_channel_ids(cam.id, home.server.id).await.is_err());
+
+    live.leave_voice(ada.id);
+    assert!(live.voice_channel_members(voice_id).is_empty());
+    let still = live.voice_watcher_ids(&store, ada.id, voice_id).await;
+    assert!(still.contains(&bob.id));
+    assert!(still.contains(&ada.id));
+}
+
 #[test]
 fn sfu_forward_rtp_rewrites_publisher_ssrc_for_write_rtp() {
     // Forward tracks negotiate their own SSRCs. Cloning the publisher packet into

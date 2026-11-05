@@ -105,7 +105,8 @@ impl Live {
         self.presence_snapshot(user_id).custom_status
     }
 
-    pub fn disconnect(&self, user_id: i64) {
+    /// Drop the socket and voice seat. Returns voice channels the user just left so the caller can publish the roster.
+    pub fn disconnect(&self, user_id: i64) -> Vec<i64> {
         crate::room::close_user(user_id);
         let channels;
         let ended_calls;
@@ -126,12 +127,10 @@ impl Live {
             inner.forward.unsubscribe_user(user_id);
             ended_calls = take_calls(&mut inner, user_id);
         }
-        for channel_id in channels {
-            self.broadcast_voice(channel_id, &[user_id]);
-        }
         for (dm_id, peer) in ended_calls {
             self.send_event(&[user_id, peer], &ServerEvent::CallEnded { dm_id });
         }
+        channels
     }
 
     pub async fn join_server_voice(&self, store: &Store, user_id: i64, channel_id: i64) -> Result<(), BanterError> {
@@ -153,10 +152,10 @@ impl Live {
         }
         if let Some(previous) = previous {
             if previous != channel_id {
-                self.broadcast_voice(previous, &[user_id]);
+                self.publish_voice(store, user_id, previous).await;
             }
         }
-        self.broadcast_voice(channel_id, &[]);
+        self.publish_voice(store, user_id, channel_id).await;
         for (dm_id, peer) in ended {
             self.send_event(&[user_id, peer], &ServerEvent::CallEnded { dm_id });
         }
@@ -172,30 +171,22 @@ impl Live {
         user.voice_channel = Some(channel_id);
     }
 
-    pub fn leave_voice(&self, user_id: i64) {
+    /// Leave the current voice channel. The channel id is the one that needs a roster update.
+    pub fn leave_voice(&self, user_id: i64) -> Option<i64> {
         crate::room::close_user(user_id);
-        let previous = {
-            let mut inner = self.lock();
-            let Some(user) = inner.users.get_mut(&user_id) else {
-                return;
-            };
-            user.voice_channel.take()
+        let mut inner = self.lock();
+        let Some(user) = inner.users.get_mut(&user_id) else {
+            return None;
         };
-        if let Some(channel_id) = previous {
-            self.broadcast_voice(channel_id, &[user_id]);
-        }
+        user.voice_channel.take()
     }
 
-    pub fn set_flags(&self, user_id: i64, flags: VoiceFlags) {
-        let channel = {
-            let mut inner = self.lock();
-            let user = entry(&mut inner, user_id);
-            user.flags = flags;
-            user.voice_channel
-        };
-        if let Some(channel_id) = channel {
-            self.broadcast_voice(channel_id, &[]);
-        }
+    /// Returns the voice channel whose roster changed, when the user is in one.
+    pub fn set_flags(&self, user_id: i64, flags: VoiceFlags) -> Option<i64> {
+        let mut inner = self.lock();
+        let user = entry(&mut inner, user_id);
+        user.flags = flags;
+        user.voice_channel
     }
 
     pub fn voice_channel_members(&self, channel_id: i64) -> Vec<VoiceMember> {
@@ -205,8 +196,9 @@ impl Live {
 
     pub async fn start_dm_call(&self, store: &Store, user_id: i64, dm_id: i64) -> Result<CallSnapshot, BanterError> {
         let (_me, peer) = store.dm_participants(user_id, dm_id).await?;
-        let snapshot = {
+        let (snapshot, left_voice) = {
             let mut inner = self.lock();
+            let left_voice = inner.users.get(&user_id).and_then(|user| user.voice_channel);
             if let Some(existing) = inner.calls.get(&dm_id).cloned() {
                 if existing.caller == user_id || existing.callee == user_id {
                     if existing.phase == CallPhase::Ringing && existing.callee == user_id {
@@ -216,7 +208,7 @@ impl Live {
                         if let Some(user) = inner.users.get_mut(&user_id) {
                             user.voice_channel = None;
                         }
-                        active
+                        (active, left_voice)
                     } else {
                         return Ok(existing);
                     }
@@ -236,15 +228,18 @@ impl Live {
                     callee: peer,
                 };
                 inner.calls.insert(dm_id, snapshot.clone());
-                snapshot
+                (snapshot, left_voice)
             }
         };
+        if let Some(channel_id) = left_voice {
+            self.publish_voice(store, user_id, channel_id).await;
+        }
         self.send_event(&[snapshot.caller, snapshot.callee], &ServerEvent::Call { call: snapshot.clone() });
         Ok(snapshot)
     }
 
-    pub async fn accept_dm_call(&self, _store: &Store, user_id: i64, dm_id: i64) -> Result<CallSnapshot, BanterError> {
-        let snapshot = {
+    pub async fn accept_dm_call(&self, store: &Store, user_id: i64, dm_id: i64) -> Result<CallSnapshot, BanterError> {
+        let (snapshot, left_voice) = {
             let mut inner = self.lock();
             let Some(call) = inner.calls.get(&dm_id).cloned() else {
                 return Err(BanterError::NotInCall);
@@ -252,14 +247,18 @@ impl Live {
             if call.callee != user_id {
                 return Err(BanterError::NotInCall);
             }
+            let left_voice = inner.users.get(&user_id).and_then(|user| user.voice_channel);
             let mut call = call;
             call.phase = CallPhase::Active;
             inner.calls.insert(dm_id, call.clone());
             if let Some(user) = inner.users.get_mut(&user_id) {
                 user.voice_channel = None;
             }
-            call
+            (call, left_voice)
         };
+        if let Some(channel_id) = left_voice {
+            self.publish_voice(store, user_id, channel_id).await;
+        }
         self.send_event(&[snapshot.caller, snapshot.callee], &ServerEvent::Call { call: snapshot.clone() });
         Ok(snapshot)
     }
@@ -394,13 +393,31 @@ impl Live {
         }
     }
 
-    fn broadcast_voice(&self, channel_id: i64, also: &[i64]) {
-        let members = {
-            let inner = self.lock();
-            members_of(&inner, channel_id)
+    /// Everyone who should see this channel's roster: the server's members, plus anyone still seated in it.
+    pub async fn voice_watcher_ids(&self, store: &Store, actor: i64, channel_id: i64) -> Vec<i64> {
+        let members = self.voice_channel_members(channel_id);
+        let mut ids = match store.channel_access(actor, channel_id).await {
+            Ok(channel) => store.member_user_ids(channel.server_id).await.unwrap_or_default(),
+            Err(_) => Vec::new(),
         };
-        let mut ids: Vec<i64> = members.iter().map(|member| member.user_id).collect();
-        ids.extend_from_slice(also);
+        for member in &members {
+            if !ids.contains(&member.user_id) {
+                ids.push(member.user_id);
+            }
+        }
+        if !ids.contains(&actor) {
+            ids.push(actor);
+        }
+        ids
+    }
+
+    /// Push the current roster to every member of the channel's server.
+    pub async fn publish_voice(&self, store: &Store, actor: i64, channel_id: i64) {
+        let members = self.voice_channel_members(channel_id);
+        let ids = self.voice_watcher_ids(store, actor, channel_id).await;
+        if ids.is_empty() {
+            return;
+        }
         self.send_event(&ids, &ServerEvent::Voice { channel_id, members });
     }
 

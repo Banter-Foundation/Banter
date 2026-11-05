@@ -11,7 +11,7 @@ use banter_server::{
     format_banter_notice, Account, BanterVersionReport, CallSnapshot, Category, CategoryLayout, Channel,
     ChannelKind, ChatTarget, CosmeticItem, DirectChat, Friend, FriendRequest, GuildRole, Mention, Message,
     Presence, ProfilePatch, ServerDebug, ServerFolder, ServerFolderPatch, ServerHome, ServerRail,
-    ServerRailServer, ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember, ERR_HTTP_PARSE,
+    ServerRailServer, ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember, VoiceRoster, ERR_HTTP_PARSE,
     ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
 };
 use serde::Deserialize;
@@ -525,6 +525,10 @@ impl Client {
 
     pub fn layout(&self, server_id: i64) -> Result<Vec<CategoryLayout>, ApiError> {
         self.get_json(&format!("/v1/servers/{server_id}/layout"))
+    }
+
+    pub fn server_voice(&self, server_id: i64) -> Result<Vec<VoiceRoster>, ApiError> {
+        self.get_json(&format!("/v1/servers/{server_id}/voice"))
     }
 
     pub fn messages(

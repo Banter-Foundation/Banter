@@ -1158,6 +1158,26 @@ impl Store {
         layout_of(&self.pool, server_id).await
     }
 
+    /// Voice channels in this server, including empty ones. Caller must be a member.
+    pub async fn voice_channel_ids(&self, user_id: i64, server_id: i64) -> Result<Vec<i64>, BanterError> {
+        self.require_member(user_id, server_id).await?;
+        sqlx::query_scalar(
+            "SELECT id FROM channels WHERE server_id = $1 AND kind = 'voice' ORDER BY position, id",
+        )
+        .bind(server_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)
+    }
+
+    pub(crate) async fn member_user_ids(&self, server_id: i64) -> Result<Vec<i64>, BanterError> {
+        sqlx::query_scalar("SELECT user_id FROM memberships WHERE server_id = $1")
+            .bind(server_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)
+    }
+
     pub async fn send_message(
         &self,
         user_id: i64,

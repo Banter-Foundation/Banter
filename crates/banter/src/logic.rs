@@ -2,7 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use banter_server::{is_channel_icon, ChannelKind, Message, ServerFolder, ServerRail, ServerRailServer, VoiceFlags};
+use banter_server::{
+    is_channel_icon, ChannelKind, Message, ServerFolder, ServerRail, ServerRailServer, VoiceFlags, VoiceMember,
+};
 use serde::{Deserialize, Serialize};
 
 /// One visible rail row after expanding folders (collapsed folders hide children).
@@ -1998,6 +2000,28 @@ pub fn is_debug_command(plain: &str) -> bool {
     plain.trim().eq_ignore_ascii_case("/debugnow")
 }
 
+/// Record who is in a voice channel. An empty list clears that channel.
+pub fn apply_voice_roster(
+    rosters: &mut HashMap<i64, Vec<VoiceMember>>,
+    channel_id: i64,
+    members: Vec<VoiceMember>,
+) {
+    if members.is_empty() {
+        rosters.remove(&channel_id);
+    } else {
+        rosters.insert(channel_id, members);
+    }
+}
+
+/// Line under a voice channel the viewer has not joined.
+pub fn voice_occupancy_line(names: &[String]) -> String {
+    match names.len() {
+        0 => "No one is currently in voice".to_string(),
+        1 => format!("{} is in voice", names[0]),
+        _ => format!("{} are in voice", names.join(", ")),
+    }
+}
+
 #[cfg(test)]
 mod member_group_tests {
     use super::plan_member_groups;
@@ -2020,6 +2044,36 @@ mod member_group_tests {
         assert_eq!(groups[2].1, vec![1]);
         assert_eq!(groups[3].0, "OFFLINE");
         assert_eq!(groups[3].1, vec![2]);
+    }
+}
+
+#[cfg(test)]
+mod voice_roster_tests {
+    use super::{apply_voice_roster, voice_occupancy_line};
+    use banter_server::{VoiceFlags, VoiceMember};
+    use std::collections::HashMap;
+
+    fn member(user_id: i64) -> VoiceMember {
+        VoiceMember { user_id, flags: VoiceFlags::default() }
+    }
+
+    #[test]
+    fn roster_is_kept_for_a_channel_the_viewer_has_not_joined() {
+        let mut rosters = HashMap::new();
+        apply_voice_roster(&mut rosters, 7, vec![member(4)]);
+        assert_eq!(rosters.get(&7).map(|members| members[0].user_id), Some(4));
+        apply_voice_roster(&mut rosters, 7, Vec::new());
+        assert!(!rosters.contains_key(&7));
+    }
+
+    #[test]
+    fn occupancy_line_names_people_already_in_voice() {
+        assert_eq!(voice_occupancy_line(&[]), "No one is currently in voice");
+        assert_eq!(voice_occupancy_line(&["Ada".into()]), "Ada is in voice");
+        assert_eq!(
+            voice_occupancy_line(&["Ada".into(), "Bob".into()]),
+            "Ada, Bob are in voice"
+        );
     }
 }
 

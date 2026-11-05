@@ -83,6 +83,7 @@ Contract tests live in `crates/banter-server/tests/foundation.rs`. Client tree h
 ## Voice, camera, and stream (high level)
 
 - Joining a voice channel (or starting a DM call) registers membership on the server and opens media paths on the client.
+- Everyone in that server sees who is in each voice channel. `GET /v1/servers/{id}/voice` is the snapshot (empty channels included). Joins, leaves, disconnects, flag changes, and leaving voice for a direct call push `Voice` to every member of the server. People who are not members of the server do not get that roster.
 - Voice-channel SFU forward stamps each packet with the forward track’s negotiated SSRC/payload type and strips inbound RTP header extensions before `write_rtp` (publisher SSRCs are not valid on those senders).
 - **Mute / deafen / push-to-talk** are client flags also pushed to the server; PTT defaults to **V** (ignored while a text field is focused) plus a Talk button. F1–F12 are available as keybinds.
 - **Camera:** local preview is mirrored RGBA; outbound is I420 → H.264 over WebRTC (not JPEG spray). Open prefers ~`1280x720` (or nearest available), FPS near 30, device MJPEG on ties — not the device’s absolute highest mode. Device MJPEG is only the webcam capture format.
