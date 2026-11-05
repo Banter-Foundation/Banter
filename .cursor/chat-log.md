@@ -926,3 +926,12 @@ Repo: Banter-Foundation/Banter, branch from latest main. Use gh / ManagePullRequ
 
 ### Summary
 Rail corner control now uses Lucide home and opens a customizable Home landing. Sections Friends / Direct Messages / Servers / Recent can be shown, hidden, and reordered; layout persists in `home.json`. Sidebar Friends still opens the people list. PR opened; do not merge until Owl says so.
+
+## 2026-11-05 00:11:39 +0000 — BA-82 Reddit-style reply thread lines
+
+Owl wants Banter's reply/message thread lines to look exactly like Reddit (dark mode), matching the reference screenshot.
+Agent: Branch `cursor/reddit-thread-lines-cd5c` from `origin/main`. Removed L-connectors; thin vertical gutters; circular (−)/(+) collapse; line hover brighten + click collapse via ancestor_ids. Tests first (theme + comment_tree). cargo check + comment_tree/theme reddit_ tests passed. PR opened; do not merge until Owl says so.
+
+### Summary
+Visual/interaction fidelity for thread lines + collapse chrome only; reply tree semantics from #22/#34 unchanged.
+

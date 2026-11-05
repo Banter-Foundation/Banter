@@ -107,6 +107,9 @@ pub struct CommentRow {
     /// Total nested replies under this node (direct + deeper).
     pub child_count: usize,
     pub collapsed: bool,
+    /// Ancestor ids from root → immediate parent. Index `i` owns the vertical
+    /// thread guide drawn at depth `i` on this row (Reddit line-click collapse).
+    pub ancestor_ids: Vec<i64>,
 }
 
 /// Build children lists keyed by parent message id. Orphans (missing parent) are roots.
@@ -156,8 +159,9 @@ pub fn comment_tree_rows(messages: &[Message], collapsed: &HashSet<i64>) -> Vec<
     let (roots, children) = comment_children(messages);
     let mut rows = Vec::with_capacity(messages.len());
     let mut stack = HashSet::new();
+    let ancestors = Vec::new();
     for root in roots {
-        walk_comment_tree(root, 0, &children, collapsed, &mut stack, &mut rows);
+        walk_comment_tree(root, 0, &children, collapsed, &ancestors, &mut stack, &mut rows);
     }
     rows
 }
@@ -167,6 +171,7 @@ fn walk_comment_tree(
     depth: u32,
     children: &HashMap<i64, Vec<i64>>,
     collapsed: &HashSet<i64>,
+    ancestors: &[i64],
     stack: &mut HashSet<i64>,
     rows: &mut Vec<CommentRow>,
 ) {
@@ -183,11 +188,22 @@ fn walk_comment_tree(
         depth,
         child_count,
         collapsed: is_collapsed,
+        ancestor_ids: ancestors.to_vec(),
     });
     if !is_collapsed {
         if let Some(kids) = children.get(&id) {
+            let mut next_ancestors = ancestors.to_vec();
+            next_ancestors.push(id);
             for kid in kids {
-                walk_comment_tree(*kid, depth.saturating_add(1), children, collapsed, stack, rows);
+                walk_comment_tree(
+                    *kid,
+                    depth.saturating_add(1),
+                    children,
+                    collapsed,
+                    &next_ancestors,
+                    stack,
+                    rows,
+                );
             }
         }
     }

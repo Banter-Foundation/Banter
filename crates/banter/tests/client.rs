@@ -373,6 +373,30 @@ fn comment_tree_nests_replies_depth_first_like_reddit() {
             (6, 0, 0, false),
         ]
     );
+    // Ancestor chain lets each vertical guide map to the comment it collapses.
+    assert_eq!(rows[0].ancestor_ids, Vec::<i64>::new());
+    assert_eq!(rows[1].ancestor_ids, vec![1]);
+    assert_eq!(rows[2].ancestor_ids, vec![1, 3]);
+    assert_eq!(rows[3].ancestor_ids, vec![1]);
+    assert!(rows[4].ancestor_ids.is_empty());
+    assert!(rows[5].ancestor_ids.is_empty());
+}
+
+#[test]
+fn comment_tree_ancestor_ids_name_each_thread_guide_owner() {
+    // On a depth-2 row, guide 0 collapses the root; guide 1 collapses the mid parent.
+    let messages = vec![
+        message(10, "root", None),
+        message(11, "mid", Some(10)),
+        message(12, "leaf", Some(11)),
+    ];
+    let rows = comment_tree_rows(&messages, &HashSet::new());
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[2].message_id, 12);
+    assert_eq!(rows[2].depth, 2);
+    assert_eq!(rows[2].ancestor_ids, vec![10, 11]);
+    assert_eq!(rows[2].ancestor_ids[0], 10);
+    assert_eq!(rows[2].ancestor_ids[1], 11);
 }
 
 #[test]
@@ -409,11 +433,13 @@ fn comment_row_helper_matches_visible_node() {
         depth: 3,
         child_count: 2,
         collapsed: true,
+        ancestor_ids: vec![1, 2, 4],
     };
     assert_eq!(row.message_id, 7);
     assert_eq!(row.depth, 3);
     assert_eq!(row.child_count, 2);
     assert!(row.collapsed);
+    assert_eq!(row.ancestor_ids, vec![1, 2, 4]);
 }
 
 #[test]

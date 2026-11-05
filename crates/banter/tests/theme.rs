@@ -168,7 +168,7 @@ fn every_skin_icon_is_vendored_and_has_ink() {
         "check", "chevron-down", "chevron-right", "chevron-up", "circle-plus", "crown", "folder", "folder-plus", "hash",
         "headphone-off", "headphones", "message-circle", "mic", "mic-off", "monitor", "monitor-off", "pencil",
         "phone", "phone-off", "plus", "search", "settings", "signal", "user", "user-plus", "users", "video",
-        "video-off", "volume-2", "x",
+        "video-off", "volume-2", "minus", "x",
     ] {
         let rgba = rasterize_lucide(name, 32, [255, 255, 255]).unwrap_or_else(|err| panic!("{name}: {err}"));
         assert!(rgba.chunks(4).any(|pixel| pixel[3] > 0), "{name} has no ink");
@@ -183,4 +183,60 @@ fn top_tooltip_is_centered_above_and_kept_on_screen() {
     assert!(min[1] >= 0.0);
     let (edge_min, _) = tooltip_rect([0.0, 400.0], [10.0, 420.0], [120.0, 18.0], TooltipSide::Top, [1280.0, 800.0]);
     assert!(edge_min[0] >= 0.0);
+}
+
+
+#[test]
+fn reddit_thread_line_metrics_match_dark_mode_reference() {
+    // Straight vertical gutters only: thin, muted, fixed indent, circular collapse chrome.
+    // No horizontal L-connectors (COMMENT_CONNECTOR_W must not exist).
+    assert!(theme::COMMENT_INDENT >= 20.0 && theme::COMMENT_INDENT <= 30.0);
+    assert!(close(theme::COMMENT_GUIDE_THICK, 1.0));
+    assert!(theme::COMMENT_FOLD_RADIUS >= 5.0 && theme::COMMENT_FOLD_RADIUS <= 9.0);
+    assert!(theme::COMMENT_COLLAPSE_W >= theme::COMMENT_FOLD_RADIUS * 2.0);
+    assert!(theme::COMMENT_LINE_HIT_W >= 6.0);
+    // Muted blue-gray on dark chat — guide, not loud.
+    let line = theme::COMMENT_THREAD_LINE;
+    let hover = theme::COMMENT_THREAD_HOVER;
+    assert!(line[0] < 0.35 && line[1] < 0.38 && line[2] < 0.42);
+    assert!(line[3] >= 0.99);
+    assert!(hover[0] > line[0] && hover[1] > line[1] && hover[2] > line[2]);
+}
+
+#[test]
+fn reddit_thread_guide_x_steps_one_indent_per_depth() {
+    let left = 100.0;
+    let d0 = theme::comment_thread_guide_x(left, 0);
+    let d1 = theme::comment_thread_guide_x(left, 1);
+    let d2 = theme::comment_thread_guide_x(left, 2);
+    assert!(close(d0, left + theme::COMMENT_COLLAPSE_W * 0.5));
+    assert!(close(d1 - d0, theme::COMMENT_INDENT));
+    assert!(close(d2 - d1, theme::COMMENT_INDENT));
+}
+
+#[test]
+fn reddit_own_branch_line_starts_under_collapse_circle() {
+    let row_top = 40.0;
+    let row_h = 80.0;
+    let (y0, y1) = theme::comment_own_branch_line_y(row_top, row_h);
+    let circle_bottom = row_top + theme::COMMENT_FOLD_PAD_Y + theme::COMMENT_FOLD_RADIUS * 2.0;
+    assert!(close(y0, circle_bottom));
+    assert!(close(y1, row_top + row_h));
+    assert!(y0 < y1);
+}
+
+#[test]
+fn reddit_collapse_circle_only_when_node_has_replies() {
+    assert!(theme::comment_shows_collapse(1));
+    assert!(theme::comment_shows_collapse(3));
+    assert!(!theme::comment_shows_collapse(0));
+}
+
+#[test]
+fn reddit_thread_line_hit_detects_near_guide() {
+    let guide = 150.0;
+    let half = theme::COMMENT_LINE_HIT_W * 0.5;
+    assert!(theme::comment_thread_line_hit(guide, guide));
+    assert!(theme::comment_thread_line_hit(guide, guide + half - 0.1));
+    assert!(!theme::comment_thread_line_hit(guide, guide + half + 1.0));
 }

@@ -528,3 +528,12 @@ The top server-rail control (Discord-home spot) uses a Lucide home icon and open
 - New features: Lucide `home` rail icon; Home landing with Friends / Direct Messages / Servers / Recent sections; Customize (show/hide + reorder); `home.json` persistence; Recent tracks opened DMs and servers
 - Bug fixes: none
 - Other: sidebar Friends still opens the full people list; Home tests in `crates/banter/tests/home.rs`
+
+## 2026-11-05 00:11:39 +0000 [ubuntu] — BA-82 Reddit-style reply thread lines
+
+- Match collapse chrome + vertical gutters to Reddit dark-mode reference (no L-hooks)
+- Theme: 24 px indent, 1 px muted blue-gray guides, circular (−)/(+) fold, line-hit hover/click
+- `CommentRow.ancestor_ids` maps each guide to the branch it collapses
+- Drop DrawListMut before fold/line hit targets (dear-imgui #31 lesson)
+- Tests: theme reddit_* helpers; comment_tree ancestor chain
+

@@ -17,7 +17,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Text + voice channels in categories (Manage Channels; owner has every permission; optional Lucide channel icons) | Working |
 | Drawing board channels (shapes, stickies, images, files, realtime ops) | Working |
 | Send / reply / edit / delete / search messages | Working |
-| Reddit-style reply threading (nested replies, collapse, inline composer) | Working — text channels + DMs; `reply_to` is the parent pointer; BA-72 clarity: stronger guides, chevron fold, Reply link, distinct inline composer |
+| Reddit-style reply threading (nested replies, collapse, inline composer) | Working — text channels + DMs; `reply_to` is the parent pointer; BA-82 thread lines match Reddit dark-mode gutters (thin vertical guides, circular (−)/(+) collapse, line-click); Reply link + distinct inline composer |
 | Attach a file to a message (composer upload) | Disabled — popup **Currently Unavailable** (BA-61); existing attachments still downloadable |
 | Mentions + presence | Working |
 | Discord-like temporary skin (rail, sidebar, chat, members, modals) | Working — **not** final Banter branding |
