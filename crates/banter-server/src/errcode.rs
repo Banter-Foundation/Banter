@@ -23,6 +23,10 @@ pub const ERR_VC_LEAVE: &str = "BANTER_VC_LEAVE_FAILED";
 pub const ERR_VC_FLAGS: &str = "BANTER_VC_FLAGS_FAILED";
 /// Could not publish local media (mic/camera/screen) onto the SFU/P2P path.
 pub const ERR_VC_PUBLISH: &str = "BANTER_VC_PUBLISH_FAILED";
+/// Could not open microphone, speakers, or camera.
+pub const ERR_VC_DEVICE: &str = "BANTER_VC_DEVICE_FAILED";
+/// Could not open WASAPI speaker/app loopback (includes process loopback).
+pub const ERR_VC_LOOPBACK: &str = "BANTER_VC_LOOPBACK_FAILED";
 
 /// Websocket to `/v1/ws` failed to connect.
 pub const ERR_WS_CONNECT: &str = "BANTER_WS_CONNECT_FAILED";

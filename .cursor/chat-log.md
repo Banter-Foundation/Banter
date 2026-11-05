@@ -1013,3 +1013,8 @@ Agent: Implemented shared BanterVersion + protocol floors in banter-server versi
 Newer clients refuse hosts without protocol (or below floor) instead of connecting into silent VC against a stale server.
 
 Agent: PR #51 opened (ManagePullRequest). Do not merge until Owl says so.
+
+## 2026-11-04 23:27:11 -06:00 — BA-92 voice 0x80070057
+
+Agent: Process loopback GetMixFormat/Initialize was the invalid-parameter path under Voice Connected with Brave app audio + screen. Fixed to MS ApplicationLoopback format + LOOPBACK flags; BANTER_VC_LOOPBACK_FAILED / BANTER_VC_DEVICE_FAILED on the voice bar. Branch cursor/fix-voice-0x80070057-b647. Do not merge until Owl says so.
+

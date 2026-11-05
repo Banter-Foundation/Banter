@@ -22,6 +22,8 @@ Shared types live in `banter_server::errcode` (`BanterIssue`, `ERR_*` constants)
 | `BANTER_VC_LEAVE_FAILED` | couldn't leave voice | `POST /v1/voice/leave` |
 | `BANTER_VC_FLAGS_FAILED` | couldn't update voice state | `POST /v1/voice/flags` (mute/deafen/camera/screen) |
 | `BANTER_VC_PUBLISH_FAILED` | (reserved) media publish path | SFU/P2P publish failures |
+| `BANTER_VC_DEVICE_FAILED` | Banter could not open this microphone/speakers/camera… | cpal / camera open failure |
+| `BANTER_VC_LOOPBACK_FAILED` | couldn't capture audio from {label} | WASAPI speaker or per-app process loopback (BA-92; was raw `0x80070057`) |
 | `BANTER_WS_CONNECT_FAILED` | couldn't connect realtime | `/v1/ws` connect |
 | `BANTER_WS_DROPPED` | realtime connection dropped | `/v1/ws` read/write failure |
 | `BANTER_HTTP_STATUS` | server returned HTTP {status} | Non-2xx with empty/non-catalog body |
