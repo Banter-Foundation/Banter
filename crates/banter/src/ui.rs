@@ -29,19 +29,21 @@ use crate::bfmd::{self, Flag as BfmdFlag};
 use crate::bfmd_paint;
 use crate::icons::rasterize_lucide;
 use crate::logic::{
-    CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry, ContextMenuTone, DevServerPrefs, MixSource,
-    MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection, StreamDefaults, StreamFps, StreamResolution,
-    VideoPrefs, VoicePrefs, api_base_for, camera_preview_mirrored, channel_context_menu, channel_default_icon,
-    channel_display_icon, clamp_context_menu_pos, clamp_window_size, comment_tree_rows, context_menu_height,
-    default_stream_fps, default_stream_resolution, discord_shell_columns, encode_jpeg_rgba, folder_context_menu,
-    fps_block, fps_from_key, fps_key, grouped_mix_sources, hardware_encoder_block, insert_mention, is_debug_command,
-    lerp_size, load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, parse_folder_color,
-    password_blocks_copy, plan_member_groups, password_is_masked, push_to_talk_held, rail_tree_rows, remove_message,
-    resolution_block, resolution_from_key, resolution_key, save_json, server_rail_context_menu, server_rail_item_menu,
+    CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry, ContextMenuTone, DevServerPrefs, HomeLayout,
+    HomeRecentEntry, HomeRecentKind, HomeSectionId, MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget,
+    SettingsSection, StreamDefaults, StreamFps, StreamResolution, VideoPrefs, VoicePrefs, api_base_for,
+    camera_preview_mirrored, channel_context_menu, channel_default_icon, channel_display_icon, clamp_context_menu_pos,
+    clamp_window_size, comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution,
+    discord_shell_columns, encode_jpeg_rgba, folder_context_menu, fps_block, fps_from_key, fps_key,
+    grouped_mix_sources, hardware_encoder_block, home_section_is_visible, home_section_label, insert_mention,
+    is_debug_command, lerp_size, load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba,
+    move_home_section, parse_folder_color, password_blocks_copy, plan_member_groups, password_is_masked,
+    push_home_recent, push_to_talk_held, rail_tree_rows, remove_message, resolution_block, resolution_from_key,
+    resolution_key, save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible,
     speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
-    stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message, chat_date_separator,
-    chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day, window_size_label,
-    window_size_presets, OPEN_MIC_RMS,
+    stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,
+    chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day,
+    window_size_label, window_size_presets, OPEN_MIC_RMS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
@@ -159,6 +161,14 @@ enum Place {
     Home,
     Server(i64),
     Direct(i64),
+}
+
+/// What the Home place shows in the stage (BA-81).
+/// Rail Home opens the customizable landing; the sidebar Friends row opens the people list.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HomePane {
+    Landing,
+    Friends,
 }
 
 /// Discord's centered dialogs. Each one maps to an existing API call.
@@ -281,6 +291,12 @@ pub(crate) struct App {
     composer: String,
     search: String,
     friend_tab: u8,
+    /// Home stage pane: customizable landing vs Friends people list (BA-81).
+    home_pane: HomePane,
+    /// Layout order, visibility, and recent destinations for the Home landing (`home.json`).
+    home_layout: HomeLayout,
+    /// When true, the Home landing shows reorder / show-hide controls.
+    home_editing: bool,
     settings: SettingsState,
     settings_error: String,
     /// Local vs remote API target from User Settings → Developer.
@@ -509,6 +525,9 @@ impl App {
             composer: String::new(),
             search: String::new(),
             friend_tab: 0,
+            home_pane: HomePane::Landing,
+            home_layout: HomeLayout::default(),
+            home_editing: false,
             settings: SettingsState::new(),
             settings_error: String::new(),
             dev_server: DevServerPrefs::default(),
@@ -1207,10 +1226,14 @@ impl App {
         ui.dummy([RAIL_W, RAIL_TOP]);
         let home = matches!(self.place, Place::Home | Place::Direct(_));
         let mentions = self.mentions.len();
+        // Top corner control: Lucide home icon → customizable Home landing (BA-81).
+        // DMs stay reachable from the sidebar and as a Home section, not as this button's sole destination.
         let (home_click, _) =
-            self.rail_icon(ui, "home", "B", None, None, home, "Direct Messages", RailTone::Server, mentions);
+            self.rail_icon(ui, "home", "", Some("home"), None, home, "Home", RailTone::Server, mentions);
         if home_click {
             self.place = Place::Home;
+            self.home_pane = HomePane::Landing;
+            self.home_editing = false;
             self.selected = None;
             self.messages.clear();
             self.server_menu = false;
@@ -1894,9 +1917,12 @@ impl App {
 
     fn draw_dm_list(&mut self, ui: &Ui) {
         ui.dummy([0.0, 8.0]);
-        let (friends_left, _) = self.dm_row(ui, "friends", None, "Friends", None, self.place == Place::Home);
+        let friends_selected = self.place == Place::Home && self.home_pane == HomePane::Friends;
+        let (friends_left, _) = self.dm_row(ui, "friends", None, "Friends", None, friends_selected);
         if friends_left {
             self.place = Place::Home;
+            self.home_pane = HomePane::Friends;
+            self.home_editing = false;
             self.selected = None;
             self.messages.clear();
         }
@@ -2233,13 +2259,33 @@ impl App {
         ui.dummy([width, HEADER_H]);
         let mut x = origin[0] + 16.0;
         match self.place {
-            Place::Home => {
+            Place::Home if self.home_pane == HomePane::Friends => {
                 skin::image(ui, self.icon("users"), [x, mid - 12.0], 24.0, CHANNEL_ICON);
                 x += 24.0 + 8.0;
                 skin::text_in_row(ui, semi, FONT_MD, x, origin[1], HEADER_H, TEXT, "Friends");
                 x += skin::text_size(ui, semi, FONT_MD, "Friends")[0] + 16.0;
                 skin::rect(ui, [x, mid - 12.0], [x + 1.0, mid + 12.0], DIVIDER, 0.0);
                 self.draw_friend_tabs(ui, x + 1.0 + 16.0, mid);
+            }
+            Place::Home => {
+                skin::image(ui, self.icon("home"), [x, mid - 12.0], 24.0, CHANNEL_ICON);
+                x += 24.0 + 8.0;
+                skin::text_in_row(ui, semi, FONT_MD, x, origin[1], HEADER_H, TEXT, "Home");
+                let edit_label = if self.home_editing { "Done" } else { "Customize" };
+                let edit_w = skin::text_size(ui, semi, FONT_SM, edit_label)[0] + 24.0;
+                let edit_x = origin[0] + width - 16.0 - edit_w;
+                if skin::button(
+                    ui,
+                    "home-customize",
+                    edit_label,
+                    Tone::Secondary,
+                    [edit_x, mid - 14.0],
+                    [edit_w, 28.0],
+                    true,
+                    semi,
+                ) {
+                    self.home_editing = !self.home_editing;
+                }
             }
             Place::Direct(dm_id) => {
                 if let Some(chat) = self.dms.iter().find(|chat| chat.id == dm_id).cloned() {
@@ -2353,7 +2399,10 @@ impl App {
         } else if self.voice_selected() {
             self.draw_voice_stage(ui);
         } else if self.place == Place::Home {
-            self.draw_people(ui);
+            match self.home_pane {
+                HomePane::Landing => self.draw_home_landing(ui),
+                HomePane::Friends => self.draw_people(ui),
+            }
         } else {
             self.draw_chat(ui);
         }
@@ -2382,7 +2431,8 @@ impl App {
             }
         }
         match self.place {
-            Place::Home => "Friends".to_string(),
+            Place::Home if self.home_pane == HomePane::Friends => "Friends".to_string(),
+            Place::Home => "Home".to_string(),
             Place::Direct(dm_id) => self
                 .dms
                 .iter()
@@ -2405,10 +2455,396 @@ impl App {
             }
         }
         match self.place {
-            Place::Home => Some("users"),
+            Place::Home if self.home_pane == HomePane::Friends => Some("users"),
+            Place::Home => Some("home"),
             Place::Direct(_) => Some("user"),
             Place::Server(_) => None,
         }
+    }
+
+    /// Customizable Home landing: Friends, DMs, Servers, and Recent sections (BA-81).
+    fn draw_home_landing(&mut self, ui: &Ui) {
+        let origin = ui.cursor_screen_pos();
+        let width = ui.content_region_avail()[0];
+        let height = ui.content_region_avail()[1];
+        let left = origin[0] + 30.0;
+        let right = origin[0] + width - 20.0;
+        ui.dummy([width, 16.0]);
+        skin::text(
+            ui,
+            None,
+            FONT_SM,
+            [left, origin[1] + 8.0],
+            TEXT_SECONDARY,
+            "Your Home page. Open Friends from the sidebar, or customize which sections show here.",
+        );
+        ui.set_cursor_screen_pos([origin[0], origin[1] + 40.0]);
+
+        if self.home_editing {
+            self.draw_home_layout_editor(ui, left, right);
+        }
+
+        let sections = if self.home_editing {
+            self.home_layout.sections.clone()
+        } else {
+            visible_home_sections(&self.home_layout)
+        };
+        let mut open_dm: Option<i64> = None;
+        let mut open_server: Option<i64> = None;
+        let mut open_friends = false;
+        for section in &sections {
+            if self.home_editing && !home_section_is_visible(&self.home_layout, *section) {
+                continue;
+            }
+            match *section {
+                HomeSectionId::Friends => {
+                    if self.draw_home_friends_section(ui, left, right) {
+                        open_friends = true;
+                    }
+                }
+                HomeSectionId::DirectMessages => {
+                    if let Some(id) = self.draw_home_dms_section(ui, left, right) {
+                        open_dm = Some(id);
+                    }
+                }
+                HomeSectionId::Servers => {
+                    if let Some(id) = self.draw_home_servers_section(ui, left, right) {
+                        open_server = Some(id);
+                    }
+                }
+                HomeSectionId::Recent => {
+                    match self.draw_home_recent_section(ui, left, right) {
+                        Some(HomeRecentEntry {
+                            kind: HomeRecentKind::DirectMessage,
+                            id,
+                        }) => open_dm = Some(id),
+                        Some(HomeRecentEntry {
+                            kind: HomeRecentKind::Server,
+                            id,
+                        }) => open_server = Some(id),
+                        None => {}
+                    }
+                }
+            }
+        }
+
+        if sections.is_empty() {
+            ui.dummy([width, (height - 80.0).max(40.0)]);
+            skin::text_centered(
+                ui,
+                None,
+                FONT_MD,
+                origin[0] + width * 0.5,
+                origin[1] + height * 0.42,
+                MUTED,
+                "No Home sections are visible. Click Customize to show some.",
+            );
+        }
+
+        if open_friends {
+            self.home_pane = HomePane::Friends;
+            self.friend_tab = 0;
+            self.home_editing = false;
+        }
+        if let Some(dm_id) = open_dm {
+            self.open_dm(dm_id);
+        }
+        if let Some(server_id) = open_server {
+            self.open_server(server_id);
+        }
+    }
+
+    fn draw_home_layout_editor(&mut self, ui: &Ui, left: f32, right: f32) {
+        let semi = self.semibold_font;
+        let origin = ui.cursor_screen_pos();
+        let width = (right - left).max(80.0);
+        skin::text(ui, semi, FONT_SM, [left, origin[1]], TEXT, "Arrange sections");
+        skin::text(
+            ui,
+            None,
+            FONT_XS,
+            [left, origin[1] + 20.0],
+            TEXT_SECONDARY,
+            "Show or hide each block and move it up or down. Changes save on this PC.",
+        );
+        ui.set_cursor_screen_pos([origin[0], origin[1] + 44.0]);
+        let order = self.home_layout.sections.clone();
+        let mut dirty = false;
+        for (index, id) in order.iter().copied().enumerate() {
+            let row_y = ui.cursor_screen_pos()[1];
+            let label = home_section_label(id);
+            let mut visible = home_section_is_visible(&self.home_layout, id);
+            skin::checkbox(
+                ui,
+                &format!("home-vis-{index}"),
+                label,
+                &mut visible,
+                [left, row_y],
+                self.icon("check"),
+                semi,
+            );
+            if visible != home_section_is_visible(&self.home_layout, id) {
+                set_home_section_visible(&mut self.home_layout, id, visible);
+                dirty = true;
+            }
+            let btn_y = row_y + 2.0;
+            if skin::icon_button(
+                ui,
+                &format!("home-up-{index}"),
+                self.icon("chevron-up"),
+                [right - 64.0, btn_y],
+                28.0,
+                20.0,
+                TEXT_SECONDARY,
+                TEXT_NORMAL,
+                None,
+            ) && move_home_section(&mut self.home_layout, id, -1)
+            {
+                dirty = true;
+            }
+            if skin::icon_button(
+                ui,
+                &format!("home-down-{index}"),
+                self.icon("chevron-down"),
+                [right - 32.0, btn_y],
+                28.0,
+                20.0,
+                TEXT_SECONDARY,
+                TEXT_NORMAL,
+                None,
+            ) && move_home_section(&mut self.home_layout, id, 1)
+            {
+                dirty = true;
+            }
+            ui.set_cursor_screen_pos([origin[0], row_y + 36.0]);
+            let _ = width;
+        }
+        if dirty {
+            self.save_home_layout();
+        }
+        ui.dummy([0.0, 12.0]);
+        skin::line_h(ui, left, right, ui.cursor_screen_pos()[1], LIST_DIVIDER);
+        ui.dummy([0.0, 16.0]);
+    }
+
+    fn draw_home_section_header(&self, ui: &Ui, left: f32, title: &str, subtitle: &str) {
+        let origin = ui.cursor_screen_pos();
+        let semi = self.semibold_font;
+        skin::text(ui, semi, FONT_XS, [left, origin[1]], TEXT_SECONDARY, &title.to_uppercase());
+        if !subtitle.is_empty() {
+            skin::text(ui, None, FONT_SM, [left, origin[1] + 18.0], TEXT_SECONDARY, subtitle);
+            ui.set_cursor_screen_pos([origin[0], origin[1] + 42.0]);
+        } else {
+            ui.set_cursor_screen_pos([origin[0], origin[1] + 22.0]);
+        }
+    }
+
+    /// Returns true when the user asks to open the full Friends pane.
+    fn draw_home_friends_section(&mut self, ui: &Ui, left: f32, right: f32) -> bool {
+        let online = self
+            .friends
+            .iter()
+            .filter(|friend| {
+                self.presence
+                    .get(&friend.id)
+                    .map(|info| info.state != Presence::Offline)
+                    .unwrap_or(false)
+            })
+            .count();
+        let pending = self.incoming.len();
+        let subtitle = if pending > 0 {
+            format!("{online} online · {pending} pending")
+        } else {
+            format!("{online} online · {} friends", self.friends.len())
+        };
+        self.draw_home_section_header(ui, left, "Friends", &subtitle);
+        let mut open = false;
+        let semi = self.semibold_font;
+        let y = ui.cursor_screen_pos()[1];
+        if skin::button(
+            ui,
+            "home-open-friends",
+            "Open Friends",
+            Tone::Brand,
+            [left, y],
+            [140.0, 32.0],
+            true,
+            semi,
+        ) {
+            open = true;
+        }
+        let preview: Vec<_> = self
+            .friends
+            .iter()
+            .filter(|friend| {
+                self.presence
+                    .get(&friend.id)
+                    .map(|info| info.state != Presence::Offline)
+                    .unwrap_or(false)
+            })
+            .take(5)
+            .cloned()
+            .collect();
+        let mut x = left + 156.0;
+        for friend in preview {
+            let center = [x + 16.0, y + 16.0];
+            let avatar = self.avatars.get(&friend.id).map(|shot| shot.texture);
+            paint_avatar(ui, avatar, center, 16.0, &initials(&friend.display_name), None);
+            let presence = self.presence.get(&friend.id).map(|p| p.state).unwrap_or(Presence::Offline);
+            paint_status_dot(ui, center, 16.0, presence, STAGE_BG);
+            x += 40.0;
+            if x + 32.0 > right {
+                break;
+            }
+        }
+        ui.set_cursor_screen_pos([ui.cursor_screen_pos()[0], y + 48.0]);
+        ui.dummy([0.0, 8.0]);
+        open
+    }
+
+    fn draw_home_dms_section(&mut self, ui: &Ui, left: f32, right: f32) -> Option<i64> {
+        let count = self.dms.len();
+        let subtitle = if count == 0 {
+            "No direct messages yet.".into()
+        } else {
+            format!("{count} conversations")
+        };
+        self.draw_home_section_header(ui, left, "Direct Messages", &subtitle);
+        let mut chosen = None;
+        let dms: Vec<_> = self.dms.iter().take(8).cloned().collect();
+        for chat in dms {
+            let row_min = [left - 10.0, ui.cursor_screen_pos()[1]];
+            let row_max = [right + 10.0, row_min[1] + 48.0];
+            let hovered = ui.is_window_hovered() && ui.is_mouse_hovering_rect(row_min, row_max);
+            if hovered {
+                skin::rect(ui, row_min, row_max, ROW_HOVER, 8.0);
+            }
+            let center = [left + 16.0, row_min[1] + 24.0];
+            let avatar = self.avatars.get(&chat.peer_id).map(|shot| shot.texture);
+            paint_avatar(ui, avatar, center, 16.0, &initials(&chat.peer_display_name), None);
+            let presence = self.presence.get(&chat.peer_id).map(|p| p.state).unwrap_or(Presence::Offline);
+            paint_status_dot(ui, center, 16.0, presence, if hovered { ROW_HOVER } else { STAGE_BG });
+            skin::text(
+                ui,
+                self.semibold_font,
+                FONT_MD,
+                [left + 44.0, row_min[1] + 14.0],
+                TEXT,
+                &chat.peer_display_name,
+            );
+            ui.set_cursor_screen_pos(row_min);
+            if ui.invisible_button(format!("home-dm-{}", chat.id), [row_max[0] - row_min[0], 48.0]) {
+                chosen = Some(chat.id);
+            }
+        }
+        ui.dummy([0.0, 12.0]);
+        chosen
+    }
+
+    fn draw_home_servers_section(&mut self, ui: &Ui, left: f32, right: f32) -> Option<i64> {
+        let count = self.servers.len();
+        let subtitle = if count == 0 {
+            "Join or create a server to pin shortcuts here.".into()
+        } else {
+            format!("{count} servers")
+        };
+        self.draw_home_section_header(ui, left, "Servers", &subtitle);
+        let mut chosen = None;
+        let mut x = left;
+        let y = ui.cursor_screen_pos()[1];
+        let servers = self.servers.clone();
+        for server in servers {
+            if x + 48.0 > right {
+                break;
+            }
+            ui.set_cursor_screen_pos([x, y]);
+            if ui.invisible_button(format!("home-server-{}", server.id), [44.0, 44.0]) {
+                chosen = Some(server.id);
+            }
+            let hovered = ui.is_item_hovered();
+            let fill = if hovered { BLURPLE } else { STAGE_BG };
+            skin::rect(ui, [x, y], [x + 44.0, y + 44.0], fill, 12.0);
+            let letters = initials(&server.name);
+            let measured = skin::text_size(ui, self.semibold_font, FONT_SM, &letters);
+            skin::text(
+                ui,
+                self.semibold_font,
+                FONT_SM,
+                [x + (44.0 - measured[0]) * 0.5, y + (44.0 - measured[1]) * 0.5],
+                WHITE,
+                &letters,
+            );
+            if hovered {
+                skin::item_tooltip(ui, self.semibold_font, &server.name);
+            }
+            x += 52.0;
+        }
+        ui.set_cursor_screen_pos([ui.cursor_screen_pos()[0], y + 56.0]);
+        ui.dummy([0.0, 8.0]);
+        chosen
+    }
+
+    fn draw_home_recent_section(&mut self, ui: &Ui, left: f32, right: f32) -> Option<HomeRecentEntry> {
+        self.draw_home_section_header(ui, left, "Recent", "");
+        let mut chosen = None;
+        let recent = self.home_layout.recent.clone();
+        if recent.is_empty() {
+            skin::text(
+                ui,
+                None,
+                FONT_SM,
+                [left, ui.cursor_screen_pos()[1]],
+                MUTED,
+                "Servers and DMs you open show up here.",
+            );
+            ui.dummy([0.0, 28.0]);
+            return None;
+        }
+        for entry in recent {
+            let label = match entry.kind {
+                HomeRecentKind::DirectMessage => self
+                    .dms
+                    .iter()
+                    .find(|chat| chat.id == entry.id)
+                    .map(|chat| format!("DM · {}", chat.peer_display_name)),
+                HomeRecentKind::Server => self
+                    .servers
+                    .iter()
+                    .find(|server| server.id == entry.id)
+                    .map(|server| format!("Server · {}", server.name)),
+            };
+            let Some(label) = label else {
+                continue;
+            };
+            let row_min = [left - 10.0, ui.cursor_screen_pos()[1]];
+            let row_max = [right + 10.0, row_min[1] + 40.0];
+            let hovered = ui.is_window_hovered() && ui.is_mouse_hovering_rect(row_min, row_max);
+            if hovered {
+                skin::rect(ui, row_min, row_max, ROW_HOVER, 8.0);
+            }
+            let icon = match entry.kind {
+                HomeRecentKind::DirectMessage => "message-circle",
+                HomeRecentKind::Server => "hash",
+            };
+            skin::image(ui, self.icon(icon), [left, row_min[1] + 8.0], 20.0, TEXT_SECONDARY);
+            skin::text(
+                ui,
+                self.semibold_font,
+                FONT_MD,
+                [left + 28.0, row_min[1] + 10.0],
+                TEXT,
+                &label,
+            );
+            ui.set_cursor_screen_pos(row_min);
+            if ui.invisible_button(
+                format!("home-recent-{:?}-{}", entry.kind, entry.id),
+                [row_max[0] - row_min[0], 40.0],
+            ) {
+                chosen = Some(entry);
+            }
+        }
+        ui.dummy([0.0, 12.0]);
+        chosen
     }
 
     /// Friends home: Online, All, Pending, and Add Friend, laid out like Discord's people list.
@@ -4957,6 +5393,10 @@ impl App {
         self.collapsed_comments.clear();
         self.editing = None;
         self.shown_invite.clear();
+        self.remember_home_recent(HomeRecentEntry {
+            kind: HomeRecentKind::Server,
+            id: server_id,
+        });
         self.reload_layout();
         self.reload_members();
         if let Some(member) = self.members.iter().find(|member| Some(member.user_id) == self.account.as_ref().map(|account| account.id)) {
@@ -4989,7 +5429,16 @@ impl App {
         self.reply_draft.clear();
         self.collapsed_comments.clear();
         self.editing = None;
+        self.remember_home_recent(HomeRecentEntry {
+            kind: HomeRecentKind::DirectMessage,
+            id: dm_id,
+        });
         self.reload_messages();
+    }
+
+    fn remember_home_recent(&mut self, entry: HomeRecentEntry) {
+        push_home_recent(&mut self.home_layout, entry);
+        self.save_home_layout();
     }
 
     /// Opens the DM for a newly added friend when they are on the friends list.
@@ -7394,7 +7843,7 @@ impl App {
             "mic", "mic-off", "headphones", "headphone-off", "video", "video-off", "monitor", "monitor-off",
             "phone-off", "settings", "chevron-down", "chevron-up", "plus", "hash", "volume-2", "users", "search", "paperclip",
             "x", "user", "log-out", "pencil", "trash-2", "reply", "check", "chevron-right", "circle-plus", "folder",
-            "folder-plus", "message-circle", "phone", "user-plus", "signal", "ellipsis", "minus",
+            "folder-plus", "message-circle", "phone", "user-plus", "signal", "ellipsis", "minus", "home",
             "image", "file-text", "sticky-note", "circle", "square", "type", "mouse-pointer-2",
         ] {
             if let Ok(rgba) = rasterize_lucide(name, 32, [255, 255, 255]) {
@@ -8688,6 +9137,13 @@ impl App {
         if let Some(dev) = load_json::<DevServerPrefs>(&self.data_dir.join("dev-server.json")) {
             self.dev_server = dev;
         }
+        if let Some(home) = load_json::<HomeLayout>(&self.data_dir.join("home.json")) {
+            self.home_layout = HomeLayout::normalize(home);
+        }
+    }
+
+    fn save_home_layout(&self) {
+        let _ = save_json(&self.data_dir.join("home.json"), &self.home_layout);
     }
 
     fn save_voice(&self) {

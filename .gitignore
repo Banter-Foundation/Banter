@@ -9,6 +9,7 @@ auth.json
 client-session.json
 voice.json
 stream.json
+home.json
 dev-server.json
 banter.db
 banter.db-*

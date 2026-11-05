@@ -39,7 +39,7 @@ When adding API or settings behavior, write or extend the failing test **before*
 Never commit:
 
 - `%LOCALAPPDATA%\Banter\**` (or the Linux/macOS data dir)
-- `auth.json`, `client-session.json`, `voice.json`, `stream.json`
+- `auth.json`, `client-session.json`, `voice.json`, `stream.json`, `home.json`
 - `.env`, secrets, PEMs
 
 ## Docs layout
