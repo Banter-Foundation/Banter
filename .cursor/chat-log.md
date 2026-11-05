@@ -1027,3 +1027,5 @@ Agent: Removed composer and inline-reply B/I/U/S chrome plus pending-flag scaffo
 
 ### Summary
 Composer and reply boxes no longer show the B/I/U/S bar; BFMD in message bodies still parses and paints.
+
+Agent: PR #56 opened. Do not merge until Owl says so.
