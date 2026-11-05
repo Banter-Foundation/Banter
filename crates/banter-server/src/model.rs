@@ -488,6 +488,14 @@ impl Default for VoiceFlags {
     }
 }
 
+/// Clear talking when mute or deafen is set so roster glows never show a silenced mic.
+pub fn sanitize_voice_flags(mut flags: VoiceFlags) -> VoiceFlags {
+    if flags.muted || flags.deafened {
+        flags.transmitting = false;
+    }
+    flags
+}
+
 pub fn should_send_audio(flags: &VoiceFlags) -> bool {
     if flags.muted || flags.deafened {
         return false;

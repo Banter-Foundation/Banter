@@ -188,7 +188,7 @@ impl Live {
     pub fn set_flags(&self, user_id: i64, flags: VoiceFlags) -> Option<i64> {
         let mut inner = self.lock();
         let user = entry(&mut inner, user_id);
-        user.flags = flags;
+        user.flags = crate::model::sanitize_voice_flags(flags);
         user.voice_channel
     }
 

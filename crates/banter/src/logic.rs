@@ -272,6 +272,8 @@ impl MuteMemory {
         camera: bool,
         screen: bool,
     ) -> VoiceFlags {
+        // Mute and deafen stop the mic; never advertise a talking glow while either is on.
+        let transmitting = transmitting && !self.muted && !self.deafened;
         VoiceFlags {
             muted: self.muted,
             deafened: self.deafened,
@@ -2062,6 +2064,23 @@ mod member_group_tests {
         assert_eq!(groups[2].1, vec![1]);
         assert_eq!(groups[3].0, "OFFLINE");
         assert_eq!(groups[3].1, vec![2]);
+    }
+}
+
+#[cfg(test)]
+mod mute_memory_tests {
+    use super::MuteMemory;
+
+    #[test]
+    fn voice_flags_clear_talking_while_muted_or_deafened() {
+        let mut memory = MuteMemory::new();
+        assert!(memory.voice_flags(false, true, false, false).transmitting);
+
+        memory.set_muted(true);
+        assert!(!memory.voice_flags(false, true, false, false).transmitting);
+
+        memory.set_deafened(true);
+        assert!(!memory.voice_flags(true, true, false, false).transmitting);
     }
 }
 
