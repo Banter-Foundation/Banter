@@ -726,3 +726,8 @@ The hidden `/debugnow` Stats section now shows the live server `BANTER_VERSION` 
 - `version` / `protocol` on `ServerDebug` (serde defaults for older hosts)
 - Stats line above uptime/rss: `version …    protocol …`
 
+## 2026-11-05 07:50:07 +00:00 [ubuntu] — Camera keyframes and Go Live restart
+
+Camera publish always stored `key: false`, so remotes never got an IDR and camera looked broken on every OS. Screen restart could stick on a failed open, a stale portal session, or a congestion `ScreenStop` ladder. First camera/size frames are keyed again; End → Go Live clears sticky failure, settles capture, closes the portal session, and resets idle ScreenStop.
+
+
