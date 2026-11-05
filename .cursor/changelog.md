@@ -730,4 +730,10 @@ The hidden `/debugnow` Stats section now shows the live server `BANTER_VERSION` 
 
 Camera publish always stored `key: false`, so remotes never got an IDR and camera looked broken on every OS. Screen restart could stick on a failed open, a stale portal session, or a congestion `ScreenStop` ladder. First camera/size frames are keyed again; End → Go Live clears sticky failure, settles capture, closes the portal session, and resets idle ScreenStop.
 
+## 2026-11-05 03:12:00 -05:00 [ubuntu] — Version-1-test-11.1 pre-release
+
+Shipped pre-release Version-1-test-11.1 from main after `/debugnow` network traffic + version/protocol, macOS Banter.app TCC packaging, camera keyframes, and Go Live restart cleanup. Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
+- Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-11.1
+- Assets: Banter-windows-version-1-test-11.1.zip, Banter-linux-version-1-test-11.1.zip, Banter-macos-arm-version-1-test-11.1.zip, banter-server.exe, banter-server-linux, banter-server-macos-arm
 
