@@ -1122,6 +1122,50 @@ pub struct DebugLogLine {
     pub message: String,
 }
 
+/// Process-wide network counters for the hidden server debug window.
+///
+/// `in` is bytes received by the server. `out` is bytes sent. Rates are since
+/// the previous `/v1/debug` poll.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerTraffic {
+    #[serde(default)]
+    pub http_in: u64,
+    #[serde(default)]
+    pub http_out: u64,
+    #[serde(default)]
+    pub http_reqs: u64,
+    #[serde(default)]
+    pub http_in_per_s: u64,
+    #[serde(default)]
+    pub http_out_per_s: u64,
+    #[serde(default)]
+    pub http_reqs_per_s: u64,
+    #[serde(default)]
+    pub ws_in: u64,
+    #[serde(default)]
+    pub ws_out: u64,
+    #[serde(default)]
+    pub ws_msgs_in: u64,
+    #[serde(default)]
+    pub ws_msgs_out: u64,
+    #[serde(default)]
+    pub ws_in_per_s: u64,
+    #[serde(default)]
+    pub ws_out_per_s: u64,
+    #[serde(default)]
+    pub media_in: u64,
+    #[serde(default)]
+    pub media_out: u64,
+    #[serde(default)]
+    pub media_packets_in: u64,
+    #[serde(default)]
+    pub media_packets_out: u64,
+    #[serde(default)]
+    pub media_in_per_s: u64,
+    #[serde(default)]
+    pub media_out_per_s: u64,
+}
+
 /// Snapshot for the hidden server debug window. Any signed-in client can read it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerDebug {
@@ -1141,5 +1185,7 @@ pub struct ServerDebug {
     pub messages: i64,
     pub pool_size: i64,
     pub pool_idle: i64,
+    #[serde(default)]
+    pub traffic: ServerTraffic,
     pub logs: Vec<DebugLogLine>,
 }

@@ -5586,6 +5586,45 @@ impl App {
                     ));
                     ui.text(format!("db pool size {}    idle {}", view.pool_size, view.pool_idle));
                     ui.separator();
+                    ui.text_colored(TEXT_SECONDARY, "Network (server in / out)");
+                    let traffic = &view.traffic;
+                    ui.text(format!(
+                        "HTTP  {}/s in  {}/s out  {} req/s",
+                        crate::profiler::format_bytes(traffic.http_in_per_s),
+                        crate::profiler::format_bytes(traffic.http_out_per_s),
+                        traffic.http_reqs_per_s
+                    ));
+                    ui.text(format!(
+                        "total  {} in  {} out  {} requests",
+                        crate::profiler::format_bytes(traffic.http_in),
+                        crate::profiler::format_bytes(traffic.http_out),
+                        traffic.http_reqs
+                    ));
+                    ui.text(format!(
+                        "WS  {}/s in  {}/s out",
+                        crate::profiler::format_bytes(traffic.ws_in_per_s),
+                        crate::profiler::format_bytes(traffic.ws_out_per_s)
+                    ));
+                    ui.text(format!(
+                        "total  {} in  {} out  {} in-msg  {} out-msg",
+                        crate::profiler::format_bytes(traffic.ws_in),
+                        crate::profiler::format_bytes(traffic.ws_out),
+                        traffic.ws_msgs_in,
+                        traffic.ws_msgs_out
+                    ));
+                    ui.text(format!(
+                        "Media  {}/s in  {}/s out",
+                        crate::profiler::format_bytes(traffic.media_in_per_s),
+                        crate::profiler::format_bytes(traffic.media_out_per_s)
+                    ));
+                    ui.text(format!(
+                        "total  {} in  {} out  {} in-pkt  {} out-pkt",
+                        crate::profiler::format_bytes(traffic.media_in),
+                        crate::profiler::format_bytes(traffic.media_out),
+                        traffic.media_packets_in,
+                        traffic.media_packets_out
+                    ));
+                    ui.separator();
                     ui.text_colored(TEXT_SECONDARY, "Logs");
                     let _log_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
                     ui.child_window("server-debug-logs").size([0.0, 0.0]).build(ui, || {

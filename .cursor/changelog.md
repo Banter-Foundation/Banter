@@ -701,3 +701,16 @@ Bare `banter-macos-arm` never appeared under Privacy & Security, so Microphone /
 - Request Screen Recording via `CGRequestScreenCaptureAccess` before capture; clear System Settings errors
 - `scripts/package-macos-app.sh` wraps the binary as `Banter.app` (bundle id `foundation.banter.desktop`) and ad-hoc signs it
 - Docs: README, build-and-run, streaming, feature-status, overview
+
+## 2026-11-05 02:47:26 -05:00 [ubuntu] — /debugnow shows server network traffic
+
+The hidden `/debugnow` window now shows HTTP, WebSocket, and SFU media bytes in and out (totals and per-second rates) so publish/view issues are easier to spot live.
+
+### Changelog
+- New features: server traffic counters in `/debugnow` / `GET /v1/debug`
+- Bug fixes: none
+- Other: none
+
+- `ServerTraffic` on `ServerDebug`; counters in `debuglog`, HTTP body middleware, WebSocket frames, and RTP forwards
+- Window section "Network (server in / out)" with HTTP / WS / Media rates and totals
+
