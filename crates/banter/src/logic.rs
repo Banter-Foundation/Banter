@@ -734,6 +734,13 @@ impl Default for ScreenShare {
     }
 }
 
+/// Close Stream Select and Stream options. Leave voice/call, disconnect, or stop share
+/// must clear both so the overlays do not stick until the next Go Live.
+pub fn dismiss_stream_overlays(share_open: &mut bool, stream_menu: &mut bool) {
+    *share_open = false;
+    *stream_menu = false;
+}
+
 /// Which camera is open. A new index means the device has to be opened again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CameraChoice {
