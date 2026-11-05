@@ -686,6 +686,13 @@ Adding a plugin asks before it runs and says what it will do. Welcome 1.1.0 chan
 
 Right-click a server and choose Plugins. Each plugin already on that server has Remove. Removing it unloads the script and deletes the install, so new messages are left alone.
 
+## 2026-11-05 06:49:00 +0000 [ubuntu] — Version-1-test-11 pre-release
+
+Shipped pre-release Version-1-test-11 from main `8e1efdc` (+ `BANTER_VERSION` bump `dcbba80`). Includes channel icons, server folders, Home landing, Settings ImGui fixes, voice error codes, version checker, Compose local image default, WASAPI loopback fix, visible voice roster, mic/screen encode split, BFMD toolbar removal, and mods/plugins from the data directory. Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
+- Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-11
+- Assets: Banter-windows-version-1-test-11.zip, Banter-linux-version-1-test-11.zip, Banter-macos-arm-version-1-test-11.zip, banter-server.exe, banter-server-linux, banter-server-macos-arm
+
 ## 2026-11-05 07:35:00 +0000 [ubuntu] — macOS voice and screen share TCC
 
 Bare `banter-macos-arm` never appeared under Privacy & Security, so Microphone / Camera / Screen Recording stayed denied and voice plus Go Live looked broken.
