@@ -105,12 +105,12 @@ Data: `$XDG_DATA_HOME/Banter` or `~/.local/share/Banter`. Speaker loopback and p
 ## macOS (Apple Silicon)
 
 ```
-cargo build --release -p banter
-./scripts/package-macos-app.sh target/release/banter dist/macos version-1-dev
+# Local or release: always produce Banter.app (never zip a bare Mach-O).
+./scripts/build-macos-release.sh version-1-dev dist/macos
 open dist/macos/Banter.app
 ```
 
-Always launch **`Banter.app`**. A bare binary has no stable bundle id, so System Settings cannot attribute Microphone / Camera / Screen Recording grants and those features stay silent. After the first prompt, enable Banter under **System Settings → Privacy & Security**, then quit and reopen the app. Data: `~/Library/Application Support/Banter`. Stream loopback / per-app audio stay Windows/Linux-only.
+`scripts/package-macos-app.sh` wraps the client binary as **`Banter.app`** (bundle id `foundation.banter.desktop`, `CFBundlePackageType` `APPL`). That is required so Finder launches Banter as a GUI app without opening Terminal, and so System Settings can attribute Microphone / Camera / Screen Recording. Do not ship or double-click a bare `banter-macos-arm` binary. After the first prompt, enable Banter under **System Settings → Privacy & Security**, then quit and reopen the app. Data: `~/Library/Application Support/Banter`. Stream loopback / per-app audio stay Windows/Linux-only. Cut Apple Silicon release zips with Actions workflow `macos-arm-release` (`workflow_dispatch`) or `./scripts/build-macos-release.sh`.
 
 ## Tests
 

@@ -1,0 +1,32 @@
+# Durable Apple Silicon client/server release build.
+# Always packages Banter.app via scripts/package-macos-app.sh so Finder does
+# not open Terminal (that happens only for a bare Mach-O zip entry).
+name: macos-arm-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_label:
+        description: "Zip label (e.g. version-1-test-12)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Package Banter.app release
+        run: |
+          set -euo pipefail
+          ./scripts/build-macos-release.sh "${{ inputs.version_label }}" dist/macos
+          file dist/macos/Banter.app/Contents/MacOS/banter
+          lipo -archs dist/macos/Banter.app/Contents/MacOS/banter
+          unzip -l "dist/macos/Banter-macos-arm-${{ inputs.version_label }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm
+          path: |
+            dist/macos/Banter-macos-arm-${{ inputs.version_label }}.zip
+            dist/macos/banter-server-macos-arm

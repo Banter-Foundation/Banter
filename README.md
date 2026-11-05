@@ -45,7 +45,7 @@ Data goes to `$XDG_DATA_HOME/Banter`, or `~/.local/share/Banter`, unless `BANTER
 
 ### macOS (Apple Silicon)
 
-Run the packaged **`Banter.app`** from the pre-release zip (not a bare `banter-macos-arm` binary). The first mic, camera, or screen share prompts macOS Privacy & Security; enable Banter under **Microphone**, **Camera**, and **Screen Recording**, then quit and reopen Banter. Data goes to `~/Library/Application Support/Banter`. Speaker loopback / per-app stream audio are not available on macOS yet. Opening http links from the client is not implemented.
+Open **`Banter.app`** from the pre-release zip (double-click or `open Banter.app`). Releases ship the `.app` bundle — not a bare `banter-macos-arm` Mach-O — so Finder does not open Terminal. The first mic, camera, or screen share prompts macOS Privacy & Security; enable Banter under **Microphone**, **Camera**, and **Screen Recording**, then quit and reopen Banter. Data goes to `~/Library/Application Support/Banter`. Speaker loopback / per-app stream audio are not available on macOS yet. Opening http links from the client is not implemented.
 
 ### Server
 

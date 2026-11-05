@@ -1,3 +1,7 @@
+## 2026-11-05 13:35:00 -05:00 [ubuntu] — macOS Banter.app without Terminal
+
+Release zips had been shipping a bare `banter-macos-arm` Mach-O. Double-clicking that in Finder opens Terminal. Packaging now always wraps the client as `Banter.app` (`scripts/package-macos-app.sh` + `scripts/build-macos-release.sh`), with a CI layout check and a durable `macos-arm-release` workflow. `LSUIElement` stays unset (docked GUI app); the Terminal fix is the `.app` launch path, not an agent flag.
+
 ## 2026-11-05 18:19:11 +00:00 [ubuntu] — Dismiss stream overlays on leave
 
 Leaving guild voice or a DM call (Disconnect / peer hang-up), or stopping a share, now clears Stream Select and Stream options. Previously those overlays could stay open until the next Go Live. Helper `dismiss_stream_overlays`; wired through `end_media_place` and `stop_streaming`.

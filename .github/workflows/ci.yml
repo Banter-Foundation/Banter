@@ -39,6 +39,9 @@ jobs:
         run: cargo test -p banter-server
       - name: client
         run: cargo test -p banter
+      - name: macOS app zip layout
+        # Structure-only; catches shipping a bare Mach-O that opens Terminal.
+        run: ./scripts/check-macos-app-zip.sh
 
   windows:
     runs-on: windows-latest
