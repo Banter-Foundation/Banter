@@ -26,7 +26,7 @@ Did **not** start a second client (other agents and an open window already owned
 | Process | `banter` pid **34512**, title **Banter**, responding |
 | Binary | `D:\Projects\Banter\target\debug\banter.exe` (started ~11:04 AM; path pre-remap) |
 | Window | ~1296×835 at screen position (78, 92) |
-| Health | `GET http://127.0.0.1:3970/v1/health` → `{"ok":true}` |
+| Health | `GET http://127.0.0.1:3970/v1/health` → `ok` plus `version` / `protocol` / `min_client_protocol` (BA-91; older hosts may still be `{"ok":true}` only) |
 | Data dir | `%LOCALAPPDATA%\Banter` — session/prefs + file bytes; SQL store is Postgres (see Data layout) |
 
 ## What the UI showed

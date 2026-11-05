@@ -8,11 +8,11 @@ use base64::Engine;
 use crate::profiler;
 use base64::engine::general_purpose::STANDARD;
 use banter_server::{
-    format_banter_notice, Account, CallSnapshot, Category, CategoryLayout, Channel, ChannelKind, ChatTarget,
-    CosmeticItem, DirectChat, Friend, FriendRequest, GuildRole, Mention, Message, Presence, ProfilePatch,
-    ServerDebug, ServerFolder, ServerFolderPatch, ServerHome, ServerRail, ServerRailServer, ServerSummary,
-    Session, UserProfile, VoiceFlags, VoiceMember, ERR_HTTP_PARSE, ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT,
-    ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
+    format_banter_notice, Account, BanterVersionReport, CallSnapshot, Category, CategoryLayout, Channel,
+    ChannelKind, ChatTarget, CosmeticItem, DirectChat, Friend, FriendRequest, GuildRole, Mention, Message,
+    Presence, ProfilePatch, ServerDebug, ServerFolder, ServerFolderPatch, ServerHome, ServerRail,
+    ServerRailServer, ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember, ERR_HTTP_PARSE,
+    ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
 };
 use serde::Deserialize;
 
@@ -188,6 +188,11 @@ impl Client {
 
     pub fn logout(&self) -> Result<(), ApiError> {
         self.call_empty("POST", "/v1/logout", self.auth(http().post(&self.url("/v1/logout"))))
+    }
+
+    /// Unauthenticated health/version probe (`GET /v1/health`).
+    pub fn health(&self) -> Result<BanterVersionReport, ApiError> {
+        self.get_json("/v1/health")
     }
 
     pub fn server_debug(&self) -> Result<ServerDebug, ApiError> {

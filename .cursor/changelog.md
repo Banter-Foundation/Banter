@@ -594,3 +594,12 @@ The red stage toast showed opaque `request failed` while Voice Connected. That s
 - Bug fixes: never toast bare `request failed`; voice flags/join/leave wrap with `BANTER_VC_*`; parse server `code`; backoff flags republish
 - New features: shared error catalog (`errcode.rs`, `docs/errors.md`); server `BanterError::code()` uses `BANTER_*` tokens
 - Other: api_errors + errcode tests; architecture/README links
+
+## 2026-11-05 05:05:04 +0000 [ubuntu] — Version system and version checker (BA-91)
+
+Live hosts answering only `{"ok":true}` left newer clients talking to pre–PR #19 SFU builds with silent VC. Added a Banter release label plus numeric protocol on health/version, and a client checker that blocks stale/incompatible hosts with `BANTER_*` codes (protocol floors, not equal strings).
+
+### Changelog
+- New features: `version.rs` (`BANTER_VERSION`, `PROTOCOL`, min floors); `GET /v1/health` + `/v1/version` payload; client check on connect / auth / Developer reconnect; Developer settings version lines
+- Bug fixes: refuse pre–version-system and too-old servers before silent feature mismatch
+- Other: `docs/version.md`; server + client version contract tests; architecture/README links; version `BANTER_*` codes live in `errcode.rs` with the BA-88 catalog

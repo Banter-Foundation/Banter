@@ -301,6 +301,12 @@ pub(crate) struct App {
     home_editing: bool,
     settings: SettingsState,
     settings_error: String,
+    /// Last successful health report's version label (empty if unknown / unreachable).
+    server_version_label: String,
+    /// Last successful health report's protocol (None if host omitted it).
+    server_protocol: Option<u32>,
+    /// Soft mismatch notice when protocols match but release labels differ.
+    version_warn: String,
     /// Local vs remote API target from User Settings → Developer.
     dev_server: DevServerPrefs,
     /// Server options panel on the sign-in / register screen.
@@ -547,6 +553,9 @@ impl App {
             home_editing: false,
             settings: SettingsState::new(),
             settings_error: String::new(),
+            server_version_label: String::new(),
+            server_protocol: None,
+            version_warn: String::new(),
             dev_server: DevServerPrefs::default(),
             login_options: false,
             login_options_frames: 0,
@@ -669,9 +678,18 @@ impl App {
         };
         app.load_saved();
         if app.account.is_some() {
-            app.display_name = app.account.as_ref().map(|account| account.display_name.clone()).unwrap_or_default();
-            app.refresh_shell();
-            app.connect_live();
+            if app.apply_version_check(true) {
+                app.display_name = app
+                    .account
+                    .as_ref()
+                    .map(|account| account.display_name.clone())
+                    .unwrap_or_default();
+                app.refresh_shell();
+                app.connect_live();
+            }
+        } else {
+            // Reachable but incompatible hosts should surface before sign-in.
+            let _ = app.apply_version_check(false);
         }
         app
     }
@@ -1325,6 +1343,9 @@ impl App {
     }
 
     fn submit_auth(&mut self) {
+        if !self.apply_version_check(true) {
+            return;
+        }
         let result = if self.register_mode {
             self.client.register(&self.username, &self.register_display, &self.password)
         } else {
@@ -8244,6 +8265,33 @@ impl App {
         ui.text(&self.base);
         settings_spacer(ui);
         ui.text_colored(MUTED, &format!("Local default is {}.", local_api_base()));
+        settings_spacer(ui);
+
+        settings_form_label(ui, self.bold_font, "VERSION");
+        ui.text(&format!(
+            "Client {} (protocol {})",
+            crate::client_version(),
+            crate::client_protocol()
+        ));
+        settings_spacer(ui);
+        let server_line = match (self.server_version_label.as_str(), self.server_protocol) {
+            ("", None) => "Server unknown (health not checked yet)".to_string(),
+            ("", Some(protocol)) => format!("Server (no label, protocol {protocol})"),
+            (label, None) => format!("Server {label} (no protocol — treat as too old)"),
+            (label, Some(protocol)) => format!("Server {label} (protocol {protocol})"),
+        };
+        ui.text(&server_line);
+        ui.text_colored(
+            MUTED,
+            &format!(
+                "Client needs server protocol {}+.",
+                crate::min_server_protocol()
+            ),
+        );
+        if !self.version_warn.is_empty() {
+            settings_spacer(ui);
+            ui.text_colored(MUTED, &self.version_warn);
+        }
 
         if !self.settings_error.is_empty() {
             settings_spacer(ui);
@@ -9442,6 +9490,14 @@ impl App {
         self.messages.clear();
         self.place = Place::Home;
 
+        if !self.apply_version_check(true) {
+            self.client.set_token(None);
+            let _ = clear_token(&self.data_dir);
+            self.account = None;
+            self.display_name.clear();
+            return;
+        }
+
         if let Some(token) = token {
             self.client.set_token(Some(token));
             match self.client.me() {
@@ -9471,6 +9527,75 @@ impl App {
             } else {
                 self.status.clear();
             }
+        }
+    }
+
+    /// Probe `/v1/health` and compare protocol floors. Returns false when the client must not stay connected.
+    ///
+    /// When `require_reachable` is false, a transport failure is ignored (startup may still be asking for a remote).
+    fn apply_version_check(&mut self, require_reachable: bool) -> bool {
+        match self.client.health() {
+            Ok(report) => {
+                self.server_version_label = report.version.clone().unwrap_or_default();
+                self.server_protocol = report.protocol;
+                match banter_server::check_remote_version(&report) {
+                    banter_server::VersionCheck::Compatible { warn } => {
+                        self.version_warn = warn.unwrap_or_default();
+                        true
+                    }
+                    banter_server::VersionCheck::Block { code, message } => {
+                        let notice = banter_server::format_version_notice(code, &message);
+                        self.drop_session_for_version(&notice);
+                        false
+                    }
+                }
+            }
+            Err(err) => {
+                self.server_version_label.clear();
+                self.server_protocol = None;
+                self.version_warn.clear();
+                if !require_reachable {
+                    return true;
+                }
+                match banter_server::unreachable_version_check(err.to_string()) {
+                    banter_server::VersionCheck::Block { code, message } => {
+                        let notice = banter_server::format_version_notice(code, &message);
+                        self.settings_error = notice.clone();
+                        self.status = notice;
+                        false
+                    }
+                    banter_server::VersionCheck::Compatible { .. } => true,
+                }
+            }
+        }
+    }
+
+    fn drop_session_for_version(&mut self, notice: &str) {
+        self.version_warn.clear();
+        self.settings_error = notice.to_string();
+        self.status = notice.to_string();
+        self.voice_channel = None;
+        self.voice_members.clear();
+        self.end_media_place();
+        self.media = None;
+        self.realtime = None;
+        if self.account.is_some() || self.client.token().is_some() {
+            self.client.set_token(None);
+            let _ = clear_token(&self.data_dir);
+            self.account = None;
+            self.display_name.clear();
+            self.friends.clear();
+            self.incoming.clear();
+            self.outgoing.clear();
+            self.servers.clear();
+            self.dms.clear();
+            self.mentions.clear();
+            self.presence.clear();
+            self.layout.clear();
+            self.members.clear();
+            self.selected = None;
+            self.messages.clear();
+            self.place = Place::Home;
         }
     }
 

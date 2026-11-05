@@ -978,3 +978,16 @@ Agent: Root cause — client `http_error` collapsed empty HTTP bodies to literal
 Toast shows `couldn't update voice state (BANTER_VC_FLAGS_FAILED)` (or server message + code) instead of opaque `request failed`; pattern documented in docs/errors.md.
 
 Agent: PR #50 opened (ManagePullRequest). Do not merge until Owl says so.
+
+Owl: merge all. #50 already on main.
+
+## 2026-11-05 BA-91 Version system and version checker
+
+Owl: Version system + version checker. Live direct.galaticserver.com:3970 was stale pre–PR #19 while client was newer — silent VC. Fingerprint cosmetics vs badges 404. Expose client+server version via API and About/settings if natural; on connect compare and warn/block with BANTER_* codes (coordinate with #50 or reimplement minimally); prefer min protocol / feature revision over equal strings. PR from main; do not merge until Owl says so. Use gh. Task BA-91.
+
+Agent: Implemented shared BanterVersion + protocol floors in banter-server version.rs; extended /v1/health and /v1/version; client probes on open/auth/reconnect and blocks with BANTER_SERVER_TOO_OLD / BANTER_CLIENT_TOO_OLD / BANTER_VERSION_UNREACHABLE; Developer settings shows versions. Branch cursor/version-system-checker-dae0. Rebased onto main after #50; version codes live in errcode.rs with the BA-88 catalog.
+
+### Summary
+Newer clients refuse hosts without protocol (or below floor) instead of connecting into silent VC against a stale server.
+
+Agent: PR #51 opened (ManagePullRequest). Do not merge until Owl says so.

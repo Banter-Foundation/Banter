@@ -119,6 +119,7 @@ pub fn serve(addr: &str, data_dir: &std::path::Path, database_url: &str) -> Resu
 fn router(state: HttpState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/version", get(version))
         .route("/v1/debug", get(server_debug))
         .route("/v1/register", post(register))
         .route("/v1/login", post(login))
@@ -186,7 +187,11 @@ fn router(state: HttpState) -> Router {
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(json!({"ok": true}))
+    Json(crate::health_payload())
+}
+
+async fn version() -> Json<serde_json::Value> {
+    Json(crate::health_payload())
 }
 
 async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> Result<Json<ServerDebug>, BanterError> {

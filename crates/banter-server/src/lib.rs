@@ -25,6 +25,7 @@ mod roles;
 mod room;
 mod sfu;
 mod store;
+mod version;
 
 pub use badges::{badge_exists, badge_item, badges_catalog, BadgeItem, BadgeShape, MAX_EQUIPPED_BADGES};
 pub use channel_icons::{is_channel_icon, normalize_channel_icon, CHANNEL_ICON_CHOICES};
@@ -34,8 +35,9 @@ pub use cosmetics::{
     DEFAULT_THEME_SECONDARY,
 };
 pub use errcode::{
-    format_banter_notice, BanterIssue, ERR_HTTP_PARSE, ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_FLAGS,
-    ERR_VC_JOIN, ERR_VC_LEAVE, ERR_VC_PUBLISH, ERR_WS_CONNECT, ERR_WS_DROPPED,
+    format_banter_notice, BanterIssue, ERR_CLIENT_TOO_OLD, ERR_HTTP_PARSE, ERR_HTTP_STATUS,
+    ERR_HTTP_TRANSPORT, ERR_SERVER_TOO_OLD, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE, ERR_VC_PUBLISH,
+    ERR_VERSION_UNREACHABLE, ERR_WS_CONNECT, ERR_WS_DROPPED,
 };
 pub use error::BanterError;
 pub use folders::{folder_color_ok, folder_depth, would_cycle, MAX_SERVER_FOLDERS, MAX_SERVER_FOLDER_DEPTH};
@@ -53,6 +55,11 @@ pub use room::{
 };
 pub use sfu::{bench_eight_publishers, BenchReport, ForwardTable};
 pub use store::Store;
+pub use version::{
+    check_remote_version, format_version_notice, health_payload, unreachable_version_check,
+    BanterVersionReport, VersionCheck, BANTER_VERSION, MIN_CLIENT_PROTOCOL, MIN_SERVER_PROTOCOL,
+    PROTOCOL,
+};
 
 pub const DEFAULT_ADDR: &str = "127.0.0.1:3970";
 

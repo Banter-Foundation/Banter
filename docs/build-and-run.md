@@ -82,7 +82,7 @@ Health check:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:3970/v1/health
-# -> { "ok": true }
+# Expect ok, version (Version-*), protocol, min_client_protocol — see docs/version.md
 ```
 
 ## Two clients on one machine
@@ -126,6 +126,7 @@ cd "D:\Projects\Project Banter"
 podman compose up -d
 # or: docker compose up -d
 Invoke-RestMethod http://127.0.0.1:3970/v1/health
+# Expect ok, version (Version-*), protocol, min_client_protocol — see docs/version.md
 ```
 
 If host port `3970` is taken, publish another (see the setup guide) and point **User Settings → Developer → Remote** at that host port.

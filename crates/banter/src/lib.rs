@@ -44,6 +44,21 @@ pub use profile::*;
 pub use session::{clear_token, load_token, persist_login, save_token};
 pub use settings::*;
 
+/// This client's Banter release label (same constant as the embedded server).
+pub fn client_version() -> &'static str {
+    banter_server::BANTER_VERSION
+}
+
+/// This client's protocol revision.
+pub fn client_protocol() -> u32 {
+    banter_server::PROTOCOL
+}
+
+/// Oldest server protocol this client will accept.
+pub fn min_server_protocol() -> u32 {
+    banter_server::MIN_SERVER_PROTOCOL
+}
+
 pub fn run() -> Result<(), String> {
     platform::run()
 }
