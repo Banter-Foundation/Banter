@@ -1002,6 +1002,11 @@ impl App {
         }
     }
 
+    /// Shell token from an enabled theme mod, or the Banter default.
+    fn shell(&self, token: &str, fallback: [f32; 4]) -> [f32; 4] {
+        self.mods.shell_color(token).map(hex).unwrap_or(fallback)
+    }
+
     fn draw_shell(&mut self, ui: &Ui) {
         let size = ui.io().display_size();
         let media_stage = self.voice_selected() || self.call_stage_open();
@@ -1028,9 +1033,10 @@ impl App {
             .build(|| {
                 // The chat header spans the stage and the member list, as in Discord.
                 let body_h = (size[1] - HEADER_H).max(0.0);
-                let rail = self.mods.shell_color("rail_bg").map(hex).unwrap_or(RAIL_BG);
-                let sidebar = self.mods.shell_color("sidebar_bg").map(hex).unwrap_or(SIDEBAR_BG);
-                let stage = self.mods.shell_color("stage_bg").map(hex).unwrap_or(STAGE_BG);
+                let rail = self.shell("rail_bg", RAIL_BG);
+                let sidebar = self.shell("sidebar_bg", SIDEBAR_BG);
+                let stage = self.shell("stage_bg", STAGE_BG);
+                let panel = self.shell("panel_bg", SIDEBAR_BG);
                 let header_bg = if media_stage { CALL_BG } else { stage };
                 self.paint_column(ui, "rail", [columns.rail_x, 0.0], [columns.rail_w, size[1]], rail);
                 self.paint_column(ui, "sidebar", [columns.sidebar_x, 0.0], [columns.sidebar_w, size[1]], sidebar);
@@ -1038,7 +1044,7 @@ impl App {
                 self.paint_column(ui, "stage-header", [columns.stage_x, 0.0], [header_w, HEADER_H], header_bg);
                 self.paint_column(ui, "stage", [columns.stage_x, HEADER_H], [columns.stage_w, body_h], stage);
                 if columns.members_w > 0.0 {
-                    self.paint_column(ui, "members", [columns.members_x, HEADER_H], [columns.members_w, body_h], SIDEBAR_BG);
+                    self.paint_column(ui, "members", [columns.members_x, HEADER_H], [columns.members_w, body_h], panel);
                 }
             });
     }
@@ -2244,10 +2250,15 @@ impl App {
         let hovered = ui.is_item_hovered();
         let min = [origin[0] + ROW_INSET, origin[1] + 1.0];
         let max = [origin[0] + width - ROW_INSET, min[1] + row_h];
+        let selected_fill = self.shell("row_selected", ROW_SELECTED);
+        let hover_fill = self.shell("row_hover", ROW_HOVER);
+        let sidebar_bg = self.shell("sidebar_bg", SIDEBAR_BG);
+        let muted = self.shell("muted", MUTED);
+        let text = self.shell("text", TEXT_NORMAL);
         let fill = if selected {
-            Some(ROW_SELECTED)
+            Some(selected_fill)
         } else if hovered {
-            Some(ROW_HOVER)
+            Some(hover_fill)
         } else {
             None
         };
@@ -2257,9 +2268,9 @@ impl App {
         let color = if selected {
             WHITE
         } else if hovered {
-            TEXT_NORMAL
+            text
         } else {
-            MUTED
+            muted
         };
         let avatar_center = [min[0] + 8.0 + 16.0, min[1] + row_h * 0.5];
         match user {
@@ -2267,7 +2278,7 @@ impl App {
                 let avatar = self.avatars.get(&user_id).map(|shot| shot.texture);
                 paint_avatar(ui, avatar, avatar_center, 16.0, &initials(label), None);
                 if let Some(presence) = presence {
-                    paint_status_dot(ui, avatar_center, 16.0, presence, fill.unwrap_or(SIDEBAR_BG));
+                    paint_status_dot(ui, avatar_center, 16.0, presence, fill.unwrap_or(sidebar_bg));
                 }
             }
             None => skin::image(ui, self.icon("users"), [avatar_center[0] - 12.0, avatar_center[1] - 12.0], 24.0, color),
@@ -3447,19 +3458,23 @@ impl App {
         let hovered = ui.is_item_hovered();
         let min = [origin[0] + ROW_INSET, origin[1] + CHANNEL_ROW_GAP * 0.5];
         let max = [origin[0] + width - ROW_INSET, min[1] + CHANNEL_ROW_H];
+        let selected_fill = self.shell("row_selected", ROW_SELECTED);
+        let hover_fill = self.shell("row_hover", ROW_HOVER);
+        let muted = self.shell("muted", MUTED);
+        let text = self.shell("text", TEXT_NORMAL);
         if selected || hovered {
-            skin::rect(ui, min, max, if selected { ROW_SELECTED } else { ROW_HOVER }, ROW_RADIUS);
+            skin::rect(ui, min, max, if selected { selected_fill } else { hover_fill }, ROW_RADIUS);
         }
         let color = if selected {
             WHITE
         } else if hovered {
-            TEXT_NORMAL
+            text
         } else {
-            MUTED
+            muted
         };
         let mut text_x = min[0] + 8.0;
         if let Some(icon) = icon {
-            skin::image(ui, self.icon(icon), [text_x, min[1] + 6.0], 20.0, if selected { TEXT_NORMAL } else { CHANNEL_ICON });
+            skin::image(ui, self.icon(icon), [text_x, min[1] + 6.0], 20.0, if selected { text } else { muted });
             text_x += 20.0 + 6.0;
         }
         let shown = skin::ellipsize(ui, None, FONT_MD, label, max[0] - 8.0 - text_x);
@@ -4188,7 +4203,14 @@ impl App {
             y += 34.0;
         }
         let corners = if strip.is_some() { DrawFlags::ROUND_BOTTOM } else { DrawFlags::ROUND_ALL };
-        skin::rect_corners(ui, [bar_x, y], [bar_x + bar_w, y + COMPOSER_H], COMPOSER_BG, COMPOSER_RADIUS, corners);
+        skin::rect_corners(
+            ui,
+            [bar_x, y],
+            [bar_x + bar_w, y + COMPOSER_H],
+            self.shell("composer_bg", COMPOSER_BG),
+            COMPOSER_RADIUS,
+            corners,
+        );
         let input_x = if self.editing.is_none() {
             let tint = if self.pending_file.is_some() { TEXT_NORMAL } else { TEXT_SECONDARY };
             if skin::icon_button(ui, "attach", self.icon("circle-plus"), [bar_x + 12.0, y + 8.0], 28.0, 24.0, tint, TEXT_NORMAL, None) {
