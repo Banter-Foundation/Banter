@@ -32,7 +32,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y
           libopus-dev libasound2-dev libx11-dev libxcb1-dev pkg-config
           libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev
-          libgl1-mesa-dev libglu1-mesa-dev libglfw3-dev
+          libgl1-mesa-dev libglu1-mesa-dev libgbm-dev libglfw3-dev
           libwayland-dev libxkbcommon-dev
           libpipewire-0.3-dev libv4l-dev
       - name: server
