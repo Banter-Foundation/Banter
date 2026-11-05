@@ -20,6 +20,7 @@ Where Arch server + release auto-deploy stand right now:
 | Server first boot / hot-swap via Actions | **Blocked** on a successful image push |
 | Latest Actions release tried | `Version-1-test-6` — login OK, push failed: *token does not match expected scopes* |
 | Manual Podman publish | Last image that landed is `ghcr.io/snowedinowl/banter:version-1-test-8` (+ `:latest` from that publish). `version-1-test-9` did not push. Desktop/server binaries for the current pre-release are `Version-1-test-10`. |
+| Compose app image | Default is `banter-server:local`, built from this checkout. A published tag is used only when `BANTER_IMAGE` is set and the pull succeeds. |
 
 **Next step (human):** replace `GHCR_WRITE_TOKEN` (and ideally `GHCR_READ_TOKEN`) with a **classic** PAT that has both **`write:packages`** and **`read:packages`** so Actions can push like the manual Podman path. Fine-grained / read-only tokens produce the scopes error. Then re-run a failed workflow. Deploy job has not been reached yet via Actions; SSH secrets are untested until Actions push succeeds.
 
@@ -28,9 +29,10 @@ Where Arch server + release auto-deploy stand right now:
 ```bash
 cd "$DEPLOY_PATH"   # e.g. ~/Banter
 git pull
-docker build -t banter-server:local .
-BANTER_IMAGE=banter-server:local ./scripts/deploy-hot-swap.sh
+./scripts/deploy-hot-swap.sh
 ```
+
+With `BANTER_IMAGE` unset, the script builds `banter-server:local` from this checkout (`docker build --pull`). If `BANTER_IMAGE` is a registry tag and `docker pull` fails, it builds that same local image and deploys it.
 
 Never put Banter builds or data on `E:`. Prefer `D:\Projects\Project Banter`.
 
@@ -59,12 +61,22 @@ Clean start: this stack does not import old SQLite `banter.db` files.
 
 ```bash
 cd /path/to/Banter
-docker compose up -d postgres caddy
-export BANTER_IMAGE=ghcr.io/snowedinowl/banter:latest
+docker compose up -d --build postgres caddy banter-a
+```
+
+That builds `banter-server:local` from this checkout (Compose `pull_policy: build`, and `--pull` on the base images) and starts Postgres, Caddy, and slot A. `--build` matters for Podman, which otherwise keeps an image that is already present.
+
+To hot-swap instead, run `./scripts/deploy-hot-swap.sh` with no `BANTER_IMAGE`. It builds the same local image, starts the first active slot (from [`deploy/active`](../deploy/active), default `a`), checks health on **3980**, points Caddy at it, then drops the temporary **3980** mapping. Clients use **3970** only.
+
+A published image is optional. The last tag on GHCR is still `version-1-test-8`:
+
+```bash
+export BANTER_IMAGE=ghcr.io/snowedinowl/banter:version-1-test-8
+export BANTER_PULL_POLICY=always
 ./scripts/deploy-hot-swap.sh
 ```
 
-The deploy script pulls the image, starts the first active slot (from [`deploy/active`](../deploy/active), default `a`), checks health on **3980**, points Caddy at it, then drops the temporary **3980** mapping. Clients use **3970** only.
+If that pull fails, the script builds `banter-server:local` and deploys that.
 
 Health check:
 
@@ -125,7 +137,12 @@ If standby health fails, the current active slot is left serving.
 
 ```bash
 cd "$DEPLOY_PATH"
-export BANTER_IMAGE=ghcr.io/snowedinowl/banter:latest
+# Current checkout. Omit BANTER_IMAGE.
+./scripts/deploy-hot-swap.sh
+
+# Or a published tag, when GHCR has it:
+export BANTER_IMAGE=ghcr.io/snowedinowl/banter:version-1-test-8
+export BANTER_PULL_POLICY=always
 export GHCR_TOKEN=...   # if the package is private
 ./scripts/deploy-hot-swap.sh
 ```
@@ -143,10 +160,11 @@ docker compose up -d postgres
 ## Build from source
 
 ```bash
-docker build -t banter-server:local .
-export BANTER_IMAGE=banter-server:local
+docker build --pull -t banter-server:local .
 ./scripts/deploy-hot-swap.sh
 ```
+
+With `BANTER_IMAGE` unset, the script builds `banter-server:local` again. Docker cache keeps that short when the checkout has not changed. `BANTER_SKIP_PULL=1` applies only to a registry tag that is already loaded locally.
 
 Or one-shot without Compose (you still need reachable Postgres):
 
@@ -167,7 +185,9 @@ docker run --rm -p 3970:3970 \
 | `BANTER_PORT` | `3970` | App listen port (Caddy public host port via compose) |
 | `BANTER_DATA` | `/data` | Avatars and uploaded files |
 | `BANTER_DATABASE_URL` | `postgres://banter:banter@postgres:5432/banter` (compose) / `postgres://banter:banter@127.0.0.1:5432/banter` (host) | Postgres URL |
-| `BANTER_IMAGE` | `ghcr.io/snowedinowl/banter:latest` | App image for both slots |
+| `BANTER_IMAGE` | `banter-server:local` | App image for both slots. Unset builds this checkout. A `registry/name:tag` value is pulled, and a failed pull falls back to a local build. |
+| `BANTER_PULL_POLICY` | `build` | Compose pull policy. `build` compiles this checkout. Set `always` together with a registry `BANTER_IMAGE`. The deploy script sets `never` after it has pulled or built. |
+| `BANTER_SKIP_PULL` | (unset) | `1` with a registry `BANTER_IMAGE` uses the local image and does not pull or rebuild. |
 | `BANTER_PG_PORT` | `5432` | Host port for Postgres |
 | `BANTER_UDP_MIN` / `BANTER_UDP_MAX` | `40000`-`40049` on slot A, `40100`-`40149` on slot B | SFU UDP ports. Compose publishes the same range on the host. Required for guild voice, camera, and screen. |
 | `BANTER_ADVERTISE_IP` | `127.0.0.1` in Compose | Address written into the SFU’s host ICE candidates. Use the host’s reachable IP when the desktop is not on this machine, and open the UDP range. |
@@ -196,7 +216,7 @@ docker run --rm -p 3970:3970 \
 | Push: `repository name must be lowercase` | Fixed on `main` — image owner is lowercased in the workflow |
 | Push: `permission_denied: read_package` (with `GITHUB_TOKEN`) | Expected on this user account — use `GHCR_WRITE_TOKEN` |
 | Push: `token does not match expected scopes` | Classic PAT missing **`write:packages`** — recreate token, update secret, re-run |
-| Local `BANTER_IMAGE=banter-server:local` tries Docker Hub | Need script from `main` that skips pull for tags without a registry host |
+| Local `BANTER_IMAGE=banter-server:local` tries Docker Hub | Update to this script: a tag with no `/` is built here and is not pulled |
 | Client won’t connect | Developer → Remote must use host **3970** (Caddy), not 3980 |
 | Want a clean DB | `docker compose down -v` (deletes Postgres and file volumes) |
 

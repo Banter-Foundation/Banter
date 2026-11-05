@@ -603,3 +603,10 @@ Live hosts answering only `{"ok":true}` left newer clients talking to pre–PR #
 - New features: `version.rs` (`BANTER_VERSION`, `PROTOCOL`, min floors); `GET /v1/health` + `/v1/version` payload; client check on connect / auth / Developer reconnect; Developer settings version lines
 - Bug fixes: refuse pre–version-system and too-old servers before silent feature mismatch
 - Other: `docs/version.md`; server + client version contract tests; architecture/README links; version `BANTER_*` codes live in `errcode.rs` with the BA-88 catalog
+
+## 2026-11-05 00:06:30 -0500 [ubuntu] — Compose builds the current server
+
+`ghcr.io/snowedinowl/banter:latest` is still `version-1-test-8`, so Compose no longer uses that tag by default. `docker compose up --build` compiles `banter-server:local` from this checkout. The deploy script does the same when `BANTER_IMAGE` is unset, and if a registry pull fails it builds that local image instead.
+
+- `docker build --pull -t banter-server:local .` succeeded (`d0530f12d92e`). The image contains `/usr/local/bin/banter-server`.
+- A published tag still works when `BANTER_IMAGE` is set and the pull succeeds. The script then sets `BANTER_PULL_POLICY=never` so Compose does not rebuild over it.

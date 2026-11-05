@@ -13,9 +13,11 @@ STANDBY_OVERRIDE="$ROOT/deploy/compose.standby.yml"
 HEALTH_URL="${BANTER_HEALTH_URL:-http://127.0.0.1:3980/v1/health}"
 HEALTH_TIMEOUT_SEC="${BANTER_HEALTH_TIMEOUT_SEC:-60}"
 
+# Empty BANTER_IMAGE builds banter-server:local from this checkout.
+# A registry tag is pulled; a failed pull builds banter-server:local instead.
 if [[ -z "${BANTER_IMAGE:-}" ]]; then
-  echo "BANTER_IMAGE is required (e.g. ghcr.io/snowedinowl/banter:version-1-test-3)" >&2
-  exit 1
+  BANTER_IMAGE=banter-server:local
+  export BANTER_IMAGE
 fi
 
 log() { printf '[deploy] %s\n' "$*"; }
@@ -132,24 +134,36 @@ drop_standby_port() {
   "${COMPOSE[@]}" up -d --no-deps --force-recreate "banter-$slot"
 }
 
+build_local() {
+  local tag="$1"
+  log "building $tag from this checkout"
+  docker build --pull -t "$tag" .
+}
+
 pull_image() {
-  # Local tags (no registry host) — use an already-built image; don't hit Docker Hub.
+  # Local tags (no registry host) are built from this checkout. Don't ask Docker Hub.
   if [[ "$BANTER_IMAGE" != */* ]]; then
-    if docker image inspect "$BANTER_IMAGE" >/dev/null 2>&1; then
-      log "using local image $BANTER_IMAGE (skip pull)"
-      return 0
-    fi
-    echo "local image $BANTER_IMAGE not found; build it first (docker build -t $BANTER_IMAGE .)" >&2
-    exit 1
+    build_local "$BANTER_IMAGE"
+    export BANTER_PULL_POLICY=never
+    return 0
   fi
   # Optional: skip pull when image is already present (e.g. just built and tagged as ghcr.io/...).
   if [[ "${BANTER_SKIP_PULL:-}" == "1" ]] && docker image inspect "$BANTER_IMAGE" >/dev/null 2>&1; then
     log "BANTER_SKIP_PULL=1; using existing $BANTER_IMAGE"
+    export BANTER_PULL_POLICY=never
     return 0
   fi
   login_ghcr
   log "pulling $BANTER_IMAGE"
-  docker pull "$BANTER_IMAGE"
+  if docker pull "$BANTER_IMAGE"; then
+    export BANTER_PULL_POLICY=never
+    return 0
+  fi
+  log "pull of $BANTER_IMAGE failed; building banter-server from this checkout"
+  build_local banter-server:local
+  BANTER_IMAGE=banter-server:local
+  export BANTER_IMAGE
+  export BANTER_PULL_POLICY=never
 }
 
 main() {

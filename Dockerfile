@@ -2,8 +2,12 @@
 # Build needs the workspace Cargo.toml because banter-server is a workspace member.
 # Podman and Docker both work. Prefer Podman on Black-Birb when Docker Desktop is down.
 #
-#   podman build -t banter-server:local .
-#   docker  build -t banter-server:local .
+# Compose builds this file as banter-server:local so the container matches this
+# checkout. ghcr.io/snowedinowl/banter:latest is still version-1-test-8.
+# --pull refreshes the Rust and Debian bases, then this file compiles banter-server:
+#
+#   docker build --pull -t banter-server:local .
+#   podman build --pull -t banter-server:local .
 
 FROM rust:1.99-bookworm AS build
 WORKDIR /src
