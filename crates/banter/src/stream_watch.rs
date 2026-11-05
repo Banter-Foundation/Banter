@@ -72,9 +72,13 @@ pub fn cycle_streamer(focus: Option<i64>, streamers: &[i64]) -> Option<i64> {
     Some(streamers[next])
 }
 
-/// Fullscreen chrome opacity from idle time. Outside fullscreen the chrome stays fully visible.
-pub fn stream_chrome_alpha(idle_secs: f32, fullscreen: bool) -> f32 {
-    if !fullscreen {
+/// Theater / pop-out chrome opacity from idle time.
+///
+/// When `fade` is false (normal featured stage) the chrome stays fully visible.
+/// Fullscreen and the Banter Stream pop-out pass `true` so profile icons, voice
+/// indicators, and watch controls hide together after pointer idle.
+pub fn stream_chrome_alpha(idle_secs: f32, fade: bool) -> f32 {
+    if !fade {
         return 1.0;
     }
     if idle_secs <= STREAM_CHROME_IDLE_SECS {
@@ -82,6 +86,14 @@ pub fn stream_chrome_alpha(idle_secs: f32, fullscreen: bool) -> f32 {
     }
     let t = ((idle_secs - STREAM_CHROME_IDLE_SECS) / STREAM_CHROME_FADE_SECS).clamp(0.0, 1.0);
     1.0 - t
+}
+
+/// Horizontal pitch between stream-watch profile icons (avatar + gap).
+pub const STREAM_WATCH_AVATAR_PITCH: f32 = 40.0;
+
+/// Left edge for the next stream-watch avatar in a bottom-left row.
+pub fn stream_watch_avatar_x(origin_x: f32, index: usize) -> f32 {
+    origin_x + index as f32 * STREAM_WATCH_AVATAR_PITCH
 }
 
 #[cfg(test)]
@@ -126,5 +138,12 @@ mod tests {
             stream_chrome_alpha(STREAM_CHROME_IDLE_SECS + STREAM_CHROME_FADE_SECS + 1.0, true),
             0.0
         );
+    }
+
+    #[test]
+    fn stream_watch_avatars_lay_out_left_to_right() {
+        assert_eq!(stream_watch_avatar_x(10.0, 0), 10.0);
+        assert_eq!(stream_watch_avatar_x(10.0, 1), 10.0 + STREAM_WATCH_AVATAR_PITCH);
+        assert_eq!(stream_watch_avatar_x(10.0, 2), 10.0 + 2.0 * STREAM_WATCH_AVATAR_PITCH);
     }
 }

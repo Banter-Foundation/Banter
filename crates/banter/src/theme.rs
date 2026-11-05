@@ -196,6 +196,11 @@ pub const STREAM_WATCH_BTN: f32 = 36.0;
 pub const STREAM_WATCH_BTN_GAP: f32 = 8.0;
 pub const STREAM_WATCH_PAD: f32 = 10.0;
 pub const STREAM_WATCH_ICON: f32 = 20.0;
+/// Profile icon size on stream watch chrome (pop-out / fullscreen).
+pub const STREAM_WATCH_AVATAR: f32 = 32.0;
+pub const STREAM_WATCH_AVATAR_GAP: f32 = 8.0;
+/// Mute / deafen badge on a stream-watch avatar.
+pub const STREAM_WATCH_BADGE: f32 = 14.0;
 
 // Floating surfaces.
 pub const TOOLTIP_PAD_X: f32 = 12.0;

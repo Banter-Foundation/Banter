@@ -2,6 +2,10 @@
 
 Leaving guild voice or a DM call (Disconnect / peer hang-up), or stopping a share, now clears Stream Select and Stream options. Previously those overlays could stay open until the next Go Live. Helper `dismiss_stream_overlays`; wired through `end_media_place` and `stop_streaming`.
 
+## 2026-11-05 12:21:00 -06:00 [Winter] — Stream watch profile icons and voice indicators
+
+Banter Stream pop-out and fullscreen theater chrome now show profile icons for live sharers with talking rings and mute/deafen badges. Those elements fade with the rest of the watch UI on pointer idle and return on mouse move. Avatar textures upload on the pop-out ImGui context like Settings.
+
 ## 2026-11-05 10:25:23 -06:00 [Winter] — Stream watch pop-out, cycle, fullscreen fade
 
 Featured screen shares gain watch chrome: Pop Out opens a Banter Stream shared-GLFW window, Next Stream cycles live sharers, and Fullscreen fills the Banter window with chrome that fades after pointer idle and returns on mouse move (Escape exits). Logic in `stream_watch.rs`; metrics `STREAM_WATCH_*`. Left encoder quality / mid-stream refresh controls alone for the parallel worker.

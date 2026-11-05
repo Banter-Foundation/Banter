@@ -67,8 +67,8 @@ use crate::settings::{
 };
 use crate::skin::{self, MenuTone, Tone};
 use crate::stream_watch::{
-    cycle_streamer, resolve_focused_streamer, stream_chrome_alpha, streaming_user_ids,
-    STREAM_CHROME_HIDE_ALPHA, STREAM_POPOUT_WINDOW_TITLE,
+    cycle_streamer, resolve_focused_streamer, stream_chrome_alpha, stream_watch_avatar_x,
+    streaming_user_ids, STREAM_CHROME_HIDE_ALPHA, STREAM_POPOUT_WINDOW_TITLE,
 };
 use crate::theme::*;
 
@@ -327,6 +327,10 @@ pub(crate) struct App {
     stream_popout_rgba: Option<(u32, u32, Vec<u8>)>,
     stream_popout_icons: HashMap<String, Shot>,
     stream_popout_icons_ready: bool,
+    /// Avatars uploaded on the Banter Stream ImGui context (swapped while that surface draws).
+    stream_popout_avatars: HashMap<i64, Shot>,
+    stream_popout_avatar_rev: HashMap<i64, i64>,
+    stream_popout_avatar_miss: HashMap<i64, i64>,
     stream_popout_shot: Option<Shot>,
     stream_popout_styled: bool,
     stream_popout_font_backup: Option<(Option<FontId>, Option<FontId>, Option<FontId>, Option<FontId>)>,
@@ -590,6 +594,9 @@ impl App {
             stream_popout_rgba: None,
             stream_popout_icons: HashMap::new(),
             stream_popout_icons_ready: false,
+            stream_popout_avatars: HashMap::new(),
+            stream_popout_avatar_rev: HashMap::new(),
+            stream_popout_avatar_miss: HashMap::new(),
             stream_popout_shot: None,
             stream_popout_styled: false,
             stream_popout_font_backup: None,
@@ -9796,7 +9803,6 @@ impl App {
                 let origin = [0.0, 0.0];
                 skin::rect(ui, origin, display, CALL_BG, 0.0);
                 let Some(user_id) = self.focused_live_streamer() else { return };
-                let name = self.name_of(user_id);
                 if let Some((texture, size)) = self.stream_texture_for(user_id) {
                     let shown = if self.screen_shown[0] > 1.0 { self.screen_shown } else { size };
                     let fitted = fit_inside(shown, display[0], display[1]);
@@ -9816,12 +9822,10 @@ impl App {
                     true,
                 );
                 if chrome > STREAM_CHROME_HIDE_ALPHA {
-                    self.name_tag(
+                    self.draw_stream_watch_people(
                         ui,
-                        [STREAM_WATCH_PAD, display[1] - STREAM_WATCH_PAD - 24.0],
-                        &name,
-                        None,
-                        true,
+                        [STREAM_WATCH_PAD, display[1] - STREAM_WATCH_PAD - STREAM_WATCH_AVATAR],
+                        chrome,
                     );
                     self.draw_stream_watch_controls(ui, origin, display[0], chrome);
                 }
@@ -9848,10 +9852,6 @@ impl App {
             .build(|| {
                 let origin = [0.0, 0.0];
                 skin::rect(ui, origin, size, CALL_BG, 0.0);
-                let name = self
-                    .focused_live_streamer()
-                    .map(|id| self.name_of(id))
-                    .unwrap_or_else(|| "Stream".to_string());
                 if let Some(shot) = self.stream_popout_shot.as_ref() {
                     let fitted = fit_inside(shot.size, size[0], size[1]);
                     let x = (size[0] - fitted[0]) * 0.5;
@@ -9870,12 +9870,10 @@ impl App {
                     true,
                 );
                 if chrome > STREAM_CHROME_HIDE_ALPHA {
-                    self.name_tag(
+                    self.draw_stream_watch_people(
                         ui,
-                        [STREAM_WATCH_PAD, size[1] - STREAM_WATCH_PAD - 24.0],
-                        &name,
-                        None,
-                        true,
+                        [STREAM_WATCH_PAD, size[1] - STREAM_WATCH_PAD - STREAM_WATCH_AVATAR],
+                        chrome,
                     );
                     // Pop-out window: cycle + close pop-out (no nested OS fullscreen here).
                     let live = self.live_streamer_ids();
@@ -9952,6 +9950,8 @@ impl App {
                 "picture-in-picture-2",
                 "maximize",
                 "minimize",
+                "mic-off",
+                "headphone-off",
             ] {
                 if let Ok(rgba) = rasterize_lucide(name, 32, [255, 255, 255]) {
                     if let Some(shot) = upload_rgba(imgui, 32, 32, &rgba) {
@@ -9960,6 +9960,14 @@ impl App {
                 }
             }
             self.stream_popout_icons_ready = true;
+        }
+        // Flush only retired textures — do not process share thumbs on this context.
+        for shot in self.retired_shots.drain(..) {
+            let _ = imgui.remove_texture(shot.texture);
+        }
+        self.install_avatars(imgui);
+        for shot in self.retired_shots.drain(..) {
+            let _ = imgui.remove_texture(shot.texture);
         }
         if let Some((width, height, rgba)) = self.stream_popout_rgba.take() {
             if let Some(shot) = upload_rgba(imgui, width, height, &rgba) {
@@ -9991,6 +9999,9 @@ impl App {
         self.bold_italic_font = bold_italic;
         std::mem::swap(&mut self.icons, &mut self.stream_popout_icons);
         std::mem::swap(&mut self.icons_ready, &mut self.stream_popout_icons_ready);
+        std::mem::swap(&mut self.avatars, &mut self.stream_popout_avatars);
+        std::mem::swap(&mut self.avatar_rev, &mut self.stream_popout_avatar_rev);
+        std::mem::swap(&mut self.avatar_miss, &mut self.stream_popout_avatar_miss);
     }
 
     pub(crate) fn end_stream_popout_surface(&mut self) {
@@ -10003,6 +10014,9 @@ impl App {
         self.bold_italic_font = bold_italic;
         std::mem::swap(&mut self.icons, &mut self.stream_popout_icons);
         std::mem::swap(&mut self.icons_ready, &mut self.stream_popout_icons_ready);
+        std::mem::swap(&mut self.avatars, &mut self.stream_popout_avatars);
+        std::mem::swap(&mut self.avatar_rev, &mut self.stream_popout_avatar_rev);
+        std::mem::swap(&mut self.avatar_miss, &mut self.stream_popout_avatar_miss);
     }
 
     pub(crate) fn release_stream_popout_gpu(&mut self, imgui: &mut Context) {
@@ -10010,6 +10024,11 @@ impl App {
             let _ = imgui.remove_texture(shot.texture);
         }
         self.stream_popout_icons_ready = false;
+        for (_, shot) in self.stream_popout_avatars.drain() {
+            let _ = imgui.remove_texture(shot.texture);
+        }
+        self.stream_popout_avatar_rev.clear();
+        self.stream_popout_avatar_miss.clear();
         if let Some(shot) = self.stream_popout_shot.take() {
             let _ = imgui.remove_texture(shot.texture);
         }
@@ -10018,23 +10037,127 @@ impl App {
         self.stream_popout_font_backup = None;
     }
 
+    /// Bottom-left stream-watch chrome: profile icons + talking rings / mute badges for live sharers.
+    ///
+    /// Fades with the same idle alpha as the rest of theater / pop-out chrome. Clicking an
+    /// avatar focuses that streamer when more than one person is sharing.
+    fn draw_stream_watch_people(&mut self, ui: &Ui, origin: [f32; 2], alpha: f32) {
+        let live = self.live_streamer_ids();
+        if live.is_empty() {
+            return;
+        }
+        let focus = self.focused_live_streamer();
+        let radius = STREAM_WATCH_AVATAR * 0.5;
+        let mut focus_index = 0usize;
+        for (index, &user_id) in live.iter().enumerate() {
+            let x = stream_watch_avatar_x(origin[0], index);
+            let center = [x + radius, origin[1] + radius];
+            let name = self.name_of(user_id);
+            let (talking, state_icon) = self.stream_watch_voice_state(user_id);
+            ui.set_cursor_screen_pos([x, origin[1]]);
+            let id = format!("stream-watch-avatar-{user_id}");
+            if ui.invisible_button(&id, [STREAM_WATCH_AVATAR, STREAM_WATCH_AVATAR]) && Some(user_id) != focus {
+                self.focused_streamer = Some(user_id);
+                self.stream_pointer_at = Instant::now();
+            }
+            let avatar = self.avatars.get(&user_id).map(|shot| shot.texture);
+            let tint = [WHITE[0], WHITE[1], WHITE[2], alpha];
+            let fill = [BLURPLE[0], BLURPLE[1], BLURPLE[2], BLURPLE[3] * alpha];
+            paint_avatar_tinted(ui, avatar, center, radius, &initials(&name), fill, tint);
+            if talking {
+                let ring = [GREEN[0], GREEN[1], GREEN[2], GREEN[3] * alpha];
+                ui.get_window_draw_list()
+                    .add_circle(center, radius + 2.0, ring)
+                    .thickness(2.0)
+                    .build();
+            }
+            if let Some(icon) = state_icon {
+                let badge = STREAM_WATCH_BADGE;
+                let bx = center[0] + radius - badge * 0.55;
+                let by = center[1] + radius - badge * 0.55;
+                skin::rect(
+                    ui,
+                    [bx, by],
+                    [bx + badge, by + badge],
+                    [0.0, 0.0, 0.0, 0.75 * alpha],
+                    badge * 0.5,
+                );
+                let inset = (badge - 10.0) * 0.5;
+                skin::image(
+                    ui,
+                    self.icon(icon),
+                    [bx + inset, by + inset],
+                    10.0,
+                    [MUTED[0], MUTED[1], MUTED[2], alpha],
+                );
+            }
+            if Some(user_id) == focus {
+                focus_index = index;
+            }
+        }
+        if let Some(user_id) = focus {
+            let name = self.name_of(user_id);
+            let tag_x = stream_watch_avatar_x(origin[0], focus_index) + STREAM_WATCH_AVATAR + 8.0;
+            let tag_y = origin[1] + (STREAM_WATCH_AVATAR - 24.0) * 0.5;
+            // Mute/deafen is on the avatar badge; the tag keeps LIVE + name only.
+            self.name_tag_alpha(ui, [tag_x, tag_y], &name, None, true, alpha);
+        }
+    }
+
+    /// Talking ring + mute/deafen icon for a live streamer on watch chrome.
+    fn stream_watch_voice_state(&self, user_id: i64) -> (bool, Option<&'static str>) {
+        let me = self.account.as_ref().map(|account| account.id);
+        let flags = if Some(user_id) == me {
+            self.flags
+        } else if let Some(member) = self.voice_members.iter().find(|member| member.user_id == user_id) {
+            member.flags
+        } else {
+            VoiceFlags::default()
+        };
+        let member = VoiceMember { user_id, flags };
+        let talking = self.member_talking(&member);
+        let icon = if flags.deafened {
+            Some("headphone-off")
+        } else if flags.muted {
+            Some("mic-off")
+        } else {
+            None
+        };
+        (talking, icon)
+    }
+
     /// Bottom-left tile label: name, then a mute or deafen icon, and a red LIVE badge for a stream.
     fn name_tag(&self, ui: &Ui, min: [f32; 2], name: &str, state_icon: Option<&str>, live: bool) {
+        self.name_tag_alpha(ui, min, name, state_icon, live, 1.0);
+    }
+
+    fn name_tag_alpha(
+        &self,
+        ui: &Ui,
+        min: [f32; 2],
+        name: &str,
+        state_icon: Option<&str>,
+        live: bool,
+        alpha: f32,
+    ) {
         let semi = self.semibold_font;
         let name_w = skin::text_size(ui, semi, FONT_SM, name)[0];
         let live_w = if live { skin::text_size(ui, self.bold_font, 11.0, "LIVE")[0] + 12.0 } else { 0.0 };
         let icon_w = if state_icon.is_some() { 20.0 } else { 0.0 };
         let tag_w = 8.0 + name_w + 8.0 + icon_w + if live { live_w + 6.0 } else { 0.0 };
-        skin::rect(ui, min, [min[0] + tag_w, min[1] + 24.0], [0.0, 0.0, 0.0, 0.6], 4.0);
+        let bg = [0.0, 0.0, 0.0, 0.6 * alpha];
+        let text = [WHITE[0], WHITE[1], WHITE[2], alpha];
+        let live_fill = [RED[0], RED[1], RED[2], RED[3] * alpha];
+        skin::rect(ui, min, [min[0] + tag_w, min[1] + 24.0], bg, 4.0);
         let mut x = min[0] + 8.0;
         if live {
-            skin::rect(ui, [x, min[1] + 4.0], [x + live_w, min[1] + 20.0], RED, 4.0);
-            skin::text_in_row(ui, self.bold_font, 11.0, x + 6.0, min[1] + 4.0, 16.0, WHITE, "LIVE");
+            skin::rect(ui, [x, min[1] + 4.0], [x + live_w, min[1] + 20.0], live_fill, 4.0);
+            skin::text_in_row(ui, self.bold_font, 11.0, x + 6.0, min[1] + 4.0, 16.0, text, "LIVE");
             x += live_w + 6.0;
         }
-        skin::text_in_row(ui, semi, FONT_SM, x, min[1], 24.0, WHITE, name);
+        skin::text_in_row(ui, semi, FONT_SM, x, min[1], 24.0, text, name);
         if let Some(icon) = state_icon {
-            skin::image(ui, self.icon(icon), [x + name_w + 6.0, min[1] + 4.0], 16.0, WHITE);
+            skin::image(ui, self.icon(icon), [x + name_w + 6.0, min[1] + 4.0], 16.0, text);
         }
     }
 
@@ -11341,10 +11464,25 @@ fn format_member_since(ms: i64) -> String {
 }
 
 fn paint_avatar(ui: &Ui, texture: Option<ManagedTextureId>, center: [f32; 2], radius: f32, letters: &str, ring: Option<[f32; 4]>) {
-    let draw = ui.get_window_draw_list();
+    paint_avatar_tinted(ui, texture, center, radius, letters, BLURPLE, WHITE);
     if let Some(color) = ring {
-        draw.add_circle(center, radius + 3.0, color).thickness(2.0).build();
+        ui.get_window_draw_list()
+            .add_circle(center, radius + 3.0, color)
+            .thickness(2.0)
+            .build();
     }
+}
+
+fn paint_avatar_tinted(
+    ui: &Ui,
+    texture: Option<ManagedTextureId>,
+    center: [f32; 2],
+    radius: f32,
+    letters: &str,
+    fill: [f32; 4],
+    tint: [f32; 4],
+) {
+    let draw = ui.get_window_draw_list();
     if let Some(texture) = texture {
         draw.add_image_rounded(
             texture,
@@ -11352,14 +11490,14 @@ fn paint_avatar(ui: &Ui, texture: Option<ManagedTextureId>, center: [f32; 2], ra
             [center[0] + radius, center[1] + radius],
             [0.0, 0.0],
             [1.0, 1.0],
-            WHITE,
+            tint,
             radius,
             DrawFlags::ROUND_ALL,
         );
     } else {
-        draw.add_circle(center, radius, BLURPLE).filled(true).build();
+        draw.add_circle(center, radius, fill).filled(true).build();
         let size = ui.calc_text_size(letters);
-        draw.add_text([center[0] - size[0] * 0.5, center[1] - size[1] * 0.5], WHITE, letters);
+        draw.add_text([center[0] - size[0] * 0.5, center[1] - size[1] * 0.5], tint, letters);
     }
 }
 
