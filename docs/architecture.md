@@ -23,7 +23,7 @@ Banter/
 | `settings.rs` | User Settings rules and `SettingsState` (OS-window host desire, layout, mic test, keybinds) — kept drawable-free for unit tests |
 | `profile.rs` | Discord-parity profile card + customization editor state (`ProfileCard`, cosmetics drafts, board tabs, media drafts, editor slots) plus view/editor layout contracts (`profile_view_layout`, `profile_editor_layout`) — drawable-free for unit tests |
 | `profile_paint.rs` | Procedural Banter-owned paint for nameplates, decorations, frames, effects, badges, and board game cards |
-| `api.rs` | HTTP client (`ureq`) for `/v1/*` |
+| `api.rs` | HTTP client (`ureq`) for `/v1/*`; maps failures to catalog codes (voice join/leave/flags first) |
 | `realtime.rs` | WebSocket client for presence, chat events, and WebRTC signaling |
 | `session.rs` | Load/save/clear `client-session.json`; `persist_login` honors Stay signed in |
 | `media.rs` (+ `media/encode.rs`, `rtc.rs`, …) | Mic/speakers (cpal), camera (nokhwa), screen share (xcap), I420→H.264 encode, WebRTC publish/subscribe |
@@ -48,7 +48,8 @@ The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, m
 | `live.rs` | In-memory presence, voice membership, calls, WebSocket fan-out |
 | `model.rs` | Shared types (accounts, channels, messages, voice flags, profile widgets, …) |
 | `codec.rs` | Shared Opus/H.264 SDP contract (profile, RIDs, STUN/TURN helpers) |
-| `error.rs` | `BanterError` → HTTP responses |
+| `error.rs` | `BanterError` → HTTP responses (`error` + `BANTER_*` `code`) |
+| `errcode.rs` | Shared catalog: `BanterIssue`, `ERR_*` codes, `format_banter_notice` (see [errors.md](errors.md)) |
 
 ### Persistence vs memory
 

@@ -42,8 +42,8 @@ use crate::logic::{
     resolution_key, save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible,
     speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
     stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,
-    chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day,
-    window_size_label, window_size_presets, OPEN_MIC_RMS,
+    voice_flags_retry_ready, chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window,
+    message_starts_new_day, window_size_label, window_size_presets, OPEN_MIC_RMS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
@@ -258,6 +258,8 @@ pub(crate) struct App {
     screen: bool,
     flags: VoiceFlags,
     sent_flags: VoiceFlags,
+    /// Last failed `POST /v1/voice/flags` time; backs off retries so the notice is not spammed.
+    flags_failed_at: Option<Instant>,
     v_held: bool,
     talk_held: bool,
     user_acted: bool,
@@ -498,6 +500,7 @@ impl App {
             screen: false,
             flags: VoiceFlags::default(),
             sent_flags: VoiceFlags::default(),
+            flags_failed_at: None,
             v_held: false,
             talk_held: false,
             user_acted: false,
@@ -4165,6 +4168,7 @@ impl App {
             self.voice_members = members;
             self.voice_channel = Some(channel_id);
             self.call = None;
+            self.flags_failed_at = None;
             self.sent_flags = VoiceFlags { muted: !self.flags.muted, ..self.flags };
         }
     }
@@ -5268,8 +5272,18 @@ impl App {
             media.set_session(place.filter(|_| in_place), me, offerer);
         }
         if in_place && self.flags != self.sent_flags {
-            if self.note(self.client.set_flags(self.flags)).is_some() {
-                self.sent_flags = self.flags;
+            let now = Instant::now();
+            if voice_flags_retry_ready(self.flags_failed_at, now, Duration::from_secs(2)) {
+                match self.client.set_flags(self.flags) {
+                    Ok(()) => {
+                        self.sent_flags = self.flags;
+                        self.flags_failed_at = None;
+                    }
+                    Err(err) => {
+                        self.status = err.to_string();
+                        self.flags_failed_at = Some(now);
+                    }
+                }
             }
         }
     }
@@ -7972,6 +7986,7 @@ impl App {
         if self.note(self.client.leave_voice()).is_some() {
             self.voice_channel = None;
             self.voice_members.clear();
+            self.flags_failed_at = None;
             self.end_media_place();
         }
     }

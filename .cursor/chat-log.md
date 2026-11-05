@@ -967,3 +967,14 @@ Settings ImGui uses its own context so clicks/keys/Escape/X should work; do not 
 Agent: PR #49 opened (ManagePullRequest; gh createPullRequest scope missing). Do not merge until Owl confirms.
 
 Owl: merge it's fixed. Merged #49 via gh (`84b10e6`). No release.
+
+## 2026-11-05 BA-87 / BA-88 Voice request failed + error catalog
+
+Owl: Voice Connected but red `request failed` toast (screenshot). Find which request failed; fix or surface a real error. Also own BA-88: small shared error catalog (stable codes + user text + optional detail); apply to voice path at minimum. Prefer one PR. Do not merge until Owl says so. Use gh; no GitHub MCP if needed.
+
+Agent: Root cause — client `http_error` collapsed empty HTTP bodies to literal `request failed`; while in voice, `finish_voice_flags` retries `POST /v1/voice/flags` every frame after join forces a flags sync. Join already succeeded so the green Voice Connected bar stayed. Fixed catalog + voice wrap + backoff. Branch cursor/voice-request-failed-32e1.
+
+### Summary
+Toast shows `couldn't update voice state (BANTER_VC_FLAGS_FAILED)` (or server message + code) instead of opaque `request failed`; pattern documented in docs/errors.md.
+
+Agent: PR #50 opened (ManagePullRequest). Do not merge until Owl says so.

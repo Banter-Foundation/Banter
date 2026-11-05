@@ -585,3 +585,12 @@ After #47+#48 on main, Settings still drew with dead ImGui (OS chrome could clos
 ### Changelog
 - Bug fixes: separate ImGui context + GlowRenderer for Banter Settings; own-window IO always; main suspends while Settings runs; Settings GPU maps/fonts swapped for that pass
 - Other: platform tests for suspend/activate independence and main pointer suppress while Settings focused; architecture note
+
+## 2026-11-05 04:44:56 +0000 [ubuntu] — Voice request failed notice + error catalog (BA-87 / BA-88)
+
+The red stage toast showed opaque `request failed` while Voice Connected. That string was the client fallback for an empty HTTP error body on `POST /v1/voice/flags` (flags sync after join). Introduced a shared `BanterIssue` catalog and surface real codes/messages for voice join/leave/flags and WS connect/drop, with a 2s flags retry backoff.
+
+### Changelog
+- Bug fixes: never toast bare `request failed`; voice flags/join/leave wrap with `BANTER_VC_*`; parse server `code`; backoff flags republish
+- New features: shared error catalog (`errcode.rs`, `docs/errors.md`); server `BanterError::code()` uses `BANTER_*` tokens
+- Other: api_errors + errcode tests; architecture/README links
