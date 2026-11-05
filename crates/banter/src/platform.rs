@@ -2,6 +2,12 @@
 //!
 //! User Settings opens in a second shared-context GLFW window so the main Banter
 //! shell stays usable. Closing that window clears settings state on the main app.
+//!
+//! The main and Settings surfaces share one ImGui context with two NewFrame passes
+//! per tick. Each pass must set `AppFocused` from that surface's `receive_pointer`
+//! (GLFW Focus events alone are transition-only and will starve Settings of input).
+//! Shared GLFW children also need `is_shared` cleared before Drop or the OS window
+//! leaks as a zombie and looks like it "will not close".
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -123,7 +129,15 @@ pub(crate) fn run() -> Result<(), String> {
             .as_ref()
             .map(|host| host.window.is_focused())
             .unwrap_or(false);
-        let main_focused = window.is_focused() && !settings_focused;
+        let settings_hovered = settings_host
+            .as_ref()
+            .map(|host| host.window.is_hovered())
+            .unwrap_or(false);
+        // Prefer the Settings surface whenever it has OS focus or the cursor is over it.
+        // Otherwise a sticky main-window focus leaves Settings with a dead UI.
+        let settings_receive = settings_host.is_some()
+            && (settings_focused || settings_hovered || !window.is_focused());
+        let main_receive = window.is_focused() && !settings_focused && !settings_hovered;
 
         {
             let _prepare = crate::profiler::scope_section(crate::profiler::Section::Prepare);
@@ -141,7 +155,7 @@ pub(crate) fn run() -> Result<(), String> {
             framebuffer_width,
             framebuffer_height,
             delta,
-            main_focused,
+            main_receive,
         );
         app.set_v_held(window.get_key(glfw::Key::V) == glfw::Action::Press);
         unsafe {
@@ -166,6 +180,11 @@ pub(crate) fn run() -> Result<(), String> {
             let (fbw, fbh) = host.window.get_framebuffer_size();
             if sw > 0 && sh > 0 {
                 host.window.make_current();
+                // Match the drawable to this window before clear/draw. The glow pass also
+                // sets a viewport from draw data; this keeps clear from using the main size.
+                unsafe {
+                    gl.viewport(0, 0, fbw, fbh);
+                }
                 feed_frame_io(
                     &mut imgui,
                     &host.window,
@@ -176,7 +195,7 @@ pub(crate) fn run() -> Result<(), String> {
                     fbw,
                     fbh,
                     delta,
-                    settings_focused || !main_focused,
+                    settings_receive,
                 );
                 unsafe {
                     gl.clear_color(0.08, 0.08, 0.10, 1.0);
@@ -192,6 +211,10 @@ pub(crate) fn run() -> Result<(), String> {
                 }
                 host.window.swap_buffers();
                 window.make_current();
+                let (mfbw, mfbh) = window.get_framebuffer_size();
+                unsafe {
+                    gl.viewport(0, 0, mfbw, mfbh);
+                }
             }
         }
     }
@@ -220,15 +243,33 @@ fn sync_settings_window(
             }
             if settings.window.should_close() {
                 app.notify_settings_window_closed();
-                *host = None;
+                if let Some(closed) = host.take() {
+                    destroy_settings_host(closed, main);
+                }
                 main.focus();
             }
         }
-    } else if host.is_some() {
-        *host = None;
+    } else if let Some(closed) = host.take() {
+        destroy_settings_host(closed, main);
         main.focus();
     }
     Ok(())
+}
+
+/// glfw-rs marks `create_shared` windows with `is_shared = true` and then **skips**
+/// `glfwDestroyWindow` on Drop (it still frees the event callback box, leaving a live
+/// OS window with a dangling user pointer). Banter Settings must clear the flag so the
+/// shared child is actually destroyed when User Settings closes.
+fn prepare_shared_settings_window_for_destroy(window: &mut glfw::Window) {
+    window.is_shared = false;
+}
+
+fn destroy_settings_host(mut host: SettingsHost, main: &mut glfw::PWindow) {
+    // GLFW requires a different context current when destroying a share-group member.
+    main.make_current();
+    host.window.hide();
+    prepare_shared_settings_window_for_destroy(&mut host.window);
+    drop(host);
 }
 
 fn create_settings_window(
@@ -254,6 +295,13 @@ fn create_settings_window(
     Ok(SettingsHost { window, events })
 }
 
+/// Dual NewFrame (main + Banter Settings) shares one ImGui context. GLFW `Focus` events only
+/// fire on transitions, so the main pass can leave `AppFocused = false` and starve the settings
+/// pass of clicks/keys. Each surface pass must write focus from `receive_pointer` itself.
+fn imgui_focus_for_surface(receive_pointer: bool) -> bool {
+    receive_pointer
+}
+
 fn feed_frame_io(
     imgui: &mut Context,
     window: &glfw::Window,
@@ -272,6 +320,8 @@ fn feed_frame_io(
     let scale_x = framebuffer_width as f32 / width as f32;
     let scale_y = framebuffer_height as f32 / height as f32;
     io.set_display_framebuffer_scale([scale_x, scale_y]);
+    // Per-pass focus — do not rely on GLFW Focus events across the dual NewFrame.
+    io.add_focus_event(imgui_focus_for_surface(receive_pointer));
     if receive_pointer {
         let (cursor_x, cursor_y) = window.get_cursor_pos();
         io.add_mouse_pos_event([cursor_x as f32, cursor_y as f32]);
@@ -281,10 +331,11 @@ fn feed_frame_io(
     }
     for event in events {
         match event {
-            glfw::WindowEvent::Focus(focused) => io.add_focus_event(*focused),
+            // Focus is owned by `imgui_focus_for_surface` above for the dual-pass.
+            glfw::WindowEvent::Focus(_) => {}
             glfw::WindowEvent::CursorPos(_, _) if receive_pointer => app.note_input(),
-            glfw::WindowEvent::MouseButton(_, _, _)
-            | glfw::WindowEvent::Scroll(_, _)
+            glfw::WindowEvent::MouseButton(_, _, _) if receive_pointer => app.note_input(),
+            glfw::WindowEvent::Scroll(_, _)
             | glfw::WindowEvent::Key(_, _, _, _)
             | glfw::WindowEvent::Char(_)
                 if receive_pointer =>
@@ -293,6 +344,18 @@ fn feed_frame_io(
             }
             _ => {}
         }
+    }
+    // Poll buttons each pass so Settings does not depend on a single queued click event
+    // surviving the main-window NewFrame that runs earlier in the same tick.
+    let press = |button| window.get_mouse_button(button) == glfw::Action::Press;
+    if receive_pointer {
+        io.add_mouse_button_event(MouseButton::Left, press(glfw::MouseButton::Button1));
+        io.add_mouse_button_event(MouseButton::Right, press(glfw::MouseButton::Button2));
+        io.add_mouse_button_event(MouseButton::Middle, press(glfw::MouseButton::Button3));
+    } else {
+        io.add_mouse_button_event(MouseButton::Left, false);
+        io.add_mouse_button_event(MouseButton::Right, false);
+        io.add_mouse_button_event(MouseButton::Middle, false);
     }
     let held = |key| window.get_key(key) == glfw::Action::Press;
     if receive_pointer {
@@ -800,7 +863,10 @@ fn map_key(key: glfw::Key) -> Option<Key> {
 
 #[cfg(test)]
 mod tests {
-    use super::wayland_position_unavailable;
+    use super::{
+        imgui_focus_for_surface, prepare_shared_settings_window_for_destroy,
+        wayland_position_unavailable,
+    };
 
     #[test]
     fn wayland_window_position_is_not_fatal() {
@@ -808,5 +874,64 @@ mod tests {
             "Wayland: The platform does not provide the window position"
         ));
         assert!(!wayland_position_unavailable("GLFW: an OpenGL context could not be created"));
+    }
+
+    #[test]
+    fn dual_pass_settings_surface_sets_imgui_focus_from_receive_pointer() {
+        // Main pass while Settings is focused uses receive_pointer=false; without rewriting
+        // AppFocused for the Settings pass, clicks/Escape/X stay dead after the first frame.
+        assert!(
+            !imgui_focus_for_surface(false),
+            "unfocused surface must clear ImGui AppFocused"
+        );
+        assert!(
+            imgui_focus_for_surface(true),
+            "Banter Settings pass must set ImGui AppFocused so controls and close work"
+        );
+    }
+
+    /// glfw-rs `create_shared` sets `Window.is_shared = true`, and `Drop` then frees the
+    /// event callbacks but skips `glfwDestroyWindow`. Banter Settings must clear that flag
+    /// before drop or the OS window becomes a zombie (blank/frozen) with a dangling
+    /// user-pointer — close appears to do nothing.
+    #[test]
+    fn shared_settings_window_must_clear_is_shared_before_drop() {
+        use glfw::Context as _;
+
+        if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return;
+        }
+        let Ok(mut glfw) = glfw::init(|_, _| {}) else {
+            return;
+        };
+        glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
+        glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
+        glfw.window_hint(glfw::WindowHint::Visible(false));
+        let Some((mut main, _)) =
+            glfw.create_window(64, 64, "banter-settings-destroy-main", glfw::WindowMode::Windowed)
+        else {
+            return;
+        };
+        main.make_current();
+        let Some((mut settings, _)) = main.create_shared(
+            64,
+            64,
+            "banter-settings-destroy-child",
+            glfw::WindowMode::Windowed,
+        ) else {
+            return;
+        };
+        assert!(
+            settings.is_shared,
+            "create_shared must mark the Banter Settings window shared (glfw-rs Drop skips DestroyWindow while set)"
+        );
+        prepare_shared_settings_window_for_destroy(&mut settings);
+        assert!(
+            !settings.is_shared,
+            "closing Banter Settings must clear is_shared so Drop calls glfwDestroyWindow"
+        );
+        // Main stays current while the shared child is destroyed (GLFW requirement).
+        main.make_current();
+        drop(settings);
     }
 }

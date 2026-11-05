@@ -935,3 +935,12 @@ Agent: Branch `cursor/reddit-thread-lines-cd5c` from `origin/main`. Removed L-co
 ### Summary
 Visual/interaction fidelity for thread lines + collapse chrome only; reply tree semantics from #22/#34 unchanged.
 
+
+## 2026-11-05 BA-84 Fix broken Settings window
+
+Owl: Banter Settings window does not work. Diagnose GLFW/shared-context Settings. Prefer current main. Later clarified: opens and displays, will not close, controls do nothing. Fix on branch from main; open PR. Then Owl said merge via gh (no GitHub MCP). No release.
+
+Agent: Root cause — dual NewFrame starved Settings of ImGui AppFocused; glfw-rs is_shared Drop leaked the OS window. Fixed in platform.rs; tests 29 settings + 3 platform. Branch cursor/fix-settings-window-59eb. Report internal/ba84-settings-window-fix.md.
+
+### Summary
+Settings receives input again and closes via X / Escape / OS chrome; shared child window is actually destroyed.
