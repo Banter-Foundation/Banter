@@ -5389,7 +5389,7 @@ impl App {
         let ptt_hot = held || self.ptt_until.is_some_and(|until| Instant::now() < until);
         let rms = self.media.as_ref().map(|media| media.input_rms()).unwrap_or(0.0);
         let threshold = if self.voice.auto_sensitivity { OPEN_MIC_RMS } else { self.voice.sensitivity };
-        let transmitting = speaking_from_level(self.push_to_talk, ptt_hot, rms, threshold);
+        let level_hot = speaking_from_level(self.push_to_talk, ptt_hot, rms, threshold);
         let in_place = self.voice_channel.is_some()
             || self.call.as_ref().is_some_and(|call| call.phase == CallPhase::Active);
         if self.media.as_ref().is_some_and(|media| media.take_capture_failure()) {
@@ -5397,10 +5397,11 @@ impl App {
             self.save_stream();
         }
         self.screen = self.share.is_live() && in_place;
-        self.flags = self.mute.voice_flags(self.push_to_talk, transmitting, self.camera && in_place, self.screen);
+        // voice_flags clears transmitting while muted/deafened (guild VC and DM calls).
+        self.flags = self.mute.voice_flags(self.push_to_talk, level_hot, self.camera && in_place, self.screen);
         if let Some(id) = self.account.as_ref().map(|account| account.id) {
             if let Some(member) = self.voice_members.iter_mut().find(|member| member.user_id == id) {
-                member.flags.transmitting = transmitting;
+                member.flags.transmitting = self.flags.transmitting;
             }
         }
         let preview = self.camera || self.video_popout || self.voice_settings_visible();
@@ -10338,10 +10339,12 @@ impl App {
     }
 
     fn member_talking(&self, member: &VoiceMember) -> bool {
+        // Never draw a talking glow over a muted or deafened mic, even if a stale
+        // transmitting bit slipped through before sanitize_voice_flags.
         if self.account.as_ref().map(|account| account.id) == Some(member.user_id) {
-            self.flags.transmitting
+            self.flags.transmitting && !self.flags.muted && !self.flags.deafened
         } else {
-            member.flags.transmitting
+            member.flags.transmitting && !member.flags.muted && !member.flags.deafened
         }
     }
 

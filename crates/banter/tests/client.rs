@@ -136,6 +136,29 @@ fn deafen_restores_the_mute_from_before_it_was_enabled() {
 }
 
 #[test]
+fn voice_flags_never_advertise_talking_while_muted_or_deafened() {
+    let mut memory = MuteMemory::new();
+    let open = memory.voice_flags(false, true, false, false);
+    assert!(open.transmitting);
+
+    memory.set_muted(true);
+    let muted = memory.voice_flags(false, true, false, false);
+    assert!(muted.muted);
+    assert!(!muted.transmitting);
+
+    memory.set_deafened(true);
+    let deafened = memory.voice_flags(true, true, false, false);
+    assert!(deafened.deafened);
+    assert!(deafened.muted);
+    assert!(!deafened.transmitting);
+
+    memory.set_deafened(false);
+    memory.set_muted(false);
+    let unmuted = memory.voice_flags(false, true, false, false);
+    assert!(unmuted.transmitting);
+}
+
+#[test]
 fn password_stays_masked_until_show_password_is_on() {
     assert!(password_is_masked(false));
     assert!(!password_is_masked(true));

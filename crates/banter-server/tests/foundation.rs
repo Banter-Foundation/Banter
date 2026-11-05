@@ -8,8 +8,8 @@ use std::time::Duration;
 use banter_server::{
     BanterError, BoardElement, BoardElementKind, BoardOp, CallPhase, ChannelKind, ChatTarget, ClientSignal, LayerId,
     Live, MediaKind, MediaPlace, Presence, ServerEvent, Store, IDLE_AFTER_MS, MAX_ATTACHMENT_BYTES, MAX_MESSAGE_CHARS,
-    should_receive_audio, should_send_audio, should_send_camera, should_send_screen, should_send_stream_audio,
-    sdp_fixture, sdp_matches_contract, VoiceFlags,
+    sanitize_voice_flags, should_receive_audio, should_send_audio, should_send_camera, should_send_screen,
+    should_send_stream_audio, sdp_fixture, sdp_matches_contract, VoiceFlags,
 };
 
 static SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -104,6 +104,32 @@ fn voice_flag_rules() {
     flags.screen = true;
     assert!(!should_send_audio(&flags));
     assert!(should_send_stream_audio(&flags));
+}
+
+#[test]
+fn muted_or_deafened_voice_flags_drop_transmitting() {
+    let muted = sanitize_voice_flags(VoiceFlags {
+        muted: true,
+        transmitting: true,
+        ..VoiceFlags::default()
+    });
+    assert!(!muted.transmitting);
+    assert!(muted.muted);
+
+    let deafened = sanitize_voice_flags(VoiceFlags {
+        muted: true,
+        deafened: true,
+        transmitting: true,
+        ..VoiceFlags::default()
+    });
+    assert!(!deafened.transmitting);
+    assert!(deafened.deafened);
+
+    let open = sanitize_voice_flags(VoiceFlags {
+        transmitting: true,
+        ..VoiceFlags::default()
+    });
+    assert!(open.transmitting);
 }
 
 #[test]
@@ -753,13 +779,23 @@ async fn voice_channel_is_drop_in_and_routes_media() {
 
     let mut flags = VoiceFlags::default();
     flags.muted = true;
+    flags.transmitting = true;
     live.set_flags(ada.id, flags);
+    let ada_flags = live
+        .voice_channel_members(voice_id)
+        .into_iter()
+        .find(|member| member.user_id == ada.id)
+        .unwrap()
+        .flags;
+    assert!(ada_flags.muted);
+    assert!(!ada_flags.transmitting, "muted users must not publish a talking flag");
     assert!(live
         .media_subscribers(ada.id, MediaPlace::VoiceChannel(voice_id), MediaKind::UserAudio)
         .unwrap()
         .is_empty());
 
     flags.muted = false;
+    flags.transmitting = false;
     flags.push_to_talk = true;
     live.set_flags(ada.id, flags);
     assert!(live
