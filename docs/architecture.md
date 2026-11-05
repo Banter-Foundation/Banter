@@ -18,7 +18,8 @@ Banter/
 | `main.rs` | Entry → `banter::run()` |
 | `platform.rs` | Main GLFW window plus optional shared-context **Banter Settings** window; OpenGL 3.3, Dear ImGui docking + glow renderer (separate ImGui context per OS window via suspend/activate), clipboard, input, embedded-server bootstrap; UI present rate follows the current monitor (VSync `Sync(1)`, reapplied when the window moves or the mode Hz changes) |
 | `ui.rs` | Signed-in Discord-like shell, sign-in/register, modals, chat, voice stage, 1:1 DM call stage, friends/DMs; `draw_main` vs `draw_settings_window` |
-| `theme.rs` | Skin metrics and colors (temporary Discord dark theme) |
+| `theme.rs` | Theme tokens: colors, sizes, radii, fonts (temporary Discord dark theme) |
+| `layout.rs` | Named shell regions and column geometry (`ShellColumns`, `shell_columns`) — see [ui-theme-layout.md](ui-theme-layout.md) |
 | `skin.rs` | Shared Dear ImGui draw helpers (buttons, inputs, menus, tooltips, …) |
 | `settings.rs` | User Settings rules and `SettingsState` (OS-window host desire, layout, mic test, keybinds) — kept drawable-free for unit tests |
 | `profile.rs` | Discord-parity profile card + customization editor state (`ProfileCard`, cosmetics drafts, board tabs, media drafts, editor slots) plus view/editor layout contracts (`profile_view_layout`, `profile_editor_layout`) — drawable-free for unit tests |
@@ -33,7 +34,7 @@ Banter/
 
 Flow: `platform::run` loads `dev-server.json` and the saved session token, applies `startup_local_policy` (skip local for Remote; start local only when logged in on Local; otherwise reuse a running loopback or ask for remote), opens the window, builds `ui::App` against the chosen API base, then frames ImGui each tick. When User Settings is open, a second GLFW window titled **Banter Settings** is created (shared GL context) with its **own Dear ImGui context** (main is suspended for that pass) so input is not shared with the shell. Closing that window (chrome, Escape, or the in-UI X) clears settings state and focuses the main window. Developer settings (and the sign-in Server options overlay) can reconnect the client mid-session and start local when the user picks Local.
 
-The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, members). Panels are not treated as free-floating docks for day-to-day use even though docking is enabled and `banter-dock.ini` is written.
+The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, members). Panels are not treated as free-floating docks for day-to-day use even though docking is enabled and `banter-dock.ini` is written. Theme tokens, region names, and how to iterate on this shell are documented in [ui-theme-layout.md](ui-theme-layout.md). Branch `cursor/ui-theme-layout-cf5e` / worktree `D:\Projects\Banter-ui-theme` is the dedicated line for that work.
 
 ## Server (`banter-server`)
 

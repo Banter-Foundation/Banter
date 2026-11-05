@@ -28,22 +28,23 @@ use crate::api::{ApiError, Client, MemberView};
 use crate::bfmd::{self, Flag as BfmdFlag};
 use crate::bfmd_paint;
 use crate::icons::rasterize_lucide;
+use crate::layout::discord_shell_columns;
 use crate::logic::{
     CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry, ContextMenuTone, DevServerPrefs, HomeLayout,
     HomeRecentEntry, HomeRecentKind, HomeSectionId, MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget,
     SettingsSection, StreamDefaults, StreamFps, StreamResolution, VideoPrefs, VoicePrefs, api_base_for,
     camera_preview_mirrored, channel_context_menu, channel_default_icon, channel_display_icon, clamp_context_menu_pos,
     clamp_window_size, comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution,
-    discord_shell_columns, encode_jpeg_rgba, folder_context_menu, fps_block, fps_from_key, fps_key,
-    grouped_mix_sources, hardware_encoder_block, home_section_is_visible, home_section_label, insert_mention,
-    is_debug_command, lerp_size, load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba,
-    move_home_section, parse_folder_color, password_blocks_copy, plan_member_groups, password_is_masked,
-    push_home_recent, push_to_talk_held, rail_tree_rows, remove_message, resolution_block, resolution_from_key,
-    resolution_key, save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible,
-    speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
-    stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,
-    voice_flags_retry_ready, chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window,
-    message_starts_new_day, window_size_label, window_size_presets, OPEN_MIC_RMS,
+    encode_jpeg_rgba, folder_context_menu, fps_block, fps_from_key, fps_key, grouped_mix_sources,
+    hardware_encoder_block, home_section_is_visible, home_section_label, insert_mention, is_debug_command, lerp_size,
+    load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, move_home_section,
+    parse_folder_color, password_blocks_copy, plan_member_groups, password_is_masked, push_home_recent,
+    push_to_talk_held, rail_tree_rows, remove_message, resolution_block, resolution_from_key, resolution_key,
+    save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible, speaking_from_level,
+    stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge, stream_resolution_label,
+    stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections, voice_flags_retry_ready,
+    chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day,
+    window_size_label, window_size_presets, OPEN_MIC_RMS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{

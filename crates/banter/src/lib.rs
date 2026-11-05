@@ -14,6 +14,7 @@ mod api;
 pub mod bfmd;
 mod bfmd_paint;
 mod icons;
+pub mod layout;
 mod logic;
 mod media;
 mod platform;
@@ -35,6 +36,7 @@ pub use banter_server::{
 };
 pub use bfmd::{parse as parse_bfmd, plain_text as bfmd_plain_text, Flag as BfmdFlag};
 pub use icons::rasterize_lucide;
+pub use layout::{Region, ShellColumns, discord_shell_columns, shell_columns};
 pub use logic::*;
 pub use media::{
     camera_preview_rgba, current_camera_frame, decode_camera_frame, hardware_encoder_available,

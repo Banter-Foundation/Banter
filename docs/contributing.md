@@ -55,7 +55,10 @@ Never commit:
 | `docs/foundation.md` | Chosen foundation + deferred list |
 | `docs/contributing.md` | This file |
 | `docs/current-build.md` | Live observation notes |
+| `docs/ui-theme-layout.md` | Theme/layout module boundaries and shell regions |
 | `docs/modding/` | Mods, plugins, and bots specification (`modding.md`, `mods.md`, `plugins.md`, `bots.md`) |
 | `.cursor/design.md` | Visual metrics for the temporary skin |
 
 When you change how people run or understand Banter, update the matching doc in the same PR.
+
+Theme tokens live in `theme.rs`; shell region geometry in `layout.rs` (`Region`, `shell_columns`). Guide: `docs/ui-theme-layout.md`.

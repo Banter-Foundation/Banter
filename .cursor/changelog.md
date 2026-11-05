@@ -138,6 +138,16 @@ User Settings gains a Developer section so the desktop client can switch between
 - Switching reconnects HTTP and WebSocket; a token that fails on the new host clears the local session so you can sign in again
 - Docs: overview, build-and-run, architecture, feature-status, README; tests in `crates/banter/tests/dev_server.rs` written first (8 passed) alongside client 26 and settings 18
 
+## 2026-11-03 14:45:00 -06:00 [Winter] — UI theme and layout branch scaffold
+
+Opened dedicated branch `cursor/ui-theme-layout-cf5e` in worktree `D:\Projects\Banter-ui-theme` from `origin/main` so theme/layout work does not fight the dirty Dev Settings checkout at `D:\Projects\Banter`. Scaffold only: Discord-temp skin stays workable. Rebased onto main after Developer settings landed (`5d5915c`).
+
+- New `crates/banter/src/layout.rs`: named `Region`s, `ShellColumns`, `shell_columns` (theme-token widths); `discord_shell_columns` kept as alias
+- Moved shell column math out of `logic.rs`; `theme` / `skin` module docs point at the boundaries
+- Docs: `docs/ui-theme-layout.md`; README, architecture, contributing, and design notes updated
+- Tests first: `crates/banter/tests/layout.rs` (region names, theme-backed columns, rect helpers)
+- Verified: `cargo test -p banter --test layout --test theme` — layout 5 passed, theme 16 passed (`CARGO_TARGET_DIR=D:\Projects\Banter-ui-theme\target`)
+
 ## 2026-11-03 15:18:54 -06:00 [Winter] — Consolidate under Project Banter
 
 Moved the primary Banter checkout from `D:\Projects\Banter` to `D:\Projects\Project Banter` (exact path; space in the name) without rewriting git history. Linked worktrees were remapped under `D:\Projects\Project Banter\worktrees\` and repaired with `git worktree repair`. `/worktrees/` is gitignored in the primary tree. Docs and agent notes now point at the new root. Never touched `E:`. Owl's previous `banter-server` was stopped for the move and restarted from the new `target\debug` path.

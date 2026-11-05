@@ -1,6 +1,7 @@
 //! Discord-skin widgets drawn on Dear ImGui draw lists.
 //!
 //! Sizes, radii, font sizes, and colors come from `theme` so every screen shares one grid.
+//! Column placement comes from `layout`. Keep new shared widgets here; keep screen flow in `ui`.
 //! Each helper takes and releases its own draw list, so helpers can be called back to back.
 
 use dear_imgui_rs::{DrawFlags, ManagedTextureId, StyleColor, StyleVar, Ui, fonts::FontId};
