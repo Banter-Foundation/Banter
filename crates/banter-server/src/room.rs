@@ -372,7 +372,9 @@ impl PeerConnectionEventHandler for Handler {
                         // Forward rows are keyed by RID (`q`/`h`/`f`), not by the raw OnOpen string.
                         let rid = layer.rid().unwrap_or("").to_string();
                         live.note_layer(user_id, kind, layer);
-                        let subscribers = live.admit_rtp(channel_id, user_id, kind, layer, packet.payload.len(), rtp_is_key(&packet.payload));
+                        let payload_len = packet.payload.len();
+                        crate::debuglog::record_media_in(payload_len as u64);
+                        let subscribers = live.admit_rtp(channel_id, user_id, kind, layer, payload_len, rtp_is_key(&packet.payload));
                         let targets: Vec<(Arc<TrackLocalStaticRTP>, u32, u8)> = {
                             let table = forwards().lock().expect("forwards");
                             table
@@ -388,6 +390,7 @@ impl PeerConnectionEventHandler for Handler {
                         };
                         for (target, out_ssrc, out_pt) in targets {
                             let outbound = rewrite_forward_rtp(packet.clone(), out_ssrc, out_pt);
+                            crate::debuglog::record_media_out(outbound.payload.len() as u64);
                             if let Err(err) = target.write_rtp(outbound).await {
                                 let _ = err;
                             }

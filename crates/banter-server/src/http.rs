@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRequestParts, Path, Query, Request, State};
 use axum::http::request::Parts;
@@ -88,7 +88,9 @@ pub fn serve(addr: &str, data_dir: &std::path::Path, database_url: &str) -> Resu
             store: Arc::clone(&store),
             live: Arc::clone(&live),
         };
-        let app = router(state.clone()).layer(RequestBodyLimitLayer::new(20 * 1024 * 1024));
+        let app = router(state.clone())
+            .layer(middleware::from_fn(traffic_gate))
+            .layer(RequestBodyLimitLayer::new(20 * 1024 * 1024));
         let listener = tokio::net::TcpListener::bind(addr).await.map_err(|err| {
             crate::debuglog::record("error", format!("bind failed on {addr}: {err}"));
             BanterError::Bind(err.to_string())
@@ -197,6 +199,31 @@ fn router(state: HttpState) -> Router {
         .with_state(state)
 }
 
+/// Count HTTP request/response body bytes for `/debugnow`.
+///
+/// Bodies are streamed through a counter so large attachments stay unbuffered
+/// and chunked transfers still show up in the totals.
+async fn traffic_gate(req: Request, next: Next) -> Response {
+    crate::debuglog::note_http_request();
+    let (parts, body) = req.into_parts();
+    let req = Request::from_parts(parts, count_http_body(body, true));
+    let response = next.run(req).await;
+    let (parts, body) = response.into_parts();
+    Response::from_parts(parts, count_http_body(body, false))
+}
+
+fn count_http_body(body: Body, inbound: bool) -> Body {
+    Body::from_stream(body.into_data_stream().inspect(move |chunk| {
+        if let Ok(data) = chunk {
+            if inbound {
+                crate::debuglog::add_http_in(data.len() as u64);
+            } else {
+                crate::debuglog::add_http_out(data.len() as u64);
+            }
+        }
+    }))
+}
+
 async fn bot_gate(State(state): State<HttpState>, req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
     let method = req.method().clone();
@@ -300,6 +327,8 @@ async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> R
     let (pool_size, pool_idle) = state.store.pool_usage();
     let (media_slots, media_forwards) = crate::room::media_snapshot();
     Ok(Json(ServerDebug {
+        version: crate::BANTER_VERSION.to_string(),
+        protocol: crate::PROTOCOL,
         uptime_ms: crate::debuglog::uptime_ms(),
         rss_bytes: crate::debuglog::rss_bytes(),
         online: counts.online,
@@ -316,6 +345,7 @@ async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> R
         messages,
         pool_size,
         pool_idle,
+        traffic: crate::debuglog::traffic_snapshot(),
         logs: crate::debuglog::recent(),
     }))
 }
@@ -1400,6 +1430,7 @@ async fn handle_socket(state: HttpState, account: Account, socket: WebSocket) {
     let writer = tokio::spawn(async move {
         while let Some(outbound) = rx.recv().await {
             let crate::live::Outbound::Text(text) = outbound;
+            crate::debuglog::record_ws_out(text.len() as u64);
             let message = WsMessage::Text(text.into());
             if sink.send(message).await.is_err() {
                 break;
@@ -1410,6 +1441,7 @@ async fn handle_socket(state: HttpState, account: Account, socket: WebSocket) {
         let Ok(message) = incoming else { break };
         match message {
             WsMessage::Text(text) => {
+                crate::debuglog::record_ws_in(text.len() as u64);
                 if let Ok(signal) = serde_json::from_str::<ClientSignal>(&text) {
                     if matches!(signal, ClientSignal::Activity) {
                         note_ws_activity(&state, user_id).await;
@@ -1425,8 +1457,9 @@ async fn handle_socket(state: HttpState, account: Account, socket: WebSocket) {
                     note_ws_activity(&state, user_id).await;
                 }
             }
-            WsMessage::Binary(_) => {
-                // Media is UDP. Binary websocket frames are not a media path.
+            WsMessage::Binary(bytes) => {
+                // Media is UDP. Still count unexpected binary frames as inbound.
+                crate::debuglog::record_ws_in(bytes.len() as u64);
             }
             WsMessage::Close(_) => break,
             _ => {}
