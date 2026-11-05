@@ -250,6 +250,10 @@ pub fn clear_for_test() {
     if let Ok(mut guard) = state().lock() {
         guard.lines.clear();
     }
+}
+
+#[cfg(test)]
+fn clear_traffic_for_test() {
     let t = traffic();
     t.http_in.store(0, Ordering::Relaxed);
     t.http_out.store(0, Ordering::Relaxed);
@@ -281,11 +285,18 @@ pub fn clear_for_test() {
 }
 
 #[cfg(test)]
+fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().expect("debuglog test lock")
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn ring_keeps_newest_lines_in_order() {
+        let _guard = test_lock();
         clear_for_test();
         record("info", "alpha");
         record("warn", "beta");
@@ -300,7 +311,8 @@ mod tests {
 
     #[test]
     fn traffic_totals_and_rates_track_in_and_out() {
-        clear_for_test();
+        let _guard = test_lock();
+        clear_traffic_for_test();
         note_http_request();
         add_http_in(100);
         add_http_out(200);
@@ -330,6 +342,6 @@ mod tests {
         assert_eq!(second.http_reqs, 2);
         assert!(second.http_in_per_s >= 1);
         assert_eq!(second.ws_in_per_s, 0);
-        clear_for_test();
+        clear_traffic_for_test();
     }
 }
