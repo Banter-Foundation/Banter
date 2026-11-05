@@ -967,3 +967,13 @@ Settings ImGui uses its own context so clicks/keys/Escape/X should work; do not 
 Agent: PR #49 opened (ManagePullRequest; gh createPullRequest scope missing). Do not merge until Owl confirms.
 
 Owl: merge it's fixed. Merged #49 via gh (`84b10e6`). No release.
+
+## 2026-11-04 22:53:02 -06:00 - BA-90 Local live voice attach (Black-Birb)
+
+Owl: Attach to live Banter session on Black-Birb; debug voice/media against `direct.galaticserver.com:3970`. Never touch E:. Cloud peer BA-89 notes available. Write findings to store `internal/ba90-black-birb-voice-attach.md`; PR only if code changes (gh; no merge until Owl says).
+
+Agent: Confirmed `banter.exe` PID 32668 on `D:\Projects\Project Banter\target\debug` with `dev-server.json` remote `direct.galaticserver.com:3970`. Live host fingerprint: cosmetics 200, **badges 404**, debug 404 → pre–Version-1-test-7 (no PR #19 SFU rewrite). Join General voice (channel 4) + flags 204 OK via Caddy. Black-Birb is client-only; cannot SSH-upgrade Galatic from this box. Upgrade path: deploy ≥ test-9 / `main` with `BANTER_ADVERTISE_IP=174.103.73.97` + UDP 40000-40049 / 40100-40149. No code PR. Report written.
+
+### Summary
+
+Live guild VC broken by stale remote server (pre-test-7); client attach healthy; ops upgrade needed on deploy host.
