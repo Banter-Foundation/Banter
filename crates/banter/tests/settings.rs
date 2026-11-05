@@ -412,6 +412,29 @@ fn settings_opens_in_its_own_os_window_and_clears_cleanly() {
 }
 
 #[test]
+fn settings_ui_close_and_escape_also_drop_os_window_desire() {
+    // Platform destroys the shared GLFW window when desire goes false. If desire sticks
+    // true, Banter keeps a host that may already be a glfw-rs zombie (is_shared Drop leak).
+    let mut state = SettingsState::new();
+    state.open_section(SettingsSection::Account);
+    assert!(state.os_window_desired());
+
+    state.close();
+    assert!(!state.os_window_desired(), "in-UI X must drop Banter Settings OS window desire");
+
+    state.open();
+    state.escape(false);
+    assert!(!state.os_window_desired(), "Escape must drop Banter Settings OS window desire");
+
+    state.open();
+    state.escape(true);
+    assert!(
+        state.os_window_desired(),
+        "Escape with a popup open must not close Settings (dropdown closes first)"
+    );
+}
+
+#[test]
 fn settings_open_section_targets_my_account_voice_or_developer() {
     let mut state = SettingsState::new();
     state.open_section(SettingsSection::Developer);

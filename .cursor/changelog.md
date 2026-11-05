@@ -537,3 +537,11 @@ The top server-rail control (Discord-home spot) uses a Lucide home icon and open
 - Drop DrawListMut before fold/line hit targets (dear-imgui #31 lesson)
 - Tests: theme reddit_* helpers; comment_tree ancestor chain
 
+
+## 2026-11-05 03:31:46 +0000 [ubuntu] — Fix Banter Settings dead UI and close (BA-84)
+
+Settings opened and drew but ignored clicks/Escape/X and could not close cleanly. Dual ImGui NewFrame left `AppFocused` false after the main pass (GLFW Focus is transition-only), and glfw-rs `create_shared` windows skipped `glfwDestroyWindow` on Drop (zombie OS window).
+
+### Changelog
+- Bug fixes: per-pass ImGui focus from `receive_pointer`; Settings input when focused or hovered; poll mouse buttons on the Settings surface; destroy shared Settings GLFW window by clearing `is_shared` before Drop
+- Other: platform tests for focus contract and shared-window destroy; settings close/Escape desire tests
