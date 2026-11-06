@@ -1191,6 +1191,41 @@ mod debug_command_tests {
 }
 
 #[cfg(test)]
+mod stream_encoder_settings_tests {
+    use super::{
+        encoder_mode_from_key, encoder_mode_key, rate_control_from_key, rate_control_key,
+        stream_full_bps, StreamDefaults, StreamEncoderMode, StreamRateControl,
+    };
+
+    #[test]
+    fn older_stream_json_keeps_new_encoder_defaults() {
+        let view: StreamDefaults = serde_json::from_str(
+            r#"{"resolution":"1080p","fps":"60","hardware":true,"bitrate_auto":false,"bitrate_kbps":4000}"#,
+        )
+        .expect("legacy stream.json");
+        assert_eq!(view.encoder, "auto");
+        assert_eq!(view.rate_control, "cbr");
+        assert_eq!(view.keyframe_secs, 2);
+        assert_eq!(view.bitrate_kbps, 4000);
+        assert!(!view.bitrate_auto);
+    }
+
+    #[test]
+    fn encoder_and_rate_keys_round_trip() {
+        assert_eq!(
+            encoder_mode_from_key(encoder_mode_key(StreamEncoderMode::Software)),
+            StreamEncoderMode::Software
+        );
+        assert_eq!(
+            rate_control_from_key(rate_control_key(StreamRateControl::Vbr)),
+            StreamRateControl::Vbr
+        );
+        assert_eq!(stream_full_bps(true, 999), 2_500_000);
+        assert_eq!(stream_full_bps(false, 4000), 4_000_000);
+    }
+}
+
+#[cfg(test)]
 mod mix_source_group_tests {
     use super::{grouped_mix_sources, mix_source_group, MixSource, MixSourceGroup};
 
@@ -1255,15 +1290,40 @@ pub fn fade_gain(current: f32, target: f32, step: f32) -> f32 {
     }
 }
 
+/// OBS-style encoder pick for Go Live. Wire stays H.264 Constrained Baseline either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamEncoderMode {
+    /// Prefer hardware when Constrained Baseline is available, else OpenH264.
+    Auto,
+    /// Require a hardware encoder; fall back to OpenH264 only if open fails.
+    Hardware,
+    /// Always OpenH264 software.
+    Software,
+}
+
+/// Rate-control intent. CBR holds a steady target; VBR may undershoot on quiet frames.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamRateControl {
+    Cbr,
+    Vbr,
+}
+
 /// Missing fields fall back to the defaults, so an older `stream.json` keeps the rest of its choices.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StreamDefaults {
     pub resolution: String,
     pub fps: String,
+    /// Capability cache for the UI (“hardware available”), not the user preference.
     pub hardware: bool,
+    /// `auto` | `hardware` | `software` — see [`StreamEncoderMode`].
+    pub encoder: String,
+    /// `cbr` | `vbr` — see [`StreamRateControl`].
+    pub rate_control: String,
     pub bitrate_auto: bool,
     pub bitrate_kbps: u32,
+    /// Force an IDR about this often while Go Live is up (1–10s).
+    pub keyframe_secs: u32,
     pub show_cursor: bool,
     pub show_preview: bool,
     pub sources: Vec<MixSource>,
@@ -1275,12 +1335,69 @@ impl Default for StreamDefaults {
             resolution: "720p".into(),
             fps: "30".into(),
             hardware: false,
+            encoder: "auto".into(),
+            rate_control: "cbr".into(),
             bitrate_auto: true,
             bitrate_kbps: 2500,
+            keyframe_secs: 2,
             show_cursor: true,
             show_preview: true,
             sources: Vec::new(),
         }
+    }
+}
+
+pub fn encoder_mode_key(mode: StreamEncoderMode) -> &'static str {
+    match mode {
+        StreamEncoderMode::Auto => "auto",
+        StreamEncoderMode::Hardware => "hardware",
+        StreamEncoderMode::Software => "software",
+    }
+}
+
+pub fn encoder_mode_from_key(key: &str) -> StreamEncoderMode {
+    match key {
+        "hardware" => StreamEncoderMode::Hardware,
+        "software" => StreamEncoderMode::Software,
+        _ => StreamEncoderMode::Auto,
+    }
+}
+
+pub fn encoder_mode_label(mode: StreamEncoderMode) -> &'static str {
+    match mode {
+        StreamEncoderMode::Auto => "Auto (prefer hardware)",
+        StreamEncoderMode::Hardware => "Hardware (H.264)",
+        StreamEncoderMode::Software => "Software (OpenH264)",
+    }
+}
+
+pub fn rate_control_key(mode: StreamRateControl) -> &'static str {
+    match mode {
+        StreamRateControl::Cbr => "cbr",
+        StreamRateControl::Vbr => "vbr",
+    }
+}
+
+pub fn rate_control_from_key(key: &str) -> StreamRateControl {
+    match key {
+        "vbr" => StreamRateControl::Vbr,
+        _ => StreamRateControl::Cbr,
+    }
+}
+
+pub fn rate_control_label(mode: StreamRateControl) -> &'static str {
+    match mode {
+        StreamRateControl::Cbr => "CBR (constant bitrate)",
+        StreamRateControl::Vbr => "VBR (variable bitrate)",
+    }
+}
+
+/// Full-layer target bits/sec from stream settings (manual kbps or 2.5 Mbps auto).
+pub fn stream_full_bps(bitrate_auto: bool, bitrate_kbps: u32) -> u32 {
+    if bitrate_auto {
+        2_500_000
+    } else {
+        bitrate_kbps.clamp(200, 20_000).saturating_mul(1000)
     }
 }
 
@@ -1597,6 +1714,10 @@ pub struct VoicePrefs {
     /// GLFW-style letter or "V". Missing older files keep V.
     #[serde(default = "default_ptt_key")]
     pub ptt_key: String,
+    /// Opt into guild voice-channel P2P video when alone with one other opted-in peer.
+    /// Off by default — guild VC stays on the SFU.
+    #[serde(default)]
+    pub guild_p2p_video: bool,
 }
 
 fn default_ptt_key() -> String {
@@ -1619,6 +1740,7 @@ impl Default for VoicePrefs {
             auto_gain: false,
             camera: String::new(),
             ptt_key: default_ptt_key(),
+            guild_p2p_video: false,
         }
     }
 }
@@ -2326,6 +2448,7 @@ mod voice_roster_tests {
         VoiceMember {
             user_id,
             flags: VoiceFlags::default(),
+            prefer_p2p_video: false,
         }
     }
 

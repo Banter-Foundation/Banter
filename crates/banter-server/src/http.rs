@@ -326,6 +326,8 @@ async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> R
     let (users, servers, channels, messages) = state.store.table_counts().await?;
     let (pool_size, pool_idle) = state.store.pool_usage();
     let (media_slots, media_forwards) = crate::room::media_snapshot();
+    let udp_ports = crate::room::claimed_udp_ports();
+    let (udp_min, udp_max) = crate::room::configured_udp_range().unwrap_or((0, 0));
     Ok(Json(ServerDebug {
         version: crate::BANTER_VERSION.to_string(),
         protocol: crate::PROTOCOL,
@@ -346,6 +348,9 @@ async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> R
         pool_size,
         pool_idle,
         traffic: crate::debuglog::traffic_snapshot(),
+        udp_ports,
+        udp_min,
+        udp_max,
         logs: crate::debuglog::recent(),
     }))
 }
@@ -1344,8 +1349,17 @@ async fn set_flags(
     Auth(account): Auth,
     Json(flags): Json<VoiceFlags>,
 ) -> StatusCode {
-    if let Some(channel_id) = state.live.set_flags(account.id, flags) {
-        state.live.publish_voice(&state.store, account.id, channel_id).await;
+    match state.live.set_flags(account.id, flags) {
+        crate::live::FlagPublish::Voice(channel_id) => {
+            state.live.publish_voice(&state.store, account.id, channel_id).await;
+        }
+        crate::live::FlagPublish::Call(call) => {
+            state.live.send_event(
+                &[call.caller, call.callee],
+                &ServerEvent::Call { call },
+            );
+        }
+        crate::live::FlagPublish::None => {}
     }
     StatusCode::NO_CONTENT
 }
@@ -1451,6 +1465,16 @@ async fn handle_socket(state: HttpState, account: Account, socket: WebSocket) {
                     }
                     let signal_for_room = signal.clone();
                     if state.live.handle_signal(user_id, signal).is_ok() {
+                        if matches!(signal_for_room, ClientSignal::GuildP2pVideo { .. }) {
+                            if let Some(MediaPlace::VoiceChannel(channel_id)) =
+                                state.live.current_place(user_id)
+                            {
+                                state
+                                    .live
+                                    .publish_voice(&state.store, user_id, channel_id)
+                                    .await;
+                            }
+                        }
                         apply_voice_signal(&state, user_id, signal_for_room);
                     }
                 } else if text.contains("activity") {
@@ -1489,21 +1513,44 @@ fn apply_voice_signal(state: &HttpState, user_id: i64, signal: ClientSignal) {
         ClientSignal::RtcOffer {
             place: MediaPlace::VoiceChannel(channel_id),
             sdp,
-        } => crate::room::accept_offer(Arc::clone(&state.live), user_id, channel_id, sdp),
+        } => {
+            // Pair opted into guild P2P video: mesh via relay_p2p, skip the SFU.
+            if state.live.voice_uses_p2p_video(channel_id) {
+                return;
+            }
+            crate::room::accept_offer(Arc::clone(&state.live), user_id, channel_id, sdp);
+        }
         ClientSignal::RtcAnswer {
-            place: MediaPlace::VoiceChannel(_),
+            place: MediaPlace::VoiceChannel(channel_id),
             sdp,
-        } => crate::room::accept_answer(user_id, sdp),
+        } => {
+            if state.live.voice_uses_p2p_video(channel_id) {
+                return;
+            }
+            crate::room::accept_answer(user_id, sdp);
+        }
         ClientSignal::RtcIce {
-            place: MediaPlace::VoiceChannel(_),
+            place: MediaPlace::VoiceChannel(channel_id),
             candidate,
             sdp_mid,
             sdp_mline_index,
-        } => crate::room::accept_ice(user_id, candidate, sdp_mid, sdp_mline_index),
-        ClientSignal::SubscribeLayer { .. } => {
-            for request in state.live.take_keyframes() {
-                crate::room::request_pli(request.publisher, request.layer);
+        } => {
+            if state.live.voice_uses_p2p_video(channel_id) {
+                return;
             }
+            crate::room::accept_ice(user_id, candidate, sdp_mid, sdp_mline_index);
+        }
+        ClientSignal::SubscribeLayer {
+            place: MediaPlace::VoiceChannel(channel_id),
+            ..
+        } => {
+            if state.live.voice_uses_p2p_video(channel_id) {
+                return;
+            }
+            crate::room::flush_keyframe_plis(&state.live);
+        }
+        ClientSignal::SubscribeLayer { .. } => {
+            crate::room::flush_keyframe_plis(&state.live);
         }
         _ => {}
     }

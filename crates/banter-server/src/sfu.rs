@@ -122,15 +122,26 @@ impl ForwardTable {
         let key = TrackKey { publisher, track };
         let previous = self.subs.get(&(subscriber, key)).map(|sub| sub.max_layer);
         self.subs.insert((subscriber, key), Sub { max_layer });
-        let delivered = self.chosen(subscriber, key);
-        if previous != Some(max_layer) && delivered != LayerId::Off && track.is_video() {
-            self.keyframes.push(KeyframeRequest {
-                publisher,
-                track,
-                layer: delivered,
-            });
-        }
+        // Dynacast first so `chosen` sees the wanted publish set (not an empty set that
+        // would skip the late-joiner PLI when nobody had noted a layer yet).
         self.refresh_dynacast(key, true);
+        let delivered = self.chosen(subscriber, key);
+        // Always request an IDR when a subscriber is new or changes layer. refresh_dynacast
+        // only PLIs when a layer newly becomes wanted globally — late joiners to an
+        // already-live Go Live would otherwise wait until the publisher restarts.
+        if track.is_video() && delivered != LayerId::Off && previous != Some(max_layer) {
+            let already = self
+                .keyframes
+                .iter()
+                .any(|key| key.publisher == publisher && key.track == track && key.layer == delivered);
+            if !already {
+                self.keyframes.push(KeyframeRequest {
+                    publisher,
+                    track,
+                    layer: delivered,
+                });
+            }
+        }
     }
 
     pub fn unsubscribe_user(&mut self, subscriber: i64) {
@@ -431,6 +442,21 @@ mod tests {
         table.subscribe(1, 9, MediaKind::Screen, LayerId::Full);
         let keys = table.take_keyframes();
         assert!(keys.iter().any(|key| key.layer == LayerId::Full));
+    }
+
+    #[test]
+    fn late_joiner_asks_for_keyframe_while_publisher_already_live() {
+        let mut table = ForwardTable::new();
+        table.subscribe(1, 4, MediaKind::Screen, LayerId::Full);
+        table.take_keyframes();
+        // Publisher keeps encoding Full; a second viewer joins mid-GOP.
+        table.subscribe(2, 4, MediaKind::Screen, LayerId::Full);
+        let keys = table.take_keyframes();
+        assert!(
+            keys.iter()
+                .any(|key| key.publisher == 4 && key.layer == LayerId::Full),
+            "late joiner must PLI the live publisher: {keys:?}"
+        );
     }
 
     #[test]

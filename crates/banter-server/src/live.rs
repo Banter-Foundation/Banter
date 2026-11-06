@@ -20,6 +20,16 @@ struct UserLive {
     custom_status: Option<String>,
     flags: VoiceFlags,
     voice_channel: Option<i64>,
+    /// Client opted into guild VC P2P video (both peers must opt in; pair only).
+    prefer_p2p_video: bool,
+}
+
+/// Where `set_flags` should publish a roster update.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FlagPublish {
+    Voice(i64),
+    Call(CallSnapshot),
+    None,
 }
 
 struct LiveInner {
@@ -184,11 +194,43 @@ impl Live {
         user.voice_channel.take()
     }
 
-    /// Returns the voice channel whose roster changed, when the user is in one.
-    pub fn set_flags(&self, user_id: i64, flags: VoiceFlags) -> Option<i64> {
+    /// Publishes voice-channel roster changes, or rebroadcasts an active DM call with flags.
+    pub fn set_flags(&self, user_id: i64, flags: VoiceFlags) -> FlagPublish {
         let mut inner = self.lock();
         let user = entry(&mut inner, user_id);
         user.flags = crate::model::sanitize_voice_flags(flags);
+        if let Some(channel_id) = user.voice_channel {
+            return FlagPublish::Voice(channel_id);
+        }
+        let flags = user.flags;
+        for call in inner.calls.values_mut() {
+            if call.phase != CallPhase::Active {
+                continue;
+            }
+            if call.caller == user_id {
+                call.caller_flags = flags;
+                return FlagPublish::Call(call.clone());
+            }
+            if call.callee == user_id {
+                call.callee_flags = flags;
+                return FlagPublish::Call(call.clone());
+            }
+        }
+        FlagPublish::None
+    }
+
+    /// True when this voice channel should mesh video P2P instead of the SFU (exactly two
+    /// seated members, both opted in via [`ClientSignal::GuildP2pVideo`]).
+    pub fn voice_uses_p2p_video(&self, channel_id: i64) -> bool {
+        let inner = self.lock();
+        voice_channel_p2p_video(&inner, channel_id)
+    }
+
+    /// Returns the voice channel to republish when the user is seated (so peers see the opt-in).
+    pub fn set_guild_p2p_video(&self, user_id: i64, enabled: bool) -> Option<i64> {
+        let mut inner = self.lock();
+        let user = entry(&mut inner, user_id);
+        user.prefer_p2p_video = enabled;
         user.voice_channel
     }
 
@@ -207,6 +249,7 @@ impl Live {
                     if existing.phase == CallPhase::Ringing && existing.callee == user_id {
                         let mut active = existing;
                         active.phase = CallPhase::Active;
+                        fill_call_flags(&inner, &mut active);
                         inner.calls.insert(dm_id, active.clone());
                         if let Some(user) = inner.users.get_mut(&user_id) {
                             user.voice_channel = None;
@@ -224,12 +267,15 @@ impl Live {
                 } else {
                     entry(&mut inner, user_id).voice_channel = None;
                 }
-                let snapshot = CallSnapshot {
+                let mut snapshot = CallSnapshot {
                     dm_id,
                     phase: CallPhase::Ringing,
                     caller: user_id,
                     callee: peer,
+                    caller_flags: VoiceFlags::default(),
+                    callee_flags: VoiceFlags::default(),
                 };
+                fill_call_flags(&inner, &mut snapshot);
                 inner.calls.insert(dm_id, snapshot.clone());
                 (snapshot, left_voice)
             }
@@ -253,6 +299,7 @@ impl Live {
             let left_voice = inner.users.get(&user_id).and_then(|user| user.voice_channel);
             let mut call = call;
             call.phase = CallPhase::Active;
+            fill_call_flags(&inner, &mut call);
             inner.calls.insert(dm_id, call.clone());
             if let Some(user) = inner.users.get_mut(&user_id) {
                 user.voice_channel = None;
@@ -508,7 +555,30 @@ fn entry(inner: &mut LiveInner, user_id: i64) -> &mut UserLive {
         custom_status: None,
         flags: VoiceFlags::default(),
         voice_channel: None,
+        prefer_p2p_video: false,
     })
+}
+
+fn fill_call_flags(inner: &LiveInner, call: &mut CallSnapshot) {
+    call.caller_flags = inner
+        .users
+        .get(&call.caller)
+        .map(|user| user.flags)
+        .unwrap_or_default();
+    call.callee_flags = inner
+        .users
+        .get(&call.callee)
+        .map(|user| user.flags)
+        .unwrap_or_default();
+}
+
+fn voice_channel_p2p_video(inner: &LiveInner, channel_id: i64) -> bool {
+    let seated: Vec<&UserLive> = inner
+        .users
+        .values()
+        .filter(|user| user.voice_channel == Some(channel_id))
+        .collect();
+    seated.len() == 2 && seated.iter().all(|user| user.prefer_p2p_video)
 }
 
 fn bot_allows(bots: &HashMap<u64, Vec<String>>, socket_id: u64, event: &ServerEvent) -> bool {
@@ -530,6 +600,7 @@ fn members_of(inner: &LiveInner, channel_id: i64) -> Vec<VoiceMember> {
         .map(|(user_id, user)| VoiceMember {
             user_id: *user_id,
             flags: user.flags,
+            prefer_p2p_video: user.prefer_p2p_video,
         })
         .collect();
     members.sort_by_key(|member| member.user_id);
@@ -593,6 +664,11 @@ fn subscribers_of(inner: &LiveInner, sender: i64, place: MediaPlace, kind: Media
 fn prepare_signal(inner: &mut LiveInner, user_id: i64, signal: ClientSignal) -> Result<Vec<(Vec<i64>, ServerEvent)>, BanterError> {
     match signal {
         ClientSignal::Activity | ClientSignal::BoardOp { .. } => Ok(Vec::new()),
+        ClientSignal::GuildP2pVideo { enabled } => {
+            let user = entry(inner, user_id);
+            user.prefer_p2p_video = enabled;
+            Ok(Vec::new())
+        }
         ClientSignal::RtcOffer { place, sdp } => relay_p2p(inner, user_id, place, ServerEvent::RtcOffer { place, from: user_id, sdp }),
         ClientSignal::RtcAnswer { place, sdp } => relay_p2p(inner, user_id, place, ServerEvent::RtcAnswer { place, from: user_id, sdp }),
         ClientSignal::RtcIce {
@@ -620,6 +696,26 @@ fn prepare_signal(inner: &mut LiveInner, user_id: i64, signal: ClientSignal) -> 
         } => {
             ensure_in_place(inner, user_id, place)?;
             match place {
+                MediaPlace::VoiceChannel(channel_id) if voice_channel_p2p_video(inner, channel_id) => {
+                    let peers: Vec<i64> = inner
+                        .users
+                        .iter()
+                        .filter(|(id, user)| {
+                            **id != user_id && user.voice_channel == Some(channel_id)
+                        })
+                        .map(|(id, _)| *id)
+                        .collect();
+                    Ok(vec![(
+                        peers,
+                        ServerEvent::SubscribeLayer {
+                            place,
+                            subscriber: user_id,
+                            publisher,
+                            track,
+                            max_layer,
+                        },
+                    )])
+                }
                 MediaPlace::VoiceChannel(_) => {
                     inner.forward.subscribe(user_id, publisher, track, max_layer);
                     let layers = inner.forward.wanted_layers(publisher, track);
@@ -661,11 +757,23 @@ pub(crate) struct LiveCounts {
     pub calls: i64,
 }
 
-/// Voice signaling stops at the SFU. Direct calls are relayed and the server does not terminate media.
+/// Direct calls always mesh. Guild voice uses the SFU unless both seated peers opted into
+/// [`ClientSignal::GuildP2pVideo`] (pair-only).
 fn relay_p2p(inner: &LiveInner, user_id: i64, place: MediaPlace, event: ServerEvent) -> Result<Vec<(Vec<i64>, ServerEvent)>, BanterError> {
     ensure_in_place(inner, user_id, place)?;
     match place {
-        MediaPlace::VoiceChannel(_) => Ok(Vec::new()),
+        MediaPlace::VoiceChannel(channel_id) => {
+            if !voice_channel_p2p_video(inner, channel_id) {
+                return Ok(Vec::new());
+            }
+            let peers: Vec<i64> = inner
+                .users
+                .iter()
+                .filter(|(id, user)| **id != user_id && user.voice_channel == Some(channel_id))
+                .map(|(id, _)| *id)
+                .collect();
+            Ok(vec![(peers, event)])
+        }
         MediaPlace::DirectCall(_) => {
             let peer = other_party(inner, user_id, place)?;
             Ok(vec![(vec![peer], event)])
@@ -720,6 +828,57 @@ mod counts_tests {
         assert_eq!(counts.voice_channels, 1);
         assert_eq!(counts.calls, 0);
         assert_eq!(counts.sockets, 0);
+    }
+
+    #[test]
+    fn set_flags_during_active_call_rebroadcasts_call_flags() {
+        let live = Live::new();
+        live.connect(1, 0, None);
+        live.connect(2, 0, None);
+        {
+            let mut inner = live.lock();
+            inner.calls.insert(
+                9,
+                CallSnapshot {
+                    dm_id: 9,
+                    phase: CallPhase::Active,
+                    caller: 1,
+                    callee: 2,
+                    caller_flags: VoiceFlags::default(),
+                    callee_flags: VoiceFlags::default(),
+                },
+            );
+        }
+        let flags = VoiceFlags {
+            screen: true,
+            camera: true,
+            ..VoiceFlags::default()
+        };
+        match live.set_flags(1, flags) {
+            FlagPublish::Call(call) => {
+                assert!(call.caller_flags.screen);
+                assert!(call.caller_flags.camera);
+                assert!(!call.callee_flags.screen);
+            }
+            other => panic!("expected Call publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn guild_p2p_video_requires_pair_and_both_opt_ins() {
+        let live = Live::new();
+        live.connect(1, 0, None);
+        live.connect(2, 0, None);
+        live.seed_voice_member(1, 42);
+        live.seed_voice_member(2, 42);
+        assert!(!live.voice_uses_p2p_video(42));
+        live.set_guild_p2p_video(1, true);
+        assert!(!live.voice_uses_p2p_video(42));
+        live.set_guild_p2p_video(2, true);
+        assert!(live.voice_uses_p2p_video(42));
+        live.seed_voice_member(3, 42);
+        live.connect(3, 0, None);
+        assert!(!live.voice_uses_p2p_video(42));
     }
 }
 

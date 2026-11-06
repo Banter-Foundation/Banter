@@ -25,9 +25,10 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Right-click context menus (messages, members/friends/DMs, channels) | Working — foundation actions only; no kick/ban/profiles |
 | Drop-in voice: mute, deafen, PTT, connection panel | Working (SFU rewrite outbound SSRC/PT on forward; open-mic Opus timeline) |
 | Camera on/off with mirrored local RGBA preview (~720p prefer; device MJPEG OK) | Working (device-dependent); wire is WebRTC H.264; remotes receive after RID map + forward SSRC rewrite |
-| Screen share Go Live + quality / source switching | Working (WebRTC H.264 SFU/P2P; remotes receive after RID map + forward SSRC rewrite) |
+| Screen share Go Live + quality / source switching | Working (WebRTC H.264 SFU/P2P; DM call flags + P2P IDR on SubscribeLayer; remotes receive after RID map + forward SSRC rewrite) |
+| Guild P2P video (1:1 voice channel mesh) | Opt-in, **off by default** — both peers must enable Prefer P2P video; groups of 3+ always SFU |
 | Stream watch: pop-out window, cycle live streamers, fullscreen chrome fade | Working — Banter Stream OS window; featured-stage cycle/pop-out/fullscreen; profile icons + voice indicators on pop-out/fullscreen; chrome fades on idle and returns on mouse move |
-| 1:1 DMs + start a call | Working — phone icon opens a Discord-style call stage (ringing avatar / two tiles when active) |
+| 1:1 DMs + start a call | Working — phone icon opens a Discord-style call stage (ringing avatar / two tiles when active); camera / Go Live flags ride on `CallSnapshot` |
 | User Settings: My Account (display name, About Me, custom status), Voice & Video, Developer (Local/Remote API, persisted) in a dedicated Banter Settings OS window | Working |
 | Embedded + standalone server, PostgreSQL data | Working |
 | Containerized `banter-server` (`ghcr.io/snowedinowl/banter`) | Image/Dockerfile ready; **GHCR publish + release auto-deploy blocked** until classic PAT has `write:packages` (see [docker-setup.md](docker-setup.md) Status) |

@@ -187,6 +187,23 @@ fn claimed_udp() -> &'static Mutex<HashSet<u16>> {
     CLAIMED.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// SFU UDP ports currently held by live voice PeerConnections (sorted).
+pub fn claimed_udp_ports() -> Vec<u16> {
+    let mut ports: Vec<u16> = claimed_udp()
+        .lock()
+        .expect("udp ports")
+        .iter()
+        .copied()
+        .collect();
+    ports.sort_unstable();
+    ports
+}
+
+/// Configured `BANTER_UDP_MIN`..=`BANTER_UDP_MAX`, if both are set.
+pub fn configured_udp_range() -> Option<(u16, u16)> {
+    udp_port_range()
+}
+
 struct UdpPort(Option<u16>);
 
 impl Drop for UdpPort {
@@ -426,6 +443,9 @@ pub fn accept_offer(live: Arc<Live>, user_id: i64, channel_id: i64, sdp: String)
             let _ = slot.tx.send(Cmd::BindPeer(user_id));
         }
     }
+    // Late joiners subscribe while the publisher is mid-GOP. Drain PLI now —
+    // SubscribeLayer is the only other flush path, and join never sends it.
+    flush_keyframe_plis(&live);
     tokio::spawn(async move {
         if let Err(err) = run_session(live, user_id, channel_id, sdp, rx).await {
             crate::debuglog::record("error", format!("voice sfu: {err}"));
@@ -434,6 +454,13 @@ pub fn accept_offer(live: Arc<Live>, user_id: i64, channel_id: i64, sdp: String)
         pending_ice().lock().expect("pending ice").remove(&user_id);
         forwards().lock().expect("forwards").retain(|row| row.subscriber != user_id && row.publisher != user_id);
     });
+}
+
+/// Ask publishers for an IDR so new subscribers (and layer switches) can decode.
+pub fn flush_keyframe_plis(live: &Live) {
+    for request in live.take_keyframes() {
+        request_pli(request.publisher, request.layer);
+    }
 }
 
 pub fn accept_answer(user_id: i64, sdp: String) {
@@ -556,13 +583,24 @@ async fn run_session(
                             );
                         }
                     }
+                    // Peer may already be mid-GOP (Go Live started before we joined).
+                    request_pli(peer, LayerId::Full);
+                    request_pli(peer, LayerId::Half);
+                    request_pli(peer, LayerId::Quarter);
                 }
             }
             Cmd::Pli { rid } => {
                 let tracks = remote.lock().expect("remote tracks").clone();
+                let _ = rid;
                 for track in tracks {
+                    let id = track.track_id().await;
+                    if !(id.contains("screen") || id.contains("camera")) {
+                        continue;
+                    }
                     let ssrc = track.ssrcs().await.into_iter().next().unwrap_or(0);
-                    let _ = rid;
+                    if ssrc == 0 {
+                        continue;
+                    }
                     let _ = track
                         .write_rtcp(vec![Box::new(PictureLossIndication { sender_ssrc: 0, media_ssrc: ssrc })])
                         .await;

@@ -36,21 +36,23 @@ use crate::logic::{
     chat_time_hover, chat_time_label, clamp_context_menu_pos, clamp_window_size, comment_tree_rows,
     context_menu_height, crop_avatar_rgba, crop_window, default_stream_fps,
     default_stream_resolution, dismiss_stream_overlays, encode_jpeg_rgba, folder_context_menu,
-    fps_block, fps_from_key, fps_key, grouped_mix_sources, hardware_encoder_block,
-    home_section_is_visible, home_section_label, insert_mention, is_debug_command, lerp_size,
-    load_json, local_api_base, member_context_menu, message_context_menu, message_starts_new_day,
-    mirror_rgba, move_home_section, next_reconnect_at, parse_folder_color, password_blocks_copy,
-    password_is_masked, plan_member_groups, push_home_recent, push_to_talk_held, rail_tree_rows,
-    reconnect_retry_ready, remove_message, resolution_block, resolution_from_key, resolution_key,
-    save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible,
-    speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
-    stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message,
-    visible_home_sections, voice_flags_retry_ready, voice_occupancy_line, voice_rtc_session_ready,
-    window_size_label, window_size_presets, CameraChoice, CaptureKind, ContextMenuAction,
-    ContextMenuEntry, ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind,
-    HomeSectionId, MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection,
-    StreamDefaults, StreamFps, StreamResolution, VideoPrefs, VoicePrefs, VoiceRejoinIntent,
-    OPEN_MIC_RMS, RECONNECTING_STATUS,
+    encoder_mode_from_key, encoder_mode_key, encoder_mode_label, fps_block, fps_from_key, fps_key,
+    grouped_mix_sources, hardware_encoder_block, home_section_is_visible, home_section_label,
+    insert_mention, is_debug_command, lerp_size, load_json, local_api_base, member_context_menu,
+    message_context_menu, message_starts_new_day, mirror_rgba, move_home_section, next_reconnect_at,
+    parse_folder_color, password_blocks_copy, password_is_masked, plan_member_groups,
+    push_home_recent, push_to_talk_held, rail_tree_rows, rate_control_from_key, rate_control_key,
+    rate_control_label, reconnect_retry_ready, remove_message, resolution_block, resolution_from_key,
+    resolution_key, save_json, server_rail_context_menu, server_rail_item_menu,
+    set_home_section_visible, speaking_from_level, stream_fps_label, stream_frame_rates,
+    stream_full_bps, stream_interval_ms, stream_max_edge, stream_resolution_label,
+    stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,
+    voice_flags_retry_ready, voice_occupancy_line, voice_rtc_session_ready, window_size_label,
+    window_size_presets, CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry,
+    ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind, HomeSectionId,
+    MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection, StreamDefaults,
+    StreamEncoderMode, StreamFps, StreamRateControl, StreamResolution, VideoPrefs, VoicePrefs,
+    VoiceRejoinIntent, OPEN_MIC_RMS, RECONNECTING_STATUS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
@@ -232,6 +234,8 @@ pub(crate) struct App {
     screen: bool,
     flags: VoiceFlags,
     sent_flags: VoiceFlags,
+    /// Last GuildP2pVideo preference pushed over the websocket (None until first send).
+    sent_guild_p2p_video: Option<bool>,
     /// Last failed `POST /v1/voice/flags` time; backs off retries so the notice is not spammed.
     flags_failed_at: Option<Instant>,
     v_held: bool,
@@ -457,6 +461,8 @@ pub(crate) struct App {
     debug_view: Option<ServerDebug>,
     debug_error: String,
     debug_fetched: Instant,
+    /// Last time we re-subscribed to live remote screen/camera (late-join / stall recovery).
+    stream_resub_at: Instant,
     layers: LayerPreferences,
     delivered: HashMap<(i64, MediaKind), LayerId>,
     quality_for: Option<(i64, MediaKind)>,
@@ -515,6 +521,7 @@ impl App {
             screen: false,
             flags: VoiceFlags::default(),
             sent_flags: VoiceFlags::default(),
+            sent_guild_p2p_video: None,
             flags_failed_at: None,
             v_held: false,
             talk_held: false,
@@ -701,6 +708,9 @@ impl App {
             debug_view: None,
             debug_error: String::new(),
             debug_fetched: Instant::now(),
+            stream_resub_at: Instant::now()
+                .checked_sub(Duration::from_secs(10))
+                .unwrap_or_else(Instant::now),
             layers: LayerPreferences::new(),
             delivered: HashMap::new(),
             quality_for: None,
@@ -3198,26 +3208,45 @@ impl App {
 
     fn start_call(&mut self, dm_id: i64) {
         if let Some(call) = self.note(self.client.start_call(dm_id)) {
-            self.call = Some(call);
-            self.voice_channel = None;
-            self.voice_members.clear();
-            self.drop_self_from_rosters(None);
-            // Keep (or open) the DM so the center stage can show the 1:1 call view.
-            if !matches!(self.place, Place::Direct(id) if id == dm_id) {
-                self.open_dm(dm_id);
-            }
+            self.apply_call_snapshot(call, true);
         }
     }
 
     fn accept_call(&mut self, dm_id: i64) {
         if let Some(call) = self.note(self.client.accept_call(dm_id)) {
-            self.call = Some(call);
-            self.voice_channel = None;
-            self.voice_members.clear();
-            self.drop_self_from_rosters(None);
-            if !matches!(self.place, Place::Direct(id) if id == dm_id) {
-                self.open_dm(dm_id);
+            self.apply_call_snapshot(call, true);
+        }
+    }
+
+    /// Seed DM call roster from snapshot flags so Go Live / camera are visible to the peer.
+    fn apply_call_snapshot(&mut self, call: CallSnapshot, open_dm_if_needed: bool) {
+        let dm_id = call.dm_id;
+        let was_active = self
+            .call
+            .as_ref()
+            .is_some_and(|prior| prior.phase == CallPhase::Active && prior.dm_id == dm_id);
+        let active = call.phase == CallPhase::Active;
+        if active {
+            if !was_active {
+                self.voice_channel = None;
+                self.drop_self_from_rosters(None);
             }
+            self.voice_members = vec![
+                VoiceMember {
+                    user_id: call.caller,
+                    flags: call.caller_flags,
+                    prefer_p2p_video: false,
+                },
+                VoiceMember {
+                    user_id: call.callee,
+                    flags: call.callee_flags,
+                    prefer_p2p_video: false,
+                },
+            ];
+        }
+        self.call = Some(call);
+        if open_dm_if_needed && !matches!(self.place, Place::Direct(id) if id == dm_id) {
+            self.open_dm(dm_id);
         }
     }
 
@@ -5623,6 +5652,7 @@ impl App {
             vec![banter_server::VoiceMember {
                 user_id: me,
                 flags: self.flags,
+                prefer_p2p_video: self.voice.guild_p2p_video,
             }]
         } else {
             members
@@ -5770,7 +5800,9 @@ impl App {
                 let pad = 16.0;
                 let area_w = (width - pad * 2.0).max(80.0);
                 let area_h = (height - CALL_BAR_H - pad).max(80.0);
-                let sharing = self.screen || people.iter().any(|member| member.flags.screen);
+                let sharing = self.screen
+                    || people.iter().any(|member| member.flags.screen)
+                    || self.has_live_stream();
                 let featured_h = if sharing {
                     (area_h * 0.62).floor()
                 } else {
@@ -5828,14 +5860,29 @@ impl App {
     }
 
     fn dm_call_members(&self, me: i64, peer: i64) -> Vec<VoiceMember> {
+        let mut peer_flags = self
+            .voice_members
+            .iter()
+            .find(|member| member.user_id == peer)
+            .map(|member| member.flags)
+            .unwrap_or_default();
+        // Flag WS can lag; remote textures already prove camera / Go Live.
+        if self.remote_video.contains_key(&(peer, 3)) {
+            peer_flags.screen = true;
+        }
+        if self.remote_video.contains_key(&(peer, 2)) {
+            peer_flags.camera = true;
+        }
         vec![
             VoiceMember {
                 user_id: peer,
-                flags: VoiceFlags::default(),
+                flags: peer_flags,
+                prefer_p2p_video: false,
             },
             VoiceMember {
                 user_id: me,
                 flags: self.flags,
+                prefer_p2p_video: false,
             },
         ]
     }
@@ -7527,6 +7574,8 @@ impl App {
                 stream_max_edge(self.stream_resolution),
                 stream_interval_ms(self.stream_fps),
             );
+            media.apply_encode(self.encode_settings());
+            media.note_publishing(self.flags.camera, self.flags.screen);
             media.apply_engine(&self.engine_update());
             media.set_mic_test(self.settings.mic_test());
             media.set_state(self.flags, in_place);
@@ -7544,13 +7593,16 @@ impl App {
                 None
             };
             let me = self.account.as_ref().map(|account| account.id).unwrap_or(0);
-            let offerer = self.voice_channel.is_some()
-                || self.call.as_ref().is_some_and(|call| call.caller == me);
+            let offerer = self.webrtc_offerer(me);
             // Do not offer WebRTC while reconnect is armed: the server seat is gone until
             // finish_reconnect HTTP-rejoins, and a premature offer is never retried.
             let rtc_ready = voice_rtc_session_ready(in_place, self.reconnect_at.is_some());
             media.set_session(place.filter(|_| rtc_ready), me, offerer);
         }
+        if in_place && self.reconnect_at.is_none() && self.media.is_some() {
+            self.ensure_remote_stream_subs();
+        }
+        self.sync_guild_p2p_video_pref();
         // Skip flag posts while the websocket is down — the server already cleared the seat.
         if in_place && self.reconnect_at.is_none() && self.flags != self.sent_flags {
             let now = Instant::now();
@@ -7715,6 +7767,25 @@ impl App {
                         "media slots {}    forwards {}",
                         view.media_slots, view.media_forwards
                     ));
+                    if view.udp_min > 0 && view.udp_max >= view.udp_min {
+                        ui.text(format!(
+                            "SFU UDP range {}–{}",
+                            view.udp_min, view.udp_max
+                        ));
+                    } else {
+                        ui.text_colored(MUTED, "SFU UDP range  (ephemeral / unset)");
+                    }
+                    if view.udp_ports.is_empty() {
+                        ui.text_colored(MUTED, "SFU UDP in use  (none)");
+                    } else {
+                        let ports = view
+                            .udp_ports
+                            .iter()
+                            .map(|port| port.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        ui.text(format!("SFU UDP in use  {ports}"));
+                    }
                     ui.text(format!(
                         "users {}    servers {}    channels {}    messages {}",
                         view.users, view.servers, view.channels, view.messages
@@ -7763,6 +7834,8 @@ impl App {
                         traffic.media_packets_out
                     ));
                     ui.separator();
+                    self.draw_debug_stream_section(ui);
+                    ui.separator();
                     ui.text_colored(TEXT_SECONDARY, "Logs");
                     let _log_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
                     ui.child_window("server-debug-logs")
@@ -7795,6 +7868,124 @@ impl App {
         self.debug_open = open;
     }
 
+    /// Local Go Live / camera publish + any remote video tile Banter is decoding.
+    fn draw_debug_stream_section(&self, ui: &Ui) {
+        ui.text_colored(TEXT_SECONDARY, "Stream");
+        let qos = profiler::qos();
+        let local_live = self.flags.screen || self.flags.camera || qos.publishing_screen || qos.publishing_camera;
+        let remote_live = !qos.remote_stream.is_empty()
+            || self
+                .voice_members
+                .iter()
+                .any(|member| member.flags.screen || member.flags.camera);
+        if !local_live && !remote_live {
+            ui.text_colored(MUTED, "No local or remote stream right now.");
+            return;
+        }
+        if local_live {
+            ui.text_colored(TEXT, "Local publish");
+            let parts: Vec<&str> = [
+                self.flags.screen.then_some("screen"),
+                self.flags.camera.then_some("camera"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            ui.text(format!(
+                "publishing {}    topology {}    ladder {}",
+                if parts.is_empty() {
+                    "idle".into()
+                } else {
+                    parts.join("+")
+                },
+                qos.topology,
+                qos.ladder
+            ));
+            ui.text(format!(
+                "encoder {} ({})    rate {}    keyframe {}s",
+                qos.backend, qos.encoder_pref, qos.rate_control, qos.keyframe_secs
+            ));
+            if qos.encode_width > 0 && qos.encode_height > 0 {
+                ui.text(format!(
+                    "encode {}x{} @ {} FPS    target {} kbps",
+                    qos.encode_width, qos.encode_height, qos.encode_fps, qos.target_kbps
+                ));
+            } else {
+                ui.text(format!(
+                    "target {} kbps    fps {}    (waiting for first frame)",
+                    qos.target_kbps, qos.encode_fps
+                ));
+            }
+            ui.text(format!(
+                "measured  screen {} kbps   camera {} kbps   stream-audio {} kbps",
+                qos.screen_kbps, qos.camera_kbps, qos.stream_kbps
+            ));
+            ui.text(format!(
+                "encode {:.1} ms   keyframes {}   layers {}",
+                qos.encode_ms, qos.keyframes, qos.layers
+            ));
+        }
+        if remote_live {
+            if local_live {
+                settings_spacer(ui);
+            }
+            ui.text_colored(TEXT, "Remote / watching");
+            if !qos.remote_stream.is_empty() {
+                ui.text(&qos.remote_stream);
+            }
+            for member in &self.voice_members {
+                if member.user_id == self.account.as_ref().map(|a| a.id).unwrap_or(-1) {
+                    continue;
+                }
+                if !(member.flags.screen || member.flags.camera) {
+                    continue;
+                }
+                let name = self.name_of(member.user_id);
+                let kinds = [
+                    member.flags.screen.then_some("screen"),
+                    member.flags.camera.then_some("camera"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("+");
+                ui.text(format!("{name}  ({kinds})"));
+            }
+            if qos.decode_ms > 0.0 {
+                ui.text(format!("decode {:.1} ms", qos.decode_ms));
+            }
+            ui.text_colored(
+                MUTED,
+                "Remote encoder/bitrate is not signaled; numbers above are what this client receives.",
+            );
+        }
+    }
+
+    fn encode_settings(&self) -> media::EncodeSettings {
+        let mode = encoder_mode_from_key(&self.stream.encoder);
+        let rate = rate_control_from_key(&self.stream.rate_control);
+        let fps = match self.stream_fps {
+            StreamFps::Fps15 => 15,
+            StreamFps::Fps30 => 30,
+            StreamFps::Fps60 => 60,
+            StreamFps::Fps120 => 120,
+            StreamFps::Fps144 => 144,
+        };
+        media::EncodeSettings {
+            full_bps: stream_full_bps(self.stream.bitrate_auto, self.stream.bitrate_kbps),
+            pick: match mode {
+                StreamEncoderMode::Auto => media::EncoderPick::Auto,
+                StreamEncoderMode::Hardware => media::EncoderPick::Hardware,
+                StreamEncoderMode::Software => media::EncoderPick::Software,
+            },
+            keyframe_ms: u64::from(self.stream.keyframe_secs.clamp(1, 10)) * 1000,
+            fps,
+            cbr: rate == StreamRateControl::Cbr,
+            pref_label: encoder_mode_key(mode),
+            rate_label: rate_control_key(rate),
+        }
+    }
+
     fn connect_live(&mut self) {
         let Some(token) = self.client.token().map(str::to_string) else {
             return;
@@ -7803,6 +7994,8 @@ impl App {
         let media = Media::start(realtime.signal_sender());
         self.media = Some(media);
         self.realtime = Some(realtime);
+        self.sent_guild_p2p_video = None;
+        self.sync_guild_p2p_video_pref();
     }
 
     /// Drop the dead socket/media, keep local voice/call for UI, and schedule reconnect.
@@ -8495,17 +8688,8 @@ impl App {
             ServerEvent::Call { call } => {
                 let me = self.account.as_ref().map(|account| account.id);
                 if Some(call.caller) == me || Some(call.callee) == me {
-                    if call.phase == CallPhase::Active {
-                        self.voice_channel = None;
-                        self.voice_members.clear();
-                        self.drop_self_from_rosters(None);
-                    }
-                    let dm_id = call.dm_id;
-                    self.call = Some(call);
-                    // Open the DM so the one-on-one call stage appears (incoming or accepted).
-                    if !matches!(self.place, Place::Direct(id) if id == dm_id) {
-                        self.open_dm(dm_id);
-                    }
+                    // Rebroadcasts carry live Go Live / camera flags during an active call.
+                    self.apply_call_snapshot(call, true);
                 }
             }
             ServerEvent::CallEnded { dm_id } => {
@@ -11837,6 +12021,22 @@ impl App {
         settings_divider(ui, width);
         settings_spacer(ui);
 
+        if settings_panel(ui, "Guild voice video") {
+            if settings_toggle_row(
+                ui,
+                "guild-p2p-video",
+                "Prefer P2P video (1:1 voice channels)",
+                &mut self.voice.guild_p2p_video,
+                width,
+            ) {
+                self.save_voice();
+            }
+            ui.text_colored(
+                MUTED,
+                "Off by default. When both people enable this and you are alone together in a voice channel, screen and camera mesh peer-to-peer instead of through the SFU. Groups of three or more always use the SFU.",
+            );
+            settings_spacer(ui);
+        }
         if settings_panel(ui, "Voice processing") {
             if settings_toggle_row(
                 ui,
@@ -12147,14 +12347,96 @@ impl App {
         }
         settings_spacer(ui);
         settings_form_label(ui, self.bold_font, "ENCODER");
+        let modes = [
+            StreamEncoderMode::Auto,
+            StreamEncoderMode::Hardware,
+            StreamEncoderMode::Software,
+        ];
+        let current = encoder_mode_from_key(&self.stream.encoder);
+        let choices: Vec<(String, String, bool, bool)> = modes
+            .iter()
+            .map(|mode| {
+                let enabled = *mode != StreamEncoderMode::Hardware || self.stream.hardware;
+                (
+                    format!("enc-{}", encoder_mode_key(*mode)),
+                    encoder_mode_label(*mode).to_string(),
+                    current == *mode,
+                    enabled,
+                )
+            })
+            .collect();
+        if let Some(index) = settings_chip_row(ui, &choices, width) {
+            let next = encoder_mode_key(modes[index]).to_string();
+            if self.stream.encoder != next {
+                self.stream.encoder = next;
+                self.save_stream();
+            }
+        }
         if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
             ui.text_colored(MUTED, reason);
         } else {
             ui.text_colored(
                 MUTED,
-                "Hardware H.264 when this PC can encode Constrained Baseline. Otherwise OpenH264.",
+                "Wire is always H.264 Constrained Baseline. Hardware when available, else OpenH264.",
             );
         }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "RATE CONTROL");
+        let rates = [StreamRateControl::Cbr, StreamRateControl::Vbr];
+        let current_rate = rate_control_from_key(&self.stream.rate_control);
+        let rate_choices: Vec<(String, String, bool, bool)> = rates
+            .iter()
+            .map(|mode| {
+                (
+                    format!("rc-{}", rate_control_key(*mode)),
+                    rate_control_label(*mode).to_string(),
+                    current_rate == *mode,
+                    true,
+                )
+            })
+            .collect();
+        if let Some(index) = settings_chip_row(ui, &rate_choices, width) {
+            let next = rate_control_key(rates[index]).to_string();
+            if self.stream.rate_control != next {
+                self.stream.rate_control = next;
+                self.save_stream();
+            }
+        }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "BITRATE");
+        let mut auto = self.stream.bitrate_auto;
+        if settings_toggle_row(ui, "bitrate-auto", "Automatic bitrate", &mut auto, width) {
+            self.stream.bitrate_auto = auto;
+            self.save_stream();
+        }
+        if !self.stream.bitrate_auto {
+            let mut kbps = self.stream.bitrate_kbps as f32;
+            if ui.slider_f32("Bitrate (kbps)", &mut kbps, 200.0, 8000.0) {
+                self.stream.bitrate_kbps = kbps.round() as u32;
+            }
+            if ui.is_item_deactivated_after_edit() {
+                self.save_stream();
+            }
+            ui.text_colored(
+                MUTED,
+                format!("Target ~{} kbps on the full layer.", self.stream.bitrate_kbps),
+            );
+        } else {
+            ui.text_colored(MUTED, "Auto targets ~2500 kbps on the full layer.");
+        }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "KEYFRAME INTERVAL");
+        let mut secs = self.stream.keyframe_secs.clamp(1, 10) as f32;
+        if ui.slider_f32("Keyframe (seconds)", &mut secs, 1.0, 10.0) {
+            self.stream.keyframe_secs = secs.round() as u32;
+        }
+        if ui.is_item_deactivated_after_edit() {
+            self.save_stream();
+        }
+        ui.text_colored(
+            MUTED,
+            "Force an IDR this often while Go Live / camera is publishing (OBS-style).",
+        );
     }
 
     /// Discord-style Screen Share / Go Live picker: overlay card, underline tabs,
@@ -13246,7 +13528,11 @@ impl App {
         } else {
             VoiceFlags::default()
         };
-        let member = VoiceMember { user_id, flags };
+        let member = VoiceMember {
+            user_id,
+            flags,
+            prefer_p2p_video: false,
+        };
         let talking = self.member_talking(&member);
         let icon = if flags.deafened {
             Some("headphone-off")
@@ -13473,6 +13759,34 @@ impl App {
         });
     }
 
+    /// Re-subscribe to peers who are Go Live / camera so the SFU PLIs an IDR.
+    /// Covers late join (publisher already mid-GOP) and receive stalls with no tiles.
+    fn ensure_remote_stream_subs(&mut self) {
+        if self.stream_resub_at.elapsed() < Duration::from_secs(2) {
+            return;
+        }
+        let me = self.account.as_ref().map(|account| account.id);
+        let mut sent = false;
+        for member in &self.voice_members {
+            if Some(member.user_id) == me {
+                continue;
+            }
+            if member.flags.screen {
+                let layer = self.layers.get(member.user_id, MediaKind::Screen);
+                self.send_subscribe(member.user_id, MediaKind::Screen, layer);
+                sent = true;
+            }
+            if member.flags.camera {
+                let layer = self.layers.get(member.user_id, MediaKind::Camera);
+                self.send_subscribe(member.user_id, MediaKind::Camera, layer);
+                sent = true;
+            }
+        }
+        if sent {
+            self.stream_resub_at = Instant::now();
+        }
+    }
+
     fn tile_camera(
         &self,
         member: &VoiceMember,
@@ -13521,10 +13835,63 @@ impl App {
         let _ = save_json(&self.data_dir.join("home.json"), &self.home_layout);
     }
 
-    fn save_voice(&self) {
+    fn save_voice(&mut self) {
         let mut voice = self.voice.clone();
         voice.push_to_talk = self.push_to_talk;
         let _ = save_json(&self.data_dir.join("voice.json"), &voice);
+        self.sync_guild_p2p_video_pref();
+    }
+
+    /// Lower user id offers when guild P2P video is active; otherwise SFU (everyone) or DM caller.
+    fn webrtc_offerer(&self, me: i64) -> bool {
+        if self.guild_p2p_video_active() {
+            let peer = self
+                .voice_members
+                .iter()
+                .map(|member| member.user_id)
+                .find(|id| *id != me)
+                .unwrap_or(me);
+            return me < peer;
+        }
+        self.voice_channel.is_some()
+            || self.call.as_ref().is_some_and(|call| call.caller == me)
+    }
+
+    /// Local setting on, exactly two seated, and the peer also opted in (roster field).
+    fn guild_p2p_video_active(&self) -> bool {
+        if !self.voice.guild_p2p_video
+            || self.voice_channel.is_none()
+            || self.voice_members.len() != 2
+        {
+            return false;
+        }
+        let me = self.account.as_ref().map(|account| account.id);
+        self.voice_members.iter().all(|member| {
+            if Some(member.user_id) == me {
+                true
+            } else {
+                member.prefer_p2p_video
+            }
+        })
+    }
+
+    fn sync_guild_p2p_video_pref(&mut self) {
+        let enabled = self.voice.guild_p2p_video;
+        if self.sent_guild_p2p_video == Some(enabled) {
+            return;
+        }
+        let Some(realtime) = &self.realtime else {
+            return;
+        };
+        realtime.send(ClientSignal::GuildP2pVideo { enabled });
+        self.sent_guild_p2p_video = Some(enabled);
+        if let Some(me) = self.account.as_ref().map(|account| account.id) {
+            for member in &mut self.voice_members {
+                if member.user_id == me {
+                    member.prefer_p2p_video = enabled;
+                }
+            }
+        }
     }
 
     fn save_video(&mut self) {
@@ -13540,6 +13907,11 @@ impl App {
         self.stream.fps = fps_key(self.stream_fps).to_string();
         // Capability flag for the UI — wire encode is always H.264 (hardware when present, else OpenH264).
         self.stream.hardware = media::hardware_encoder_available();
+        self.stream.encoder = encoder_mode_key(encoder_mode_from_key(&self.stream.encoder)).into();
+        self.stream.rate_control =
+            rate_control_key(rate_control_from_key(&self.stream.rate_control)).into();
+        self.stream.keyframe_secs = self.stream.keyframe_secs.clamp(1, 10);
+        self.stream.bitrate_kbps = self.stream.bitrate_kbps.clamp(200, 20_000);
         let _ = save_json(&self.data_dir.join("stream.json"), &self.stream);
     }
 
@@ -14046,21 +14418,6 @@ impl App {
                         // Always visible so res/FPS are one click from the stage chevron while sharing.
                         let quality_w = ui.content_region_avail()[0];
                         self.draw_stream_quality(ui, quality_w);
-                        if settings_panel(ui, "Bitrate") {
-                            if ui.checkbox("Automatic bitrate", &mut self.stream.bitrate_auto) {
-                                self.save_stream();
-                            }
-                            if !self.stream.bitrate_auto {
-                                let mut kbps = self.stream.bitrate_kbps as f32;
-                                if ui.slider_f32("Bitrate kbps", &mut kbps, 200.0, 8000.0) {
-                                    self.stream.bitrate_kbps = kbps.round() as u32;
-                                    self.save_stream();
-                                }
-                            }
-                            if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
-                                ui.text_wrapped(reason);
-                            }
-                        }
                         if settings_panel(ui, "Preview") {
                             if ui.checkbox("Show cursor", &mut self.stream.show_cursor) {
                                 self.save_stream();
@@ -14167,6 +14524,16 @@ impl App {
                     qos.subscribers, qos.layers, qos.backend
                 ));
                 ui.text(format!(
+                    "pref {}   rate {}   keyframe {}s   target {} kbps",
+                    qos.encoder_pref, qos.rate_control, qos.keyframe_secs, qos.target_kbps
+                ));
+                if qos.encode_width > 0 {
+                    ui.text(format!(
+                        "encode {}x{} @ {} FPS",
+                        qos.encode_width, qos.encode_height, qos.encode_fps
+                    ));
+                }
+                ui.text(format!(
                     "{}   loss {:.1}%   rtt {} ms   jitter {} ms",
                     qos.step,
                     qos.loss * 100.0,
@@ -14182,6 +14549,9 @@ impl App {
                     qos.camera_kbps, qos.screen_kbps, qos.encode_ms, qos.decode_ms
                 ));
                 ui.text(format!("keyframes {}", qos.keyframes));
+                if !qos.remote_stream.is_empty() {
+                    ui.text(format!("remote {}", qos.remote_stream));
+                }
                 ui.separator();
                 ui.checkbox("ImGui Metrics", &mut self.profiler_metrics);
                 ui.same_line();

@@ -875,6 +875,10 @@ pub enum ClientSignal {
         track: MediaKind,
         max_layer: LayerId,
     },
+    /// Opt into guild voice-channel P2P video mesh (off unless both peers enable it).
+    GuildP2pVideo {
+        enabled: bool,
+    },
     BoardOp {
         channel_id: i64,
         op: BoardOp,
@@ -894,12 +898,21 @@ pub struct CallSnapshot {
     pub phase: CallPhase,
     pub caller: i64,
     pub callee: i64,
+    /// Live mute / camera / Go Live flags for the caller (DM P2P roster).
+    #[serde(default)]
+    pub caller_flags: VoiceFlags,
+    /// Live mute / camera / Go Live flags for the callee (DM P2P roster).
+    #[serde(default)]
+    pub callee_flags: VoiceFlags,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VoiceMember {
     pub user_id: i64,
     pub flags: VoiceFlags,
+    /// Guild VC P2P video opt-in (both peers must enable; pair-only).
+    #[serde(default)]
+    pub prefer_p2p_video: bool,
 }
 
 /// Who is in one voice channel. Empty `members` means the channel is clear.
@@ -1201,6 +1214,14 @@ pub struct ServerDebug {
     pub pool_idle: i64,
     #[serde(default)]
     pub traffic: ServerTraffic,
+    /// Live SFU UDP ports claimed for voice PeerConnections (empty when unbound / ephemeral).
+    #[serde(default)]
+    pub udp_ports: Vec<u16>,
+    /// Configured SFU UDP range (`BANTER_UDP_MIN`, `BANTER_UDP_MAX`) when set.
+    #[serde(default)]
+    pub udp_min: u16,
+    #[serde(default)]
+    pub udp_max: u16,
     pub logs: Vec<DebugLogLine>,
 }
 
@@ -1233,6 +1254,9 @@ mod server_debug_tests {
         assert_eq!(view.version, "");
         assert_eq!(view.protocol, 0);
         assert_eq!(view.traffic, ServerTraffic::default());
+        assert!(view.udp_ports.is_empty());
+        assert_eq!(view.udp_min, 0);
+        assert_eq!(view.udp_max, 0);
         assert_eq!(view.uptime_ms, 1000);
     }
 }

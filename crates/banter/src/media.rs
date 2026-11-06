@@ -17,6 +17,9 @@ mod rtc;
 #[cfg(target_os = "linux")]
 mod screencast;
 
+pub use encode::EncoderPick;
+pub use rtc::EncodeSettings;
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -348,6 +351,14 @@ impl Media {
         self.stream_edge.store(max_edge, Ordering::Relaxed);
         self.stream_interval
             .store(interval_ms.max(1), Ordering::Relaxed);
+    }
+
+    pub fn apply_encode(&self, settings: EncodeSettings) {
+        self.session.apply_encode(settings);
+    }
+
+    pub fn note_publishing(&self, camera: bool, screen: bool) {
+        self.session.note_publishing(camera, screen);
     }
 
     /// The recorder could not start (the share dialog was dismissed, or the source is gone).
