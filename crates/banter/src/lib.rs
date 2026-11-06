@@ -26,6 +26,7 @@ mod profiler;
 mod realtime;
 mod session;
 mod settings;
+mod sfx;
 mod shell_sync;
 mod skin;
 mod stream_watch;
@@ -54,6 +55,7 @@ pub use plugins::{
 pub use profile::*;
 pub use session::{clear_token, load_token, persist_login, save_token};
 pub use settings::*;
+pub use sfx::{decode_all_assets, SoundEvent, RINGTONE_ASSET};
 pub use shell_sync::{
     avatar_fetch_batch, first_shell_channel, shell_poll_due, snapshot_applies, ShellGate,
 };
