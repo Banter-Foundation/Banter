@@ -13,7 +13,8 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-14 currently maps to unsupported macos-14-arm64-us-default here.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
