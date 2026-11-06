@@ -17,6 +17,7 @@ dear-imgui-rs = "0.22"
 glow = "0.18"
 glfw = "0.63"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+lewton = "0.10"
 nokhwa = { version = "0.10", default-features = false, features = ["input-native"] }
 openh264 = "0.9"
 opus = "0.4"

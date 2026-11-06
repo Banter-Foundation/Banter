@@ -1,3 +1,10 @@
+## 2026-11-06 02:50:00 -05:00 [ubuntu] — Version-1-test-13 pre-release
+
+Shipped pre-release Version-1-test-13 from main after Banter UI sound events (join/leave/mute/stream + one-shot DM ringtone with call timeout), stream debug/encoder settings + late-join PLI + P2P streaming (#74), and Version-1-test-12 features. Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
+- Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-13
+- Assets: Banter-windows-version-1-test-13.zip, Banter-linux-version-1-test-13.zip, Banter-macos-arm-version-1-test-13.zip (Banter.app), banter-server.exe, banter-server-linux, banter-server-macos-arm
+
 ## 2026-11-06 02:10:00 -05:00 [ubuntu] — Fix DM P2P streaming + opt-in guild P2P video
 
 DM Go Live/camera stayed invisible because call flag posts never reached the peer (`set_flags` only published voice-channel rosters) and P2P `SubscribeLayer` never forced an IDR. Active calls now rebroadcast `Call` with `caller_flags`/`callee_flags`; the stage seeds `voice_members` from those flags and still infers from remote textures. Publishers force a keyframe when a P2P peer cap changes, and idle camera/screen encoders clear when not publishing.

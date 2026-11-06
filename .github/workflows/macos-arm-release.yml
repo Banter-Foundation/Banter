@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version_label:
-        description: "Zip label (e.g. version-1-test-12)"
+        description: "Zip label (e.g. version-1-test-13)"
         required: true
         type: string
 

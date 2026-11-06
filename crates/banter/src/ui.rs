@@ -55,6 +55,7 @@ use crate::logic::{
     VoiceRejoinIntent, OPEN_MIC_RMS, RECONNECTING_STATUS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
+use crate::sfx::{ringtone_duration, Sfx, SoundEvent};
 use crate::profile::{
     display_name_style_color, games_from_payload, games_to_payload, games_widget_cap,
     profile_badge_row_visible_cap, profile_board_tabs, profile_column_content_width,
@@ -447,6 +448,10 @@ pub(crate) struct App {
     remote_video: HashMap<(i64, u8), Shot>,
     realtime: Option<Realtime>,
     media: Option<Media>,
+    /// Local UI sounds (join/leave/mute/stream) and DM call ringtone.
+    sfx: Sfx,
+    /// When the one-shot ringtone started; unanswered calls time out at start + ringtone length.
+    ring_deadline: Option<Instant>,
     /// When set, the websocket is down and the next connect attempt runs at this instant.
     reconnect_at: Option<Instant>,
     /// Guild VC or DM call to rejoin after a successful reconnect (server clears seats on drop).
@@ -697,6 +702,8 @@ impl App {
             remote_video: HashMap::new(),
             realtime: None,
             media: None,
+            sfx: Sfx::open(),
+            ring_deadline: None,
             reconnect_at: None,
             pending_voice_rejoin: None,
             shell: ShellHost::start(),
@@ -718,6 +725,7 @@ impl App {
             mods,
         };
         app.load_saved();
+        app.sync_sfx_output();
         if app.account.is_some() {
             if app.apply_version_check(true) {
                 app.display_name = app
@@ -798,6 +806,7 @@ impl App {
             return;
         }
         self.pump_events();
+        self.tick_call_ringtone();
         if !self.stream.show_preview {
             if let Some(shot) = self.local_screen.take() {
                 let _ = imgui.remove_texture(shot.texture);
@@ -2893,7 +2902,9 @@ impl App {
             mic_hover,
             Some(ICON_HOVER_BG),
         ) {
-            self.mute.set_muted(!muted);
+            let next = !muted;
+            self.mute.set_muted(next);
+            self.play_mute_toggle(next);
         }
         skin::item_tooltip(
             ui,
@@ -3086,6 +3097,7 @@ impl App {
                         semi,
                     ) {
                         if self.note(self.client.decline_call(call.dm_id)).is_some() {
+                            self.stop_ringing();
                             self.end_media_place();
                         }
                     }
@@ -3201,7 +3213,12 @@ impl App {
         };
         if ended || self.reconnect_at.is_some() {
             // While reconnecting the server already ended the call; clear local UI anyway.
+            let was_active = call.phase == CallPhase::Active;
             self.call = None;
+            self.stop_ringing();
+            if was_active {
+                self.sfx.play(SoundEvent::Leave);
+            }
             self.end_media_place();
         }
     }
@@ -3226,10 +3243,13 @@ impl App {
             .as_ref()
             .is_some_and(|prior| prior.phase == CallPhase::Active && prior.dm_id == dm_id);
         let active = call.phase == CallPhase::Active;
+        let ringing = call.phase == CallPhase::Ringing;
         if active {
             if !was_active {
                 self.voice_channel = None;
                 self.drop_self_from_rosters(None);
+                self.stop_ringing();
+                self.sfx.play(SoundEvent::Join);
             }
             self.voice_members = vec![
                 VoiceMember {
@@ -3243,10 +3263,86 @@ impl App {
                     prefer_p2p_video: false,
                 },
             ];
+        } else if ringing {
+            self.begin_ringing();
+        } else {
+            self.stop_ringing();
         }
         self.call = Some(call);
         if open_dm_if_needed && !matches!(self.place, Place::Direct(id) if id == dm_id) {
             self.open_dm(dm_id);
+        }
+    }
+
+    fn play_mute_toggle(&self, now_muted: bool) {
+        self.sfx.play(if now_muted {
+            SoundEvent::Mute
+        } else {
+            SoundEvent::Unmute
+        });
+    }
+
+    fn sync_sfx_output(&self) {
+        self.sfx
+            .configure(&self.voice.output_device, self.voice.output_volume);
+    }
+
+    fn begin_ringing(&mut self) {
+        if self.ring_deadline.is_some() {
+            return;
+        }
+        self.sfx.set_ringing(true);
+        self.ring_deadline = Some(Instant::now() + ringtone_duration());
+    }
+
+    fn stop_ringing(&mut self) {
+        self.sfx.set_ringing(false);
+        self.ring_deadline = None;
+    }
+
+    /// Keep ringtone in sync with call phase; time out unanswered calls when the clip ends.
+    fn tick_call_ringtone(&mut self) {
+        let ringing = self
+            .call
+            .as_ref()
+            .is_some_and(|call| call.phase == CallPhase::Ringing);
+        if !ringing {
+            if self.ring_deadline.is_some() {
+                self.stop_ringing();
+            }
+            return;
+        }
+        if self.ring_deadline.is_none() {
+            self.begin_ringing();
+        }
+        if self
+            .ring_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.timeout_ringing_call();
+        }
+    }
+
+    /// Ringtone finished with nobody answering — cancel/decline the ringing call.
+    fn timeout_ringing_call(&mut self) {
+        let me = self.account.as_ref().map(|account| account.id);
+        let Some(call) = self.call.clone() else {
+            self.stop_ringing();
+            return;
+        };
+        if call.phase != CallPhase::Ringing {
+            self.stop_ringing();
+            return;
+        }
+        let ended = if Some(call.callee) == me {
+            self.note(self.client.decline_call(call.dm_id)).is_some()
+        } else {
+            self.note(self.client.end_call(call.dm_id)).is_some()
+        };
+        self.stop_ringing();
+        if ended || self.reconnect_at.is_some() {
+            self.call = None;
+            self.end_media_place();
         }
     }
 
@@ -5581,6 +5677,8 @@ impl App {
             self.voice_members = members;
             self.voice_channel = Some(channel_id);
             self.call = None;
+            self.stop_ringing();
+            self.sfx.play(SoundEvent::Join);
             self.flags_failed_at = None;
             self.sent_flags = VoiceFlags {
                 muted: !self.flags.muted,
@@ -5789,6 +5887,7 @@ impl App {
                         WHITE,
                     ) {
                         if self.note(self.client.decline_call(call.dm_id)).is_some() {
+                            self.stop_ringing();
                             self.end_media_place();
                         }
                     }
@@ -5945,7 +6044,9 @@ impl App {
             false,
             mic_tint,
         ) {
-            self.mute.set_muted(!muted);
+            let next = !muted;
+            self.mute.set_muted(next);
+            self.play_mute_toggle(next);
         }
         skin::item_tooltip(ui, semi, if muted { "Unmute" } else { "Mute" });
         if self.round_control(
@@ -6033,6 +6134,7 @@ impl App {
             self.share_open = false;
             self.share.go_live_portal();
             self.save_stream();
+            self.sfx.play(SoundEvent::StartStream);
         } else {
             self.open_share();
         }
@@ -8694,6 +8796,14 @@ impl App {
             }
             ServerEvent::CallEnded { dm_id } => {
                 if self.call.as_ref().map(|call| call.dm_id) == Some(dm_id) {
+                    let was_active = self
+                        .call
+                        .as_ref()
+                        .is_some_and(|call| call.phase == CallPhase::Active);
+                    self.stop_ringing();
+                    if was_active {
+                        self.sfx.play(SoundEvent::Leave);
+                    }
                     // Peer hang-up / remote end: same cleanup as Disconnect (drops stream overlays).
                     self.end_media_place();
                 }
@@ -11107,6 +11217,7 @@ impl App {
             self.voice_members.clear();
             self.drop_self_from_rosters(None);
             self.flags_failed_at = None;
+            self.sfx.play(SoundEvent::Leave);
             self.end_media_place();
         }
     }
@@ -11150,9 +11261,13 @@ impl App {
     }
 
     fn stop_streaming(&mut self) {
+        let was_live = self.share.is_live();
         self.share.stop();
         dismiss_stream_overlays(&mut self.share_open, &mut self.stream_menu);
         self.save_stream();
+        if was_live {
+            self.sfx.play(SoundEvent::StopStream);
+        }
     }
 
     fn close_stream_watch(&mut self) {
@@ -12671,6 +12786,7 @@ impl App {
                     if self.share.go_live() {
                         self.share_open = false;
                         self.status.clear();
+                        self.sfx.play(SoundEvent::StartStream);
                     } else {
                         self.status = "choose a screen or an application first".into();
                     }
@@ -13839,6 +13955,7 @@ impl App {
         let mut voice = self.voice.clone();
         voice.push_to_talk = self.push_to_talk;
         let _ = save_json(&self.data_dir.join("voice.json"), &voice);
+        self.sync_sfx_output();
         self.sync_guild_p2p_video_pref();
     }
 
