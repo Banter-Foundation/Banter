@@ -386,6 +386,16 @@ pub fn next_reconnect_at(now: std::time::Instant) -> std::time::Instant {
     now + RECONNECT_INTERVAL
 }
 
+/// Whether the client may attach a WebRTC session for the local voice/call seat.
+///
+/// While a websocket reconnect is armed, the server has already cleared the seat.
+/// Offering before HTTP rejoin is dropped (`ensure_in_place`) and never retried,
+/// because `Rtc::set_session` dedupes the same place — leaving mic/camera/screen
+/// locally live but SFU media dead.
+pub fn voice_rtc_session_ready(in_place: bool, reconnect_armed: bool) -> bool {
+    in_place && !reconnect_armed
+}
+
 /// Open-mic frames quieter than this RMS are not sent. Push-to-talk does not use this gate.
 pub const OPEN_MIC_RMS: f32 = 180.0;
 
@@ -2342,8 +2352,8 @@ mod voice_roster_tests {
 #[cfg(test)]
 mod reconnect_tests {
     use super::{
-        capture_voice_rejoin_intent, next_reconnect_at, reconnect_retry_ready, VoiceRejoinIntent,
-        RECONNECTING_STATUS, RECONNECT_INTERVAL,
+        capture_voice_rejoin_intent, next_reconnect_at, reconnect_retry_ready,
+        voice_rtc_session_ready, VoiceRejoinIntent, RECONNECTING_STATUS, RECONNECT_INTERVAL,
     };
     use banter_server::CallPhase;
     use std::time::{Duration, Instant};
@@ -2393,6 +2403,17 @@ mod reconnect_tests {
             Some(VoiceRejoinIntent::DirectCall(9))
         );
         assert_eq!(capture_voice_rejoin_intent(None, None), None);
+    }
+
+    #[test]
+    fn rtc_session_waits_until_reconnect_clears() {
+        // In voice locally, but socket still reconnecting — must not offer yet.
+        assert!(!voice_rtc_session_ready(true, true));
+        // Not in a seat — never offer.
+        assert!(!voice_rtc_session_ready(false, false));
+        assert!(!voice_rtc_session_ready(false, true));
+        // Seated and socket stable — offer/attach allowed.
+        assert!(voice_rtc_session_ready(true, false));
     }
 }
 
