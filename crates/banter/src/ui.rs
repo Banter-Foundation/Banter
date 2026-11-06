@@ -45,12 +45,12 @@ use crate::logic::{
     save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible,
     speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
     stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message,
-    visible_home_sections, voice_flags_retry_ready, voice_occupancy_line, window_size_label,
-    window_size_presets, CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry,
-    ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind, HomeSectionId,
-    MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection, StreamDefaults,
-    StreamFps, StreamResolution, VideoPrefs, VoicePrefs, VoiceRejoinIntent, OPEN_MIC_RMS,
-    RECONNECTING_STATUS,
+    visible_home_sections, voice_flags_retry_ready, voice_occupancy_line, voice_rtc_session_ready,
+    window_size_label, window_size_presets, CameraChoice, CaptureKind, ContextMenuAction,
+    ContextMenuEntry, ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind,
+    HomeSectionId, MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection,
+    StreamDefaults, StreamFps, StreamResolution, VideoPrefs, VoicePrefs, VoiceRejoinIntent,
+    OPEN_MIC_RMS, RECONNECTING_STATUS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
@@ -7546,7 +7546,10 @@ impl App {
             let me = self.account.as_ref().map(|account| account.id).unwrap_or(0);
             let offerer = self.voice_channel.is_some()
                 || self.call.as_ref().is_some_and(|call| call.caller == me);
-            media.set_session(place.filter(|_| in_place), me, offerer);
+            // Do not offer WebRTC while reconnect is armed: the server seat is gone until
+            // finish_reconnect HTTP-rejoins, and a premature offer is never retried.
+            let rtc_ready = voice_rtc_session_ready(in_place, self.reconnect_at.is_some());
+            media.set_session(place.filter(|_| rtc_ready), me, offerer);
         }
         // Skip flag posts while the websocket is down — the server already cleared the seat.
         if in_place && self.reconnect_at.is_none() && self.flags != self.sent_flags {
@@ -7860,6 +7863,12 @@ impl App {
         self.reconnect_at = None;
         if self.status.starts_with(RECONNECTING_STATUS) {
             self.status.clear();
+        }
+        // Drop any RTC session started while the seat was still cleared server-side
+        // (connect_live recreates Media before HTTP rejoin). Same place would otherwise
+        // dedupe and never re-offer after join_voice / start_call.
+        if let Some(media) = &self.media {
+            media.set_session(None, 0, false);
         }
         let Some(intent) = self.pending_voice_rejoin.take() else {
             return;
