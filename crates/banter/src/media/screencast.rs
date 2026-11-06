@@ -12,16 +12,20 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use pipewire::{
-    channel, context::ContextRc, keys, main_loop::MainLoopRc, properties,
+    channel,
+    context::ContextRc,
+    keys,
+    main_loop::MainLoopRc,
+    properties,
     spa::{
         buffer::{ChunkFlags, DataType},
         param::{
-            ParamType,
             format::{FormatProperties, MediaSubtype, MediaType},
             format_utils,
             video::{VideoFormat, VideoInfoRaw},
+            ParamType,
         },
-        pod::{self, Pod, serialize::PodSerializer},
+        pod::{self, serialize::PodSerializer, Pod},
         utils::{Direction, Fraction, Rectangle, SpaTypes},
     },
     stream::{StreamFlags, StreamRc, StreamState},
@@ -86,7 +90,18 @@ impl CastStream {
         let fault_thread = Arc::clone(&fault);
         let thread = thread::Builder::new()
             .name("banter-screencast".into())
-            .spawn(move || stream_loop(fd, node, max_edge, fps.max(1), latest_thread, stop_thread, fault_thread, quit_rx))
+            .spawn(move || {
+                stream_loop(
+                    fd,
+                    node,
+                    max_edge,
+                    fps.max(1),
+                    latest_thread,
+                    stop_thread,
+                    fault_thread,
+                    quit_rx,
+                )
+            })
             .map_err(|err| err.to_string())?;
         Ok(Self {
             latest,
@@ -106,7 +121,9 @@ impl CastStream {
     /// Takes the newest raw frame and scales it to `edge` on this thread.
     pub fn take_picture(&self, edge: u32) -> Option<(u32, u32, Vec<u8>)> {
         let raw = self.latest.lock().expect("screencast frame").take()?;
-        let frame = sample_frame(&raw.bytes, raw.width, raw.height, raw.stride, raw.format, edge)?;
+        let frame = sample_frame(
+            &raw.bytes, raw.width, raw.height, raw.stride, raw.format, edge,
+        )?;
         Some((frame.width, frame.height, frame.rgba))
     }
 
@@ -179,7 +196,10 @@ fn stream_loop(
     let cancel = main_loop.clone();
     let _quit = quit_rx.attach(main_loop.loop_(), move |_| cancel.quit());
 
-    let data = StreamData { format: VideoInfoRaw::new(), logged: false };
+    let data = StreamData {
+        format: VideoInfoRaw::new(),
+        logged: false,
+    };
     let callback_loop = main_loop.clone();
     let fault_state = Arc::clone(&fault);
     let stop_loop = Arc::clone(&stop);
@@ -200,7 +220,9 @@ fn stream_loop(
             if id != ParamType::Format.as_raw() {
                 return;
             }
-            let Ok((media_type, media_subtype)) = format_utils::parse_format(param) else { return };
+            let Ok((media_type, media_subtype)) = format_utils::parse_format(param) else {
+                return;
+            };
             if media_type != MediaType::Video || media_subtype != MediaSubtype::Raw {
                 return;
             }
@@ -210,7 +232,12 @@ fn stream_loop(
             if !data.logged {
                 data.logged = true;
                 let size = data.format.size();
-                eprintln!("banter: screencast format {} {}x{}", data.format.format().0, size.width, size.height);
+                eprintln!(
+                    "banter: screencast format {} {}x{}",
+                    data.format.format().0,
+                    size.width,
+                    size.height
+                );
             }
         })
         .process(move |stream, data| {
@@ -218,9 +245,13 @@ fn stream_loop(
                 callback_loop.quit();
                 return;
             }
-            let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            let Some(mut buffer) = stream.dequeue_buffer() else {
+                return;
+            };
             let datas = buffer.datas_mut();
-            let Some(chunk_src) = datas.first_mut() else { return };
+            let Some(chunk_src) = datas.first_mut() else {
+                return;
+            };
             let (offset, chunk_size, stride, corrupted) = {
                 let chunk = chunk_src.chunk();
                 (
@@ -265,7 +296,12 @@ fn stream_loop(
         return;
     };
     let mut params = [pod];
-    if let Err(err) = stream.connect(Direction::Input, Some(node), StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS, &mut params) {
+    if let Err(err) = stream.connect(
+        Direction::Input,
+        Some(node),
+        StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS,
+        &mut params,
+    ) {
         fail(&fault, format!("screencast start: {err}"));
         return;
     }
@@ -274,7 +310,10 @@ fn stream_loop(
     drop(listener);
     drop(stream);
     if !stop.load(Ordering::Relaxed) && started.elapsed() < Duration::from_millis(200) {
-        fail(&fault, "screencast ended before the first frame".to_string());
+        fail(
+            &fault,
+            "screencast ended before the first frame".to_string(),
+        );
     }
 }
 
@@ -306,8 +345,18 @@ impl Drop for Mmap {
     }
 }
 
-fn copy_frame(bytes: &[u8], offset: usize, chunk_size: usize, stride: i32, format: &VideoInfoRaw) -> Option<RawFrame> {
-    let size = if chunk_size == 0 { bytes.len().saturating_sub(offset) } else { chunk_size };
+fn copy_frame(
+    bytes: &[u8],
+    offset: usize,
+    chunk_size: usize,
+    stride: i32,
+    format: &VideoInfoRaw,
+) -> Option<RawFrame> {
+    let size = if chunk_size == 0 {
+        bytes.len().saturating_sub(offset)
+    } else {
+        chunk_size
+    };
     let end = offset.saturating_add(size).min(bytes.len());
     if end <= offset {
         return None;
@@ -335,7 +384,16 @@ fn map_memfd(data: &pipewire::spa::buffer::Data) -> Option<Mmap> {
     if fd < 0 || len == 0 {
         return None;
     }
-    let ptr = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd, raw.mapoffset as i64) };
+    let ptr = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ,
+            libc::MAP_SHARED,
+            fd,
+            raw.mapoffset as i64,
+        )
+    };
     if ptr == libc::MAP_FAILED {
         return None;
     }
@@ -372,9 +430,18 @@ fn format_pod(edge: u32, fps: u32) -> Result<Vec<u8>, String> {
             Choice,
             Range,
             Rectangle,
-            Rectangle { width: edge, height },
-            Rectangle { width: 2, height: 2 },
-            Rectangle { width: 4096, height: 4096 }
+            Rectangle {
+                width: edge,
+                height
+            },
+            Rectangle {
+                width: 2,
+                height: 2
+            },
+            Rectangle {
+                width: 4096,
+                height: 4096
+            }
         ),
         // KWin offers 0/1 here, meaning the compositor picks the rate. A minimum of 1 rejects that offer.
         pod::property!(
@@ -384,17 +451,38 @@ fn format_pod(edge: u32, fps: u32) -> Result<Vec<u8>, String> {
             Fraction,
             Fraction { num: fps, denom: 1 },
             Fraction { num: 0, denom: 1 },
-            Fraction { num: fps.max(1), denom: 1 }
+            Fraction {
+                num: fps.max(1),
+                denom: 1
+            }
         ),
     );
-    let (cursor, _) = PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &pod::Value::Object(obj)).map_err(|err| err.to_string())?;
+    let (cursor, _) =
+        PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &pod::Value::Object(obj))
+            .map_err(|err| err.to_string())?;
     Ok(cursor.into_inner())
 }
 
-fn sample_frame(src: &[u8], width: u32, height: u32, stride: i32, format: VideoFormat, max_edge: u32) -> Option<Latest> {
+fn sample_frame(
+    src: &[u8],
+    width: u32,
+    height: u32,
+    stride: i32,
+    format: VideoFormat,
+    max_edge: u32,
+) -> Option<Latest> {
     let (bpp, kind) = pixel_kind(format)?;
-    let stride = if stride > 0 { stride as usize } else { width as usize * bpp };
-    if src.len() < stride.saturating_mul(height as usize).max(width as usize * bpp) && kind != Pixel::I420 {
+    let stride = if stride > 0 {
+        stride as usize
+    } else {
+        width as usize * bpp
+    };
+    if src.len()
+        < stride
+            .saturating_mul(height as usize)
+            .max(width as usize * bpp)
+        && kind != Pixel::I420
+    {
         if src.len() < width as usize * bpp * height as usize {
             return None;
         }
@@ -422,7 +510,11 @@ fn sample_frame(src: &[u8], width: u32, height: u32, stride: i32, format: VideoF
             }
         }
     }
-    Some(Latest { width: dw, height: dh, rgba })
+    Some(Latest {
+        width: dw,
+        height: dh,
+        rgba,
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -433,10 +525,24 @@ enum Pixel {
 
 fn pixel_kind(format: VideoFormat) -> Option<(usize, Pixel)> {
     if format == VideoFormat::RGB || format == VideoFormat::BGR {
-        return Some((3, Pixel::Packed { swap_rb: format == VideoFormat::BGR }));
+        return Some((
+            3,
+            Pixel::Packed {
+                swap_rb: format == VideoFormat::BGR,
+            },
+        ));
     }
-    if format == VideoFormat::RGBA || format == VideoFormat::RGBx || format == VideoFormat::BGRA || format == VideoFormat::BGRx {
-        return Some((4, Pixel::Packed { swap_rb: format == VideoFormat::BGRA || format == VideoFormat::BGRx }));
+    if format == VideoFormat::RGBA
+        || format == VideoFormat::RGBx
+        || format == VideoFormat::BGRA
+        || format == VideoFormat::BGRx
+    {
+        return Some((
+            4,
+            Pixel::Packed {
+                swap_rb: format == VideoFormat::BGRA || format == VideoFormat::BGRx,
+            },
+        ));
     }
     if format == VideoFormat::I420 {
         return Some((1, Pixel::I420));
@@ -470,7 +576,14 @@ fn write_pixel(dst: &mut [u8], src: &[u8], bpp: usize, swap_rb: bool) {
     dst[3] = 255;
 }
 
-fn sample_i420(src: &[u8], width: u32, height: u32, dw: u32, dh: u32, rgba: &mut [u8]) -> Option<()> {
+fn sample_i420(
+    src: &[u8],
+    width: u32,
+    height: u32,
+    dw: u32,
+    dh: u32,
+    rgba: &mut [u8],
+) -> Option<()> {
     let width = width as usize;
     let height = height as usize;
     let y_len = width * height;
@@ -552,9 +665,17 @@ struct StartResponse {
 impl Portal {
     fn connect() -> Result<Self, String> {
         let conn = zbus::blocking::Connection::session().map_err(|err| err.to_string())?;
-        let proxy = Proxy::new(&conn, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.ScreenCast")
-            .map_err(|err| err.to_string())?;
-        Ok(Self { proxy, session: None })
+        let proxy = Proxy::new(
+            &conn,
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.ScreenCast",
+        )
+        .map_err(|err| err.to_string())?;
+        Ok(Self {
+            proxy,
+            session: None,
+        })
     }
 
     fn attach_session(&mut self, session: OwnedObjectPath) {
@@ -568,11 +689,20 @@ impl Portal {
         let mut options: HashMap<&str, Value<'_>> = HashMap::new();
         options.insert("handle_token", Value::from(handle.as_str()));
         options.insert("session_handle_token", Value::from(session_token.as_str()));
-        let incoming = request.receive_signal("Response").map_err(|err| err.to_string())?;
-        self.proxy.call_method("CreateSession", &(options)).map_err(|err| err.to_string())?;
+        let incoming = request
+            .receive_signal("Response")
+            .map_err(|err| err.to_string())?;
+        self.proxy
+            .call_method("CreateSession", &(options))
+            .map_err(|err| err.to_string())?;
         let results: HashMap<String, OwnedValue> = read_response(incoming)?;
-        let session_handle = dbus_string(results.get("session_handle")).ok_or_else(|| "screen cast did not return a session".to_string())?;
-        let unique = self.proxy.connection().unique_name().ok_or_else(|| "no dbus name".to_string())?;
+        let session_handle = dbus_string(results.get("session_handle"))
+            .ok_or_else(|| "screen cast did not return a session".to_string())?;
+        let unique = self
+            .proxy
+            .connection()
+            .unique_name()
+            .ok_or_else(|| "no dbus name".to_string())?;
         let unique = unique.trim_start_matches(':').replace('.', "_");
         let path = format!("/org/freedesktop/portal/desktop/session/{unique}/{session_token}");
         if path != session_handle {
@@ -590,8 +720,12 @@ impl Portal {
         options.insert("multiple", Value::from(false));
         options.insert("cursor_mode", Value::from(2_u32));
         options.insert("persist_mode", Value::from(0_u32));
-        let incoming = request.receive_signal("Response").map_err(|err| err.to_string())?;
-        self.proxy.call_method("SelectSources", &(session, options)).map_err(|err| err.to_string())?;
+        let incoming = request
+            .receive_signal("Response")
+            .map_err(|err| err.to_string())?;
+        self.proxy
+            .call_method("SelectSources", &(session, options))
+            .map_err(|err| err.to_string())?;
         let _: HashMap<String, OwnedValue> = read_response(incoming)?;
         Ok(())
     }
@@ -601,14 +735,21 @@ impl Portal {
         let request = portal_request(self.proxy.connection(), &handle)?;
         let mut options: HashMap<&str, Value<'_>> = HashMap::new();
         options.insert("handle_token", Value::from(handle.as_str()));
-        let incoming = request.receive_signal("Response").map_err(|err| err.to_string())?;
-        self.proxy.call_method("Start", &(session, "", options)).map_err(|err| err.to_string())?;
+        let incoming = request
+            .receive_signal("Response")
+            .map_err(|err| err.to_string())?;
+        self.proxy
+            .call_method("Start", &(session, "", options))
+            .map_err(|err| err.to_string())?;
         read_response(incoming)
     }
 
     fn pipewire_fd(&self, session: &OwnedObjectPath) -> Result<OwnedFd, String> {
         let options: HashMap<&str, Value<'_>> = HashMap::new();
-        let fd: zbus::zvariant::OwnedFd = self.proxy.call("OpenPipeWireRemote", &(session, options)).map_err(|err| err.to_string())?;
+        let fd: zbus::zvariant::OwnedFd = self
+            .proxy
+            .call("OpenPipeWireRemote", &(session, options))
+            .map_err(|err| err.to_string())?;
         Ok(OwnedFd::from(fd))
     }
 }
@@ -616,14 +757,32 @@ impl Portal {
 /// A portal dict value is either a string or an object path, depending on the desktop.
 fn dbus_string(value: Option<&OwnedValue>) -> Option<String> {
     let value = value?;
-    <&str>::try_from(value).ok().map(str::to_string).or_else(|| <&zbus::zvariant::ObjectPath>::try_from(value).ok().map(|path| path.to_string()))
+    <&str>::try_from(value)
+        .ok()
+        .map(str::to_string)
+        .or_else(|| {
+            <&zbus::zvariant::ObjectPath>::try_from(value)
+                .ok()
+                .map(|path| path.to_string())
+        })
 }
 
-fn portal_request(conn: &zbus::blocking::Connection, handle: &str) -> Result<Proxy<'static>, String> {
-    let unique = conn.unique_name().ok_or_else(|| "no dbus name".to_string())?;
+fn portal_request(
+    conn: &zbus::blocking::Connection,
+    handle: &str,
+) -> Result<Proxy<'static>, String> {
+    let unique = conn
+        .unique_name()
+        .ok_or_else(|| "no dbus name".to_string())?;
     let unique = unique.trim_start_matches(':').replace('.', "_");
     let path = format!("/org/freedesktop/portal/desktop/request/{unique}/{handle}");
-    Proxy::new(conn, "org.freedesktop.portal.Desktop", path, "org.freedesktop.portal.Request").map_err(|err| err.to_string())
+    Proxy::new(
+        conn,
+        "org.freedesktop.portal.Desktop",
+        path,
+        "org.freedesktop.portal.Request",
+    )
+    .map_err(|err| err.to_string())
 }
 
 #[cfg(test)]
@@ -646,8 +805,13 @@ fn read_response<T>(mut incoming: zbus::blocking::proxy::SignalIterator<'_>) -> 
 where
     T: for<'de> serde::Deserialize<'de> + Type,
 {
-    let message = incoming.next().ok_or_else(|| "screen share dialog closed".to_string())?;
-    let (code, body): (u32, T) = message.body().deserialize().map_err(|err| err.to_string())?;
+    let message = incoming
+        .next()
+        .ok_or_else(|| "screen share dialog closed".to_string())?;
+    let (code, body): (u32, T) = message
+        .body()
+        .deserialize()
+        .map_err(|err| err.to_string())?;
     match code {
         0 => Ok(body),
         1 => Err("cancelled".into()),

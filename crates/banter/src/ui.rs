@@ -10,19 +10,19 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use banter_server::{
-    Account, BadgeItem, CallPhase, CallSnapshot, CategoryLayout, Channel, ChannelKind, ChatTarget,
-    ClientSignal, CosmeticItem, CosmeticKind, DirectChat, Friend, FriendRequest, GuildRole, LayerId,
-    LayerPreferences, MAX_AVATAR_BYTES, MAX_BANNER_BYTES, MediaKind, MediaPlace, Mention, Message,
-    PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_BOTS, PERM_MANAGE_CHANNELS, PERM_MANAGE_PLUGINS,
-    PERM_MANAGE_ROLES, Presence,
-    ProfileActivityInput, ProfileConnectionInput, ProfilePatch, ProfileWidgetInput, ProfileWidgetKind,
-    ProfileWishlistInput, ServerDebug, ServerFolderPatch, ServerRail, ServerSummary, UserProfile,
-    VoiceFlags, VoiceMember, CHANNEL_ICON_CHOICES, has_permission, top_hoisted_role, top_role_color,
+    has_permission, top_hoisted_role, top_role_color, Account, BadgeItem, CallPhase, CallSnapshot,
+    CategoryLayout, Channel, ChannelKind, ChatTarget, ClientSignal, CosmeticItem, CosmeticKind,
+    DirectChat, Friend, FriendRequest, GuildRole, LayerId, LayerPreferences, MediaKind, MediaPlace,
+    Mention, Message, Presence, ProfileActivityInput, ProfileConnectionInput, ProfilePatch,
+    ProfileWidgetInput, ProfileWidgetKind, ProfileWishlistInput, ServerDebug, ServerFolderPatch,
+    ServerRail, ServerSummary, UserProfile, VoiceFlags, VoiceMember, CHANNEL_ICON_CHOICES,
+    MAX_AVATAR_BYTES, MAX_BANNER_BYTES, PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_BOTS,
+    PERM_MANAGE_CHANNELS, PERM_MANAGE_PLUGINS, PERM_MANAGE_ROLES,
 };
 use dear_imgui_rs::{
-    ChildFlags, Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton, OwnedTextureData,
-    PopupQueryFlags, Style, StyleColor, StyleVar, TextureFormat, TreeNodeFlags, Ui, WindowFlags,
-    fonts::FontId,
+    fonts::FontId, ChildFlags, Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton,
+    OwnedTextureData, PopupQueryFlags, Style, StyleColor, StyleVar, TextureFormat, TreeNodeFlags,
+    Ui, WindowFlags,
 };
 
 use crate::api::{ApiError, Client, MemberView};
@@ -31,40 +31,49 @@ use crate::bfmd_paint;
 use crate::icons::rasterize_lucide;
 use crate::layout::discord_shell_columns;
 use crate::logic::{
-    CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry, ContextMenuTone, DevServerPrefs, HomeLayout,
-    HomeRecentEntry, HomeRecentKind, HomeSectionId, MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget,
-    SettingsSection, StreamDefaults, StreamFps, StreamResolution, VideoPrefs, VoicePrefs, api_base_for,
-    camera_preview_mirrored, channel_context_menu, channel_default_icon, channel_display_icon, clamp_context_menu_pos,
-    clamp_window_size, comment_tree_rows, context_menu_height, default_stream_fps, default_stream_resolution,
-    dismiss_stream_overlays, encode_jpeg_rgba, folder_context_menu, fps_block, fps_from_key, fps_key, grouped_mix_sources,
-    hardware_encoder_block, home_section_is_visible, home_section_label, insert_mention, is_debug_command, lerp_size,
-    load_json, local_api_base, member_context_menu, message_context_menu, mirror_rgba, move_home_section,
-    parse_folder_color, password_blocks_copy, plan_member_groups, password_is_masked, push_home_recent,
-    push_to_talk_held, rail_tree_rows, remove_message, resolution_block, resolution_from_key, resolution_key,
-    save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible, speaking_from_level,
-    stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge, stream_resolution_label,
-    stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,     voice_flags_retry_ready, apply_voice_roster, voice_occupancy_line,
-    capture_voice_rejoin_intent, next_reconnect_at, reconnect_retry_ready, VoiceRejoinIntent,
-    chat_date_separator, chat_time_hover, chat_time_label, crop_avatar_rgba, crop_window, message_starts_new_day,
-    window_size_label, window_size_presets, OPEN_MIC_RMS, RECONNECTING_STATUS,
+    api_base_for, apply_voice_roster, camera_preview_mirrored, capture_voice_rejoin_intent,
+    channel_context_menu, channel_default_icon, channel_display_icon, chat_date_separator,
+    chat_time_hover, chat_time_label, clamp_context_menu_pos, clamp_window_size, comment_tree_rows,
+    context_menu_height, crop_avatar_rgba, crop_window, default_stream_fps,
+    default_stream_resolution, dismiss_stream_overlays, encode_jpeg_rgba, folder_context_menu,
+    fps_block, fps_from_key, fps_key, grouped_mix_sources, hardware_encoder_block,
+    home_section_is_visible, home_section_label, insert_mention, is_debug_command, lerp_size,
+    load_json, local_api_base, member_context_menu, message_context_menu, message_starts_new_day,
+    mirror_rgba, move_home_section, next_reconnect_at, parse_folder_color, password_blocks_copy,
+    password_is_masked, plan_member_groups, push_home_recent, push_to_talk_held, rail_tree_rows,
+    reconnect_retry_ready, remove_message, resolution_block, resolution_from_key, resolution_key,
+    save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible,
+    speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
+    stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message,
+    visible_home_sections, voice_flags_retry_ready, voice_occupancy_line, window_size_label,
+    window_size_presets, CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry,
+    ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind, HomeSectionId,
+    MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection, StreamDefaults,
+    StreamFps, StreamResolution, VideoPrefs, VoicePrefs, VoiceRejoinIntent, OPEN_MIC_RMS,
+    RECONNECTING_STATUS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
-    ProfileAction, ProfileBoardTab, ProfileCard, ProfileEditScope, ProfileEditorSlot, ProfileKind,
-    ProfileMediaDraft, ProfileMode, ProfilePanelRect, display_name_style_color, games_from_payload,
-    games_to_payload, games_widget_cap, profile_badge_row_visible_cap, profile_board_tabs,
-    profile_column_content_width, profile_editor_layout, profile_editor_slot_rows, profile_heading,
-    profile_primary_actions, profile_view_layout, rgb_u32_to_rgba,
+    display_name_style_color, games_from_payload, games_to_payload, games_widget_cap,
+    profile_badge_row_visible_cap, profile_board_tabs, profile_column_content_width,
+    profile_editor_layout, profile_editor_slot_rows, profile_heading, profile_primary_actions,
+    profile_view_layout, rgb_u32_to_rgba, ProfileAction, ProfileBoardTab, ProfileCard,
+    ProfileEditScope, ProfileEditorSlot, ProfileKind, ProfileMediaDraft, ProfileMode,
+    ProfilePanelRect,
 };
 use crate::profile_paint;
 use crate::profiler;
 use crate::realtime::Realtime;
 use crate::session::{clear_token, load_token, persist_login};
 use crate::settings::{
-    SettingsState, account_avatar_actions_place, db_to_rms, device_error_text, display_name_dirty,
-    display_name_error, meter_fraction, percent_to_volume, rms_to_db, settings_layout, settings_nav_list_w,
-    settings_nav_list_x, slider_fraction, slider_track_width, voice_bar_error_lines, volume_to_percent,
-    wrap_rows, SETTINGS_NAV_HEADING_GAP, SETTINGS_NAV_SECTION_GAP, SETTINGS_TOP_PAD,
+    account_avatar_actions_place, db_to_rms, device_error_text, display_name_dirty,
+    display_name_error, meter_fraction, percent_to_volume, rms_to_db, settings_layout,
+    settings_nav_list_w, settings_nav_list_x, slider_fraction, slider_track_width,
+    voice_bar_error_lines, volume_to_percent, wrap_rows, SettingsState, SETTINGS_NAV_HEADING_GAP,
+    SETTINGS_NAV_SECTION_GAP, SETTINGS_TOP_PAD,
+};
+use crate::shell_sync::{
+    snapshot_applies, AvatarFile, AvatarWant, FetchKind, ShellHost, ShellQuery, ShellSnapshot,
 };
 use crate::skin::{self, MenuTone, Tone};
 use crate::stream_watch::{
@@ -334,7 +343,12 @@ pub(crate) struct App {
     stream_popout_avatar_miss: HashMap<i64, i64>,
     stream_popout_shot: Option<Shot>,
     stream_popout_styled: bool,
-    stream_popout_font_backup: Option<(Option<FontId>, Option<FontId>, Option<FontId>, Option<FontId>)>,
+    stream_popout_font_backup: Option<(
+        Option<FontId>,
+        Option<FontId>,
+        Option<FontId>,
+        Option<FontId>,
+    )>,
     members_open: bool,
     bold_font: Option<FontId>,
     semibold_font: Option<FontId>,
@@ -358,7 +372,12 @@ pub(crate) struct App {
     settings_crop_preview: Option<Shot>,
     settings_crop_preview_key: [i32; 3],
     settings_local_camera: Option<Shot>,
-    settings_font_backup: Option<(Option<FontId>, Option<FontId>, Option<FontId>, Option<FontId>)>,
+    settings_font_backup: Option<(
+        Option<FontId>,
+        Option<FontId>,
+        Option<FontId>,
+        Option<FontId>,
+    )>,
     /// Last local camera RGBA mirrored for the Settings ImGui context upload.
     settings_camera_rgba: Option<(u32, u32, Vec<u8>)>,
     settings_styled: bool,
@@ -428,7 +447,7 @@ pub(crate) struct App {
     reconnect_at: Option<Instant>,
     /// Guild VC or DM call to rejoin after a successful reconnect (server clears seats on drop).
     pending_voice_rejoin: Option<VoiceRejoinIntent>,
-    last_poll: Instant,
+    shell: ShellHost,
     last_activity: Instant,
     styled: bool,
     profiler_metrics: bool,
@@ -673,7 +692,7 @@ impl App {
             media: None,
             reconnect_at: None,
             pending_voice_rejoin: None,
-            last_poll: Instant::now(),
+            shell: ShellHost::start(),
             last_activity: Instant::now(),
             styled: false,
             profiler_metrics: false,
@@ -755,6 +774,7 @@ impl App {
     }
 
     pub(crate) fn prepare(&mut self, imgui: &mut Context) {
+        self.pump_shell();
         if let Some(text) = self.copy_message.take() {
             imgui.set_clipboard_text(text);
         }
@@ -773,10 +793,17 @@ impl App {
                 let _ = imgui.remove_texture(shot.texture);
             }
         }
-        let frames = self.media.as_ref().map(|media| media.take_video()).unwrap_or_default();
+        let frames = self
+            .media
+            .as_ref()
+            .map(|media| media.take_video())
+            .unwrap_or_default();
         for frame in frames {
             // Keep a CPU copy so the Settings ImGui context can upload the same preview.
-            if frame.sender.is_none() && frame.kind == MediaKind::Camera {
+            if self.settings_os_window_desired()
+                && frame.sender.is_none()
+                && frame.kind == MediaKind::Camera
+            {
                 if let Some((width, height, rgba)) = frame.rgba.as_ref() {
                     self.settings_camera_rgba = Some((*width, *height, rgba.clone()));
                 }
@@ -816,7 +843,10 @@ impl App {
         std::mem::swap(&mut self.avatar_rev, &mut self.settings_avatar_rev);
         std::mem::swap(&mut self.avatar_miss, &mut self.settings_avatar_miss);
         std::mem::swap(&mut self.crop_preview, &mut self.settings_crop_preview);
-        std::mem::swap(&mut self.crop_preview_key, &mut self.settings_crop_preview_key);
+        std::mem::swap(
+            &mut self.crop_preview_key,
+            &mut self.settings_crop_preview_key,
+        );
         std::mem::swap(&mut self.local_camera, &mut self.settings_local_camera);
     }
 
@@ -834,7 +864,10 @@ impl App {
         std::mem::swap(&mut self.avatar_rev, &mut self.settings_avatar_rev);
         std::mem::swap(&mut self.avatar_miss, &mut self.settings_avatar_miss);
         std::mem::swap(&mut self.crop_preview, &mut self.settings_crop_preview);
-        std::mem::swap(&mut self.crop_preview_key, &mut self.settings_crop_preview_key);
+        std::mem::swap(
+            &mut self.crop_preview_key,
+            &mut self.settings_crop_preview_key,
+        );
         std::mem::swap(&mut self.local_camera, &mut self.settings_local_camera);
     }
 
@@ -911,6 +944,7 @@ impl App {
 
     /// Main Banter window. User Settings lives in a separate GLFW window so this shell stays usable.
     pub(crate) fn draw_main(&mut self, ui: &Ui) {
+        self.pump_shell();
         if !ui.io().want_capture_keyboard() && ui.is_key_pressed(Key::F3) {
             profiler::global().toggle();
         }
@@ -918,11 +952,6 @@ impl App {
             self.draw_login(ui);
             self.draw_profiler(ui);
             return;
-        }
-        if self.last_poll.elapsed() >= Duration::from_secs(2) {
-            self.refresh_shell();
-            self.reload_messages();
-            self.last_poll = Instant::now();
         }
         if self.user_acted || self.last_activity.elapsed() >= Duration::from_secs(20) {
             if let Some(realtime) = &self.realtime {
@@ -1038,32 +1067,74 @@ impl App {
                 let stage = self.shell("stage_bg", STAGE_BG);
                 let panel = self.shell("panel_bg", SIDEBAR_BG);
                 let header_bg = if media_stage { CALL_BG } else { stage };
-                self.paint_column(ui, "rail", [columns.rail_x, 0.0], [columns.rail_w, size[1]], rail);
-                self.paint_column(ui, "sidebar", [columns.sidebar_x, 0.0], [columns.sidebar_w, size[1]], sidebar);
+                self.paint_column(
+                    ui,
+                    "rail",
+                    [columns.rail_x, 0.0],
+                    [columns.rail_w, size[1]],
+                    rail,
+                );
+                self.paint_column(
+                    ui,
+                    "sidebar",
+                    [columns.sidebar_x, 0.0],
+                    [columns.sidebar_w, size[1]],
+                    sidebar,
+                );
                 let header_w = columns.stage_w + columns.members_w;
-                self.paint_column(ui, "stage-header", [columns.stage_x, 0.0], [header_w, HEADER_H], header_bg);
-                self.paint_column(ui, "stage", [columns.stage_x, HEADER_H], [columns.stage_w, body_h], stage);
+                self.paint_column(
+                    ui,
+                    "stage-header",
+                    [columns.stage_x, 0.0],
+                    [header_w, HEADER_H],
+                    header_bg,
+                );
+                self.paint_column(
+                    ui,
+                    "stage",
+                    [columns.stage_x, HEADER_H],
+                    [columns.stage_w, body_h],
+                    stage,
+                );
                 if columns.members_w > 0.0 {
-                    self.paint_column(ui, "members", [columns.members_x, HEADER_H], [columns.members_w, body_h], panel);
+                    self.paint_column(
+                        ui,
+                        "members",
+                        [columns.members_x, HEADER_H],
+                        [columns.members_w, body_h],
+                        panel,
+                    );
                 }
             });
     }
 
-    fn paint_column(&mut self, ui: &Ui, name: &str, pos: [f32; 2], size: [f32; 2], color: [f32; 4]) {
+    fn paint_column(
+        &mut self,
+        ui: &Ui,
+        name: &str,
+        pos: [f32; 2],
+        size: [f32; 2],
+        color: [f32; 4],
+    ) {
         let _color = ui.push_style_color(StyleColor::ChildBg, color);
         let flags = match name {
             "rail" => WindowFlags::NO_SCROLLBAR,
-            "stage-header" | "sidebar" => WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE,
+            "stage-header" | "sidebar" => {
+                WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE
+            }
             _ => WindowFlags::empty(),
         };
         ui.set_cursor_screen_pos(pos);
-        ui.child_window(name).size(size).flags(flags).build(ui, || match name {
-            "rail" => self.draw_rail(ui),
-            "sidebar" => self.draw_sidebar_column(ui),
-            "stage-header" => self.draw_stage_header(ui),
-            "members" => self.draw_members(ui),
-            _ => self.draw_stage(ui),
-        });
+        ui.child_window(name)
+            .size(size)
+            .flags(flags)
+            .build(ui, || match name {
+                "rail" => self.draw_rail(ui),
+                "sidebar" => self.draw_sidebar_column(ui),
+                "stage-header" => self.draw_stage_header(ui),
+                "members" => self.draw_members(ui),
+                _ => self.draw_stage(ui),
+            });
     }
 
     fn draw_login(&mut self, ui: &Ui) {
@@ -1157,11 +1228,25 @@ impl App {
 
                 let width = MODAL_W.min(display[0] - 32.0);
                 let pad = MODAL_PAD;
-                let body_h = 28.0 + 44.0 + 4.0 + 44.0 + 16.0 + 18.0 + 36.0 + INPUT_H + 16.0 + 18.0 + 22.0 + 16.0;
+                let body_h = 28.0
+                    + 44.0
+                    + 4.0
+                    + 44.0
+                    + 16.0
+                    + 18.0
+                    + 36.0
+                    + INPUT_H
+                    + 16.0
+                    + 18.0
+                    + 22.0
+                    + 16.0;
                 let footer_h = MODAL_FOOTER_H;
                 let title_h = 24.0 + FONT_LG + 8.0 + 16.0 + 16.0;
                 let height = title_h + body_h + footer_h;
-                let min = [((display[0] - width) * 0.5).floor(), ((display[1] - height) * 0.5).max(16.0).floor()];
+                let min = [
+                    ((display[0] - width) * 0.5).floor(),
+                    ((display[1] - height) * 0.5).max(16.0).floor(),
+                ];
                 let max = [min[0] + width, min[1] + height];
 
                 skin::shadow(ui, min, max, MODAL_RADIUS);
@@ -1178,7 +1263,14 @@ impl App {
                 let inner_x = min[0] + pad;
                 let inner_w = width - pad * 2.0;
                 let mut y = min[1] + 24.0;
-                skin::text(ui, self.semibold_font, FONT_LG, [inner_x, y], TEXT, "Server options");
+                skin::text(
+                    ui,
+                    self.semibold_font,
+                    FONT_LG,
+                    [inner_x, y],
+                    TEXT,
+                    "Server options",
+                );
                 if skin::icon_button(
                     ui,
                     "login-options-close",
@@ -1209,20 +1301,40 @@ impl App {
                 y += 18.0;
                 ui.set_cursor_screen_pos([inner_x, y]);
                 let local_selected = self.dev_server.target == ServerTarget::Local;
-                if settings_radio_row(ui, "login-dev-server-local", "Local", local_selected, inner_w) && !local_selected {
+                if settings_radio_row(
+                    ui,
+                    "login-dev-server-local",
+                    "Local",
+                    local_selected,
+                    inner_w,
+                ) && !local_selected
+                {
                     self.dev_server.target = ServerTarget::Local;
                     self.apply_dev_server();
                 }
                 ui.set_cursor_screen_pos([inner_x, y + 48.0]);
                 let remote_selected = self.dev_server.target == ServerTarget::Remote;
-                if settings_radio_row(ui, "login-dev-server-remote", "Remote", remote_selected, inner_w) && !remote_selected
+                if settings_radio_row(
+                    ui,
+                    "login-dev-server-remote",
+                    "Remote",
+                    remote_selected,
+                    inner_w,
+                ) && !remote_selected
                 {
                     self.dev_server.target = ServerTarget::Remote;
                     self.apply_dev_server();
                 }
                 y += 48.0 + 48.0 + 8.0;
 
-                skin::text(ui, self.bold_font, FONT_XS, [inner_x, y], MUTED, "REMOTE HOST");
+                skin::text(
+                    ui,
+                    self.bold_font,
+                    FONT_XS,
+                    [inner_x, y],
+                    MUTED,
+                    "REMOTE HOST",
+                );
                 y += 18.0;
                 skin::text(
                     ui,
@@ -1234,7 +1346,9 @@ impl App {
                 );
                 y += 36.0;
                 let apply_label = "Apply";
-                let apply_w = (skin::text_size(ui, self.semibold_font, FONT_SM, apply_label)[0] + 32.0).max(96.0);
+                let apply_w = (skin::text_size(ui, self.semibold_font, FONT_SM, apply_label)[0]
+                    + 32.0)
+                    .max(96.0);
                 let field_w = (inner_w - apply_w - 8.0).max(120.0);
                 let entered = skin::input(
                     ui,
@@ -1263,16 +1377,31 @@ impl App {
                 }
                 y += INPUT_H + 16.0;
 
-                skin::text(ui, self.bold_font, FONT_XS, [inner_x, y], MUTED, "ACTIVE API BASE");
+                skin::text(
+                    ui,
+                    self.bold_font,
+                    FONT_XS,
+                    [inner_x, y],
+                    MUTED,
+                    "ACTIVE API BASE",
+                );
                 y += 18.0;
                 skin::text(ui, None, FONT_SM, [inner_x, y], TEXT_NORMAL, &self.base);
 
                 if !self.settings_error.is_empty() {
                     let err_y = max[1] - footer_h + 12.0;
-                    skin::text(ui, None, FONT_SM, [inner_x, err_y], RED, &self.settings_error);
+                    skin::text(
+                        ui,
+                        None,
+                        FONT_SM,
+                        [inner_x, err_y],
+                        RED,
+                        &self.settings_error,
+                    );
                 }
 
-                let done_w = (skin::text_size(ui, self.semibold_font, FONT_SM, "Done")[0] + 32.0).max(96.0);
+                let done_w =
+                    (skin::text_size(ui, self.semibold_font, FONT_SM, "Done")[0] + 32.0).max(96.0);
                 let done_y = max[1] - footer_h + (footer_h - BUTTON_H) * 0.5;
                 if skin::button(
                     ui,
@@ -1291,8 +1420,10 @@ impl App {
                 // Same dismiss rule as other modals: outside the card, after the opening frame.
                 if self.login_options_frames > 0 && ui.is_mouse_clicked(MouseButton::Left) {
                     let mouse = ui.mouse_pos();
-                    let inside =
-                        mouse[0] >= min[0] && mouse[0] <= max[0] && mouse[1] >= min[1] && mouse[1] <= max[1];
+                    let inside = mouse[0] >= min[0]
+                        && mouse[0] <= max[0]
+                        && mouse[1] >= min[1]
+                        && mouse[1] <= max[1];
                     if !inside {
                         self.close_login_options();
                     }
@@ -1306,7 +1437,14 @@ impl App {
     fn draw_login_card(&mut self, ui: &Ui, size: [f32; 2]) {
         let semi = self.semibold_font;
         let bold = self.bold_font;
-        ui.get_window_draw_list().add_rect_filled_multicolor([0.0, 0.0], size, LOGIN_TOP, LOGIN_TOP, LOGIN_BOTTOM, LOGIN_BOTTOM);
+        ui.get_window_draw_list().add_rect_filled_multicolor(
+            [0.0, 0.0],
+            size,
+            LOGIN_TOP,
+            LOGIN_TOP,
+            LOGIN_BOTTOM,
+            LOGIN_BOTTOM,
+        );
         let register = self.register_mode;
         let card_w = 480.0_f32.min(size[0] - 32.0).max(320.0);
         let pad = 32.0;
@@ -1314,8 +1452,21 @@ impl App {
         let fields = if register { 3.0 } else { 2.0 };
         let subtitle_h = if register { 0.0 } else { 28.0 };
         // Two checkboxes: Show password + Stay signed in (28 each) then gap before the button.
-        let card_h = pad + 30.0 + subtitle_h + 20.0 + fields * field_h + 28.0 + 28.0 + 44.0 + 12.0 + 20.0 + pad;
-        let min = [((size[0] - card_w) * 0.5).floor(), ((size[1] - card_h) * 0.5).max(16.0).floor()];
+        let card_h = pad
+            + 30.0
+            + subtitle_h
+            + 20.0
+            + fields * field_h
+            + 28.0
+            + 28.0
+            + 44.0
+            + 12.0
+            + 20.0
+            + pad;
+        let min = [
+            ((size[0] - card_w) * 0.5).floor(),
+            ((size[1] - card_h) * 0.5).max(16.0).floor(),
+        ];
         let max = [min[0] + card_w, min[1] + card_h];
         skin::shadow(ui, min, max, 5.0);
         skin::rect(ui, min, max, STAGE_BG, 5.0);
@@ -1323,11 +1474,23 @@ impl App {
         let inner_x = min[0] + pad;
         let inner_w = card_w - pad * 2.0;
         let mut y = min[1] + pad;
-        let title = if register { "Create an account" } else { "Welcome back!" };
+        let title = if register {
+            "Create an account"
+        } else {
+            "Welcome back!"
+        };
         skin::text_centered(ui, semi, FONT_XL, center_x, y, TEXT, title);
         y += 30.0;
         if !register {
-            skin::text_centered(ui, None, FONT_MD, center_x, y + 8.0, TEXT_SECONDARY, "We're so excited to see you again!");
+            skin::text_centered(
+                ui,
+                None,
+                FONT_MD,
+                center_x,
+                y + 8.0,
+                TEXT_SECONDARY,
+                "We're so excited to see you again!",
+            );
             y += subtitle_h;
         }
         y += 20.0;
@@ -1335,23 +1498,68 @@ impl App {
         let mut submit = false;
         if register {
             skin::field_label(ui, bold, [inner_x, y], "Display name", false, None);
-            submit |= skin::input(ui, "##display", &mut self.register_display, "", [inner_x, y + 20.0], inner_w, INPUT_H, FONT_MD, false);
+            submit |= skin::input(
+                ui,
+                "##display",
+                &mut self.register_display,
+                "",
+                [inner_x, y + 20.0],
+                inner_w,
+                INPUT_H,
+                FONT_MD,
+                false,
+            );
             y += field_h;
         }
         skin::field_label(ui, bold, [inner_x, y], "Username", true, error.as_deref());
-        submit |= skin::input(ui, "##username", &mut self.username, "", [inner_x, y + 20.0], inner_w, INPUT_H, FONT_MD, false);
+        submit |= skin::input(
+            ui,
+            "##username",
+            &mut self.username,
+            "",
+            [inner_x, y + 20.0],
+            inner_w,
+            INPUT_H,
+            FONT_MD,
+            false,
+        );
         y += field_h;
-        skin::field_label(ui, bold, [inner_x, y], "Password", true, if register { None } else { error.as_deref() });
+        skin::field_label(
+            ui,
+            bold,
+            [inner_x, y],
+            "Password",
+            true,
+            if register { None } else { error.as_deref() },
+        );
         {
             // The password flag hides characters, but it also disables copy.
             let masked = password_is_masked(self.show_password);
             let _block_copy = password_blocks_copy(self.show_password);
             let _mask = masked.then(StarMask::push);
-            submit |= skin::input(ui, "##password", &mut self.password, "", [inner_x, y + 20.0], inner_w, INPUT_H, FONT_MD, false);
+            submit |= skin::input(
+                ui,
+                "##password",
+                &mut self.password,
+                "",
+                [inner_x, y + 20.0],
+                inner_w,
+                INPUT_H,
+                FONT_MD,
+                false,
+            );
         }
         y += 20.0 + INPUT_H + 8.0;
         let check = self.icon("check");
-        skin::checkbox(ui, "show-password", "Show password", &mut self.show_password, [inner_x, y], check, None);
+        skin::checkbox(
+            ui,
+            "show-password",
+            "Show password",
+            &mut self.show_password,
+            [inner_x, y],
+            check,
+            None,
+        );
         y += 28.0;
         skin::checkbox(
             ui,
@@ -1364,12 +1572,29 @@ impl App {
         );
         y += 28.0 + 12.0;
         let label = if register { "Continue" } else { "Log In" };
-        if skin::button(ui, "auth-submit", label, Tone::Brand, [inner_x, y], [inner_w, 44.0], true, semi) {
+        if skin::button(
+            ui,
+            "auth-submit",
+            label,
+            Tone::Brand,
+            [inner_x, y],
+            [inner_w, 44.0],
+            true,
+            semi,
+        ) {
             submit = true;
         }
         y += 44.0 + 12.0;
         if register {
-            if skin::link(ui, "to-login", "Already have an account?", [inner_x, y], None, FONT_SM, LINK) {
+            if skin::link(
+                ui,
+                "to-login",
+                "Already have an account?",
+                [inner_x, y],
+                None,
+                FONT_SM,
+                LINK,
+            ) {
                 self.register_mode = false;
                 self.status.clear();
             }
@@ -1377,7 +1602,15 @@ impl App {
             let lead = "Need an account? ";
             skin::text(ui, None, FONT_SM, [inner_x, y], MUTED, lead);
             let lead_w = skin::text_size(ui, None, FONT_SM, lead)[0];
-            if skin::link(ui, "to-register", "Register", [inner_x + lead_w, y], None, FONT_SM, LINK) {
+            if skin::link(
+                ui,
+                "to-register",
+                "Register",
+                [inner_x + lead_w, y],
+                None,
+                FONT_SM,
+                LINK,
+            ) {
                 self.register_mode = true;
                 self.status.clear();
             }
@@ -1392,13 +1625,15 @@ impl App {
             return;
         }
         let result = if self.register_mode {
-            self.client.register(&self.username, &self.register_display, &self.password)
+            self.client
+                .register(&self.username, &self.register_display, &self.password)
         } else {
             self.client.login(&self.username, &self.password)
         };
         match result {
             Ok(session) => {
-                if let Err(err) = persist_login(&self.data_dir, &session.token, self.stay_signed_in) {
+                if let Err(err) = persist_login(&self.data_dir, &session.token, self.stay_signed_in)
+                {
                     self.status = if self.stay_signed_in {
                         format!("could not remember the login: {err}")
                     } else {
@@ -1422,8 +1657,17 @@ impl App {
         let mentions = self.mentions.len();
         // Top corner control: Lucide home icon → customizable Home landing (BA-81).
         // DMs stay reachable from the sidebar and as a Home section, not as this button's sole destination.
-        let (home_click, _) =
-            self.rail_icon(ui, "home", "", Some("home"), None, home, "Home", RailTone::Server, mentions);
+        let (home_click, _) = self.rail_icon(
+            ui,
+            "home",
+            "",
+            Some("home"),
+            None,
+            home,
+            "Home",
+            RailTone::Server,
+            mentions,
+        );
         if home_click {
             self.place = Place::Home;
             self.home_pane = HomePane::Landing;
@@ -1431,6 +1675,7 @@ impl App {
             self.selected = None;
             self.messages.clear();
             self.server_menu = false;
+            self.shell.bump();
         }
         self.rail_separator(ui);
         let rows = rail_tree_rows(&self.server_rail);
@@ -1448,7 +1693,12 @@ impl App {
         for row in rows {
             match row {
                 RailTreeRow::Folder { id, depth } => {
-                    let Some(folder) = self.server_rail.folders.iter().find(|folder| folder.id == id) else {
+                    let Some(folder) = self
+                        .server_rail
+                        .folders
+                        .iter()
+                        .find(|folder| folder.id == id)
+                    else {
                         continue;
                     };
                     let tip = if folder.collapsed {
@@ -1482,7 +1732,12 @@ impl App {
                     }
                 }
                 RailTreeRow::Server { id, depth } => {
-                    let Some(row) = self.server_rail.servers.iter().find(|row| row.server.id == id) else {
+                    let Some(row) = self
+                        .server_rail
+                        .servers
+                        .iter()
+                        .find(|row| row.server.id == id)
+                    else {
                         continue;
                     };
                     let selected = self.place == Place::Server(id);
@@ -1510,8 +1765,17 @@ impl App {
             }
         }
         let add_origin = ui.cursor_screen_pos();
-        let (add_left, add_right) =
-            self.rail_icon(ui, "add-server", "", Some("plus"), None, false, "Add a Server", RailTone::Add, 0);
+        let (add_left, add_right) = self.rail_icon(
+            ui,
+            "add-server",
+            "",
+            Some("plus"),
+            None,
+            false,
+            "Add a Server",
+            RailTone::Add,
+            0,
+        );
         if add_left {
             self.server_name.clear();
             self.invite_code.clear();
@@ -1530,7 +1794,11 @@ impl App {
         if let Some((folder_id, anchor)) = folder_menu {
             self.open_context_menu(ui, folder_context_menu(folder_id, true), anchor);
         } else if let Some((server_id, folder_id, anchor)) = server_menu {
-            self.open_context_menu(ui, server_rail_item_menu(server_id, folder_id, &folders), anchor);
+            self.open_context_menu(
+                ui,
+                server_rail_item_menu(server_id, folder_id, &folders),
+                anchor,
+            );
         } else if let Some(anchor) = rail_menu {
             self.open_context_menu(ui, server_rail_context_menu(), anchor);
         }
@@ -1581,7 +1849,13 @@ impl App {
             );
         }
         if let Some(name) = icon {
-            skin::image(ui, self.icon(name), [center[0] - 12.0, center[1] - 12.0], 24.0, ink);
+            skin::image(
+                ui,
+                self.icon(name),
+                [center[0] - 12.0, center[1] - 12.0],
+                24.0,
+                ink,
+            );
         } else if !letters.is_empty() {
             let size = match letters.chars().count() {
                 0..=3 => FONT_MD,
@@ -1599,17 +1873,44 @@ impl App {
             );
         }
         if badge > 0 {
-            let label = if badge > 99 { "99+".to_string() } else { badge.to_string() };
+            let label = if badge > 99 {
+                "99+".to_string()
+            } else {
+                badge.to_string()
+            };
             let label_w = skin::text_size(ui, self.bold_font, FONT_XS, &label)[0];
             let badge_w = (label_w + 8.0).max(16.0);
             let badge_min = [max[0] + 4.0 - badge_w, max[1] - 12.0];
             let badge_max = [max[0] + 4.0, max[1] + 4.0];
-            skin::rect(ui, [badge_min[0] - 3.0, badge_min[1] - 3.0], [badge_max[0] + 3.0, badge_max[1] + 3.0], RAIL_BG, 11.0);
+            skin::rect(
+                ui,
+                [badge_min[0] - 3.0, badge_min[1] - 3.0],
+                [badge_max[0] + 3.0, badge_max[1] + 3.0],
+                RAIL_BG,
+                11.0,
+            );
             skin::rect(ui, badge_min, badge_max, RED, 8.0);
-            skin::text_in_row(ui, self.bold_font, FONT_XS, badge_min[0] + (badge_w - label_w) * 0.5, badge_min[1], 16.0, WHITE, &label);
+            skin::text_in_row(
+                ui,
+                self.bold_font,
+                FONT_XS,
+                badge_min[0] + (badge_w - label_w) * 0.5,
+                badge_min[1],
+                16.0,
+                WHITE,
+                &label,
+            );
         }
         if hovered {
-            skin::tooltip(ui, self.semibold_font, FONT_MD, tip, min, max, TooltipSide::Right);
+            skin::tooltip(
+                ui,
+                self.semibold_font,
+                FONT_MD,
+                tip,
+                min,
+                max,
+                TooltipSide::Right,
+            );
         }
         ui.dummy([RAIL_W, RAIL_ICON_GAP]);
         (clicked, right)
@@ -1619,24 +1920,42 @@ impl App {
         let origin = ui.cursor_screen_pos();
         ui.dummy([RAIL_W, RAIL_SEPARATOR_H + RAIL_ICON_GAP]);
         let x = origin[0] + (RAIL_W - RAIL_SEPARATOR_W) * 0.5;
-        skin::rect(ui, [x, origin[1]], [x + RAIL_SEPARATOR_W, origin[1] + RAIL_SEPARATOR_H], RAIL_SEPARATOR, 1.0);
+        skin::rect(
+            ui,
+            [x, origin[1]],
+            [x + RAIL_SEPARATOR_W, origin[1] + RAIL_SEPARATOR_H],
+            RAIL_SEPARATOR,
+            1.0,
+        );
     }
 
     fn draw_sidebar_column(&mut self, ui: &Ui) {
         let connected = self.voice_channel.is_some() || self.call.is_some();
         let connection_h = if connected { VOICE_PANEL_H } else { 0.0 };
-        let list_h = (ui.content_region_avail()[1] - HEADER_H - connection_h - USER_PANEL_H).max(40.0);
+        let list_h =
+            (ui.content_region_avail()[1] - HEADER_H - connection_h - USER_PANEL_H).max(40.0);
         let fixed = WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE;
-        ui.child_window("sidebar-header").size([0.0, HEADER_H]).flags(fixed).build(ui, || self.draw_sidebar_header(ui));
-        ui.child_window("sidebar-list").size([0.0, list_h]).build(ui, || match self.place {
-            Place::Home | Place::Direct(_) => self.draw_dm_list(ui),
-            Place::Server(server_id) => self.draw_channels(ui, server_id),
-        });
+        ui.child_window("sidebar-header")
+            .size([0.0, HEADER_H])
+            .flags(fixed)
+            .build(ui, || self.draw_sidebar_header(ui));
+        ui.child_window("sidebar-list")
+            .size([0.0, list_h])
+            .build(ui, || match self.place {
+                Place::Home | Place::Direct(_) => self.draw_dm_list(ui),
+                Place::Server(server_id) => self.draw_channels(ui, server_id),
+            });
         let _panel = ui.push_style_color(StyleColor::ChildBg, PANEL_BG);
         if connected {
-            ui.child_window("sidebar-voice").size([0.0, connection_h]).flags(fixed).build(ui, || self.draw_connection(ui));
+            ui.child_window("sidebar-voice")
+                .size([0.0, connection_h])
+                .flags(fixed)
+                .build(ui, || self.draw_connection(ui));
         }
-        ui.child_window("sidebar-user").size([0.0, USER_PANEL_H]).flags(fixed).build(ui, || self.draw_user_bar(ui));
+        ui.child_window("sidebar-user")
+            .size([0.0, USER_PANEL_H])
+            .flags(fixed)
+            .build(ui, || self.draw_user_bar(ui));
     }
 
     fn draw_sidebar_header(&mut self, ui: &Ui) {
@@ -1655,16 +1974,56 @@ impl App {
                     self.server_menu = !self.server_menu;
                 }
                 if ui.is_item_hovered() || self.server_menu {
-                    skin::rect(ui, origin, [origin[0] + width, origin[1] + HEADER_H - 1.0], ROW_HOVER, 0.0);
+                    skin::rect(
+                        ui,
+                        origin,
+                        [origin[0] + width, origin[1] + HEADER_H - 1.0],
+                        ROW_HOVER,
+                        0.0,
+                    );
                 }
-                let shown = skin::ellipsize(ui, self.semibold_font, FONT_MD, &name, width - 16.0 - 18.0 - 16.0 - 8.0);
-                skin::text_in_row(ui, self.semibold_font, FONT_MD, origin[0] + 16.0, origin[1], HEADER_H, TEXT, &shown);
-                let chevron = if self.server_menu { "x" } else { "chevron-down" };
-                skin::image(ui, self.icon(chevron), [origin[0] + width - 16.0 - 18.0, origin[1] + 15.0], 18.0, TEXT_NORMAL);
+                let shown = skin::ellipsize(
+                    ui,
+                    self.semibold_font,
+                    FONT_MD,
+                    &name,
+                    width - 16.0 - 18.0 - 16.0 - 8.0,
+                );
+                skin::text_in_row(
+                    ui,
+                    self.semibold_font,
+                    FONT_MD,
+                    origin[0] + 16.0,
+                    origin[1],
+                    HEADER_H,
+                    TEXT,
+                    &shown,
+                );
+                let chevron = if self.server_menu {
+                    "x"
+                } else {
+                    "chevron-down"
+                };
+                skin::image(
+                    ui,
+                    self.icon(chevron),
+                    [origin[0] + width - 16.0 - 18.0, origin[1] + 15.0],
+                    18.0,
+                    TEXT_NORMAL,
+                );
             }
             Place::Home | Place::Direct(_) => {
                 ui.dummy([width, HEADER_H]);
-                skin::text_in_row(ui, self.semibold_font, FONT_MD, origin[0] + 16.0, origin[1], HEADER_H, TEXT, "Direct Messages");
+                skin::text_in_row(
+                    ui,
+                    self.semibold_font,
+                    FONT_MD,
+                    origin[0] + 16.0,
+                    origin[1],
+                    HEADER_H,
+                    TEXT,
+                    "Direct Messages",
+                );
             }
         }
         header_rule(ui);
@@ -1718,30 +2077,75 @@ impl App {
                 let item_w = width - MENU_PAD * 2.0;
                 let mut y = pos[1] + MENU_PAD;
                 if can_invite {
-                    if skin::menu_item(ui, "menu-invite", "Invite People", self.icon("user-plus"), MenuTone::Brand, [x, y], item_w, semi) {
+                    if skin::menu_item(
+                        ui,
+                        "menu-invite",
+                        "Invite People",
+                        self.icon("user-plus"),
+                        MenuTone::Brand,
+                        [x, y],
+                        item_w,
+                        semi,
+                    ) {
                         action = Some(Modal::Invite);
                     }
                     y += MENU_ITEM_H + 2.0;
                 }
                 if can_channels {
-                    if skin::menu_item(ui, "menu-channel", "Create Channel", self.icon("circle-plus"), MenuTone::Normal, [x, y], item_w, semi) {
+                    if skin::menu_item(
+                        ui,
+                        "menu-channel",
+                        "Create Channel",
+                        self.icon("circle-plus"),
+                        MenuTone::Normal,
+                        [x, y],
+                        item_w,
+                        semi,
+                    ) {
                         action = Some(Modal::CreateChannel);
                     }
                     y += MENU_ITEM_H + 2.0;
-                    if skin::menu_item(ui, "menu-category", "Create Category", self.icon("folder-plus"), MenuTone::Normal, [x, y], item_w, semi) {
+                    if skin::menu_item(
+                        ui,
+                        "menu-category",
+                        "Create Category",
+                        self.icon("folder-plus"),
+                        MenuTone::Normal,
+                        [x, y],
+                        item_w,
+                        semi,
+                    ) {
                         action = Some(Modal::CreateCategory);
                     }
                     y += MENU_ITEM_H + 2.0;
                 }
                 if can_roles {
-                    if skin::menu_item(ui, "menu-roles", "Server Roles", self.icon("users"), MenuTone::Normal, [x, y], item_w, semi) {
+                    if skin::menu_item(
+                        ui,
+                        "menu-roles",
+                        "Server Roles",
+                        self.icon("users"),
+                        MenuTone::Normal,
+                        [x, y],
+                        item_w,
+                        semi,
+                    ) {
                         action = Some(Modal::Roles);
                     }
                     y += MENU_ITEM_H + 2.0;
                 }
                 skin::menu_separator(ui, [x, y], item_w);
                 y += 9.0;
-                if skin::menu_item(ui, "menu-nickname", "Change Nickname", self.icon("pencil"), MenuTone::Normal, [x, y], item_w, semi) {
+                if skin::menu_item(
+                    ui,
+                    "menu-nickname",
+                    "Change Nickname",
+                    self.icon("pencil"),
+                    MenuTone::Normal,
+                    [x, y],
+                    item_w,
+                    semi,
+                ) {
                     action = Some(Modal::Nickname);
                 }
             });
@@ -1763,7 +2167,11 @@ impl App {
                 }
                 Modal::Nickname => {
                     let me = self.account.as_ref().map(|account| account.id);
-                    if let Some(member) = self.members.iter().find(|member| Some(member.user_id) == me) {
+                    if let Some(member) = self
+                        .members
+                        .iter()
+                        .find(|member| Some(member.user_id) == me)
+                    {
                         self.nickname = member.nickname.clone().unwrap_or_default();
                     }
                     self.open_modal(Modal::Nickname);
@@ -1775,8 +2183,12 @@ impl App {
         }
         if ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
             let mouse = ui.mouse_pos();
-            let in_menu = mouse[0] >= pos[0] && mouse[0] <= pos[0] + width && mouse[1] >= pos[1] && mouse[1] <= pos[1] + height;
-            let in_header = mouse[0] >= RAIL_W && mouse[0] <= RAIL_W + SIDEBAR_W && mouse[1] <= HEADER_H;
+            let in_menu = mouse[0] >= pos[0]
+                && mouse[0] <= pos[0] + width
+                && mouse[1] >= pos[1]
+                && mouse[1] <= pos[1] + height;
+            let in_header =
+                mouse[0] >= RAIL_W && mouse[0] <= RAIL_W + SIDEBAR_W && mouse[1] <= HEADER_H;
             if !in_menu && !in_header {
                 self.server_menu = false;
             }
@@ -1812,7 +2224,10 @@ impl App {
             "ctx-call" => "phone",
             "ctx-add-friend" | "ctx-invite" => "user-plus",
             "ctx-copy-channel-id" | "ctx-copy-msg-id" => "hash",
-            "ctx-create-folder" | "ctx-create-subfolder" | "ctx-move-folder" | "ctx-remove-folder" => "folder",
+            "ctx-create-folder"
+            | "ctx-create-subfolder"
+            | "ctx-move-folder"
+            | "ctx-remove-folder" => "folder",
             "ctx-recolor-folder" => "circle-plus",
             "ctx-add-plugin" => "puzzle",
             _ => return None,
@@ -1893,10 +2308,14 @@ impl App {
         } else {
             0
         };
-        if frames > 1 && (ui.is_mouse_clicked(MouseButton::Left) || ui.is_mouse_clicked(MouseButton::Right)) {
+        if frames > 1
+            && (ui.is_mouse_clicked(MouseButton::Left) || ui.is_mouse_clicked(MouseButton::Right))
+        {
             let mouse = ui.mouse_pos();
-            let in_menu =
-                mouse[0] >= pos[0] && mouse[0] <= pos[0] + width && mouse[1] >= pos[1] && mouse[1] <= pos[1] + height;
+            let in_menu = mouse[0] >= pos[0]
+                && mouse[0] <= pos[0] + width
+                && mouse[1] >= pos[1]
+                && mouse[1] <= pos[1] + height;
             if !in_menu {
                 self.context_menu = None;
             }
@@ -1911,7 +2330,11 @@ impl App {
                 self.reply_draft.clear();
             }
             ContextMenuAction::Edit { message_id } => {
-                if let Some(message) = self.messages.iter().find(|message| message.id == message_id) {
+                if let Some(message) = self
+                    .messages
+                    .iter()
+                    .find(|message| message.id == message_id)
+                {
                     self.reply_to = None;
                     self.reply_draft.clear();
                     self.editing = Some(message_id);
@@ -1946,7 +2369,10 @@ impl App {
                 }
             }
             ContextMenuAction::AddFriend { username } => {
-                if self.note(self.client.send_friend_request(&username)).is_some() {
+                if self
+                    .note(self.client.send_friend_request(&username))
+                    .is_some()
+                {
                     self.refresh_shell();
                 }
             }
@@ -1969,11 +2395,17 @@ impl App {
                 self.open_folder_modal(FolderModalMode::Recolor, Some(folder_id), None);
             }
             ContextMenuAction::DeleteServerFolder { folder_id } => {
-                if self.note(self.client.delete_server_folder(folder_id)).is_some() {
+                if self
+                    .note(self.client.delete_server_folder(folder_id))
+                    .is_some()
+                {
                     self.refresh_shell();
                 }
             }
-            ContextMenuAction::MoveServerToFolder { server_id, folder_id } => {
+            ContextMenuAction::MoveServerToFolder {
+                server_id,
+                folder_id,
+            } => {
                 if self
                     .note(self.client.move_server_to_folder(server_id, folder_id, 0))
                     .is_some()
@@ -1996,7 +2428,11 @@ impl App {
         self.installed_plugins = self
             .client
             .list_plugins(server_id)
-            .map(|rows| rows.into_iter().map(|row| (row.id, row.name, row.version)).collect())
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| (row.id, row.name, row.version))
+                    .collect()
+            })
             .unwrap_or_default();
         self.open_modal(Modal::AddPlugin);
     }
@@ -2031,16 +2467,25 @@ impl App {
         let Some(server_id) = self.plugin_server else {
             return;
         };
-        let Some(plugin) = self.local_plugins.iter().find(|plugin| plugin.id == id && plugin.failed.is_none()) else {
+        let Some(plugin) = self
+            .local_plugins
+            .iter()
+            .find(|plugin| plugin.id == id && plugin.failed.is_none())
+        else {
             return;
         };
         let zip = plugin.zip.clone();
         let name = plugin.name.clone();
         let version = plugin.version.clone();
         let usage = crate::plugins::plugin_usage(&plugin.id);
-        if self.note(self.client.install_plugin(server_id, &zip)).is_some() {
-            self.installed_plugins.retain(|(installed_id, _, _)| installed_id != id);
-            self.installed_plugins.push((id.to_string(), name.clone(), version));
+        if self
+            .note(self.client.install_plugin(server_id, &zip))
+            .is_some()
+        {
+            self.installed_plugins
+                .retain(|(installed_id, _, _)| installed_id != id);
+            self.installed_plugins
+                .push((id.to_string(), name.clone(), version));
             self.plugin_notice = format!("{name} is on this server. {usage} Remove takes it off.");
             self.status = self.plugin_notice.clone();
         }
@@ -2056,14 +2501,25 @@ impl App {
             .find(|(installed_id, _, _)| installed_id == id)
             .map(|(_, name, _)| name.clone())
             .unwrap_or_else(|| id.to_string());
-        if self.note(self.client.remove_plugin(server_id, id)).is_some() {
-            self.installed_plugins.retain(|(installed_id, _, _)| installed_id != id);
-            self.plugin_notice = format!("{name} was removed from this server. New messages stay as you wrote them.");
+        if self
+            .note(self.client.remove_plugin(server_id, id))
+            .is_some()
+        {
+            self.installed_plugins
+                .retain(|(installed_id, _, _)| installed_id != id);
+            self.plugin_notice = format!(
+                "{name} was removed from this server. New messages stay as you wrote them."
+            );
             self.status = self.plugin_notice.clone();
         }
     }
 
-    fn open_folder_modal(&mut self, mode: FolderModalMode, folder_id: Option<i64>, parent_id: Option<i64>) {
+    fn open_folder_modal(
+        &mut self,
+        mode: FolderModalMode,
+        folder_id: Option<i64>,
+        parent_id: Option<i64>,
+    ) {
         self.folder_mode = mode;
         self.folder_error.clear();
         self.editing_folder = folder_id;
@@ -2071,7 +2527,12 @@ impl App {
         self.folder_name.clear();
         self.folder_color.clear();
         if let Some(id) = folder_id {
-            if let Some(folder) = self.server_rail.folders.iter().find(|folder| folder.id == id) {
+            if let Some(folder) = self
+                .server_rail
+                .folders
+                .iter()
+                .find(|folder| folder.id == id)
+            {
                 self.folder_name = folder.name.clone();
                 self.folder_color = if folder.color == 0 {
                     String::new()
@@ -2085,7 +2546,12 @@ impl App {
     }
 
     fn toggle_rail_folder(&mut self, folder_id: i64) {
-        let Some(folder) = self.server_rail.folders.iter().find(|folder| folder.id == folder_id) else {
+        let Some(folder) = self
+            .server_rail
+            .folders
+            .iter()
+            .find(|folder| folder.id == folder_id)
+        else {
             return;
         };
         let collapsed = !folder.collapsed;
@@ -2093,7 +2559,10 @@ impl App {
             collapsed: Some(collapsed),
             ..ServerFolderPatch::default()
         };
-        if self.note(self.client.update_server_folder(folder_id, patch)).is_some() {
+        if self
+            .note(self.client.update_server_folder(folder_id, patch))
+            .is_some()
+        {
             self.refresh_shell();
         }
     }
@@ -2115,7 +2584,10 @@ impl App {
                     return;
                 }
                 if self
-                    .note(self.client.create_server_folder(&name, self.folder_parent, color))
+                    .note(
+                        self.client
+                            .create_server_folder(&name, self.folder_parent, color),
+                    )
                     .is_some()
                 {
                     self.modal = None;
@@ -2138,7 +2610,10 @@ impl App {
                     },
                     FolderModalMode::Create => unreachable!(),
                 };
-                if self.note(self.client.update_server_folder(folder_id, patch)).is_some() {
+                if self
+                    .note(self.client.update_server_folder(folder_id, patch))
+                    .is_some()
+                {
                     self.modal = None;
                     self.refresh_shell();
                 }
@@ -2166,7 +2641,12 @@ impl App {
     }
 
     fn open_dm_for_user(&mut self, user_id: i64) -> Option<i64> {
-        if let Some(chat) = self.dms.iter().find(|chat| chat.peer_id == user_id).cloned() {
+        if let Some(chat) = self
+            .dms
+            .iter()
+            .find(|chat| chat.peer_id == user_id)
+            .cloned()
+        {
             self.open_dm(chat.id);
             return Some(chat.id);
         }
@@ -2199,12 +2679,17 @@ impl App {
             self.home_editing = false;
             self.selected = None;
             self.messages.clear();
+            self.shell.bump();
         }
         list_label(ui, "Direct Messages", self.semibold_font);
         let dms = self.dms.clone();
         for chat in dms {
             let selected = self.place == Place::Direct(chat.id);
-            let presence = self.presence.get(&chat.peer_id).map(|p| p.state).unwrap_or(Presence::Offline);
+            let presence = self
+                .presence
+                .get(&chat.peer_id)
+                .map(|p| p.state)
+                .unwrap_or(Presence::Offline);
             let (left, right) = self.dm_row(
                 ui,
                 &format!("dm{}", chat.id),
@@ -2221,7 +2706,13 @@ impl App {
                 let mine = self.account.as_ref().map(|account| account.id);
                 self.open_context_menu(
                     ui,
-                    member_context_menu(chat.peer_id, &chat.peer_username, mine, self.is_friend(chat.peer_id), false),
+                    member_context_menu(
+                        chat.peer_id,
+                        &chat.peer_username,
+                        mine,
+                        self.is_friend(chat.peer_id),
+                        false,
+                    ),
                     mouse,
                 );
             }
@@ -2231,7 +2722,8 @@ impl App {
             let mentions = self.mentions.clone();
             for mention in mentions {
                 let label = format!("{}: {}", mention.from_username, mention.body);
-                let (left, _) = self.channel_row(ui, &format!("men{}", mention.id), None, &label, false);
+                let (left, _) =
+                    self.channel_row(ui, &format!("men{}", mention.id), None, &label, false);
                 if left {
                     self.open_mention(&mention);
                 }
@@ -2241,7 +2733,15 @@ impl App {
 
     /// A 42 px direct-message row. `user` is None for the Friends row, which shows the people icon.
     /// Returns `(left_click, right_click)`.
-    fn dm_row(&self, ui: &Ui, id: &str, user: Option<i64>, label: &str, presence: Option<Presence>, selected: bool) -> (bool, bool) {
+    fn dm_row(
+        &self,
+        ui: &Ui,
+        id: &str,
+        user: Option<i64>,
+        label: &str,
+        presence: Option<Presence>,
+        selected: bool,
+    ) -> (bool, bool) {
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
         let row_h = MEMBER_ROW_H;
@@ -2278,10 +2778,22 @@ impl App {
                 let avatar = self.avatars.get(&user_id).map(|shot| shot.texture);
                 paint_avatar(ui, avatar, avatar_center, 16.0, &initials(label), None);
                 if let Some(presence) = presence {
-                    paint_status_dot(ui, avatar_center, 16.0, presence, fill.unwrap_or(sidebar_bg));
+                    paint_status_dot(
+                        ui,
+                        avatar_center,
+                        16.0,
+                        presence,
+                        fill.unwrap_or(sidebar_bg),
+                    );
                 }
             }
-            None => skin::image(ui, self.icon("users"), [avatar_center[0] - 12.0, avatar_center[1] - 12.0], 24.0, color),
+            None => skin::image(
+                ui,
+                self.icon("users"),
+                [avatar_center[0] - 12.0, avatar_center[1] - 12.0],
+                24.0,
+                color,
+            ),
         }
         let text_x = min[0] + 8.0 + 32.0 + 12.0;
         let shown = skin::ellipsize(ui, None, FONT_MD, label, max[0] - 8.0 - text_x);
@@ -2290,7 +2802,11 @@ impl App {
     }
 
     fn draw_user_bar(&mut self, ui: &Ui) {
-        let username = self.account.as_ref().map(|account| account.username.clone()).unwrap_or_default();
+        let username = self
+            .account
+            .as_ref()
+            .map(|account| account.username.clone())
+            .unwrap_or_default();
         let account_id = self.account.as_ref().map(|account| account.id);
         let presence = account_id
             .and_then(|id| self.presence.get(&id).map(|p| p.state))
@@ -2305,16 +2821,34 @@ impl App {
             }
         }
         let avatar = account_id.and_then(|id| self.avatars.get(&id).map(|shot| shot.texture));
-        paint_avatar(ui, avatar, center, 16.0, &initials(&self.display_name), None);
+        paint_avatar(
+            ui,
+            avatar,
+            center,
+            16.0,
+            &initials(&self.display_name),
+            None,
+        );
         paint_status_dot(ui, center, 16.0, presence, PANEL_BG);
         let buttons_x = origin[0] + width - 8.0 - 32.0 * 3.0;
         let name_x = origin[0] + 8.0 + 32.0 + 8.0;
         let name_w = (buttons_x - 4.0 - name_x).max(16.0);
         let name = skin::ellipsize(ui, self.semibold_font, FONT_SM, &self.display_name, name_w);
-        skin::text(ui, self.semibold_font, FONT_SM, [name_x, origin[1] + 8.0], TEXT, &name);
+        skin::text(
+            ui,
+            self.semibold_font,
+            FONT_SM,
+            [name_x, origin[1] + 8.0],
+            TEXT,
+            &name,
+        );
         let custom = account_id.and_then(|id| {
             self.presence.get(&id).and_then(|info| {
-                info.custom_status.as_deref().map(str::trim).filter(|text| !text.is_empty()).map(str::to_string)
+                info.custom_status
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_string)
             })
         });
         let (second, second_color) = match custom {
@@ -2322,22 +2856,65 @@ impl App {
             None => (username, TEXT_SECONDARY),
         };
         let handle = skin::ellipsize(ui, None, FONT_XS, &second, name_w);
-        skin::text(ui, None, FONT_XS, [name_x, origin[1] + 27.0], second_color, &handle);
+        skin::text(
+            ui,
+            None,
+            FONT_XS,
+            [name_x, origin[1] + 27.0],
+            second_color,
+            &handle,
+        );
         let y = origin[1] + (USER_PANEL_H - 32.0) * 0.5;
         let muted = self.mute.muted();
-        let (mic_tint, mic_icon) = if muted { (RED, "mic-off") } else { (TEXT_SECONDARY, "mic") };
+        let (mic_tint, mic_icon) = if muted {
+            (RED, "mic-off")
+        } else {
+            (TEXT_SECONDARY, "mic")
+        };
         let mic_hover = if muted { RED } else { TEXT_NORMAL };
-        if skin::icon_button(ui, "mute", self.icon(mic_icon), [buttons_x, y], 32.0, 20.0, mic_tint, mic_hover, Some(ICON_HOVER_BG)) {
+        if skin::icon_button(
+            ui,
+            "mute",
+            self.icon(mic_icon),
+            [buttons_x, y],
+            32.0,
+            20.0,
+            mic_tint,
+            mic_hover,
+            Some(ICON_HOVER_BG),
+        ) {
             self.mute.set_muted(!muted);
         }
-        skin::item_tooltip(ui, self.semibold_font, if muted { "Unmute" } else { "Mute" });
+        skin::item_tooltip(
+            ui,
+            self.semibold_font,
+            if muted { "Unmute" } else { "Mute" },
+        );
         let deafened = self.mute.deafened();
-        let (deaf_tint, deaf_icon) = if deafened { (RED, "headphone-off") } else { (TEXT_SECONDARY, "headphones") };
+        let (deaf_tint, deaf_icon) = if deafened {
+            (RED, "headphone-off")
+        } else {
+            (TEXT_SECONDARY, "headphones")
+        };
         let deaf_hover = if deafened { RED } else { TEXT_NORMAL };
-        if skin::icon_button(ui, "deafen", self.icon(deaf_icon), [buttons_x + 32.0, y], 32.0, 20.0, deaf_tint, deaf_hover, Some(ICON_HOVER_BG)) {
+        if skin::icon_button(
+            ui,
+            "deafen",
+            self.icon(deaf_icon),
+            [buttons_x + 32.0, y],
+            32.0,
+            20.0,
+            deaf_tint,
+            deaf_hover,
+            Some(ICON_HOVER_BG),
+        ) {
             self.mute.set_deafened(!deafened);
         }
-        skin::item_tooltip(ui, self.semibold_font, if deafened { "Undeafen" } else { "Deafen" });
+        skin::item_tooltip(
+            ui,
+            self.semibold_font,
+            if deafened { "Undeafen" } else { "Deafen" },
+        );
         if skin::icon_button(
             ui,
             "open-settings",
@@ -2359,23 +2936,46 @@ impl App {
         let origin = ui.window_pos();
         let width = ui.window_size()[0];
         let semi = self.semibold_font;
-        skin::line_h(ui, origin[0] + 8.0, origin[0] + width - 8.0, origin[1] + VOICE_PANEL_H - 1.0, LIST_DIVIDER);
+        skin::line_h(
+            ui,
+            origin[0] + 8.0,
+            origin[0] + width - 8.0,
+            origin[1] + VOICE_PANEL_H - 1.0,
+            LIST_DIVIDER,
+        );
         let me = self.account.as_ref().map(|account| account.id);
         let call = self.call.clone();
         let (title, title_color, subtitle) = if let Some(channel_id) = self.voice_channel {
             let channel = self.find_channel(channel_id);
-            let name = channel.as_ref().map(|channel| channel.name.clone()).unwrap_or_else(|| format!("channel {channel_id}"));
+            let name = channel
+                .as_ref()
+                .map(|channel| channel.name.clone())
+                .unwrap_or_else(|| format!("channel {channel_id}"));
             let server = channel
                 .as_ref()
-                .and_then(|channel| self.servers.iter().find(|server| server.id == channel.server_id))
+                .and_then(|channel| {
+                    self.servers
+                        .iter()
+                        .find(|server| server.id == channel.server_id)
+                })
                 .map(|server| server.name.clone())
                 .unwrap_or_default();
-            let subtitle = if server.is_empty() { name } else { format!("{name} / {server}") };
+            let subtitle = if server.is_empty() {
+                name
+            } else {
+                format!("{name} / {server}")
+            };
             ("Voice Connected", GREEN, subtitle)
         } else if let Some(call) = &call {
-            let peer = if Some(call.caller) == me { call.callee } else { call.caller };
+            let peer = if Some(call.caller) == me {
+                call.callee
+            } else {
+                call.caller
+            };
             match call.phase {
-                CallPhase::Ringing if Some(call.callee) == me => ("Incoming Call", GREEN, self.name_of(peer)),
+                CallPhase::Ringing if Some(call.callee) == me => {
+                    ("Incoming Call", GREEN, self.name_of(peer))
+                }
                 CallPhase::Ringing => ("Calling…", YELLOW, self.name_of(peer)),
                 CallPhase::Active => ("Voice Connected", GREEN, self.name_of(peer)),
             }
@@ -2383,26 +2983,53 @@ impl App {
             return;
         };
         // One plain device error replaces the place name, like Discord. Settings still lists every error.
-        let media_errors = self.media.as_ref().map(|media| media.errors()).unwrap_or_default();
+        let media_errors = self
+            .media
+            .as_ref()
+            .map(|media| media.errors())
+            .unwrap_or_default();
         let voice_errors = voice_bar_error_lines(&media_errors);
         let error = media_errors.first().cloned();
-        skin::image(ui, self.icon("signal"), [origin[0] + 8.0, origin[1] + 12.0], 16.0, title_color);
-        skin::text(ui, semi, FONT_SM, [origin[0] + 8.0 + 16.0 + 6.0, origin[1] + 10.0], title_color, title);
+        skin::image(
+            ui,
+            self.icon("signal"),
+            [origin[0] + 8.0, origin[1] + 12.0],
+            16.0,
+            title_color,
+        );
+        skin::text(
+            ui,
+            semi,
+            FONT_SM,
+            [origin[0] + 8.0 + 16.0 + 6.0, origin[1] + 10.0],
+            title_color,
+            title,
+        );
         let sub_w = width - 8.0 - 8.0 - 40.0;
         let (sub_text, sub_color) = match voice_errors.first() {
             Some(short) => ((*short).to_string(), RED),
             None => (subtitle, TEXT_SECONDARY),
         };
         let sub_text = skin::ellipsize(ui, None, FONT_XS, &sub_text, sub_w);
-        skin::text(ui, None, FONT_XS, [origin[0] + 8.0, origin[1] + 30.0], sub_color, &sub_text);
+        skin::text(
+            ui,
+            None,
+            FONT_XS,
+            [origin[0] + 8.0, origin[1] + 30.0],
+            sub_color,
+            &sub_text,
+        );
         if let Some(error) = &error {
             ui.set_cursor_screen_pos([origin[0] + 8.0, origin[1] + 28.0]);
             ui.invisible_button("connection-error", [sub_w, 16.0]);
-            let detail = skin::wrap_lines(ui, None, FONT_SM, device_error_text(error), 360.0).join("\n");
+            let detail =
+                skin::wrap_lines(ui, None, FONT_SM, device_error_text(error), 360.0).join("\n");
             skin::item_tooltip(ui, None, &detail);
         }
         let end_tip = match &call {
-            Some(call) if call.phase == CallPhase::Ringing && Some(call.callee) != me => "Cancel Call",
+            Some(call) if call.phase == CallPhase::Ringing && Some(call.callee) != me => {
+                "Cancel Call"
+            }
             Some(call) if call.phase == CallPhase::Ringing => "Decline",
             _ => "Disconnect",
         };
@@ -2426,10 +3053,28 @@ impl App {
             if call.phase == CallPhase::Ringing {
                 if Some(call.callee) == me {
                     let half = (row_w - 8.0) * 0.5;
-                    if skin::button(ui, "accept-call", "Accept", Tone::Green, [origin[0] + 8.0, row_y], [half, 32.0], true, semi) {
+                    if skin::button(
+                        ui,
+                        "accept-call",
+                        "Accept",
+                        Tone::Green,
+                        [origin[0] + 8.0, row_y],
+                        [half, 32.0],
+                        true,
+                        semi,
+                    ) {
                         self.accept_call(call.dm_id);
                     }
-                    if skin::button(ui, "decline-call", "Decline", Tone::Danger, [origin[0] + 16.0 + half, row_y], [half, 32.0], true, semi) {
+                    if skin::button(
+                        ui,
+                        "decline-call",
+                        "Decline",
+                        Tone::Danger,
+                        [origin[0] + 16.0 + half, row_y],
+                        [half, 32.0],
+                        true,
+                        semi,
+                    ) {
                         if self.note(self.client.decline_call(call.dm_id)).is_some() {
                             self.end_media_place();
                         }
@@ -2449,11 +3094,21 @@ impl App {
         if self.panel_button(ui, "camera-toggle", "video", [x, row_y], slot_w, camera) {
             self.camera = !self.camera;
         }
-        skin::item_tooltip(ui, semi, if camera { "Turn Off Camera" } else { "Turn On Camera" });
+        skin::item_tooltip(
+            ui,
+            semi,
+            if camera {
+                "Turn Off Camera"
+            } else {
+                "Turn On Camera"
+            },
+        );
         x += slot_w + 8.0;
         let live = self.share.is_live();
-        let share_clicked = self.panel_button(ui, "screen-toggle", "monitor", [x, row_y], slot_w, live);
-        let share_custom = ui.is_item_clicked_with_button(dear_imgui_rs::MouseButton::Right) && ui.io().key_shift();
+        let share_clicked =
+            self.panel_button(ui, "screen-toggle", "monitor", [x, row_y], slot_w, live);
+        let share_custom = ui.is_item_clicked_with_button(dear_imgui_rs::MouseButton::Right)
+            && ui.io().key_shift();
         if share_clicked || share_custom {
             self.on_share_click(share_clicked, share_custom);
         }
@@ -2463,17 +3118,40 @@ impl App {
             ui.set_cursor_screen_pos([x, row_y]);
             ui.invisible_button("talk", [slot_w, 32.0]);
             self.talk_held = ui.is_item_active();
-            let fill = if self.talk_held { GREEN_BUTTON } else if ui.is_item_hovered() { CONTROL_HOVER } else { CONTROL_BG };
+            let fill = if self.talk_held {
+                GREEN_BUTTON
+            } else if ui.is_item_hovered() {
+                CONTROL_HOVER
+            } else {
+                CONTROL_BG
+            };
             skin::rect(ui, [x, row_y], [x + slot_w, row_y + 32.0], fill, 4.0);
             let label_w = skin::text_size(ui, semi, FONT_SM, "Talk")[0];
-            skin::text_in_row(ui, semi, FONT_SM, x + (slot_w - label_w) * 0.5, row_y, 32.0, TEXT_NORMAL, "Talk");
+            skin::text_in_row(
+                ui,
+                semi,
+                FONT_SM,
+                x + (slot_w - label_w) * 0.5,
+                row_y,
+                32.0,
+                TEXT_NORMAL,
+                "Talk",
+            );
         } else {
             self.talk_held = false;
         }
         self.video_popout = false;
     }
 
-    fn panel_button(&self, ui: &Ui, id: &str, icon: &str, min: [f32; 2], width: f32, active: bool) -> bool {
+    fn panel_button(
+        &self,
+        ui: &Ui,
+        id: &str,
+        icon: &str,
+        min: [f32; 2],
+        width: f32,
+        active: bool,
+    ) -> bool {
         ui.set_cursor_screen_pos(min);
         let clicked = ui.invisible_button(id, [width, 32.0]);
         let fill = if active {
@@ -2485,7 +3163,13 @@ impl App {
         };
         skin::rect(ui, min, [min[0] + width, min[1] + 32.0], fill, 4.0);
         let tint = if active { WHITE } else { TEXT_NORMAL };
-        skin::image(ui, self.icon(icon), [min[0] + (width - 20.0) * 0.5, min[1] + 6.0], 20.0, tint);
+        skin::image(
+            ui,
+            self.icon(icon),
+            [min[0] + (width - 20.0) * 0.5, min[1] + 6.0],
+            20.0,
+            tint,
+        );
         clicked
     }
 
@@ -2497,7 +3181,9 @@ impl App {
             return;
         }
         let me = self.account.as_ref().map(|account| account.id);
-        let Some(call) = self.call.clone() else { return };
+        let Some(call) = self.call.clone() else {
+            return;
+        };
         let ended = if call.phase == CallPhase::Ringing && Some(call.callee) == me {
             self.note(self.client.decline_call(call.dm_id)).is_some()
         } else {
@@ -2556,7 +3242,11 @@ impl App {
                 skin::image(ui, self.icon("home"), [x, mid - 12.0], 24.0, CHANNEL_ICON);
                 x += 24.0 + 8.0;
                 skin::text_in_row(ui, semi, FONT_MD, x, origin[1], HEADER_H, TEXT, "Home");
-                let edit_label = if self.home_editing { "Done" } else { "Customize" };
+                let edit_label = if self.home_editing {
+                    "Done"
+                } else {
+                    "Customize"
+                };
                 let edit_w = skin::text_size(ui, semi, FONT_SM, edit_label)[0] + 24.0;
                 let edit_x = origin[0] + width - 16.0 - edit_w;
                 if skin::button(
@@ -2576,11 +3266,31 @@ impl App {
                 if let Some(chat) = self.dms.iter().find(|chat| chat.id == dm_id).cloned() {
                     let center = [x + 12.0, mid];
                     let avatar = self.avatars.get(&chat.peer_id).map(|shot| shot.texture);
-                    paint_avatar(ui, avatar, center, 12.0, &initials(&chat.peer_display_name), None);
-                    let presence = self.presence.get(&chat.peer_id).map(|p| p.state).unwrap_or(Presence::Offline);
+                    paint_avatar(
+                        ui,
+                        avatar,
+                        center,
+                        12.0,
+                        &initials(&chat.peer_display_name),
+                        None,
+                    );
+                    let presence = self
+                        .presence
+                        .get(&chat.peer_id)
+                        .map(|p| p.state)
+                        .unwrap_or(Presence::Offline);
                     paint_status_dot(ui, center, 12.0, presence, STAGE_BG);
                     x += 24.0 + 8.0;
-                    skin::text_in_row(ui, semi, FONT_MD, x, origin[1], HEADER_H, TEXT, &chat.peer_display_name);
+                    skin::text_in_row(
+                        ui,
+                        semi,
+                        FONT_MD,
+                        x,
+                        origin[1],
+                        HEADER_H,
+                        TEXT,
+                        &chat.peer_display_name,
+                    );
                 }
             }
             Place::Server(_) => {
@@ -2603,7 +3313,17 @@ impl App {
             right -= HEADER_ICON;
             let open = self.members_open;
             let tint = if open { TEXT } else { TEXT_SECONDARY };
-            if skin::icon_button(ui, "members-toggle", self.icon("users"), [right, mid - 12.0], HEADER_ICON, HEADER_ICON, tint, TEXT_NORMAL, None) {
+            if skin::icon_button(
+                ui,
+                "members-toggle",
+                self.icon("users"),
+                [right, mid - 12.0],
+                HEADER_ICON,
+                HEADER_ICON,
+                tint,
+                TEXT_NORMAL,
+                None,
+            ) {
                 self.members_open = !self.members_open;
             }
             let tip = match (self.place, open) {
@@ -2618,7 +3338,17 @@ impl App {
         if let Place::Direct(dm_id) = self.place {
             if self.call.is_none() {
                 right -= HEADER_ICON;
-                if skin::icon_button(ui, "start-call", self.icon("phone"), [right, mid - 12.0], HEADER_ICON, HEADER_ICON, TEXT_SECONDARY, TEXT_NORMAL, None) {
+                if skin::icon_button(
+                    ui,
+                    "start-call",
+                    self.icon("phone"),
+                    [right, mid - 12.0],
+                    HEADER_ICON,
+                    HEADER_ICON,
+                    TEXT_SECONDARY,
+                    TEXT_NORMAL,
+                    None,
+                ) {
                     self.start_call(dm_id);
                 }
                 skin::item_tooltip(ui, semi, "Start Voice Call");
@@ -2645,16 +3375,41 @@ impl App {
                     self.mods.click(&id);
                 }
             } else {
-                skin::text_in_row(ui, self.semibold_font, FONT_SM, x, origin[1], HEADER_H, TEXT, &text);
+                skin::text_in_row(
+                    ui,
+                    self.semibold_font,
+                    FONT_SM,
+                    x,
+                    origin[1],
+                    HEADER_H,
+                    TEXT,
+                    &text,
+                );
             }
         }
     }
 
     fn draw_header_search(&mut self, ui: &Ui, min: [f32; 2]) {
-        let submit = skin::input(ui, "##search", &mut self.search, "Search", min, SEARCH_W, SEARCH_H, FONT_SM, false);
-        skin::image(ui, self.icon("search"), [min[0] + SEARCH_W - 20.0, min[1] + 4.0], 16.0, TEXT_SECONDARY);
+        let submit = skin::input(
+            ui,
+            "##search",
+            &mut self.search,
+            "Search",
+            min,
+            SEARCH_W,
+            SEARCH_H,
+            FONT_SM,
+            false,
+        );
+        skin::image(
+            ui,
+            self.icon("search"),
+            [min[0] + SEARCH_W - 20.0, min[1] + 4.0],
+            16.0,
+            TEXT_SECONDARY,
+        );
         if submit {
-            self.reload_messages();
+            self.navigate_shell(FetchKind::messages());
         }
     }
 
@@ -2675,7 +3430,11 @@ impl App {
             }
             let hovered = ui.is_item_hovered();
             let (fill, color) = if index == 3 {
-                if selected { (None, GREEN_TEXT) } else { (Some(GREEN_BUTTON), WHITE) }
+                if selected {
+                    (None, GREEN_TEXT)
+                } else {
+                    (Some(GREEN_BUTTON), WHITE)
+                }
             } else if selected {
                 (Some(ROW_SELECTED), WHITE)
             } else if hovered {
@@ -2692,7 +3451,16 @@ impl App {
                 let bx = x + 8.0 + label_w + 4.0;
                 skin::rect(ui, [bx, mid - 8.0], [bx + 16.0, mid + 8.0], RED, 8.0);
                 let count_w = skin::text_size(ui, self.bold_font, FONT_XS, &count)[0];
-                skin::text_in_row(ui, self.bold_font, FONT_XS, bx + (16.0 - count_w) * 0.5, mid - 8.0, 16.0, WHITE, &count);
+                skin::text_in_row(
+                    ui,
+                    self.bold_font,
+                    FONT_XS,
+                    bx + (16.0 - count_w) * 0.5,
+                    mid - 8.0,
+                    16.0,
+                    WHITE,
+                    &count,
+                );
             }
             x += tab_w + 16.0;
         }
@@ -2722,11 +3490,36 @@ impl App {
         let width = ui.content_region_avail()[0];
         let height = 36.0;
         ui.dummy([width, height]);
-        skin::rect(ui, origin, [origin[0] + width, origin[1] + height], NOTICE_BG, 0.0);
+        skin::rect(
+            ui,
+            origin,
+            [origin[0] + width, origin[1] + height],
+            NOTICE_BG,
+            0.0,
+        );
         let message = skin::ellipsize(ui, self.semibold_font, FONT_SM, &self.status, width - 80.0);
         let message_w = skin::text_size(ui, self.semibold_font, FONT_SM, &message)[0];
-        skin::text_in_row(ui, self.semibold_font, FONT_SM, origin[0] + (width - message_w) * 0.5, origin[1], height, WHITE, &message);
-        if skin::icon_button(ui, "dismiss-notice", self.icon("x"), [origin[0] + width - 8.0 - 24.0, origin[1] + 6.0], 24.0, 16.0, WHITE, WHITE, None) {
+        skin::text_in_row(
+            ui,
+            self.semibold_font,
+            FONT_SM,
+            origin[0] + (width - message_w) * 0.5,
+            origin[1],
+            height,
+            WHITE,
+            &message,
+        );
+        if skin::icon_button(
+            ui,
+            "dismiss-notice",
+            self.icon("x"),
+            [origin[0] + width - 8.0 - 24.0, origin[1] + 6.0],
+            24.0,
+            16.0,
+            WHITE,
+            WHITE,
+            None,
+        ) {
             self.status.clear();
         }
         ui.set_cursor_screen_pos([origin[0], origin[1] + height]);
@@ -2820,19 +3613,17 @@ impl App {
                         open_server = Some(id);
                     }
                 }
-                HomeSectionId::Recent => {
-                    match self.draw_home_recent_section(ui, left, right) {
-                        Some(HomeRecentEntry {
-                            kind: HomeRecentKind::DirectMessage,
-                            id,
-                        }) => open_dm = Some(id),
-                        Some(HomeRecentEntry {
-                            kind: HomeRecentKind::Server,
-                            id,
-                        }) => open_server = Some(id),
-                        None => {}
-                    }
-                }
+                HomeSectionId::Recent => match self.draw_home_recent_section(ui, left, right) {
+                    Some(HomeRecentEntry {
+                        kind: HomeRecentKind::DirectMessage,
+                        id,
+                    }) => open_dm = Some(id),
+                    Some(HomeRecentEntry {
+                        kind: HomeRecentKind::Server,
+                        id,
+                    }) => open_server = Some(id),
+                    None => {}
+                },
             }
         }
 
@@ -2866,7 +3657,14 @@ impl App {
         let semi = self.semibold_font;
         let origin = ui.cursor_screen_pos();
         let width = (right - left).max(80.0);
-        skin::text(ui, semi, FONT_SM, [left, origin[1]], TEXT, "Arrange sections");
+        skin::text(
+            ui,
+            semi,
+            FONT_SM,
+            [left, origin[1]],
+            TEXT,
+            "Arrange sections",
+        );
         skin::text(
             ui,
             None,
@@ -2938,9 +3736,23 @@ impl App {
     fn draw_home_section_header(&self, ui: &Ui, left: f32, title: &str, subtitle: &str) {
         let origin = ui.cursor_screen_pos();
         let semi = self.semibold_font;
-        skin::text(ui, semi, FONT_XS, [left, origin[1]], TEXT_SECONDARY, &title.to_uppercase());
+        skin::text(
+            ui,
+            semi,
+            FONT_XS,
+            [left, origin[1]],
+            TEXT_SECONDARY,
+            &title.to_uppercase(),
+        );
         if !subtitle.is_empty() {
-            skin::text(ui, None, FONT_SM, [left, origin[1] + 18.0], TEXT_SECONDARY, subtitle);
+            skin::text(
+                ui,
+                None,
+                FONT_SM,
+                [left, origin[1] + 18.0],
+                TEXT_SECONDARY,
+                subtitle,
+            );
             ui.set_cursor_screen_pos([origin[0], origin[1] + 42.0]);
         } else {
             ui.set_cursor_screen_pos([origin[0], origin[1] + 22.0]);
@@ -2997,8 +3809,19 @@ impl App {
         for friend in preview {
             let center = [x + 16.0, y + 16.0];
             let avatar = self.avatars.get(&friend.id).map(|shot| shot.texture);
-            paint_avatar(ui, avatar, center, 16.0, &initials(&friend.display_name), None);
-            let presence = self.presence.get(&friend.id).map(|p| p.state).unwrap_or(Presence::Offline);
+            paint_avatar(
+                ui,
+                avatar,
+                center,
+                16.0,
+                &initials(&friend.display_name),
+                None,
+            );
+            let presence = self
+                .presence
+                .get(&friend.id)
+                .map(|p| p.state)
+                .unwrap_or(Presence::Offline);
             paint_status_dot(ui, center, 16.0, presence, STAGE_BG);
             x += 40.0;
             if x + 32.0 > right {
@@ -3029,9 +3852,26 @@ impl App {
             }
             let center = [left + 16.0, row_min[1] + 24.0];
             let avatar = self.avatars.get(&chat.peer_id).map(|shot| shot.texture);
-            paint_avatar(ui, avatar, center, 16.0, &initials(&chat.peer_display_name), None);
-            let presence = self.presence.get(&chat.peer_id).map(|p| p.state).unwrap_or(Presence::Offline);
-            paint_status_dot(ui, center, 16.0, presence, if hovered { ROW_HOVER } else { STAGE_BG });
+            paint_avatar(
+                ui,
+                avatar,
+                center,
+                16.0,
+                &initials(&chat.peer_display_name),
+                None,
+            );
+            let presence = self
+                .presence
+                .get(&chat.peer_id)
+                .map(|p| p.state)
+                .unwrap_or(Presence::Offline);
+            paint_status_dot(
+                ui,
+                center,
+                16.0,
+                presence,
+                if hovered { ROW_HOVER } else { STAGE_BG },
+            );
             skin::text(
                 ui,
                 self.semibold_font,
@@ -3041,7 +3881,10 @@ impl App {
                 &chat.peer_display_name,
             );
             ui.set_cursor_screen_pos(row_min);
-            if ui.invisible_button(format!("home-dm-{}", chat.id), [row_max[0] - row_min[0], 48.0]) {
+            if ui.invisible_button(
+                format!("home-dm-{}", chat.id),
+                [row_max[0] - row_min[0], 48.0],
+            ) {
                 chosen = Some(chat.id);
             }
         }
@@ -3078,7 +3921,10 @@ impl App {
                 ui,
                 self.semibold_font,
                 FONT_SM,
-                [x + (44.0 - measured[0]) * 0.5, y + (44.0 - measured[1]) * 0.5],
+                [
+                    x + (44.0 - measured[0]) * 0.5,
+                    y + (44.0 - measured[1]) * 0.5,
+                ],
                 WHITE,
                 &letters,
             );
@@ -3092,7 +3938,12 @@ impl App {
         chosen
     }
 
-    fn draw_home_recent_section(&mut self, ui: &Ui, left: f32, right: f32) -> Option<HomeRecentEntry> {
+    fn draw_home_recent_section(
+        &mut self,
+        ui: &Ui,
+        left: f32,
+        right: f32,
+    ) -> Option<HomeRecentEntry> {
         self.draw_home_section_header(ui, left, "Recent", "");
         let mut chosen = None;
         let recent = self.home_layout.recent.clone();
@@ -3134,7 +3985,13 @@ impl App {
                 HomeRecentKind::DirectMessage => "message-circle",
                 HomeRecentKind::Server => "hash",
             };
-            skin::image(ui, self.icon(icon), [left, row_min[1] + 8.0], 20.0, TEXT_SECONDARY);
+            skin::image(
+                ui,
+                self.icon(icon),
+                [left, row_min[1] + 8.0],
+                20.0,
+                TEXT_SECONDARY,
+            );
             skin::text(
                 ui,
                 self.semibold_font,
@@ -3165,8 +4022,22 @@ impl App {
         let semi = self.semibold_font;
         if self.friend_tab == 3 {
             ui.dummy([width, 20.0]);
-            skin::text(ui, semi, FONT_LG, [left, origin[1] + 20.0], TEXT, "Add Friend");
-            skin::text(ui, None, FONT_SM, [left, origin[1] + 52.0], TEXT_SECONDARY, "You can add friends with their Banter username.");
+            skin::text(
+                ui,
+                semi,
+                FONT_LG,
+                [left, origin[1] + 20.0],
+                TEXT,
+                "Add Friend",
+            );
+            skin::text(
+                ui,
+                None,
+                FONT_SM,
+                [left, origin[1] + 52.0],
+                TEXT_SECONDARY,
+                "You can add friends with their Banter username.",
+            );
             let box_min = [left, origin[1] + 80.0];
             let box_max = [right, box_min[1] + 52.0];
             skin::rect(ui, box_min, box_max, INPUT_BG, 8.0);
@@ -3202,7 +4073,13 @@ impl App {
                     self.open_dm_after_adding_friend(&name);
                 }
             }
-            skin::line_h(ui, origin[0], origin[0] + width, origin[1] + 156.0, LIST_DIVIDER);
+            skin::line_h(
+                ui,
+                origin[0],
+                origin[0] + width,
+                origin[1] + 156.0,
+                LIST_DIVIDER,
+            );
             ui.set_cursor_screen_pos([origin[0], origin[1] + 160.0]);
             ui.dummy([width, 1.0]);
             return;
@@ -3212,17 +4089,35 @@ impl App {
         let empty;
         if self.friend_tab == 2 {
             for request in &self.incoming {
-                rows.push((request.id, request.from_username.clone(), request.from_username.clone(), Presence::Offline, "Incoming Friend Request".into(), true));
+                rows.push((
+                    request.id,
+                    request.from_username.clone(),
+                    request.from_username.clone(),
+                    Presence::Offline,
+                    "Incoming Friend Request".into(),
+                    true,
+                ));
             }
             for request in &self.outgoing {
-                rows.push((request.id, request.to_username.clone(), request.to_username.clone(), Presence::Offline, "Outgoing Friend Request".into(), false));
+                rows.push((
+                    request.id,
+                    request.to_username.clone(),
+                    request.to_username.clone(),
+                    Presence::Offline,
+                    "Outgoing Friend Request".into(),
+                    false,
+                ));
             }
             title = "Pending";
             empty = "There are no pending friend requests.";
         } else {
             let online_only = self.friend_tab == 0;
             for friend in &self.friends {
-                let presence = self.presence.get(&friend.id).map(|p| p.state).unwrap_or(Presence::Offline);
+                let presence = self
+                    .presence
+                    .get(&friend.id)
+                    .map(|p| p.state)
+                    .unwrap_or(Presence::Offline);
                 if online_only && presence == Presence::Offline {
                     continue;
                 }
@@ -3232,19 +4127,45 @@ impl App {
                     .and_then(|info| info.custom_status.clone())
                     .filter(|status| !status.trim().is_empty())
                     .unwrap_or_else(|| presence_label(presence).into());
-                rows.push((friend.id, friend.display_name.clone(), friend.username.clone(), presence, subtitle, false));
+                rows.push((
+                    friend.id,
+                    friend.display_name.clone(),
+                    friend.username.clone(),
+                    presence,
+                    subtitle,
+                    false,
+                ));
             }
             title = if online_only { "Online" } else { "All Friends" };
-            empty = if online_only { "No one's around right now." } else { "You have not added anyone yet." };
+            empty = if online_only {
+                "No one's around right now."
+            } else {
+                "You have not added anyone yet."
+            };
         }
         if rows.is_empty() {
             ui.dummy([width, height.max(1.0)]);
             let mid_y = origin[1] + height * 0.42;
-            skin::text_centered(ui, None, FONT_MD, origin[0] + width * 0.5, mid_y, MUTED, empty);
+            skin::text_centered(
+                ui,
+                None,
+                FONT_MD,
+                origin[0] + width * 0.5,
+                mid_y,
+                MUTED,
+                empty,
+            );
             return;
         }
         let label = format!("{} — {}", title.to_uppercase(), rows.len());
-        skin::text(ui, semi, FONT_XS, [left, origin[1] + 24.0], TEXT_SECONDARY, &label);
+        skin::text(
+            ui,
+            semi,
+            FONT_XS,
+            [left, origin[1] + 24.0],
+            TEXT_SECONDARY,
+            &label,
+        );
         ui.dummy([width, 48.0]);
         let pending_tab = self.friend_tab == 2;
         let mut open_chat = None;
@@ -3270,31 +4191,72 @@ impl App {
             } else {
                 let avatar = self.avatars.get(id).map(|shot| shot.texture);
                 paint_avatar(ui, avatar, center, 16.0, &initials(name), None);
-                paint_status_dot(ui, center, 16.0, *presence, if hovered { ROW_HOVER } else { STAGE_BG });
+                paint_status_dot(
+                    ui,
+                    center,
+                    16.0,
+                    *presence,
+                    if hovered { ROW_HOVER } else { STAGE_BG },
+                );
             }
             let text_x = left + 32.0 + 12.0;
             skin::text(ui, semi, FONT_MD, [text_x, row_min[1] + 12.0], TEXT, name);
             if hovered && !pending_tab {
                 let name_w = skin::text_size(ui, semi, FONT_MD, name)[0];
-                skin::text(ui, None, FONT_SM, [text_x + name_w + 6.0, row_min[1] + 14.0], TEXT_SECONDARY, username);
+                skin::text(
+                    ui,
+                    None,
+                    FONT_SM,
+                    [text_x + name_w + 6.0, row_min[1] + 14.0],
+                    TEXT_SECONDARY,
+                    username,
+                );
             }
-            skin::text(ui, None, FONT_SM, [text_x, row_min[1] + 33.0], TEXT_SECONDARY, subtitle);
+            skin::text(
+                ui,
+                None,
+                FONT_SM,
+                [text_x, row_min[1] + 33.0],
+                TEXT_SECONDARY,
+                subtitle,
+            );
             let button_y = row_min[1] + 13.0;
             let mut bx = right - 36.0;
             if pending_tab {
                 if *incoming {
-                    if self.round_action(ui, &format!("decline-{id}"), "x", [bx, button_y], hovered, RED) {
+                    if self.round_action(
+                        ui,
+                        &format!("decline-{id}"),
+                        "x",
+                        [bx, button_y],
+                        hovered,
+                        RED,
+                    ) {
                         decline = Some(*id);
                     }
                     skin::item_tooltip(ui, semi, "Ignore");
                     bx -= 36.0 + 10.0;
-                    if self.round_action(ui, &format!("accept-{id}"), "check", [bx, button_y], hovered, GREEN) {
+                    if self.round_action(
+                        ui,
+                        &format!("accept-{id}"),
+                        "check",
+                        [bx, button_y],
+                        hovered,
+                        GREEN,
+                    ) {
                         accept = Some(*id);
                     }
                     skin::item_tooltip(ui, semi, "Accept");
                 }
             } else {
-                if self.round_action(ui, &format!("message-{id}"), "message-circle", [bx, button_y], hovered, TEXT_NORMAL) {
+                if self.round_action(
+                    ui,
+                    &format!("message-{id}"),
+                    "message-circle",
+                    [bx, button_y],
+                    hovered,
+                    TEXT_NORMAL,
+                ) {
                     open_chat = Some(*id);
                 }
                 skin::item_tooltip(ui, semi, "Message");
@@ -3339,18 +4301,36 @@ impl App {
         if let Some((user_id, username)) = context_user {
             let mouse = ui.mouse_pos();
             let mine = self.account.as_ref().map(|account| account.id);
-            self.open_context_menu(ui, member_context_menu(user_id, &username, mine, true, false), mouse);
+            self.open_context_menu(
+                ui,
+                member_context_menu(user_id, &username, mine, true, false),
+                mouse,
+            );
         }
     }
 
     /// Round 36 px action button used in the friends list.
-    fn round_action(&self, ui: &Ui, id: &str, icon: &str, min: [f32; 2], row_hovered: bool, hover_tint: [f32; 4]) -> bool {
+    fn round_action(
+        &self,
+        ui: &Ui,
+        id: &str,
+        icon: &str,
+        min: [f32; 2],
+        row_hovered: bool,
+        hover_tint: [f32; 4],
+    ) -> bool {
         ui.set_cursor_screen_pos(min);
         let clicked = ui.invisible_button(id, [36.0, 36.0]);
         let hovered = ui.is_item_hovered();
         let fill = if row_hovered { RAIL_BG } else { SIDEBAR_BG };
         skin::rect(ui, min, [min[0] + 36.0, min[1] + 36.0], fill, 18.0);
-        skin::image(ui, self.icon(icon), [min[0] + 8.0, min[1] + 8.0], 20.0, if hovered { hover_tint } else { TEXT_SECONDARY });
+        skin::image(
+            ui,
+            self.icon(icon),
+            [min[0] + 8.0, min[1] + 8.0],
+            20.0,
+            if hovered { hover_tint } else { TEXT_SECONDARY },
+        );
         clicked
     }
 
@@ -3363,7 +4343,13 @@ impl App {
         for category in layout {
             let category_id = category.category.id;
             let collapsed = self.collapsed.contains(&category_id);
-            let (toggle, create) = self.category_row(ui, category_id, &category.category.name, collapsed, can_manage);
+            let (toggle, create) = self.category_row(
+                ui,
+                category_id,
+                &category.category.name,
+                collapsed,
+                can_manage,
+            );
             if toggle {
                 if collapsed {
                     self.collapsed.remove(&category_id);
@@ -3380,14 +4366,20 @@ impl App {
                 self.open_modal(Modal::CreateChannel);
             }
             for channel in category.channels {
-                let joined = channel.kind == ChannelKind::Voice && self.voice_channel == Some(channel.id);
+                let joined =
+                    channel.kind == ChannelKind::Voice && self.voice_channel == Some(channel.id);
                 let selected = selected_id == Some(channel.id);
                 if collapsed && !selected && !joined {
                     continue;
                 }
                 let icon_name = channel_display_icon(&channel.kind, channel.icon.as_deref());
-                let (left, right) =
-                    self.channel_row(ui, &format!("ch{}", channel.id), Some(icon_name), &channel.name, selected);
+                let (left, right) = self.channel_row(
+                    ui,
+                    &format!("ch{}", channel.id),
+                    Some(icon_name),
+                    &channel.name,
+                    selected,
+                );
                 if left {
                     self.selected = Some(channel.clone());
                     self.search.clear();
@@ -3397,11 +4389,14 @@ impl App {
                     self.editing = None;
                     self.messages.clear();
                     if channel.kind == ChannelKind::Text {
-                        self.reload_messages();
+                        self.navigate_shell(FetchKind::messages());
                     } else if channel.kind == ChannelKind::Voice
                         && self.voice_channel != Some(channel.id)
                     {
+                        self.shell.bump();
                         self.join_voice_channel(channel.id);
+                    } else {
+                        self.shell.bump();
                     }
                 }
                 if right {
@@ -3425,32 +4420,86 @@ impl App {
     }
 
     /// Category header: chevron, 12 px uppercase name, and a Create Channel plus for the owner.
-    fn category_row(&self, ui: &Ui, category_id: i64, name: &str, collapsed: bool, can_create: bool) -> (bool, bool) {
+    fn category_row(
+        &self,
+        ui: &Ui,
+        category_id: i64,
+        name: &str,
+        collapsed: bool,
+        can_create: bool,
+    ) -> (bool, bool) {
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
         let text_top = origin[1] + 16.0;
         let text_h = CATEGORY_H - 16.0;
         let mut create = false;
-        let plus_min = [origin[0] + width - 8.0 - 18.0, text_top + (text_h - 18.0) * 0.5];
+        let plus_min = [
+            origin[0] + width - 8.0 - 18.0,
+            text_top + (text_h - 18.0) * 0.5,
+        ];
         if can_create {
-            create = skin::icon_button(ui, &format!("cat-add-{category_id}"), self.icon("plus"), plus_min, 18.0, 18.0, MUTED, TEXT_NORMAL, None);
+            create = skin::icon_button(
+                ui,
+                &format!("cat-add-{category_id}"),
+                self.icon("plus"),
+                plus_min,
+                18.0,
+                18.0,
+                MUTED,
+                TEXT_NORMAL,
+                None,
+            );
             skin::item_tooltip(ui, self.semibold_font, "Create Channel");
         }
         ui.set_cursor_screen_pos(origin);
-        let toggle_w = if can_create { width - 8.0 - 18.0 - 4.0 } else { width };
+        let toggle_w = if can_create {
+            width - 8.0 - 18.0 - 4.0
+        } else {
+            width
+        };
         let toggle = ui.invisible_button(format!("cat-{category_id}"), [toggle_w, CATEGORY_H]);
-        let color = if ui.is_item_hovered() { TEXT_NORMAL } else { MUTED };
-        let chevron = if collapsed { "chevron-right" } else { "chevron-down" };
-        skin::image(ui, self.icon(chevron), [origin[0] + 4.0, text_top + (text_h - 12.0) * 0.5], 12.0, color);
+        let color = if ui.is_item_hovered() {
+            TEXT_NORMAL
+        } else {
+            MUTED
+        };
+        let chevron = if collapsed {
+            "chevron-right"
+        } else {
+            "chevron-down"
+        };
+        skin::image(
+            ui,
+            self.icon(chevron),
+            [origin[0] + 4.0, text_top + (text_h - 12.0) * 0.5],
+            12.0,
+            color,
+        );
         let label = name.to_uppercase();
         let shown = skin::ellipsize(ui, self.semibold_font, FONT_XS, &label, toggle_w - 22.0);
-        skin::text_in_row(ui, self.semibold_font, FONT_XS, origin[0] + 18.0, text_top, text_h, color, &shown);
+        skin::text_in_row(
+            ui,
+            self.semibold_font,
+            FONT_XS,
+            origin[0] + 18.0,
+            text_top,
+            text_h,
+            color,
+            &shown,
+        );
         (toggle, create)
     }
 
     /// A 32 px channel row with 8 px insets, rounded hover and selected fills, icon, then name.
     /// Returns `(left_click, right_click)`.
-    fn channel_row(&self, ui: &Ui, id: &str, icon: Option<&str>, label: &str, selected: bool) -> (bool, bool) {
+    fn channel_row(
+        &self,
+        ui: &Ui,
+        id: &str,
+        icon: Option<&str>,
+        label: &str,
+        selected: bool,
+    ) -> (bool, bool) {
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
         let clicked = ui.invisible_button(id, [width, CHANNEL_ROW_H + CHANNEL_ROW_GAP]);
@@ -3463,7 +4512,13 @@ impl App {
         let muted = self.shell("muted", MUTED);
         let text = self.shell("text", TEXT_NORMAL);
         if selected || hovered {
-            skin::rect(ui, min, max, if selected { selected_fill } else { hover_fill }, ROW_RADIUS);
+            skin::rect(
+                ui,
+                min,
+                max,
+                if selected { selected_fill } else { hover_fill },
+                ROW_RADIUS,
+            );
         }
         let color = if selected {
             WHITE
@@ -3474,11 +4529,26 @@ impl App {
         };
         let mut text_x = min[0] + 8.0;
         if let Some(icon) = icon {
-            skin::image(ui, self.icon(icon), [text_x, min[1] + 6.0], 20.0, if selected { text } else { muted });
+            skin::image(
+                ui,
+                self.icon(icon),
+                [text_x, min[1] + 6.0],
+                20.0,
+                if selected { text } else { muted },
+            );
             text_x += 20.0 + 6.0;
         }
         let shown = skin::ellipsize(ui, None, FONT_MD, label, max[0] - 8.0 - text_x);
-        skin::text_in_row(ui, None, FONT_MD, text_x, min[1], CHANNEL_ROW_H, color, &shown);
+        skin::text_in_row(
+            ui,
+            None,
+            FONT_MD,
+            text_x,
+            min[1],
+            CHANNEL_ROW_H,
+            color,
+            &shown,
+        );
         (clicked, right)
     }
 
@@ -3489,9 +4559,14 @@ impl App {
                 let rows: Vec<(bool, Option<(i64, String)>)> = members
                     .iter()
                     .map(|member| {
-                        let presence = self.presence.get(&member.user_id).map(|info| info.state).unwrap_or(member.presence);
+                        let presence = self
+                            .presence
+                            .get(&member.user_id)
+                            .map(|info| info.state)
+                            .unwrap_or(member.presence);
                         let online = presence != Presence::Offline;
-                        let hoist = top_hoisted_role(&member.roles).map(|role| (role.position, role.name.clone()));
+                        let hoist = top_hoisted_role(&member.roles)
+                            .map(|role| (role.position, role.name.clone()));
                         (online, hoist)
                     })
                     .collect();
@@ -3500,7 +4575,11 @@ impl App {
                         .into_iter()
                         .filter_map(|index| {
                             let member = members.get(index)?.clone();
-                            let presence = self.presence.get(&member.user_id).map(|info| info.state).unwrap_or(member.presence);
+                            let presence = self
+                                .presence
+                                .get(&member.user_id)
+                                .map(|info| info.state)
+                                .unwrap_or(member.presence);
                             Some((member, presence))
                         })
                         .collect();
@@ -3510,18 +4589,39 @@ impl App {
             }
             Place::Direct(dm_id) => {
                 if let Some(chat) = self.dms.iter().find(|chat| chat.id == dm_id).cloned() {
-                    let presence = self.presence.get(&chat.peer_id).map(|p| p.state).unwrap_or(Presence::Offline);
-                    let status = self
+                    let presence = self
                         .presence
                         .get(&chat.peer_id)
-                        .and_then(|info| info.custom_status.as_deref().map(str::trim).filter(|text| !text.is_empty()).map(str::to_string));
+                        .map(|p| p.state)
+                        .unwrap_or(Presence::Offline);
+                    let status = self.presence.get(&chat.peer_id).and_then(|info| {
+                        info.custom_status
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|text| !text.is_empty())
+                            .map(str::to_string)
+                    });
                     ui.dummy([0.0, 16.0]);
-                    if self.person_row(ui, chat.peer_id, &chat.peer_display_name, presence, false, status.as_deref(), None) {
+                    if self.person_row(
+                        ui,
+                        chat.peer_id,
+                        &chat.peer_display_name,
+                        presence,
+                        false,
+                        status.as_deref(),
+                        None,
+                    ) {
                         let mouse = ui.mouse_pos();
                         let mine = self.account.as_ref().map(|account| account.id);
                         self.open_context_menu(
                             ui,
-                            member_context_menu(chat.peer_id, &chat.peer_username, mine, self.is_friend(chat.peer_id), false),
+                            member_context_menu(
+                                chat.peer_id,
+                                &chat.peer_username,
+                                mine,
+                                self.is_friend(chat.peer_id),
+                                false,
+                            ),
                             mouse,
                         );
                     }
@@ -3531,7 +4631,12 @@ impl App {
         }
     }
 
-    fn member_group(&mut self, ui: &Ui, title: &str, members: &[(crate::api::MemberView, Presence)]) {
+    fn member_group(
+        &mut self,
+        ui: &Ui,
+        title: &str,
+        members: &[(crate::api::MemberView, Presence)],
+    ) {
         if members.is_empty() {
             return;
         }
@@ -3539,10 +4644,25 @@ impl App {
         let width = ui.content_region_avail()[0];
         ui.dummy([width, MEMBER_GROUP_H]);
         let label = format!("{title} — {}", members.len());
-        skin::text_in_row(ui, self.semibold_font, FONT_XS, origin[0] + 16.0, origin[1] + 24.0, 16.0, MUTED, &label);
+        skin::text_in_row(
+            ui,
+            self.semibold_font,
+            FONT_XS,
+            origin[0] + 16.0,
+            origin[1] + 24.0,
+            16.0,
+            MUTED,
+            &label,
+        );
         for (member, presence) in members {
-            let name = member.nickname.clone().unwrap_or(member.display_name.clone());
-            let live_status = self.presence.get(&member.user_id).and_then(|info| info.custom_status.clone());
+            let name = member
+                .nickname
+                .clone()
+                .unwrap_or(member.display_name.clone());
+            let live_status = self
+                .presence
+                .get(&member.user_id)
+                .and_then(|info| info.custom_status.clone());
             let status = live_status
                 .or_else(|| member.custom_status.clone())
                 .as_deref()
@@ -3550,7 +4670,15 @@ impl App {
                 .filter(|text| !text.is_empty())
                 .map(str::to_string);
             let color = top_role_color(&member.roles).map(|rgb| rgb_u32_to_rgba(rgb as u32));
-            if self.person_row(ui, member.user_id, &name, *presence, member.is_owner, status.as_deref(), color) {
+            if self.person_row(
+                ui,
+                member.user_id,
+                &name,
+                *presence,
+                member.is_owner,
+                status.as_deref(),
+                color,
+            ) {
                 let mouse = ui.mouse_pos();
                 let mine = self.account.as_ref().map(|account| account.id);
                 self.open_context_menu(
@@ -3580,7 +4708,11 @@ impl App {
         custom_status: Option<&str>,
         role_color: Option<[f32; 4]>,
     ) -> bool {
-        let row_h = if custom_status.is_some() { MEMBER_ROW_H + 14.0 } else { MEMBER_ROW_H };
+        let row_h = if custom_status.is_some() {
+            MEMBER_ROW_H + 14.0
+        } else {
+            MEMBER_ROW_H
+        };
         let width = ui.content_region_avail()[0].max(32.0);
         let origin = ui.cursor_screen_pos();
         let clicked = ui.invisible_button(format!("member-{user_id}"), [width, row_h]);
@@ -3600,7 +4732,10 @@ impl App {
         paint_avatar(ui, avatar, center, 16.0, &initials(name), None);
         let offline = presence == Presence::Offline;
         if offline {
-            ui.get_window_draw_list().add_circle(center, 16.5, with_alpha(backdrop, 0.7)).filled(true).build();
+            ui.get_window_draw_list()
+                .add_circle(center, 16.5, with_alpha(backdrop, 0.7))
+                .filled(true)
+                .build();
         } else {
             paint_status_dot(ui, center, 16.0, presence, backdrop);
         }
@@ -3612,22 +4747,49 @@ impl App {
         } else {
             MUTED
         };
-        let color = if offline { fallback } else { role_color.unwrap_or(fallback) };
+        let color = if offline {
+            fallback
+        } else {
+            role_color.unwrap_or(fallback)
+        };
         let crown_w = if owner { 18.0 } else { 0.0 };
         let shown = skin::ellipsize(ui, None, FONT_MD, name, max[0] - 8.0 - crown_w - text_x);
-        let name_y = if custom_status.is_some() { origin[1] + 4.0 } else { origin[1] };
+        let name_y = if custom_status.is_some() {
+            origin[1] + 4.0
+        } else {
+            origin[1]
+        };
         let name_h = if custom_status.is_some() { 20.0 } else { row_h };
         skin::text_in_row(ui, None, FONT_MD, text_x, name_y, name_h, color, &shown);
         if let Some(status) = custom_status {
             let status = skin::ellipsize(ui, None, FONT_XS, status, max[0] - 8.0 - text_x);
-            skin::text(ui, None, FONT_XS, [text_x, origin[1] + 24.0], if offline { with_alpha(MUTED, 0.5) } else { TEXT_SECONDARY }, &status);
+            skin::text(
+                ui,
+                None,
+                FONT_XS,
+                [text_x, origin[1] + 24.0],
+                if offline {
+                    with_alpha(MUTED, 0.5)
+                } else {
+                    TEXT_SECONDARY
+                },
+                &status,
+            );
         }
         if owner {
             let name_w = skin::text_size(ui, None, FONT_MD, &shown)[0];
             let crown_min = [text_x + name_w + 4.0, name_y + name_h * 0.5 - 7.0];
             skin::image(ui, self.icon("crown"), crown_min, 14.0, WHITE);
             if ui.is_mouse_hovering_rect(crown_min, [crown_min[0] + 14.0, crown_min[1] + 14.0]) {
-                skin::tooltip(ui, self.semibold_font, FONT_SM, "Server Owner", crown_min, [crown_min[0] + 14.0, crown_min[1] + 14.0], TooltipSide::Top);
+                skin::tooltip(
+                    ui,
+                    self.semibold_font,
+                    FONT_SM,
+                    "Server Owner",
+                    crown_min,
+                    [crown_min[0] + 14.0, crown_min[1] + 14.0],
+                    TooltipSide::Top,
+                );
             }
         }
         right
@@ -3657,7 +4819,8 @@ impl App {
             let Some(message) = by_id.get(&row.message_id) else {
                 continue;
             };
-            if previous_at.is_some_and(|at| message_starts_new_day(at, message.created_at, offset)) {
+            if previous_at.is_some_and(|at| message_starts_new_day(at, message.created_at, offset))
+            {
                 let label = chat_date_separator(message.created_at, offset);
                 let origin = ui.cursor_screen_pos();
                 ui.dummy([width, 28.0]);
@@ -3665,9 +4828,17 @@ impl App {
                 let label_w = ui.calc_text_size(&label)[0];
                 let mid_y = origin[1] + 14.0;
                 let draw = ui.get_window_draw_list();
-                draw.add_line([origin[0] + 16.0, mid_y], [origin[0] + (width - label_w) * 0.5 - 8.0, mid_y], MUTED)
-                    .build();
-                draw.add_text([origin[0] + (width - label_w) * 0.5, origin[1] + 6.0], MUTED, &label);
+                draw.add_line(
+                    [origin[0] + 16.0, mid_y],
+                    [origin[0] + (width - label_w) * 0.5 - 8.0, mid_y],
+                    MUTED,
+                )
+                .build();
+                draw.add_text(
+                    [origin[0] + (width - label_w) * 0.5, origin[1] + 6.0],
+                    MUTED,
+                    &label,
+                );
                 draw.add_line(
                     [origin[0] + (width + label_w) * 0.5 + 8.0, mid_y],
                     [origin[0] + width - 16.0, mid_y],
@@ -3699,15 +4870,28 @@ impl App {
                 .author_nickname
                 .clone()
                 .unwrap_or_else(|| message.author_display_name.clone());
-            let edited = if message.edited_at.is_some() { " (edited)" } else { "" };
+            let edited = if message.edited_at.is_some() {
+                " (edited)"
+            } else {
+                ""
+            };
             let body_h = if message.body.is_empty() {
                 0.0
             } else if edited.is_empty() {
                 bfmd_paint::measure(ui, self.bfmd_fonts(), &message.body, text_w)
             } else {
-                bfmd_paint::measure(ui, self.bfmd_fonts(), &format!("{}{edited}", message.body), text_w)
+                bfmd_paint::measure(
+                    ui,
+                    self.bfmd_fonts(),
+                    &format!("{}{edited}", message.body),
+                    text_w,
+                )
             };
-            let collapsed_note_h = if row.collapsed && row.child_count > 0 { 18.0 } else { 0.0 };
+            let collapsed_note_h = if row.collapsed && row.child_count > 0 {
+                18.0
+            } else {
+                0.0
+            };
             let action_h = COMMENT_ACTION_H;
             let row_h = (22.0 + body_h.max(20.0) + collapsed_note_h + action_h + 4.0).max(52.0);
             let origin = ui.cursor_screen_pos();
@@ -3818,7 +5002,10 @@ impl App {
                 }
             }
             let center = [origin[0] + avatar_x + 20.0, origin[1] + 22.0];
-            let avatar = self.avatars.get(&message.author_id).map(|shot| shot.texture);
+            let avatar = self
+                .avatars
+                .get(&message.author_id)
+                .map(|shot| shot.texture);
             ui.set_cursor_screen_pos([center[0] - 20.0, center[1] - 20.0]);
             if ui.invisible_button(format!("msg-avatar-{}", message.id), [40.0, 40.0]) {
                 self.open_profile(message.author_id, [center[0] + 24.0, center[1]]);
@@ -3834,8 +5021,11 @@ impl App {
             }
             {
                 let _bold = ui.push_font_with_size(self.bold_font, 16.0);
-                ui.get_window_draw_list()
-                    .add_text([origin[0] + text_x, origin[1] + 2.0], TEXT, &name);
+                ui.get_window_draw_list().add_text(
+                    [origin[0] + text_x, origin[1] + 2.0],
+                    TEXT,
+                    &name,
+                );
             }
             let stamp = chat_time_label(message.created_at, now, offset);
             let stamp_pos = [origin[0] + text_x + name_w + 8.0, origin[1] + 5.0];
@@ -3850,7 +5040,14 @@ impl App {
             }
             if !message.body.is_empty() {
                 let body_origin = [origin[0] + text_x, origin[1] + 22.0];
-                bfmd_paint::draw(ui, self.bfmd_fonts(), &message.body, body_origin, text_w, edited);
+                bfmd_paint::draw(
+                    ui,
+                    self.bfmd_fonts(),
+                    &message.body,
+                    body_origin,
+                    text_w,
+                    edited,
+                );
             }
             if row.collapsed && row.child_count > 0 {
                 let note_y = origin[1] + 22.0 + body_h.max(20.0);
@@ -3864,25 +5061,38 @@ impl App {
                     ui.calc_text_size(&label)[0]
                 };
                 ui.set_cursor_screen_pos([origin[0] + text_x, note_y]);
-                if ui.invisible_button(format!("expand-note-{}", message.id), [label_w.max(8.0) + 4.0, 16.0]) {
+                if ui.invisible_button(
+                    format!("expand-note-{}", message.id),
+                    [label_w.max(8.0) + 4.0, 16.0],
+                ) {
                     *collapse = Some(message.id);
                 }
                 {
                     let _small = ui.push_font_with_size(None, 13.0);
-                    ui.get_window_draw_list()
-                        .add_text([origin[0] + text_x, note_y], BLURPLE_TEXT, &label);
+                    ui.get_window_draw_list().add_text(
+                        [origin[0] + text_x, note_y],
+                        BLURPLE_TEXT,
+                        &label,
+                    );
                 }
             }
             let action_y = origin[1] + 22.0 + body_h.max(20.0) + collapsed_note_h + 2.0;
             // Always-visible Reddit-style Reply link (hover toolbar still has the icon).
             {
-                let reply_label = if replying_here { "Replying…" } else { "Reply" };
+                let reply_label = if replying_here {
+                    "Replying…"
+                } else {
+                    "Reply"
+                };
                 let reply_w = {
                     let _small = ui.push_font_with_size(self.semibold_font, 12.0);
                     ui.calc_text_size(reply_label)[0]
                 };
                 ui.set_cursor_screen_pos([origin[0] + text_x, action_y]);
-                if ui.invisible_button(format!("reply-link-{}", message.id), [reply_w.max(8.0) + 4.0, COMMENT_ACTION_H]) {
+                if ui.invisible_button(
+                    format!("reply-link-{}", message.id),
+                    [reply_w.max(8.0) + 4.0, COMMENT_ACTION_H],
+                ) {
                     *reply = Some(message.id);
                 }
                 let reply_hot = ui.is_item_hovered();
@@ -3893,14 +5103,20 @@ impl App {
                 };
                 {
                     let _small = ui.push_font_with_size(self.semibold_font, 12.0);
-                    ui.get_window_draw_list()
-                        .add_text([origin[0] + text_x, action_y + 2.0], reply_color, reply_label);
+                    ui.get_window_draw_list().add_text(
+                        [origin[0] + text_x, action_y + 2.0],
+                        reply_color,
+                        reply_label,
+                    );
                 }
             }
             let mut attachment_y = action_y + action_h;
             for attachment in &message.attachments {
                 ui.set_cursor_screen_pos([origin[0] + text_x, attachment_y]);
-                ui.text(format!("file: {} ({} bytes)", attachment.filename, attachment.byte_size));
+                ui.text(format!(
+                    "file: {} ({} bytes)",
+                    attachment.filename, attachment.byte_size
+                ));
                 ui.same_line();
                 if ui.button(format!("Save##att{}", attachment.id)) {
                     *save = Some((attachment.id, attachment.filename.clone()));
@@ -3932,7 +5148,13 @@ impl App {
                         _ => "More",
                     };
                     let active = *name == "reply" && replying_here;
-                    if self.tool(ui, &format!("{name}-{}", message.id), name, active, Some(tip)) {
+                    if self.tool(
+                        ui,
+                        &format!("{name}-{}", message.id),
+                        name,
+                        active,
+                        Some(tip),
+                    ) {
                         match *name {
                             "reply" => *reply = Some(message.id),
                             "pencil" => *edit = Some(message.id),
@@ -3941,7 +5163,12 @@ impl App {
                                 let anchor = [bar_x, bar_y + 36.0];
                                 self.open_context_menu(
                                     ui,
-                                    message_context_menu(message.id, message.author_id, &message.body, mine),
+                                    message_context_menu(
+                                        message.id,
+                                        message.author_id,
+                                        &message.body,
+                                        mine,
+                                    ),
                                     anchor,
                                 );
                             }
@@ -4002,10 +5229,13 @@ impl App {
                     let _hint = ui.push_style_color(StyleColor::TextDisabled, PLACEHOLDER);
                     let _text = ui.push_style_color(StyleColor::Text, TEXT_NORMAL);
                     ui.set_next_item_width((box_w - 32.0).max(40.0));
-                    ui.input_text(&format!("##inline-reply-{}", message.id), &mut self.reply_draft)
-                        .hint(format!("Write a reply to {name}"))
-                        .enter_returns_true(true)
-                        .build()
+                    ui.input_text(
+                        &format!("##inline-reply-{}", message.id),
+                        &mut self.reply_draft,
+                    )
+                    .hint(format!("Write a reply to {name}"))
+                    .enter_returns_true(true)
+                    .build()
                 };
                 if submit {
                     *inline_submit = true;
@@ -4064,43 +5294,54 @@ impl App {
         let mut inline_submit = false;
         let mut inline_cancel = false;
         let footer = self.composer_footer_h();
-        ui.child_window("history").size([0.0, -footer]).build(ui, || {
-            let stick = crate::theme::chat_should_stick(ui.scroll_y(), ui.scroll_max_y(), self.chat_jump);
-            // Pad with last frame's history height so few messages sit on the composer, like Discord.
-            let view_h = ui.content_region_avail()[1];
-            ui.dummy([0.0, crate::theme::chat_top_pad(self.history_h, view_h)]);
-            let history_top = ui.cursor_pos()[1];
-            let mine = self.account.as_ref().map(|account| account.id);
-            if self.messages.is_empty() && self.search.trim().is_empty() {
-                if let Some(channel) = &self.selected {
-                    if matches!(self.place, Place::Server(_)) && channel.kind == ChannelKind::Text {
-                        ui.dummy([0.0, 24.0]);
-                        ui.indent_by(16.0);
-                        let _title = ui.push_font_with_size(self.bold_font, 28.0);
-                        ui.text(format!("Welcome to #{}!", channel.name));
-                        drop(_title);
-                        ui.text_colored(MUTED, format!("This is the start of the #{} channel.", channel.name));
-                        ui.unindent_by(16.0);
+        ui.child_window("history")
+            .size([0.0, -footer])
+            .build(ui, || {
+                let stick = crate::theme::chat_should_stick(
+                    ui.scroll_y(),
+                    ui.scroll_max_y(),
+                    self.chat_jump,
+                );
+                // Pad with last frame's history height so few messages sit on the composer, like Discord.
+                let view_h = ui.content_region_avail()[1];
+                ui.dummy([0.0, crate::theme::chat_top_pad(self.history_h, view_h)]);
+                let history_top = ui.cursor_pos()[1];
+                let mine = self.account.as_ref().map(|account| account.id);
+                if self.messages.is_empty() && self.search.trim().is_empty() {
+                    if let Some(channel) = &self.selected {
+                        if matches!(self.place, Place::Server(_))
+                            && channel.kind == ChannelKind::Text
+                        {
+                            ui.dummy([0.0, 24.0]);
+                            ui.indent_by(16.0);
+                            let _title = ui.push_font_with_size(self.bold_font, 28.0);
+                            ui.text(format!("Welcome to #{}!", channel.name));
+                            drop(_title);
+                            ui.text_colored(
+                                MUTED,
+                                format!("This is the start of the #{} channel.", channel.name),
+                            );
+                            ui.unindent_by(16.0);
+                        }
                     }
                 }
-            }
-            self.draw_message_rows(
-                ui,
-                mine,
-                &mut reply,
-                &mut edit,
-                &mut delete,
-                &mut save,
-                &mut collapse,
-                &mut inline_submit,
-                &mut inline_cancel,
-            );
-            self.history_h = ui.cursor_pos()[1] - history_top;
-            if stick {
-                ui.set_scroll_here_y(1.0);
-            }
-            self.chat_jump = false;
-        });
+                self.draw_message_rows(
+                    ui,
+                    mine,
+                    &mut reply,
+                    &mut edit,
+                    &mut delete,
+                    &mut save,
+                    &mut collapse,
+                    &mut inline_submit,
+                    &mut inline_cancel,
+                );
+                self.history_h = ui.cursor_pos()[1] - history_top;
+                if stick {
+                    ui.set_scroll_here_y(1.0);
+                }
+                self.chat_jump = false;
+            });
         if let Some(id) = reply {
             self.reply_to = Some(id);
             self.reply_draft.clear();
@@ -4148,7 +5389,15 @@ impl App {
         ui.dummy([width, height]);
         let center_x = origin[0] + width * 0.5;
         let top = origin[1] + height * 0.4;
-        skin::text_centered(ui, self.bold_font, FONT_MD, center_x, top, TEXT_SECONDARY, "NO TEXT CHANNELS");
+        skin::text_centered(
+            ui,
+            self.bold_font,
+            FONT_MD,
+            center_x,
+            top,
+            TEXT_SECONDARY,
+            "NO TEXT CHANNELS",
+        );
         let body = "You find yourself in a strange place. You don't have access to any text channels, or there are none in this server.";
         let mut y = top + 28.0;
         for line in skin::wrap_lines(ui, None, FONT_SM, body, (width - 64.0).min(440.0)) {
@@ -4159,11 +5408,12 @@ impl App {
 
     fn composer_footer_h(&self) -> f32 {
         // Replies use an inline composer under the parent comment (Reddit). Bottom strip is edit/file/reply-hint.
-        let strip = if self.editing.is_some() || self.pending_file.is_some() || self.reply_to.is_some() {
-            34.0
-        } else {
-            0.0
-        };
+        let strip =
+            if self.editing.is_some() || self.pending_file.is_some() || self.reply_to.is_some() {
+                34.0
+            } else {
+                0.0
+            };
         8.0 + strip + COMPOSER_H + COMPOSER_BOTTOM
     }
 
@@ -4182,17 +5432,41 @@ impl App {
         } else if let Some((name, bytes)) = &self.pending_file {
             Some((format!("{name} ({} KB)", bytes.len().div_ceil(1024)), false))
         } else if self.reply_to.is_some() {
-            Some(("Replying in the thread above — this bar starts a new top-level post".to_string(), true))
+            Some((
+                "Replying in the thread above — this bar starts a new top-level post".to_string(),
+                true,
+            ))
         } else {
             None
         };
         if let Some((label, reply_hint)) = &strip {
-            skin::rect_corners(ui, [bar_x, y], [bar_x + bar_w, y + 34.0], SIDEBAR_BG, COMPOSER_RADIUS, DrawFlags::ROUND_TOP);
+            skin::rect_corners(
+                ui,
+                [bar_x, y],
+                [bar_x + bar_w, y + 34.0],
+                SIDEBAR_BG,
+                COMPOSER_RADIUS,
+                DrawFlags::ROUND_TOP,
+            );
             let shown = skin::ellipsize(ui, None, FONT_SM, label, bar_w - 64.0);
-            let color = if *reply_hint { BLURPLE_TEXT } else { TEXT_SECONDARY };
+            let color = if *reply_hint {
+                BLURPLE_TEXT
+            } else {
+                TEXT_SECONDARY
+            };
             skin::text_in_row(ui, None, FONT_SM, bar_x + 16.0, y, 34.0, color, &shown);
             if !*reply_hint {
-                if skin::icon_button(ui, "composer-cancel", self.icon("x"), [bar_x + bar_w - 8.0 - 24.0, y + 5.0], 24.0, 16.0, TEXT_SECONDARY, TEXT_NORMAL, None) {
+                if skin::icon_button(
+                    ui,
+                    "composer-cancel",
+                    self.icon("x"),
+                    [bar_x + bar_w - 8.0 - 24.0, y + 5.0],
+                    24.0,
+                    16.0,
+                    TEXT_SECONDARY,
+                    TEXT_NORMAL,
+                    None,
+                ) {
                     if self.editing.take().is_some() {
                         self.composer.clear();
                     } else {
@@ -4202,7 +5476,11 @@ impl App {
             }
             y += 34.0;
         }
-        let corners = if strip.is_some() { DrawFlags::ROUND_BOTTOM } else { DrawFlags::ROUND_ALL };
+        let corners = if strip.is_some() {
+            DrawFlags::ROUND_BOTTOM
+        } else {
+            DrawFlags::ROUND_ALL
+        };
         skin::rect_corners(
             ui,
             [bar_x, y],
@@ -4212,8 +5490,22 @@ impl App {
             corners,
         );
         let input_x = if self.editing.is_none() {
-            let tint = if self.pending_file.is_some() { TEXT_NORMAL } else { TEXT_SECONDARY };
-            if skin::icon_button(ui, "attach", self.icon("circle-plus"), [bar_x + 12.0, y + 8.0], 28.0, 24.0, tint, TEXT_NORMAL, None) {
+            let tint = if self.pending_file.is_some() {
+                TEXT_NORMAL
+            } else {
+                TEXT_SECONDARY
+            };
+            if skin::icon_button(
+                ui,
+                "attach",
+                self.icon("circle-plus"),
+                [bar_x + 12.0, y + 8.0],
+                28.0,
+                24.0,
+                tint,
+                TEXT_NORMAL,
+                None,
+            ) {
                 self.pick_attachment();
             }
             skin::item_tooltip(ui, self.semibold_font, "Upload a File");
@@ -4221,7 +5513,11 @@ impl App {
         } else {
             bar_x + 8.0
         };
-        let channel_mark = if self.stage_icon() == Some("hash") { "#" } else { "@" };
+        let channel_mark = if self.stage_icon() == Some("hash") {
+            "#"
+        } else {
+            "@"
+        };
         let hint = if self.reply_to.is_some() {
             format!("New post in {channel_mark}{}", self.stage_title())
         } else {
@@ -4230,7 +5526,8 @@ impl App {
         ui.set_cursor_screen_pos([input_x, y]);
         let submit = {
             let _font = ui.push_font_with_size(None, FONT_MD);
-            let _pad = ui.push_style_var(StyleVar::FramePadding([4.0, (COMPOSER_H - FONT_MD) * 0.5]));
+            let _pad =
+                ui.push_style_var(StyleVar::FramePadding([4.0, (COMPOSER_H - FONT_MD) * 0.5]));
             let _border = ui.push_style_var(StyleVar::FrameBorderSize(0.0));
             let _bg = ui.push_style_color(StyleColor::FrameBg, skin::CLEAR);
             let _bg_hover = ui.push_style_color(StyleColor::FrameBgHovered, skin::CLEAR);
@@ -4238,7 +5535,10 @@ impl App {
             let _hint = ui.push_style_color(StyleColor::TextDisabled, PLACEHOLDER);
             let _text = ui.push_style_color(StyleColor::Text, TEXT_NORMAL);
             ui.set_next_item_width((bar_x + bar_w - 16.0 - input_x).max(40.0));
-            ui.input_text("##composer", &mut self.composer).hint(hint).enter_returns_true(true).build()
+            ui.input_text("##composer", &mut self.composer)
+                .hint(hint)
+                .enter_returns_true(true)
+                .build()
         };
         if submit {
             self.submit_composer(target);
@@ -4253,32 +5553,65 @@ impl App {
             self.voice_channel = Some(channel_id);
             self.call = None;
             self.flags_failed_at = None;
-            self.sent_flags = VoiceFlags { muted: !self.flags.muted, ..self.flags };
+            self.sent_flags = VoiceFlags {
+                muted: !self.flags.muted,
+                ..self.flags
+            };
         }
     }
 
     fn draw_voice_stage(&mut self, ui: &Ui) {
         let channel = self.selected.clone();
-        let joined = channel.as_ref().is_some_and(|channel| self.voice_channel == Some(channel.id));
+        let joined = channel
+            .as_ref()
+            .is_some_and(|channel| self.voice_channel == Some(channel.id));
         let origin = ui.cursor_screen_pos();
         let width = ui.content_region_avail()[0].max(1.0);
         let height = ui.content_region_avail()[1].max(1.0);
         ui.dummy([width, height]);
-        skin::rect(ui, origin, [origin[0] + width, origin[1] + height], CALL_BG, 0.0);
+        skin::rect(
+            ui,
+            origin,
+            [origin[0] + width, origin[1] + height],
+            CALL_BG,
+            0.0,
+        );
         let semi = self.semibold_font;
         if !joined {
             if let Some(channel) = channel {
                 let names: Vec<String> = self
                     .voice_rosters
                     .get(&channel.id)
-                    .map(|members| members.iter().map(|member| self.name_of(member.user_id)).collect())
+                    .map(|members| {
+                        members
+                            .iter()
+                            .map(|member| self.name_of(member.user_id))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let line = voice_occupancy_line(&names);
                 let center_x = origin[0] + width * 0.5;
                 let title_y = origin[1] + height * 0.4;
                 skin::text_centered(ui, semi, FONT_XL, center_x, title_y, TEXT, &channel.name);
-                skin::text_centered(ui, None, FONT_MD, center_x, title_y + 36.0, TEXT_SECONDARY, &line);
-                if skin::button(ui, "join-voice", "Join Voice", Tone::Green, [center_x - 60.0, title_y + 72.0], [120.0, BUTTON_H], true, semi) {
+                skin::text_centered(
+                    ui,
+                    None,
+                    FONT_MD,
+                    center_x,
+                    title_y + 36.0,
+                    TEXT_SECONDARY,
+                    &line,
+                );
+                if skin::button(
+                    ui,
+                    "join-voice",
+                    "Join Voice",
+                    Tone::Green,
+                    [center_x - 60.0, title_y + 72.0],
+                    [120.0, BUTTON_H],
+                    true,
+                    semi,
+                ) {
                     self.join_voice_channel(channel.id);
                 }
             }
@@ -4287,7 +5620,10 @@ impl App {
         let members = self.voice_members.clone();
         let people = if members.is_empty() {
             let me = self.account.as_ref().map(|account| account.id).unwrap_or(0);
-            vec![banter_server::VoiceMember { user_id: me, flags: self.flags }]
+            vec![banter_server::VoiceMember {
+                user_id: me,
+                flags: self.flags,
+            }]
         } else {
             members
         };
@@ -4295,9 +5631,18 @@ impl App {
         let area_w = (width - pad * 2.0).max(80.0);
         let area_h = (height - CALL_BAR_H - pad).max(80.0);
         let sharing = self.screen || people.iter().any(|member| member.flags.screen);
-        let featured_h = if sharing { (area_h * 0.62).floor() } else { 0.0 };
+        let featured_h = if sharing {
+            (area_h * 0.62).floor()
+        } else {
+            0.0
+        };
         if sharing {
-            self.draw_featured_screen_at(ui, [origin[0] + pad, origin[1] + pad], area_w, featured_h);
+            self.draw_featured_screen_at(
+                ui,
+                [origin[0] + pad, origin[1] + pad],
+                area_w,
+                featured_h,
+            );
         }
         let tiles_top = origin[1] + pad + if sharing { featured_h + TILE_GAP } else { 0.0 };
         let tiles_h = (area_h - if sharing { featured_h + TILE_GAP } else { 0.0 }).max(60.0);
@@ -4313,25 +5658,51 @@ impl App {
                 (start_x + col as f32 * (grid.tile_w + TILE_GAP)).floor(),
                 (start_y + row as f32 * (grid.tile_h + TILE_GAP)).floor(),
             ];
-            self.draw_voice_tile_at(ui, member, tile_origin, grid.tile_w.floor(), grid.tile_h.floor());
+            self.draw_voice_tile_at(
+                ui,
+                member,
+                tile_origin,
+                grid.tile_w.floor(),
+                grid.tile_h.floor(),
+            );
         }
         self.draw_stage_controls(ui, [origin[0], origin[1] + height - CALL_BAR_H], width);
         if self.push_to_talk {
             let note = format!("Hold {} to talk.", self.voice.ptt_key);
-            skin::text_centered(ui, None, FONT_XS, origin[0] + width * 0.5, origin[1] + height - 18.0, MUTED, &note);
+            skin::text_centered(
+                ui,
+                None,
+                FONT_XS,
+                origin[0] + width * 0.5,
+                origin[1] + height - 18.0,
+                MUTED,
+                &note,
+            );
         }
     }
 
     /// Discord-style 1:1 DM call stage: large avatar while ringing, two tiles when active.
     fn draw_call_stage(&mut self, ui: &Ui) {
-        let Some(call) = self.call.clone() else { return };
+        let Some(call) = self.call.clone() else {
+            return;
+        };
         let me = self.account.as_ref().map(|account| account.id).unwrap_or(0);
-        let peer = if call.caller == me { call.callee } else { call.caller };
+        let peer = if call.caller == me {
+            call.callee
+        } else {
+            call.caller
+        };
         let origin = ui.cursor_screen_pos();
         let width = ui.content_region_avail()[0].max(1.0);
         let height = ui.content_region_avail()[1].max(1.0);
         ui.dummy([width, height]);
-        skin::rect(ui, origin, [origin[0] + width, origin[1] + height], CALL_BG, 0.0);
+        skin::rect(
+            ui,
+            origin,
+            [origin[0] + width, origin[1] + height],
+            CALL_BG,
+            0.0,
+        );
         let semi = self.semibold_font;
         match call.phase {
             CallPhase::Ringing => {
@@ -4340,12 +5711,33 @@ impl App {
                 let name = self.name_of(peer);
                 let avatar = self.avatars.get(&peer).map(|shot| shot.texture);
                 paint_avatar(ui, avatar, center, radius, &initials(&name), None);
-                let status = if call.callee == me { "Incoming Call" } else { "Calling…" };
-                skin::text_centered(ui, semi, FONT_XL, center[0], center[1] + radius + 24.0, TEXT, &name);
-                skin::text_centered(ui, None, FONT_MD, center[0], center[1] + radius + 52.0, TEXT_SECONDARY, status);
+                let status = if call.callee == me {
+                    "Incoming Call"
+                } else {
+                    "Calling…"
+                };
+                skin::text_centered(
+                    ui,
+                    semi,
+                    FONT_XL,
+                    center[0],
+                    center[1] + radius + 24.0,
+                    TEXT,
+                    &name,
+                );
+                skin::text_centered(
+                    ui,
+                    None,
+                    FONT_MD,
+                    center[0],
+                    center[1] + radius + 52.0,
+                    TEXT_SECONDARY,
+                    status,
+                );
                 if call.callee == me {
                     let y = origin[1] + height - CALL_BAR_H - CALL_BUTTON - 24.0;
-                    let xs = centered_row(width, &[CALL_BUTTON, CALL_BUTTON], CALL_BUTTON_GAP * 2.0);
+                    let xs =
+                        centered_row(width, &[CALL_BUTTON, CALL_BUTTON], CALL_BUTTON_GAP * 2.0);
                     if self.round_control_colored(
                         ui,
                         "call-accept",
@@ -4358,7 +5750,14 @@ impl App {
                         self.accept_call(call.dm_id);
                     }
                     skin::item_tooltip(ui, semi, "Accept");
-                    if self.round_control(ui, "call-decline", "phone-off", [origin[0] + xs[1], y], true, WHITE) {
+                    if self.round_control(
+                        ui,
+                        "call-decline",
+                        "phone-off",
+                        [origin[0] + xs[1], y],
+                        true,
+                        WHITE,
+                    ) {
                         if self.note(self.client.decline_call(call.dm_id)).is_some() {
                             self.end_media_place();
                         }
@@ -4372,16 +5771,28 @@ impl App {
                 let area_w = (width - pad * 2.0).max(80.0);
                 let area_h = (height - CALL_BAR_H - pad).max(80.0);
                 let sharing = self.screen || people.iter().any(|member| member.flags.screen);
-                let featured_h = if sharing { (area_h * 0.62).floor() } else { 0.0 };
+                let featured_h = if sharing {
+                    (area_h * 0.62).floor()
+                } else {
+                    0.0
+                };
                 if sharing {
-                    self.draw_featured_screen_at(ui, [origin[0] + pad, origin[1] + pad], area_w, featured_h);
+                    self.draw_featured_screen_at(
+                        ui,
+                        [origin[0] + pad, origin[1] + pad],
+                        area_w,
+                        featured_h,
+                    );
                 }
                 let tiles_top = origin[1] + pad + if sharing { featured_h + TILE_GAP } else { 0.0 };
-                let tiles_h = (area_h - if sharing { featured_h + TILE_GAP } else { 0.0 }).max(60.0);
+                let tiles_h =
+                    (area_h - if sharing { featured_h + TILE_GAP } else { 0.0 }).max(60.0);
                 let count = dm_call_participant_tiles(true);
                 let grid = voice_tile_grid(count, area_w, tiles_h, TILE_GAP);
-                let grid_w = grid.cols as f32 * grid.tile_w + grid.cols.saturating_sub(1) as f32 * TILE_GAP;
-                let grid_h = grid.rows as f32 * grid.tile_h + grid.rows.saturating_sub(1) as f32 * TILE_GAP;
+                let grid_w =
+                    grid.cols as f32 * grid.tile_w + grid.cols.saturating_sub(1) as f32 * TILE_GAP;
+                let grid_h =
+                    grid.rows as f32 * grid.tile_h + grid.rows.saturating_sub(1) as f32 * TILE_GAP;
                 let start_x = origin[0] + pad + (area_w - grid_w) * 0.5;
                 let start_y = tiles_top + (tiles_h - grid_h) * 0.5;
                 for (index, member) in people.iter().enumerate().take(count) {
@@ -4391,14 +5802,28 @@ impl App {
                         (start_x + col as f32 * (grid.tile_w + TILE_GAP)).floor(),
                         (start_y + row as f32 * (grid.tile_h + TILE_GAP)).floor(),
                     ];
-                    self.draw_voice_tile_at(ui, member, tile_origin, grid.tile_w.floor(), grid.tile_h.floor());
+                    self.draw_voice_tile_at(
+                        ui,
+                        member,
+                        tile_origin,
+                        grid.tile_w.floor(),
+                        grid.tile_h.floor(),
+                    );
                 }
             }
         }
         self.draw_stage_controls(ui, [origin[0], origin[1] + height - CALL_BAR_H], width);
         if self.push_to_talk {
             let note = format!("Hold {} to talk.", self.voice.ptt_key);
-            skin::text_centered(ui, None, FONT_XS, origin[0] + width * 0.5, origin[1] + height - 18.0, MUTED, &note);
+            skin::text_centered(
+                ui,
+                None,
+                FONT_XS,
+                origin[0] + width * 0.5,
+                origin[1] + height - 18.0,
+                MUTED,
+                &note,
+            );
         }
     }
 
@@ -4418,19 +5843,40 @@ impl App {
     /// Centered call controls: camera, screen share with its options chevron, mic, and the red disconnect.
     fn draw_stage_controls(&mut self, ui: &Ui, origin: [f32; 2], width: f32) {
         let semi = self.semibold_font;
-        let widths = [CALL_BUTTON, CALL_BUTTON + CALL_CHEVRON_W, CALL_BUTTON, CALL_BUTTON];
+        let widths = [
+            CALL_BUTTON,
+            CALL_BUTTON + CALL_CHEVRON_W,
+            CALL_BUTTON,
+            CALL_BUTTON,
+        ];
         let xs = centered_row(width, &widths, CALL_BUTTON_GAP);
         let y = origin[1] + (CALL_BAR_H - CALL_BUTTON) * 0.5;
         let camera = self.camera;
         let camera_icon = if camera { "video" } else { "video-off" };
-        if self.round_control(ui, "stage-camera", camera_icon, [origin[0] + xs[0], y], false, WHITE) {
+        if self.round_control(
+            ui,
+            "stage-camera",
+            camera_icon,
+            [origin[0] + xs[0], y],
+            false,
+            WHITE,
+        ) {
             self.camera = !self.camera;
         }
-        skin::item_tooltip(ui, semi, if camera { "Turn Off Camera" } else { "Turn On Camera" });
+        skin::item_tooltip(
+            ui,
+            semi,
+            if camera {
+                "Turn Off Camera"
+            } else {
+                "Turn On Camera"
+            },
+        );
         let live = self.share.is_live();
         let screen_min = [origin[0] + xs[1], y];
         let screen_icon = if live { "monitor" } else { "monitor-off" };
-        let (share_clicked, options_clicked, share_custom) = self.split_control(ui, "stage-screen", screen_icon, screen_min);
+        let (share_clicked, options_clicked, share_custom) =
+            self.split_control(ui, "stage-screen", screen_icon, screen_min);
         if share_clicked || share_custom {
             self.on_share_click(share_clicked, share_custom);
         }
@@ -4439,16 +5885,37 @@ impl App {
             self.stream_menu = !self.stream_menu;
         }
         let muted = self.mute.muted();
-        let (mic_icon, mic_tint) = if muted { ("mic-off", RED) } else { ("mic", WHITE) };
-        if self.round_control(ui, "stage-mic", mic_icon, [origin[0] + xs[2], y], false, mic_tint) {
+        let (mic_icon, mic_tint) = if muted {
+            ("mic-off", RED)
+        } else {
+            ("mic", WHITE)
+        };
+        if self.round_control(
+            ui,
+            "stage-mic",
+            mic_icon,
+            [origin[0] + xs[2], y],
+            false,
+            mic_tint,
+        ) {
             self.mute.set_muted(!muted);
         }
         skin::item_tooltip(ui, semi, if muted { "Unmute" } else { "Mute" });
-        if self.round_control(ui, "stage-disconnect", "phone-off", [origin[0] + xs[3], y], true, WHITE) {
+        if self.round_control(
+            ui,
+            "stage-disconnect",
+            "phone-off",
+            [origin[0] + xs[3], y],
+            true,
+            WHITE,
+        ) {
             self.end_voice_or_call();
         }
         let end_tip = match &self.call {
-            Some(call) if call.phase == CallPhase::Ringing && self.account.as_ref().map(|a| a.id) != Some(call.callee) => {
+            Some(call)
+                if call.phase == CallPhase::Ringing
+                    && self.account.as_ref().map(|a| a.id) != Some(call.callee) =>
+            {
                 "Cancel"
             }
             Some(call) if call.phase == CallPhase::Ringing => "Decline",
@@ -4458,7 +5925,15 @@ impl App {
         skin::item_tooltip(ui, semi, end_tip);
     }
 
-    fn round_control(&self, ui: &Ui, id: &str, icon: &str, origin: [f32; 2], danger: bool, tint: [f32; 4]) -> bool {
+    fn round_control(
+        &self,
+        ui: &Ui,
+        id: &str,
+        icon: &str,
+        origin: [f32; 2],
+        danger: bool,
+        tint: [f32; 4],
+    ) -> bool {
         let (fill, hover) = if danger {
             (DANGER, DANGER_HOVER)
         } else {
@@ -4484,7 +5959,13 @@ impl App {
         let max = [origin[0] + CALL_BUTTON, origin[1] + CALL_BUTTON];
         skin::rect(ui, origin, max, color, CALL_BUTTON * 0.5);
         let inset = (CALL_BUTTON - 24.0) * 0.5;
-        skin::image(ui, self.icon(icon), [origin[0] + inset, origin[1] + inset], 24.0, tint);
+        skin::image(
+            ui,
+            self.icon(icon),
+            [origin[0] + inset, origin[1] + inset],
+            24.0,
+            tint,
+        );
         clicked
     }
 
@@ -4517,9 +5998,17 @@ impl App {
         skin::rect(ui, origin, max, CONTROL_BG, CALL_BUTTON * 0.5);
         ui.set_cursor_screen_pos(origin);
         let main = ui.invisible_button(id, [CALL_BUTTON, CALL_BUTTON]);
-        let custom = ui.is_item_clicked_with_button(dear_imgui_rs::MouseButton::Right) && ui.io().key_shift();
+        let custom = ui.is_item_clicked_with_button(dear_imgui_rs::MouseButton::Right)
+            && ui.io().key_shift();
         if ui.is_item_hovered() {
-            skin::rect_corners(ui, origin, [origin[0] + CALL_BUTTON, max[1]], CONTROL_HOVER, CALL_BUTTON * 0.5, DrawFlags::ROUND_LEFT);
+            skin::rect_corners(
+                ui,
+                origin,
+                [origin[0] + CALL_BUTTON, max[1]],
+                CONTROL_HOVER,
+                CALL_BUTTON * 0.5,
+                DrawFlags::ROUND_LEFT,
+            );
         }
         let live = self.share.is_live();
         skin::item_tooltip(ui, semi, share_tip(live));
@@ -4527,13 +6016,38 @@ impl App {
         ui.set_cursor_screen_pos(chevron_min);
         let options = ui.invisible_button(format!("{id}-options"), [CALL_CHEVRON_W, CALL_BUTTON]);
         if ui.is_item_hovered() || self.stream_menu {
-            skin::rect_corners(ui, chevron_min, max, CONTROL_HOVER, CALL_BUTTON * 0.5, DrawFlags::ROUND_RIGHT);
+            skin::rect_corners(
+                ui,
+                chevron_min,
+                max,
+                CONTROL_HOVER,
+                CALL_BUTTON * 0.5,
+                DrawFlags::ROUND_RIGHT,
+            );
         }
         skin::item_tooltip(ui, semi, "Stream Options");
-        skin::rect(ui, [chevron_min[0], origin[1] + 14.0], [chevron_min[0] + 1.0, max[1] - 14.0], CALL_BG, 0.0);
+        skin::rect(
+            ui,
+            [chevron_min[0], origin[1] + 14.0],
+            [chevron_min[0] + 1.0, max[1] - 14.0],
+            CALL_BG,
+            0.0,
+        );
         let inset = (CALL_BUTTON - 24.0) * 0.5;
-        skin::image(ui, self.icon(icon), [origin[0] + inset, origin[1] + inset], 24.0, WHITE);
-        skin::image(ui, self.icon("chevron-up"), [chevron_min[0] + 2.0, origin[1] + (CALL_BUTTON - 16.0) * 0.5], 16.0, TEXT_NORMAL);
+        skin::image(
+            ui,
+            self.icon(icon),
+            [origin[0] + inset, origin[1] + inset],
+            24.0,
+            WHITE,
+        );
+        skin::image(
+            ui,
+            self.icon("chevron-up"),
+            [chevron_min[0] + 2.0, origin[1] + (CALL_BUTTON - 16.0) * 0.5],
+            16.0,
+            TEXT_NORMAL,
+        );
         (main, options, custom)
     }
 
@@ -4577,7 +6091,10 @@ impl App {
                 };
                 if self.modal_frames > 0 && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
                     let mouse = ui.mouse_pos();
-                    let inside = mouse[0] >= card.0[0] && mouse[0] <= card.1[0] && mouse[1] >= card.0[1] && mouse[1] <= card.1[1];
+                    let inside = mouse[0] >= card.0[0]
+                        && mouse[0] <= card.1[0]
+                        && mouse[1] >= card.0[1]
+                        && mouse[1] <= card.1[1];
                     if !inside {
                         self.modal = None;
                     }
@@ -4604,15 +6121,35 @@ impl App {
         let width = MODAL_W.min(display[0] - 32.0);
         let inner_w = width - MODAL_PAD * 2.0;
         let title_size = if left_aligned { FONT_LG } else { FONT_XL };
-        let lines = subtitle.map(|text| skin::wrap_lines(ui, None, if left_aligned { FONT_XS } else { FONT_MD }, text, inner_w - 24.0)).unwrap_or_default();
+        let lines = subtitle
+            .map(|text| {
+                skin::wrap_lines(
+                    ui,
+                    None,
+                    if left_aligned { FONT_XS } else { FONT_MD },
+                    text,
+                    inner_w - 24.0,
+                )
+            })
+            .unwrap_or_default();
         let line_h = if left_aligned { 16.0 } else { 20.0 };
         let header_h = 24.0 + title_size + 8.0 + lines.len() as f32 * line_h + 16.0;
         let height = header_h + body_h + footer_h;
-        let min = [((display[0] - width) * 0.5).floor(), ((display[1] - height) * 0.5).max(16.0).floor()];
+        let min = [
+            ((display[0] - width) * 0.5).floor(),
+            ((display[1] - height) * 0.5).max(16.0).floor(),
+        ];
         let max = [min[0] + width, min[1] + height];
         skin::rect(ui, min, max, STAGE_BG, MODAL_RADIUS);
         if footer_h > 0.0 {
-            skin::rect_corners(ui, [min[0], max[1] - footer_h], max, MODAL_FOOTER_BG, MODAL_RADIUS, DrawFlags::ROUND_BOTTOM);
+            skin::rect_corners(
+                ui,
+                [min[0], max[1] - footer_h],
+                max,
+                MODAL_FOOTER_BG,
+                MODAL_RADIUS,
+                DrawFlags::ROUND_BOTTOM,
+            );
         }
         let center_x = min[0] + width * 0.5;
         let mut y = min[1] + 24.0;
@@ -4624,26 +6161,70 @@ impl App {
         y += title_size + 8.0;
         for line in &lines {
             if left_aligned {
-                skin::text(ui, None, FONT_XS, [min[0] + MODAL_PAD, y], TEXT_SECONDARY, line);
+                skin::text(
+                    ui,
+                    None,
+                    FONT_XS,
+                    [min[0] + MODAL_PAD, y],
+                    TEXT_SECONDARY,
+                    line,
+                );
             } else {
                 skin::text_centered(ui, None, FONT_MD, center_x, y, TEXT_SECONDARY, line);
             }
             y += line_h;
         }
-        if skin::icon_button(ui, "modal-close", self.icon("x"), [max[0] - 16.0 - 24.0, min[1] + 16.0], 24.0, 24.0, TEXT_SECONDARY, TEXT_NORMAL, None) {
+        if skin::icon_button(
+            ui,
+            "modal-close",
+            self.icon("x"),
+            [max[0] - 16.0 - 24.0, min[1] + 16.0],
+            24.0,
+            24.0,
+            TEXT_SECONDARY,
+            TEXT_NORMAL,
+            None,
+        ) {
             self.modal = None;
         }
         ([min[0] + MODAL_PAD, min[1] + header_h], min, max)
     }
 
     /// Footer with a text link on the left and the primary button on the right.
-    fn modal_footer(&mut self, ui: &Ui, max: [f32; 2], min_x: f32, back: &str, primary: &str, tone: Tone, enabled: bool) -> (bool, bool) {
+    fn modal_footer(
+        &mut self,
+        ui: &Ui,
+        max: [f32; 2],
+        min_x: f32,
+        back: &str,
+        primary: &str,
+        tone: Tone,
+        enabled: bool,
+    ) -> (bool, bool) {
         let semi = self.semibold_font;
         let y = max[1] - MODAL_FOOTER_H + (MODAL_FOOTER_H - BUTTON_H) * 0.5;
         let back_w = skin::text_size(ui, semi, FONT_SM, back)[0] + 32.0;
-        let back_clicked = skin::button(ui, "modal-back", back, Tone::Link, [min_x + MODAL_PAD - 16.0, y], [back_w, BUTTON_H], true, semi);
+        let back_clicked = skin::button(
+            ui,
+            "modal-back",
+            back,
+            Tone::Link,
+            [min_x + MODAL_PAD - 16.0, y],
+            [back_w, BUTTON_H],
+            true,
+            semi,
+        );
         let primary_w = (skin::text_size(ui, semi, FONT_SM, primary)[0] + 32.0).max(96.0);
-        let primary_clicked = skin::button(ui, "modal-primary", primary, tone, [max[0] - MODAL_PAD - primary_w, y], [primary_w, BUTTON_H], enabled, semi);
+        let primary_clicked = skin::button(
+            ui,
+            "modal-primary",
+            primary,
+            tone,
+            [max[0] - MODAL_PAD - primary_w, y],
+            [primary_w, BUTTON_H],
+            enabled,
+            semi,
+        );
         (back_clicked, primary_clicked)
     }
 
@@ -4660,7 +6241,9 @@ impl App {
             ui,
             display,
             "Create Your Server",
-            Some("Your server is where you and your friends hang out. Make yours and start talking."),
+            Some(
+                "Your server is where you and your friends hang out. Make yours and start talking.",
+            ),
             false,
             64.0 + 16.0,
             footer_h,
@@ -4671,17 +6254,52 @@ impl App {
         ui.set_cursor_screen_pos(option_min);
         let create = ui.invisible_button("create-my-own", [inner_w, 64.0]);
         let hovered = ui.is_item_hovered();
-        skin::rect(ui, option_min, option_max, if hovered { ROW_HOVER } else { STAGE_BG }, 8.0);
+        skin::rect(
+            ui,
+            option_min,
+            option_max,
+            if hovered { ROW_HOVER } else { STAGE_BG },
+            8.0,
+        );
         ui.get_window_draw_list()
             .add_rect(option_min, option_max, LIST_DIVIDER)
             .rounding(8.0)
             .thickness(1.0)
             .build();
-        skin::image(ui, self.icon("circle-plus"), [option_min[0] + 16.0, option_min[1] + 16.0], 32.0, GREEN);
-        skin::text_in_row(ui, semi, FONT_MD, option_min[0] + 64.0, option_min[1], 64.0, TEXT, "Create My Own");
-        skin::image(ui, self.icon("chevron-right"), [option_max[0] - 16.0 - 20.0, option_min[1] + 22.0], 20.0, TEXT_SECONDARY);
+        skin::image(
+            ui,
+            self.icon("circle-plus"),
+            [option_min[0] + 16.0, option_min[1] + 16.0],
+            32.0,
+            GREEN,
+        );
+        skin::text_in_row(
+            ui,
+            semi,
+            FONT_MD,
+            option_min[0] + 64.0,
+            option_min[1],
+            64.0,
+            TEXT,
+            "Create My Own",
+        );
+        skin::image(
+            ui,
+            self.icon("chevron-right"),
+            [option_max[0] - 16.0 - 20.0, option_min[1] + 22.0],
+            20.0,
+            TEXT_SECONDARY,
+        );
         let footer_top = max[1] - footer_h;
-        skin::text_centered(ui, semi, FONT_LG, (min[0] + max[0]) * 0.5, footer_top + 16.0, TEXT, "Have an invite already?");
+        skin::text_centered(
+            ui,
+            semi,
+            FONT_LG,
+            (min[0] + max[0]) * 0.5,
+            footer_top + 16.0,
+            TEXT,
+            "Have an invite already?",
+        );
         let join = skin::button(
             ui,
             "join-a-server",
@@ -4716,9 +6334,20 @@ impl App {
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         skin::field_label(ui, self.bold_font, body, "Server name", false, None);
         self.focus_modal_field(ui);
-        let enter = skin::input(ui, "##server-name", &mut self.server_name, "", [body[0], body[1] + 20.0], inner_w, INPUT_H, FONT_MD, false);
+        let enter = skin::input(
+            ui,
+            "##server-name",
+            &mut self.server_name,
+            "",
+            [body[0], body[1] + 20.0],
+            inner_w,
+            INPUT_H,
+            FONT_MD,
+            false,
+        );
         let enabled = !self.server_name.trim().is_empty();
-        let (back, create) = self.modal_footer(ui, max, min[0], "Back", "Create", Tone::Brand, enabled);
+        let (back, create) =
+            self.modal_footer(ui, max, min[0], "Back", "Create", Tone::Brand, enabled);
         if back {
             self.open_modal(Modal::AddServer);
         } else if (create || enter) && enabled {
@@ -4746,9 +6375,20 @@ impl App {
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         skin::field_label(ui, self.bold_font, body, "Invite link", true, None);
         self.focus_modal_field(ui);
-        let enter = skin::input(ui, "##invite-code", &mut self.invite_code, "Invite code", [body[0], body[1] + 20.0], inner_w, INPUT_H, FONT_MD, false);
+        let enter = skin::input(
+            ui,
+            "##invite-code",
+            &mut self.invite_code,
+            "Invite code",
+            [body[0], body[1] + 20.0],
+            inner_w,
+            INPUT_H,
+            FONT_MD,
+            false,
+        );
         let enabled = !self.invite_code.trim().is_empty();
-        let (back, join) = self.modal_footer(ui, max, min[0], "Back", "Join Server", Tone::Brand, enabled);
+        let (back, join) =
+            self.modal_footer(ui, max, min[0], "Back", "Join Server", Tone::Brand, enabled);
         if back {
             self.open_modal(Modal::AddServer);
         } else if (join || enter) && enabled {
@@ -4765,7 +6405,11 @@ impl App {
 
     fn modal_invite(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
         let server = match self.place {
-            Place::Server(id) => self.servers.iter().find(|server| server.id == id).map(|server| server.name.clone()),
+            Place::Server(id) => self
+                .servers
+                .iter()
+                .find(|server| server.id == id)
+                .map(|server| server.name.clone()),
             _ => None,
         }
         .unwrap_or_else(|| "your server".into());
@@ -4775,18 +6419,58 @@ impl App {
             .filter(|channel| channel.kind == ChannelKind::Text)
             .map(|channel| format!("# {}", channel.name));
         let title = format!("Invite friends to {server}");
-        let (body, min, max) = self.modal_frame(ui, display, &title, channel.as_deref(), true, 20.0 + INPUT_H + 24.0, 0.0);
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            &title,
+            channel.as_deref(),
+            true,
+            20.0 + INPUT_H + 24.0,
+            0.0,
+        );
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
-        skin::field_label(ui, self.bold_font, body, "Or, send a server invite link to a friend", false, None);
+        skin::field_label(
+            ui,
+            self.bold_font,
+            body,
+            "Or, send a server invite link to a friend",
+            false,
+            None,
+        );
         let field_min = [body[0], body[1] + 20.0];
-        skin::rect(ui, field_min, [field_min[0] + inner_w, field_min[1] + INPUT_H], INPUT_BG, INPUT_RADIUS);
+        skin::rect(
+            ui,
+            field_min,
+            [field_min[0] + inner_w, field_min[1] + INPUT_H],
+            INPUT_BG,
+            INPUT_RADIUS,
+        );
         let mut code = self.shown_invite.clone();
-        skin::input(ui, "##invite-link", &mut code, "", field_min, inner_w - 84.0, INPUT_H, FONT_MD, true);
+        skin::input(
+            ui,
+            "##invite-link",
+            &mut code,
+            "",
+            field_min,
+            inner_w - 84.0,
+            INPUT_H,
+            FONT_MD,
+            true,
+        );
         let copied = self.invite_copied;
         let enabled = !self.shown_invite.is_empty();
         let button_min = [field_min[0] + inner_w - 4.0 - 75.0, field_min[1] + 4.0];
         let tone = if copied { Tone::Green } else { Tone::Brand };
-        if skin::button(ui, "copy-invite", if copied { "Copied" } else { "Copy" }, tone, button_min, [75.0, 32.0], enabled, self.semibold_font) {
+        if skin::button(
+            ui,
+            "copy-invite",
+            if copied { "Copied" } else { "Copy" },
+            tone,
+            button_min,
+            [75.0, 32.0],
+            enabled,
+            self.semibold_font,
+        ) {
             crate::platform::copy_to_clipboard(&self.shown_invite);
             self.invite_copied = true;
         }
@@ -4806,7 +6490,15 @@ impl App {
         } else {
             20.0 + INPUT_H + picker_h + 28.0
         };
-        let (body, min, max) = self.modal_frame(ui, display, title, Some("Hex color like 5865F2"), true, body_h, MODAL_FOOTER_H);
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            title,
+            Some("Hex color like 5865F2"),
+            true,
+            body_h,
+            MODAL_FOOTER_H,
+        );
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         let mut y = body[1];
         if show_name {
@@ -4814,7 +6506,8 @@ impl App {
             y += 20.0;
             ui.set_cursor_screen_pos([body[0], y]);
             ui.set_next_item_width(inner_w);
-            ui.input_text("##folder-name", &mut self.folder_name).build();
+            ui.input_text("##folder-name", &mut self.folder_name)
+                .build();
             y += INPUT_H + 12.0;
         }
         skin::field_label(ui, self.bold_font, [body[0], y], "Color", false, None);
@@ -4824,19 +6517,25 @@ impl App {
             Ok(rgb) => rgb_u32_to_rgba(rgb as u32),
             Err(_) => RED,
         };
-        skin::rect(ui, [body[0], y], [body[0] + INPUT_H, y + INPUT_H], swatch, 8.0);
+        skin::rect(
+            ui,
+            [body[0], y],
+            [body[0] + INPUT_H, y + INPUT_H],
+            swatch,
+            8.0,
+        );
         ui.set_cursor_screen_pos([body[0] + INPUT_H + 8.0, y]);
         ui.set_next_item_width(inner_w - INPUT_H - 8.0);
-        ui.input_text("##folder-color", &mut self.folder_color).hint("5865F2").build();
+        ui.input_text("##folder-color", &mut self.folder_color)
+            .hint("5865F2")
+            .build();
         // Compact RGB sliders act as the color picker; values sync into the hex field.
         let mut rgb = match parse_folder_color(&self.folder_color) {
-            Ok(value) if value > 0 => {
-                [
-                    ((value >> 16) & 0xFF) as f32 / 255.0,
-                    ((value >> 8) & 0xFF) as f32 / 255.0,
-                    (value & 0xFF) as f32 / 255.0,
-                ]
-            }
+            Ok(value) if value > 0 => [
+                ((value >> 16) & 0xFF) as f32 / 255.0,
+                ((value >> 8) & 0xFF) as f32 / 255.0,
+                (value & 0xFF) as f32 / 255.0,
+            ],
             _ => [0.345, 0.396, 0.949],
         };
         y += INPUT_H + 8.0;
@@ -4869,10 +6568,13 @@ impl App {
             FolderModalMode::Recolor => "Save Color",
         };
         let enabled = match self.folder_mode {
-            FolderModalMode::Create | FolderModalMode::Rename => !self.folder_name.trim().is_empty(),
+            FolderModalMode::Create | FolderModalMode::Rename => {
+                !self.folder_name.trim().is_empty()
+            }
             FolderModalMode::Recolor => true,
         };
-        let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", primary, Tone::Brand, enabled);
+        let (cancel, save) =
+            self.modal_footer(ui, max, min[0], "Cancel", primary, Tone::Brand, enabled);
         if cancel {
             self.modal = None;
         } else if save {
@@ -4884,11 +6586,22 @@ impl App {
     /// Notice when the composer attach control (or any other chat upload path) is used.
     fn modal_add_plugin(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
         let folder = self.data_dir.join("plugins");
-        let subtitle = format!("Add a package from {}, or remove one that is already on this server.", folder.display());
+        let subtitle = format!(
+            "Add a package from {}, or remove one that is already on this server.",
+            folder.display()
+        );
         let list_h = (self.local_plugins.len().max(1) as f32 * 52.0).min(280.0);
         let notice = self.plugin_notice.clone();
         let notice_h = if notice.is_empty() { 0.0 } else { 40.0 };
-        let (body, min, max) = self.modal_frame(ui, display, "Plugins", Some(&subtitle), true, list_h + notice_h + 8.0, 0.0);
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Plugins",
+            Some(&subtitle),
+            true,
+            list_h + notice_h + 8.0,
+            0.0,
+        );
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         let plugins = self.local_plugins.clone();
         let installed = self.installed_plugins.clone();
@@ -4898,82 +6611,114 @@ impl App {
             skin::text(ui, None, FONT_SM, body, TEXT, &notice);
         }
         ui.set_cursor_screen_pos([body[0], body[1] + notice_h]);
-        ui.child_window("local-plugins").size([inner_w, list_h]).build(ui, || {
-            if plugins.is_empty() && installed.is_empty() {
-                skin::text(ui, None, FONT_SM, ui.cursor_screen_pos(), MUTED, "No plugins in that folder, and none on this server.");
-                return;
-            }
-            for plugin in &plugins {
-                let origin = ui.cursor_screen_pos();
-                ui.dummy([inner_w, 48.0]);
-                let next = ui.cursor_screen_pos();
-                skin::text(ui, self.semibold_font, FONT_SM, origin, TEXT, &plugin.name);
-                let installed_version = installed.iter().find(|(id, _, _)| id == &plugin.id).map(|(_, _, version)| version.as_str());
-                let newer = installed_version.is_some_and(|version| crate::plugins::plugin_version_is_newer(&plugin.version, version));
-                let detail = if let Some(reason) = &plugin.failed {
-                    reason.clone()
-                } else {
-                    crate::plugins::plugin_usage(&plugin.id).to_string()
-                };
-                skin::text(ui, None, FONT_XS, [origin[0], origin[1] + 18.0], MUTED, &detail);
-                let on_server = installed_version.is_some();
-                let can_add = plugin.failed.is_none() && (!on_server || newer);
-                if on_server
-                    && skin::button(
+        ui.child_window("local-plugins")
+            .size([inner_w, list_h])
+            .build(ui, || {
+                if plugins.is_empty() && installed.is_empty() {
+                    skin::text(
                         ui,
-                        &format!("remove-plugin-{}", plugin.id),
+                        None,
+                        FONT_SM,
+                        ui.cursor_screen_pos(),
+                        MUTED,
+                        "No plugins in that folder, and none on this server.",
+                    );
+                    return;
+                }
+                for plugin in &plugins {
+                    let origin = ui.cursor_screen_pos();
+                    ui.dummy([inner_w, 48.0]);
+                    let next = ui.cursor_screen_pos();
+                    skin::text(ui, self.semibold_font, FONT_SM, origin, TEXT, &plugin.name);
+                    let installed_version = installed
+                        .iter()
+                        .find(|(id, _, _)| id == &plugin.id)
+                        .map(|(_, _, version)| version.as_str());
+                    let newer = installed_version.is_some_and(|version| {
+                        crate::plugins::plugin_version_is_newer(&plugin.version, version)
+                    });
+                    let detail = if let Some(reason) = &plugin.failed {
+                        reason.clone()
+                    } else {
+                        crate::plugins::plugin_usage(&plugin.id).to_string()
+                    };
+                    skin::text(
+                        ui,
+                        None,
+                        FONT_XS,
+                        [origin[0], origin[1] + 18.0],
+                        MUTED,
+                        &detail,
+                    );
+                    let on_server = installed_version.is_some();
+                    let can_add = plugin.failed.is_none() && (!on_server || newer);
+                    if on_server
+                        && skin::button(
+                            ui,
+                            &format!("remove-plugin-{}", plugin.id),
+                            "Remove",
+                            Tone::Danger,
+                            [origin[0] + inner_w - 80.0, origin[1] + 8.0],
+                            [72.0, 32.0],
+                            true,
+                            self.semibold_font,
+                        )
+                    {
+                        removed = Some(plugin.id.clone());
+                    }
+                    if can_add {
+                        let add_x = if on_server {
+                            origin[0] + inner_w - 160.0
+                        } else {
+                            origin[0] + inner_w - 88.0
+                        };
+                        let label = if newer { "Update" } else { "Add" };
+                        if skin::button(
+                            ui,
+                            &format!("add-plugin-{}", plugin.id),
+                            label,
+                            Tone::Brand,
+                            [add_x, origin[1] + 8.0],
+                            [72.0, 32.0],
+                            true,
+                            self.semibold_font,
+                        ) {
+                            chosen = Some(plugin.id.clone());
+                        }
+                    }
+                    ui.set_cursor_screen_pos(next);
+                }
+                for (id, name, version) in &installed {
+                    if plugins.iter().any(|plugin| plugin.id == *id) {
+                        continue;
+                    }
+                    let origin = ui.cursor_screen_pos();
+                    ui.dummy([inner_w, 48.0]);
+                    let next = ui.cursor_screen_pos();
+                    skin::text(ui, self.semibold_font, FONT_SM, origin, TEXT, name);
+                    skin::text(
+                        ui,
+                        None,
+                        FONT_XS,
+                        [origin[0], origin[1] + 18.0],
+                        MUTED,
+                        &format!("On this server · {version}"),
+                    );
+                    if skin::button(
+                        ui,
+                        &format!("remove-installed-{id}"),
                         "Remove",
                         Tone::Danger,
                         [origin[0] + inner_w - 80.0, origin[1] + 8.0],
                         [72.0, 32.0],
                         true,
                         self.semibold_font,
-                    )
-                {
-                    removed = Some(plugin.id.clone());
-                }
-                if can_add {
-                    let add_x = if on_server { origin[0] + inner_w - 160.0 } else { origin[0] + inner_w - 88.0 };
-                    let label = if newer { "Update" } else { "Add" };
-                    if skin::button(
-                        ui,
-                        &format!("add-plugin-{}", plugin.id),
-                        label,
-                        Tone::Brand,
-                        [add_x, origin[1] + 8.0],
-                        [72.0, 32.0],
-                        true,
-                        self.semibold_font,
                     ) {
-                        chosen = Some(plugin.id.clone());
+                        removed = Some(id.clone());
                     }
+                    ui.set_cursor_screen_pos(next);
                 }
-                ui.set_cursor_screen_pos(next);
-            }
-            for (id, name, version) in &installed {
-                if plugins.iter().any(|plugin| plugin.id == *id) {
-                    continue;
-                }
-                let origin = ui.cursor_screen_pos();
-                ui.dummy([inner_w, 48.0]);
-                let next = ui.cursor_screen_pos();
-                skin::text(ui, self.semibold_font, FONT_SM, origin, TEXT, name);
-                skin::text(ui, None, FONT_XS, [origin[0], origin[1] + 18.0], MUTED, &format!("On this server · {version}"));
-                if skin::button(
-                    ui,
-                    &format!("remove-installed-{id}"),
-                    "Remove",
-                    Tone::Danger,
-                    [origin[0] + inner_w - 80.0, origin[1] + 8.0],
-                    [72.0, 32.0],
-                    true,
-                    self.semibold_font,
-                ) {
-                    removed = Some(id.clone());
-                }
-                ui.set_cursor_screen_pos(next);
-            }
-        });
+            });
         if let Some(id) = removed {
             self.remove_server_plugin(&id);
         } else if let Some(id) = chosen {
@@ -4984,9 +6729,13 @@ impl App {
 
     fn modal_plugin_allow(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
         let pending = self.plugin_pending.clone();
-        let plugin = pending.as_ref().and_then(|id| self.local_plugins.iter().find(|plugin| plugin.id == *id)).cloned();
+        let plugin = pending
+            .as_ref()
+            .and_then(|id| self.local_plugins.iter().find(|plugin| plugin.id == *id))
+            .cloned();
         let Some(plugin) = plugin else {
-            let (body, min, max) = self.modal_frame(ui, display, "Add Plugin", None, true, 24.0, 0.0);
+            let (body, min, max) =
+                self.modal_frame(ui, display, "Add Plugin", None, true, 24.0, 0.0);
             let _ = body;
             return (min, max);
         };
@@ -5010,7 +6759,15 @@ impl App {
         } else {
             "Allow this plugin to run on this server?"
         };
-        let (body, min, max) = self.modal_frame(ui, display, &plugin.name, Some(subtitle), true, body_h, MODAL_FOOTER_H);
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            &plugin.name,
+            Some(subtitle),
+            true,
+            body_h,
+            MODAL_FOOTER_H,
+        );
         let mut y = body[1];
         for (index, line) in lines.iter().enumerate() {
             if second && index == 0 && line.starts_with("Banter is not responsible") {
@@ -5019,7 +6776,8 @@ impl App {
             skin::text(ui, None, FONT_SM, [body[0], y], TEXT, line);
             y += 22.0;
         }
-        let (cancel, allow) = self.modal_footer(ui, max, min[0], "Cancel", "Allow", Tone::Brand, true);
+        let (cancel, allow) =
+            self.modal_footer(ui, max, min[0], "Cancel", "Allow", Tone::Brand, true);
         if cancel {
             self.plugin_pending = None;
             self.plugin_confirm_step = 0;
@@ -5049,7 +6807,15 @@ impl App {
 
     fn modal_roles(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
         let body_h = 112.0 + 20.0 + INPUT_H + 12.0 + 20.0 + INPUT_H + 12.0 + 22.0 * 6.0 + 72.0;
-        let (body, min, max) = self.modal_frame(ui, display, "Server Roles", Some("Color, hoist, and permissions"), true, body_h, MODAL_FOOTER_H);
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Server Roles",
+            Some("Color, hoist, and permissions"),
+            true,
+            body_h,
+            MODAL_FOOTER_H,
+        );
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         let roles = self.guild_roles.clone();
         let list_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
@@ -5057,7 +6823,11 @@ impl App {
         ui.child_window("role-list")
             .size([inner_w, 104.0])
             .build(ui, || {
-                if ui.selectable_config("New role").selected(self.editing_role.is_none()).build() {
+                if ui
+                    .selectable_config("New role")
+                    .selected(self.editing_role.is_none())
+                    .build()
+                {
                     self.clear_role_form();
                 }
                 for role in &roles {
@@ -5072,7 +6842,15 @@ impl App {
         let mut y = body[1] + 112.0;
         skin::field_label(ui, self.bold_font, [body[0], y], "Role name", false, None);
         y += 20.0;
-        let everyone = self.editing_role.and_then(|id| self.guild_roles.iter().find(|role| role.id == id).map(|role| role.everyone)).unwrap_or(false);
+        let everyone = self
+            .editing_role
+            .and_then(|id| {
+                self.guild_roles
+                    .iter()
+                    .find(|role| role.id == id)
+                    .map(|role| role.everyone)
+            })
+            .unwrap_or(false);
         ui.set_cursor_screen_pos([body[0], y]);
         ui.set_next_item_width(inner_w);
         let _disabled = ui.begin_disabled_with_cond(everyone);
@@ -5083,7 +6861,9 @@ impl App {
         y += 20.0;
         ui.set_cursor_screen_pos([body[0], y]);
         ui.set_next_item_width(inner_w);
-        ui.input_text("##role-color", &mut self.role_color).hint("5865F2").build();
+        ui.input_text("##role-color", &mut self.role_color)
+            .hint("5865F2")
+            .build();
         y += INPUT_H + 8.0;
         ui.set_cursor_screen_pos([body[0], y]);
         let _disabled = ui.begin_disabled_with_cond(everyone);
@@ -5119,8 +6899,20 @@ impl App {
             ui.set_cursor_screen_pos([body[0], y]);
             ui.text_colored(RED, &self.role_error);
         }
-        let primary = if self.editing_role.is_some() { "Save Role" } else { "Create Role" };
-        let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", primary, Tone::Brand, !self.role_name.trim().is_empty() || everyone);
+        let primary = if self.editing_role.is_some() {
+            "Save Role"
+        } else {
+            "Create Role"
+        };
+        let (cancel, save) = self.modal_footer(
+            ui,
+            max,
+            min[0],
+            "Cancel",
+            primary,
+            Tone::Brand,
+            !self.role_name.trim().is_empty() || everyone,
+        );
         if cancel {
             self.modal = None;
         } else if save {
@@ -5133,11 +6925,29 @@ impl App {
         let user_id = self.assign_user;
         let name = user_id
             .and_then(|id| self.members.iter().find(|member| member.user_id == id))
-            .map(|member| member.nickname.clone().unwrap_or_else(|| member.display_name.clone()))
+            .map(|member| {
+                member
+                    .nickname
+                    .clone()
+                    .unwrap_or_else(|| member.display_name.clone())
+            })
             .unwrap_or_else(|| "Member".into());
-        let roles: Vec<GuildRole> = self.guild_roles.iter().filter(|role| !role.everyone).cloned().collect();
+        let roles: Vec<GuildRole> = self
+            .guild_roles
+            .iter()
+            .filter(|role| !role.everyone)
+            .cloned()
+            .collect();
         let body_h = 24.0 + (roles.len().max(1) as f32 * 24.0) + 16.0;
-        let (body, min, max) = self.modal_frame(ui, display, "Roles", Some(&name), true, body_h, MODAL_FOOTER_H);
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Roles",
+            Some(&name),
+            true,
+            body_h,
+            MODAL_FOOTER_H,
+        );
         let mut y = body[1];
         if roles.is_empty() {
             ui.set_cursor_screen_pos([body[0], y]);
@@ -5162,7 +6972,15 @@ impl App {
             ui.set_cursor_screen_pos([body[0], y]);
             ui.text_colored(RED, &self.role_error);
         }
-        let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", "Save", Tone::Brand, user_id.is_some());
+        let (cancel, save) = self.modal_footer(
+            ui,
+            max,
+            min[0],
+            "Cancel",
+            "Save",
+            Tone::Brand,
+            user_id.is_some(),
+        );
         if cancel {
             self.modal = None;
         } else if save {
@@ -5182,25 +7000,59 @@ impl App {
     }
 
     fn modal_nickname(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
-        let (body, min, max) = self.modal_frame(ui, display, "Change Nickname", None, false, 20.0 + INPUT_H + 8.0 + 20.0 + 16.0, MODAL_FOOTER_H);
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Change Nickname",
+            None,
+            false,
+            20.0 + INPUT_H + 8.0 + 20.0 + 16.0,
+            MODAL_FOOTER_H,
+        );
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         skin::field_label(ui, self.bold_font, body, "Nickname", false, None);
         self.focus_modal_field(ui);
         let hint = self.display_name.clone();
-        let enter = skin::input(ui, "##nickname", &mut self.nickname, &hint, [body[0], body[1] + 20.0], inner_w, INPUT_H, FONT_MD, false);
-        if skin::link(ui, "reset-nickname", "Reset Nickname", [body[0], body[1] + 20.0 + INPUT_H + 8.0], None, FONT_SM, LINK) {
+        let enter = skin::input(
+            ui,
+            "##nickname",
+            &mut self.nickname,
+            &hint,
+            [body[0], body[1] + 20.0],
+            inner_w,
+            INPUT_H,
+            FONT_MD,
+            false,
+        );
+        if skin::link(
+            ui,
+            "reset-nickname",
+            "Reset Nickname",
+            [body[0], body[1] + 20.0 + INPUT_H + 8.0],
+            None,
+            FONT_SM,
+            LINK,
+        ) {
             self.nickname.clear();
         }
-        let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", "Save", Tone::Brand, true);
+        let (cancel, save) =
+            self.modal_footer(ui, max, min[0], "Cancel", "Save", Tone::Brand, true);
         if cancel {
             self.modal = None;
         } else if save || enter {
             if let Place::Server(server_id) = self.place {
                 let nickname = {
                     let trimmed = self.nickname.trim();
-                    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
                 };
-                if self.note(self.client.set_nickname(server_id, nickname.as_deref())).is_some() {
+                if self
+                    .note(self.client.set_nickname(server_id, nickname.as_deref()))
+                    .is_some()
+                {
                     self.reload_members();
                     self.modal = None;
                 }
@@ -5218,7 +7070,13 @@ impl App {
     }
 
     /// Lucide picker: Default (kind glyph) plus curated channel icons. Returns true if changed.
-    fn draw_channel_icon_picker(&mut self, ui: &Ui, origin: [f32; 2], width: f32, kind: &ChannelKind) -> bool {
+    fn draw_channel_icon_picker(
+        &mut self,
+        ui: &Ui,
+        origin: [f32; 2],
+        width: f32,
+        kind: &ChannelKind,
+    ) -> bool {
         skin::field_label(ui, self.bold_font, origin, "Channel icon", false, None);
         let y = origin[1] + 20.0;
         let cols = 8usize;
@@ -5284,14 +7142,32 @@ impl App {
             .map(|layout| format!("in {}", layout.category.name));
         let icon_h = self.channel_icon_picker_height();
         let body_h = 20.0 + 2.0 * 68.0 + 16.0 + 20.0 + INPUT_H + 16.0 + icon_h + 24.0;
-        let (body, min, max) = self.modal_frame(ui, display, "Create Channel", category_name.as_deref(), true, body_h, MODAL_FOOTER_H);
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Create Channel",
+            category_name.as_deref(),
+            true,
+            body_h,
+            MODAL_FOOTER_H,
+        );
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         let semi = self.semibold_font;
         skin::field_label(ui, self.bold_font, body, "Channel type", false, None);
         let mut y = body[1] + 20.0;
         let options = [
-            (false, "hash", "Text", "Send messages, images, GIFs, emoji, opinions, and puns"),
-            (true, "volume-2", "Voice", "Hang out together with voice, video, and screen share"),
+            (
+                false,
+                "hash",
+                "Text",
+                "Send messages, images, GIFs, emoji, opinions, and puns",
+            ),
+            (
+                true,
+                "volume-2",
+                "Voice",
+                "Hang out together with voice, video, and screen share",
+            ),
         ];
         for (voice, icon, title, description) in options {
             let option_min = [body[0], y];
@@ -5310,34 +7186,97 @@ impl App {
                 SIDEBAR_BG
             };
             skin::rect(ui, option_min, option_max, fill, 4.0);
-            skin::image(ui, self.icon(icon), [option_min[0] + 12.0, option_min[1] + 18.0], 24.0, TEXT_SECONDARY);
-            skin::text(ui, semi, FONT_MD, [option_min[0] + 48.0, option_min[1] + 10.0], TEXT_NORMAL, title);
+            skin::image(
+                ui,
+                self.icon(icon),
+                [option_min[0] + 12.0, option_min[1] + 18.0],
+                24.0,
+                TEXT_SECONDARY,
+            );
+            skin::text(
+                ui,
+                semi,
+                FONT_MD,
+                [option_min[0] + 48.0, option_min[1] + 10.0],
+                TEXT_NORMAL,
+                title,
+            );
             let line = skin::ellipsize(ui, None, FONT_SM, description, inner_w - 48.0 - 44.0);
-            skin::text(ui, None, FONT_SM, [option_min[0] + 48.0, option_min[1] + 32.0], TEXT_SECONDARY, &line);
+            skin::text(
+                ui,
+                None,
+                FONT_SM,
+                [option_min[0] + 48.0, option_min[1] + 32.0],
+                TEXT_SECONDARY,
+                &line,
+            );
             let radio = [option_max[0] - 22.0, option_min[1] + 30.0];
-            ui.get_window_draw_list().add_circle(radio, 10.0, if chosen { WHITE } else { TEXT_SECONDARY }).thickness(2.0).build();
+            ui.get_window_draw_list()
+                .add_circle(radio, 10.0, if chosen { WHITE } else { TEXT_SECONDARY })
+                .thickness(2.0)
+                .build();
             if chosen {
-                ui.get_window_draw_list().add_circle(radio, 5.0, WHITE).filled(true).build();
+                ui.get_window_draw_list()
+                    .add_circle(radio, 5.0, WHITE)
+                    .filled(true)
+                    .build();
             }
             y += 68.0;
         }
         y += 8.0;
-        skin::field_label(ui, self.bold_font, [body[0], y], "Channel name", false, None);
+        skin::field_label(
+            ui,
+            self.bold_font,
+            [body[0], y],
+            "Channel name",
+            false,
+            None,
+        );
         let field_min = [body[0], y + 20.0];
-        skin::rect(ui, field_min, [field_min[0] + inner_w, field_min[1] + INPUT_H], INPUT_BG, INPUT_RADIUS);
+        skin::rect(
+            ui,
+            field_min,
+            [field_min[0] + inner_w, field_min[1] + INPUT_H],
+            INPUT_BG,
+            INPUT_RADIUS,
+        );
         let kind = if self.channel_is_voice {
             ChannelKind::Voice
         } else {
             ChannelKind::Text
         };
         let prefix = channel_display_icon(&kind, self.channel_icon.as_deref());
-        skin::image(ui, self.icon(prefix), [field_min[0] + 10.0, field_min[1] + 12.0], 16.0, TEXT_NORMAL);
+        skin::image(
+            ui,
+            self.icon(prefix),
+            [field_min[0] + 10.0, field_min[1] + 12.0],
+            16.0,
+            TEXT_NORMAL,
+        );
         self.focus_modal_field(ui);
-        let enter = skin::input(ui, "##channel-name", &mut self.channel_name, "new-channel", [field_min[0] + 28.0, field_min[1]], inner_w - 28.0, INPUT_H, FONT_MD, false);
+        let enter = skin::input(
+            ui,
+            "##channel-name",
+            &mut self.channel_name,
+            "new-channel",
+            [field_min[0] + 28.0, field_min[1]],
+            inner_w - 28.0,
+            INPUT_H,
+            FONT_MD,
+            false,
+        );
         y = field_min[1] + INPUT_H + 16.0;
         self.draw_channel_icon_picker(ui, [body[0], y], inner_w, &kind);
         let enabled = !self.channel_name.trim().is_empty();
-        let (cancel, create) = self.modal_footer(ui, max, min[0], "Cancel", "Create Channel", Tone::Brand, enabled);
+        let (cancel, create) = self.modal_footer(
+            ui,
+            max,
+            min[0],
+            "Cancel",
+            "Create Channel",
+            Tone::Brand,
+            enabled,
+        );
         if cancel {
             self.modal = None;
         } else if (create || enter) && enabled {
@@ -5402,9 +7341,21 @@ impl App {
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         skin::field_label(ui, self.bold_font, body, "Channel name", false, None);
         let field_min = [body[0], body[1] + 20.0];
-        skin::rect(ui, field_min, [field_min[0] + inner_w, field_min[1] + INPUT_H], INPUT_BG, INPUT_RADIUS);
+        skin::rect(
+            ui,
+            field_min,
+            [field_min[0] + inner_w, field_min[1] + INPUT_H],
+            INPUT_BG,
+            INPUT_RADIUS,
+        );
         let prefix = channel_display_icon(&kind, self.channel_icon.as_deref());
-        skin::image(ui, self.icon(prefix), [field_min[0] + 10.0, field_min[1] + 12.0], 16.0, TEXT_NORMAL);
+        skin::image(
+            ui,
+            self.icon(prefix),
+            [field_min[0] + 10.0, field_min[1] + 12.0],
+            16.0,
+            TEXT_NORMAL,
+        );
         self.focus_modal_field(ui);
         let enter = skin::input(
             ui,
@@ -5420,12 +7371,21 @@ impl App {
         let picker_y = field_min[1] + INPUT_H + 16.0;
         self.draw_channel_icon_picker(ui, [body[0], picker_y], inner_w, &kind);
         let enabled = !self.channel_name.trim().is_empty() && self.channel_edit_id.is_some();
-        let (cancel, save) = self.modal_footer(ui, max, min[0], "Cancel", "Save Changes", Tone::Brand, enabled);
+        let (cancel, save) = self.modal_footer(
+            ui,
+            max,
+            min[0],
+            "Cancel",
+            "Save Changes",
+            Tone::Brand,
+            enabled,
+        );
         if cancel {
             self.modal = None;
             self.channel_edit_id = None;
         } else if (save || enter) && enabled {
-            if let (Place::Server(server_id), Some(channel_id)) = (self.place, self.channel_edit_id) {
+            if let (Place::Server(server_id), Some(channel_id)) = (self.place, self.channel_edit_id)
+            {
                 let name = self.channel_name.trim().to_string();
                 let icon = self.channel_icon.clone();
                 if let Some(updated) = self.note(self.client.update_channel(
@@ -5434,7 +7394,11 @@ impl App {
                     &name,
                     icon.as_deref(),
                 )) {
-                    if self.selected.as_ref().is_some_and(|channel| channel.id == channel_id) {
+                    if self
+                        .selected
+                        .as_ref()
+                        .is_some_and(|channel| channel.id == channel_id)
+                    {
                         self.selected = Some(updated);
                     }
                     self.channel_name.clear();
@@ -5449,19 +7413,48 @@ impl App {
     }
 
     fn modal_create_category(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
-        let (body, min, max) = self.modal_frame(ui, display, "Create Category", None, true, 20.0 + INPUT_H + 24.0, MODAL_FOOTER_H);
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Create Category",
+            None,
+            true,
+            20.0 + INPUT_H + 24.0,
+            MODAL_FOOTER_H,
+        );
         let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
         skin::field_label(ui, self.bold_font, body, "Category name", false, None);
         self.focus_modal_field(ui);
-        let enter = skin::input(ui, "##category-name", &mut self.category_name, "New Category", [body[0], body[1] + 20.0], inner_w, INPUT_H, FONT_MD, false);
+        let enter = skin::input(
+            ui,
+            "##category-name",
+            &mut self.category_name,
+            "New Category",
+            [body[0], body[1] + 20.0],
+            inner_w,
+            INPUT_H,
+            FONT_MD,
+            false,
+        );
         let enabled = !self.category_name.trim().is_empty();
-        let (cancel, create) = self.modal_footer(ui, max, min[0], "Cancel", "Create Category", Tone::Brand, enabled);
+        let (cancel, create) = self.modal_footer(
+            ui,
+            max,
+            min[0],
+            "Cancel",
+            "Create Category",
+            Tone::Brand,
+            enabled,
+        );
         if cancel {
             self.modal = None;
         } else if (create || enter) && enabled {
             if let Place::Server(server_id) = self.place {
                 let name = self.category_name.trim().to_string();
-                if self.note(self.client.create_category(server_id, &name)).is_some() {
+                if self
+                    .note(self.client.create_category(server_id, &name))
+                    .is_some()
+                {
                     self.category_name.clear();
                     self.modal = None;
                     self.reload_layout();
@@ -5475,22 +7468,47 @@ impl App {
         let key_held = self.ptt_down(ui);
         let held = push_to_talk_held(key_held, self.talk_held, ui.io().want_capture_keyboard());
         if self.push_to_talk && held {
-            self.ptt_until = Some(Instant::now() + Duration::from_millis(self.voice.release_ms as u64));
+            self.ptt_until =
+                Some(Instant::now() + Duration::from_millis(self.voice.release_ms as u64));
         }
         let ptt_hot = held || self.ptt_until.is_some_and(|until| Instant::now() < until);
-        let rms = self.media.as_ref().map(|media| media.input_rms()).unwrap_or(0.0);
-        let threshold = if self.voice.auto_sensitivity { OPEN_MIC_RMS } else { self.voice.sensitivity };
+        let rms = self
+            .media
+            .as_ref()
+            .map(|media| media.input_rms())
+            .unwrap_or(0.0);
+        let threshold = if self.voice.auto_sensitivity {
+            OPEN_MIC_RMS
+        } else {
+            self.voice.sensitivity
+        };
         let level_hot = speaking_from_level(self.push_to_talk, ptt_hot, rms, threshold);
         let in_place = self.voice_channel.is_some()
-            || self.call.as_ref().is_some_and(|call| call.phase == CallPhase::Active);
-        if self.media.as_ref().is_some_and(|media| media.take_capture_failure()) {
+            || self
+                .call
+                .as_ref()
+                .is_some_and(|call| call.phase == CallPhase::Active);
+        if self
+            .media
+            .as_ref()
+            .is_some_and(|media| media.take_capture_failure())
+        {
             self.stop_streaming();
         }
         self.screen = self.share.is_live() && in_place;
         // voice_flags clears transmitting while muted/deafened (guild VC and DM calls).
-        self.flags = self.mute.voice_flags(self.push_to_talk, level_hot, self.camera && in_place, self.screen);
+        self.flags = self.mute.voice_flags(
+            self.push_to_talk,
+            level_hot,
+            self.camera && in_place,
+            self.screen,
+        );
         if let Some(id) = self.account.as_ref().map(|account| account.id) {
-            if let Some(member) = self.voice_members.iter_mut().find(|member| member.user_id == id) {
+            if let Some(member) = self
+                .voice_members
+                .iter_mut()
+                .find(|member| member.user_id == id)
+            {
                 member.flags.transmitting = self.flags.transmitting;
             }
         }
@@ -5500,21 +7518,34 @@ impl App {
             let pick = if self.share.is_portal() {
                 Some(StreamPick::Portal)
             } else {
-                self.share.live_target().map(|(kind, id)| StreamPick::Source(kind, id))
+                self.share
+                    .live_target()
+                    .map(|(kind, id)| StreamPick::Source(kind, id))
             };
-            media.set_stream_choice(pick, stream_max_edge(self.stream_resolution), stream_interval_ms(self.stream_fps));
+            media.set_stream_choice(
+                pick,
+                stream_max_edge(self.stream_resolution),
+                stream_interval_ms(self.stream_fps),
+            );
             media.apply_engine(&self.engine_update());
             media.set_mic_test(self.settings.mic_test());
             media.set_state(self.flags, in_place);
             let place = if let Some(channel_id) = self.voice_channel {
                 Some(MediaPlace::VoiceChannel(channel_id))
-            } else if self.call.as_ref().is_some_and(|call| call.phase == CallPhase::Active) {
-                self.call.as_ref().map(|call| MediaPlace::DirectCall(call.dm_id))
+            } else if self
+                .call
+                .as_ref()
+                .is_some_and(|call| call.phase == CallPhase::Active)
+            {
+                self.call
+                    .as_ref()
+                    .map(|call| MediaPlace::DirectCall(call.dm_id))
             } else {
                 None
             };
             let me = self.account.as_ref().map(|account| account.id).unwrap_or(0);
-            let offerer = self.voice_channel.is_some() || self.call.as_ref().is_some_and(|call| call.caller == me);
+            let offerer = self.voice_channel.is_some()
+                || self.call.as_ref().is_some_and(|call| call.caller == me);
             media.set_session(place.filter(|_| in_place), me, offerer);
         }
         // Skip flag posts while the websocket is down — the server already cleared the seat.
@@ -5578,7 +7609,8 @@ impl App {
             self.open_modal(Modal::UploadsUnavailable);
             return;
         }
-        if let Some(message) = self.note(self.client.send_message(target, &body, Some(parent), &[])) {
+        if let Some(message) = self.note(self.client.send_message(target, &body, Some(parent), &[]))
+        {
             if self.search.trim().is_empty() {
                 upsert_message(&mut self.messages, message);
             }
@@ -5635,7 +7667,9 @@ impl App {
         let _round = ui.push_style_var(StyleVar::WindowRounding(MENU_RADIUS));
         let mut open = self.debug_open;
         ui.window("Server Debug")
-            .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SAVED_SETTINGS | WindowFlags::NO_DOCKING)
+            .flags(
+                WindowFlags::NO_COLLAPSE | WindowFlags::NO_SAVED_SETTINGS | WindowFlags::NO_DOCKING,
+            )
             .position(pos, Condition::FirstUseEver)
             .size([width, height], Condition::FirstUseEver)
             .opened(&mut open)
@@ -5682,7 +7716,10 @@ impl App {
                         "users {}    servers {}    channels {}    messages {}",
                         view.users, view.servers, view.channels, view.messages
                     ));
-                    ui.text(format!("db pool size {}    idle {}", view.pool_size, view.pool_idle));
+                    ui.text(format!(
+                        "db pool size {}    idle {}",
+                        view.pool_size, view.pool_idle
+                    ));
                     ui.separator();
                     ui.text_colored(TEXT_SECONDARY, "Network (server in / out)");
                     let traffic = &view.traffic;
@@ -5725,23 +7762,29 @@ impl App {
                     ui.separator();
                     ui.text_colored(TEXT_SECONDARY, "Logs");
                     let _log_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
-                    ui.child_window("server-debug-logs").size([0.0, 0.0]).build(ui, || {
-                        let stick = ui.scroll_max_y() <= 1.0 || ui.scroll_y() >= ui.scroll_max_y() - 8.0;
-                        if view.logs.is_empty() {
-                            ui.text_colored(MUTED, "No log lines yet.");
-                        }
-                        for line in &view.logs {
-                            let color = match line.level.as_str() {
-                                "error" => RED,
-                                "warn" => YELLOW,
-                                _ => TEXT_SECONDARY,
-                            };
-                            ui.text_colored(color, format!("{}  {}", format_log_clock(line.at_ms), line.message));
-                        }
-                        if stick {
-                            ui.set_scroll_here_y(1.0);
-                        }
-                    });
+                    ui.child_window("server-debug-logs")
+                        .size([0.0, 0.0])
+                        .build(ui, || {
+                            let stick = ui.scroll_max_y() <= 1.0
+                                || ui.scroll_y() >= ui.scroll_max_y() - 8.0;
+                            if view.logs.is_empty() {
+                                ui.text_colored(MUTED, "No log lines yet.");
+                            }
+                            for line in &view.logs {
+                                let color = match line.level.as_str() {
+                                    "error" => RED,
+                                    "warn" => YELLOW,
+                                    _ => TEXT_SECONDARY,
+                                };
+                                ui.text_colored(
+                                    color,
+                                    format!("{}  {}", format_log_clock(line.at_ms), line.message),
+                                );
+                            }
+                            if stick {
+                                ui.set_scroll_here_y(1.0);
+                            }
+                        });
                 } else if self.debug_error.is_empty() {
                     ui.text_colored(MUTED, "Loading...");
                 }
@@ -5750,7 +7793,9 @@ impl App {
     }
 
     fn connect_live(&mut self) {
-        let Some(token) = self.client.token().map(str::to_string) else { return };
+        let Some(token) = self.client.token().map(str::to_string) else {
+            return;
+        };
         let realtime = Realtime::connect(websocket_url(&self.base, &token));
         let media = Media::start(realtime.signal_sender());
         self.media = Some(media);
@@ -5790,7 +7835,11 @@ impl App {
         if self.status.is_empty() || !self.status.starts_with(RECONNECTING_STATUS) {
             self.status = RECONNECTING_STATUS.to_string();
         }
-        if self.realtime.as_ref().is_some_and(|realtime| realtime.is_connected()) {
+        if self
+            .realtime
+            .as_ref()
+            .is_some_and(|realtime| realtime.is_connected())
+        {
             return;
         }
         if !reconnect_retry_ready(self.reconnect_at, Instant::now()) {
@@ -5834,6 +7883,7 @@ impl App {
         self.media = None;
         self.realtime = None;
         self.client.set_token(None);
+        self.shell.invalidate();
         self.account = None;
         self.messages.clear();
         self.friends.clear();
@@ -5852,7 +7902,72 @@ impl App {
     }
 
     fn refresh_shell(&mut self) {
-        if let Ok(account) = self.client.me() {
+        self.shell.request(FetchKind::refresh());
+    }
+
+    fn navigate_shell(&mut self, kind: FetchKind) {
+        self.shell.bump();
+        self.shell.request(kind);
+    }
+
+    fn pump_shell(&mut self) {
+        let received = self.shell.try_recv();
+        let restart = if received.is_some() {
+            self.shell.finish_job()
+        } else {
+            false
+        };
+        if let Some(snap) = received {
+            if snapshot_applies(snap.generation, self.shell.generation()) {
+                self.apply_shell_snapshot(snap);
+            }
+        }
+        if self.client.token().is_some()
+            && self.account.is_some()
+            && self.shell.poll_due(Instant::now())
+        {
+            self.shell.mark_polled(Instant::now());
+            self.shell.queued.merge(FetchKind::refresh());
+        }
+        let start = (restart || !self.shell.in_flight())
+            && self.shell.has_work()
+            && self.client.token().is_some();
+        if start {
+            if !self.shell.in_flight() {
+                let _ = self.shell.begin_job();
+            }
+            self.dispatch_shell();
+        }
+    }
+
+    fn dispatch_shell(&mut self) {
+        let kind = std::mem::take(&mut self.shell.queued);
+        let search = {
+            let trimmed = self.search.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        };
+        let query = ShellQuery {
+            generation: self.shell.generation(),
+            base: self.base.clone(),
+            token: self.client.token().unwrap_or("").to_string(),
+            kind,
+            server_id: match self.place {
+                Place::Server(id) => Some(id),
+                _ => None,
+            },
+            chat: self.chat_target(),
+            search,
+            avatars: self.shell.take_avatars(),
+        };
+        self.shell.submit(query);
+    }
+
+    fn apply_shell_snapshot(&mut self, snap: ShellSnapshot) {
+        if let Some(Ok(account)) = snap.account {
             let revision_changed = self.account.as_ref().is_none_or(|current| {
                 current.avatar_rev != account.avatar_rev || current.has_avatar != account.has_avatar
             });
@@ -5863,56 +7978,147 @@ impl App {
                     }
                     self.avatar_rev.remove(&id);
                     self.avatar_miss.remove(&id);
+                    self.shell.forget_avatar(id);
                 }
             }
             self.account = Some(account);
         }
-        if let Some(friends) = self.note(self.client.friends()) {
-            self.friends = friends;
+        if let Some(friends) = snap.friends {
+            if let Some(friends) = self.note(friends) {
+                self.friends = friends;
+            }
         }
-        if let Some((incoming, outgoing)) = self.note(self.client.friend_requests()) {
-            self.incoming = incoming;
-            self.outgoing = outgoing;
+        if let Some(requests) = snap.requests {
+            if let Some((incoming, outgoing)) = self.note(requests) {
+                self.incoming = incoming;
+                self.outgoing = outgoing;
+            }
         }
-        if let Some(servers) = self.note(self.client.servers()) {
-            self.servers = servers;
+        if let Some(servers) = snap.servers {
+            if let Some(servers) = self.note(servers) {
+                self.servers = servers;
+            }
         }
-        if let Some(rail) = self.note(self.client.server_rail()) {
-            self.server_rail = rail;
-            // Keep the flat membership list aligned with rail order for other UI.
-            if !self.server_rail.servers.is_empty() {
-                self.servers = self
-                    .server_rail
-                    .servers
-                    .iter()
-                    .map(|row| row.server.clone())
+        if let Some(rail) = snap.rail {
+            if let Some(rail) = self.note(rail) {
+                self.server_rail = rail;
+                if !self.server_rail.servers.is_empty() {
+                    self.servers = self
+                        .server_rail
+                        .servers
+                        .iter()
+                        .map(|row| row.server.clone())
+                        .collect();
+                }
+            }
+        }
+        if let Some(dms) = snap.dms {
+            if let Some(dms) = self.note(dms) {
+                self.dms = dms;
+            }
+        }
+        if let Some(mentions) = snap.mentions {
+            if let Some(mentions) = self.note(mentions) {
+                self.mentions = mentions;
+            }
+        }
+        if let Some(rows) = snap.presence {
+            if let Some(rows) = self.note(rows) {
+                self.presence = rows
+                    .into_iter()
+                    .map(|(user_id, state, custom_status)| {
+                        (
+                            user_id,
+                            PresenceInfo {
+                                state,
+                                custom_status,
+                            },
+                        )
+                    })
                     .collect();
             }
         }
-        if let Some(dms) = self.note(self.client.direct_messages()) {
-            self.dms = dms;
+        if let Some(server_id) = snap.server_id {
+            if self.place == Place::Server(server_id) {
+                if let Some(layout) = snap.layout {
+                    if let Some(layout) = self.note(layout) {
+                        if let Some(selected) = &self.selected {
+                            self.selected = layout
+                                .iter()
+                                .flat_map(|category| category.channels.iter())
+                                .find(|channel| channel.id == selected.id)
+                                .cloned();
+                        }
+                        self.layout = layout;
+                    }
+                }
+                if self.selected.is_none() {
+                    if let Some(channel) = snap.picked_channel {
+                        if channel.server_id == server_id {
+                            self.selected = Some(channel);
+                        }
+                    }
+                }
+                if let Some(members) = snap.members {
+                    if let Some(members) = self.note(members) {
+                        for member in &members {
+                            self.presence.insert(
+                                member.user_id,
+                                PresenceInfo {
+                                    state: member.presence,
+                                    custom_status: member.custom_status.clone(),
+                                },
+                            );
+                        }
+                        self.members = members;
+                        if self.modal != Some(Modal::Nickname) {
+                            if let Some(member) = self.members.iter().find(|member| {
+                                Some(member.user_id)
+                                    == self.account.as_ref().map(|account| account.id)
+                            }) {
+                                self.nickname = member.nickname.clone().unwrap_or_default();
+                            }
+                        }
+                    }
+                }
+                if let Some(rows) = snap.voice {
+                    if let Some(rows) = self.note(rows) {
+                        self.apply_voice_roster_rows(rows);
+                    }
+                }
+            }
         }
-        if let Some(mentions) = self.note(self.client.mentions()) {
-            self.mentions = mentions;
+        if let Some(messages) = snap.messages {
+            if self.chat_target() == snap.chat {
+                if let Some(messages) = self.note(messages) {
+                    self.messages = messages;
+                }
+            }
         }
-        if let Some(rows) = self.note(self.client.presence()) {
-            self.presence = rows
-                .into_iter()
-                .map(|(user_id, state, custom_status)| {
-                    (
-                        user_id,
-                        PresenceInfo {
-                            state,
-                            custom_status,
-                        },
-                    )
-                })
-                .collect();
+        for avatar in snap.avatars {
+            self.shell
+                .store_avatar(avatar.user_id, avatar.rev, avatar.bytes);
         }
-        if let Place::Server(server_id) = self.place {
-            self.reload_layout();
-            self.reload_members();
-            self.reload_voice_rosters(server_id);
+    }
+
+    fn apply_voice_roster_rows(&mut self, rows: Vec<banter_server::VoiceRoster>) {
+        let mine: Vec<i64> = self
+            .layout
+            .iter()
+            .flat_map(|category| category.channels.iter())
+            .filter(|channel| channel.kind == ChannelKind::Voice)
+            .map(|channel| channel.id)
+            .collect();
+        for channel_id in mine {
+            self.voice_rosters.remove(&channel_id);
+        }
+        for row in rows {
+            apply_voice_roster(&mut self.voice_rosters, row.channel_id, row.members);
+        }
+        if let Some(channel_id) = self.voice_channel {
+            if let Some(members) = self.voice_rosters.get(&channel_id) {
+                self.voice_members = members.clone();
+            }
         }
     }
 
@@ -5926,33 +8132,13 @@ impl App {
         self.collapsed_comments.clear();
         self.editing = None;
         self.shown_invite.clear();
+        self.layout.clear();
+        self.members.clear();
         self.remember_home_recent(HomeRecentEntry {
             kind: HomeRecentKind::Server,
             id: server_id,
         });
-        self.reload_layout();
-        self.reload_members();
-        self.reload_voice_rosters(server_id);
-        if let Some(member) = self.members.iter().find(|member| Some(member.user_id) == self.account.as_ref().map(|account| account.id)) {
-            self.nickname = member.nickname.clone().unwrap_or_default();
-        }
-        self.select_first_text_channel();
-    }
-
-    fn select_first_text_channel(&mut self) {
-        let channel = self
-            .layout
-            .iter()
-            .flat_map(|category| category.channels.iter())
-            .find(|channel| channel.kind == ChannelKind::Text)
-            .cloned()
-            .or_else(|| self.layout.iter().flat_map(|category| category.channels.iter()).next().cloned());
-        let Some(channel) = channel else { return };
-        let text = channel.kind == ChannelKind::Text;
-        self.selected = Some(channel);
-        if text {
-            self.reload_messages();
-        }
+        self.navigate_shell(FetchKind::open_server());
     }
 
     fn open_dm(&mut self, dm_id: i64) {
@@ -5963,11 +8149,12 @@ impl App {
         self.reply_draft.clear();
         self.collapsed_comments.clear();
         self.editing = None;
+        self.messages.clear();
         self.remember_home_recent(HomeRecentEntry {
             kind: HomeRecentKind::DirectMessage,
             id: dm_id,
         });
-        self.reload_messages();
+        self.navigate_shell(FetchKind::messages());
     }
 
     fn remember_home_recent(&mut self, entry: HomeRecentEntry) {
@@ -5978,7 +8165,9 @@ impl App {
     /// Opens the DM for a newly added friend when they are on the friends list.
     fn open_dm_after_adding_friend(&mut self, peer_username: &str) {
         let Some(peer_id) = crate::open_dm_peer_after_friend_add(
-            self.friends.iter().map(|friend| (friend.id, friend.username.as_str())),
+            self.friends
+                .iter()
+                .map(|friend| (friend.id, friend.username.as_str())),
             peer_username,
         ) else {
             return;
@@ -5990,7 +8179,10 @@ impl App {
     }
 
     fn open_mention(&mut self, mention: &Mention) {
-        if self.note(self.client.mark_mention_read(mention.id)).is_some() {
+        if self
+            .note(self.client.mark_mention_read(mention.id))
+            .is_some()
+        {
             self.mentions.retain(|item| item.id != mention.id);
         }
         if let Some(channel_id) = mention.channel_id {
@@ -5998,7 +8190,7 @@ impl App {
                 let server_id = channel.server_id;
                 self.open_server(server_id);
                 self.selected = Some(channel);
-                self.reload_messages();
+                self.navigate_shell(FetchKind::messages());
             }
         } else if let Some(dm_id) = mention.dm_id {
             self.open_dm(dm_id);
@@ -6006,44 +8198,44 @@ impl App {
     }
 
     fn reload_layout(&mut self) {
-        let Place::Server(server_id) = self.place else { return };
-        if let Some(layout) = self.note(self.client.layout(server_id)) {
-            if let Some(selected) = &self.selected {
-                self.selected = layout.iter().flat_map(|category| category.channels.iter()).find(|channel| channel.id == selected.id).cloned();
-            }
-            self.layout = layout;
-        }
+        self.navigate_shell(FetchKind::place());
     }
 
     fn reload_members(&mut self) {
-        let Place::Server(server_id) = self.place else { return };
-        if let Some(members) = self.note(self.client.members(server_id)) {
-            for member in &members {
-                self.presence.insert(
-                    member.user_id,
-                    PresenceInfo {
-                        state: member.presence,
-                        custom_status: member.custom_status.clone(),
-                    },
-                );
-            }
-            self.members = members;
-        }
+        self.navigate_shell(FetchKind {
+            place: true,
+            ..FetchKind::default()
+        });
     }
 
     fn can_permission(&self, flag: i64) -> bool {
-        let Place::Server(server_id) = self.place else { return false };
-        let Some(me) = self.account.as_ref().map(|account| account.id) else { return false };
-        if self.servers.iter().any(|server| server.id == server_id && server.owner_id == me) {
+        let Place::Server(server_id) = self.place else {
+            return false;
+        };
+        let Some(me) = self.account.as_ref().map(|account| account.id) else {
+            return false;
+        };
+        if self
+            .servers
+            .iter()
+            .any(|server| server.id == server_id && server.owner_id == me)
+        {
             return true;
         }
-        let Some(member) = self.members.iter().find(|member| member.user_id == me) else { return false };
-        let bits = member.roles.iter().fold(0, |acc, role| acc | role.permissions);
+        let Some(member) = self.members.iter().find(|member| member.user_id == me) else {
+            return false;
+        };
+        let bits = member
+            .roles
+            .iter()
+            .fold(0, |acc, role| acc | role.permissions);
         has_permission(bits, flag)
     }
 
     fn reload_role_list(&mut self) {
-        let Place::Server(server_id) = self.place else { return };
+        let Place::Server(server_id) = self.place else {
+            return;
+        };
         if let Ok(roles) = self.client.roles(server_id) {
             self.guild_roles = roles;
         }
@@ -6063,7 +8255,14 @@ impl App {
             .members
             .iter()
             .find(|member| member.user_id == user_id)
-            .map(|member| member.roles.iter().filter(|role| !role.everyone).map(|role| role.id).collect())
+            .map(|member| {
+                member
+                    .roles
+                    .iter()
+                    .filter(|role| !role.everyone)
+                    .map(|role| role.id)
+                    .collect()
+            })
             .unwrap_or_default();
         self.role_error.clear();
         self.open_modal(Modal::MemberRoles);
@@ -6086,7 +8285,11 @@ impl App {
     fn load_role_form(&mut self, role: &GuildRole) {
         self.editing_role = Some(role.id);
         self.role_name = role.name.clone();
-        self.role_color = if role.color == 0 { String::new() } else { format!("{:06X}", role.color) };
+        self.role_color = if role.color == 0 {
+            String::new()
+        } else {
+            format!("{:06X}", role.color)
+        };
         self.role_hoist = role.hoist;
         self.role_admin = role.permissions & PERM_ADMINISTRATOR != 0;
         self.role_channels = role.permissions & PERM_MANAGE_CHANNELS != 0;
@@ -6121,7 +8324,9 @@ impl App {
     }
 
     fn submit_role(&mut self, everyone: bool) {
-        let Place::Server(server_id) = self.place else { return };
+        let Place::Server(server_id) = self.place else {
+            return;
+        };
         let color = match parse_role_color(&self.role_color) {
             Ok(color) => color,
             Err(err) => {
@@ -6129,7 +8334,11 @@ impl App {
                 return;
             }
         };
-        let name = if everyone { "@everyone".to_string() } else { self.role_name.trim().to_string() };
+        let name = if everyone {
+            "@everyone".to_string()
+        } else {
+            self.role_name.trim().to_string()
+        };
         if name.is_empty() {
             self.role_error = "name is required".into();
             return;
@@ -6137,9 +8346,11 @@ impl App {
         let bits = self.role_form_bits();
         let hoist = self.role_hoist && !everyone;
         let result = if let Some(role_id) = self.editing_role {
-            self.client.update_role(server_id, role_id, &name, color, hoist, bits)
+            self.client
+                .update_role(server_id, role_id, &name, color, hoist, bits)
         } else {
-            self.client.create_role(server_id, &name, color, hoist, bits)
+            self.client
+                .create_role(server_id, &name, color, hoist, bits)
         };
         match result {
             Ok(role) => {
@@ -6153,8 +8364,12 @@ impl App {
     }
 
     fn delete_editing_role(&mut self) {
-        let Place::Server(server_id) = self.place else { return };
-        let Some(role_id) = self.editing_role else { return };
+        let Place::Server(server_id) = self.place else {
+            return;
+        };
+        let Some(role_id) = self.editing_role else {
+            return;
+        };
         match self.client.delete_role(server_id, role_id) {
             Ok(()) => {
                 self.clear_role_form();
@@ -6165,27 +8380,22 @@ impl App {
         }
     }
 
-    fn reload_messages(&mut self) {
-        let Some(target) = self.chat_target() else { return };
-        let query = {
-            let trimmed = self.search.trim();
-            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
-        };
-        if let Some(messages) = self.note(self.client.messages(target, 100, query.as_deref())) {
-            self.messages = messages;
-        }
-    }
-
     fn chat_target(&self) -> Option<ChatTarget> {
         match self.place {
             Place::Direct(id) => Some(ChatTarget::Direct(id)),
-            Place::Server(_) => self.selected.as_ref().filter(|channel| channel.kind == ChannelKind::Text).map(|channel| ChatTarget::Channel(channel.id)),
+            Place::Server(_) => self
+                .selected
+                .as_ref()
+                .filter(|channel| channel.kind == ChannelKind::Text)
+                .map(|channel| ChatTarget::Channel(channel.id)),
             Place::Home => None,
         }
     }
 
     fn voice_selected(&self) -> bool {
-        self.selected.as_ref().is_some_and(|channel| channel.kind.is_voice())
+        self.selected
+            .as_ref()
+            .is_some_and(|channel| channel.kind.is_voice())
     }
 
     /// Center stage shows the Discord-style 1:1 call view for the open DM that owns the call.
@@ -6199,12 +8409,18 @@ impl App {
     }
 
     fn find_channel(&self, channel_id: i64) -> Option<Channel> {
-        self.layout.iter().flat_map(|category| category.channels.iter()).find(|channel| channel.id == channel_id).cloned()
+        self.layout
+            .iter()
+            .flat_map(|category| category.channels.iter())
+            .find(|channel| channel.id == channel_id)
+            .cloned()
     }
 
     fn pump_events(&mut self) {
         self.tick_reconnect();
-        let Some(realtime) = &self.realtime else { return };
+        let Some(realtime) = &self.realtime else {
+            return;
+        };
         let events = realtime.take_events();
         if let Some(error) = realtime.take_error() {
             self.begin_reconnect(error);
@@ -6237,12 +8453,17 @@ impl App {
                         custom_status: custom_status.clone(),
                     },
                 );
-                if let Some(member) = self.members.iter_mut().find(|member| member.user_id == user_id) {
+                if let Some(member) = self
+                    .members
+                    .iter_mut()
+                    .find(|member| member.user_id == user_id)
+                {
                     member.presence = state;
                     member.custom_status = custom_status;
                 }
             }
-            ServerEvent::MessageCreated { target, message } | ServerEvent::MessageEdited { target, message } => {
+            ServerEvent::MessageCreated { target, message }
+            | ServerEvent::MessageEdited { target, message } => {
                 if self.search.trim().is_empty() && self.chat_target() == Some(target) {
                     upsert_message(&mut self.messages, message);
                 }
@@ -6253,7 +8474,10 @@ impl App {
                 }
             }
             ServerEvent::FriendRequest { .. } | ServerEvent::FriendsChanged => self.refresh_shell(),
-            ServerEvent::Voice { channel_id, members } => {
+            ServerEvent::Voice {
+                channel_id,
+                members,
+            } => {
                 apply_voice_roster(&mut self.voice_rosters, channel_id, members.clone());
                 if self.voice_channel == Some(channel_id) {
                     self.voice_members = members;
@@ -6297,7 +8521,10 @@ impl App {
             self.delivered.insert((sender, frame.kind), frame.layer);
         }
         let shot = if let Some((width, height, rgba)) = frame.rgba.as_ref() {
-            if frame.sender.is_none() && frame.kind == MediaKind::Camera && camera_preview_mirrored() {
+            if frame.sender.is_none()
+                && frame.kind == MediaKind::Camera
+                && camera_preview_mirrored()
+            {
                 mirrored_camera_rgba(imgui, *width, *height, rgba)
             } else {
                 upload_rgba(imgui, *width, *height, rgba)
@@ -6329,7 +8556,9 @@ impl App {
             if let Some(shot) = self.banners.remove(&user_id) {
                 self.retired_shots.push(shot);
             }
-            if let Some(shot) = upload_jpeg(imgui, &bytes).or_else(|| upload_rgba_png(imgui, &bytes)) {
+            if let Some(shot) =
+                upload_jpeg(imgui, &bytes).or_else(|| upload_rgba_png(imgui, &bytes))
+            {
                 self.banners.insert(user_id, shot);
                 self.banner_rev.insert(user_id, rev);
                 self.banner_miss.remove(&user_id);
@@ -6350,7 +8579,7 @@ impl App {
         for chat in &self.dms {
             wanted.push((chat.peer_id, chat.peer_has_avatar, chat.peer_avatar_rev));
         }
-        let mut fetched = 0;
+        let mut noted = false;
         for (user_id, has_avatar, rev) in wanted {
             if !has_avatar {
                 if let Some(shot) = self.avatars.remove(&user_id) {
@@ -6363,16 +8592,24 @@ impl App {
             if self.avatar_rev.get(&user_id) == Some(&rev) && self.avatars.contains_key(&user_id) {
                 continue;
             }
-            if self.avatar_miss.get(&user_id) == Some(&rev) || fetched >= 4 {
+            if self.avatar_miss.get(&user_id) == Some(&rev) {
                 continue;
             }
-            fetched += 1;
-            if let Some(shot) = self.avatars.remove(&user_id) {
-                self.retired_shots.push(shot);
-            }
-            match self.client.avatar(user_id) {
-                Ok(bytes) => {
-                    if let Some(shot) = upload_jpeg(imgui, &bytes).or_else(|| upload_rgba_png(imgui, &bytes)) {
+            let step = match self.shell.avatar_file(user_id) {
+                Some(AvatarFile::Ready { rev: got, bytes }) if *got == rev => {
+                    AvatarStep::Upload(bytes.clone())
+                }
+                Some(AvatarFile::Failed { rev: got }) if *got == rev => AvatarStep::Miss,
+                _ => AvatarStep::Want,
+            };
+            match step {
+                AvatarStep::Upload(bytes) => {
+                    if let Some(shot) = self.avatars.remove(&user_id) {
+                        self.retired_shots.push(shot);
+                    }
+                    if let Some(shot) =
+                        upload_jpeg(imgui, &bytes).or_else(|| upload_rgba_png(imgui, &bytes))
+                    {
                         self.avatars.insert(user_id, shot);
                         self.avatar_rev.insert(user_id, rev);
                         self.avatar_miss.remove(&user_id);
@@ -6380,11 +8617,20 @@ impl App {
                         self.avatar_miss.insert(user_id, rev);
                     }
                 }
-                Err(_) => {
+                AvatarStep::Miss => {
                     self.avatar_miss.insert(user_id, rev);
+                }
+                AvatarStep::Want => {
+                    if self.shell.note_want(AvatarWant { user_id, rev }) {
+                        noted = true;
+                    }
                 }
             }
         }
+        if noted && self.shell.in_flight() {
+            let _ = self.shell.begin_job();
+        }
+        self.pump_shell();
     }
 
     fn pick_avatar(&mut self) {
@@ -6417,7 +8663,15 @@ impl App {
 
     fn save_avatar_crop(&mut self) {
         let edge = 512u32;
-        let rgba = crop_avatar_rgba(self.crop_size[0], self.crop_size[1], &self.crop_rgba, self.crop_zoom, self.crop_pan[0], self.crop_pan[1], edge);
+        let rgba = crop_avatar_rgba(
+            self.crop_size[0],
+            self.crop_size[1],
+            &self.crop_rgba,
+            self.crop_zoom,
+            self.crop_pan[0],
+            self.crop_pan[1],
+            edge,
+        );
         let Some(png) = encode_png(edge, edge, &rgba) else {
             self.status = "could not save that picture".into();
             return;
@@ -6459,7 +8713,11 @@ impl App {
 
     fn draw_avatar_crop(&mut self, ui: &Ui) {
         let size = ui.io().display_size();
-        let flags = WindowFlags::NO_DECORATION | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE | WindowFlags::NO_SAVED_SETTINGS | WindowFlags::NO_DOCKING;
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING;
         ui.window("Avatar crop")
             .flags(flags)
             .position([0.0, 0.0], Condition::Always)
@@ -6469,7 +8727,11 @@ impl App {
                 let panel = [420.0, 460.0];
                 let origin = [(size[0] - panel[0]) * 0.5, (size[1] - panel[1]) * 0.5];
                 ui.get_window_draw_list()
-                    .add_rect(origin, [origin[0] + panel[0], origin[1] + panel[1]], STAGE_BG)
+                    .add_rect(
+                        origin,
+                        [origin[0] + panel[0], origin[1] + panel[1]],
+                        STAGE_BG,
+                    )
                     .rounding(8.0)
                     .filled(true)
                     .build();
@@ -6488,16 +8750,32 @@ impl App {
                 if ui.button("Cancel") {
                     self.crop_open = false;
                 }
-                let drag = pointer_in(ui, [center[0] - 96.0, center[1] - 96.0], [center[0] + 96.0, center[1] + 96.0]);
+                let drag = pointer_in(
+                    ui,
+                    [center[0] - 96.0, center[1] - 96.0],
+                    [center[0] + 96.0, center[1] + 96.0],
+                );
                 if drag && ui.is_mouse_down(MouseButton::Left) {
                     let mouse = ui.io().mouse_pos();
                     if let Some(previous) = self.crop_drag {
-                        let window = crop_window(self.crop_size[0], self.crop_size[1], self.crop_zoom, 0.0, 0.0)
-                            .map(|(_, _, side)| side)
-                            .unwrap_or(1.0);
+                        let window = crop_window(
+                            self.crop_size[0],
+                            self.crop_size[1],
+                            self.crop_zoom,
+                            0.0,
+                            0.0,
+                        )
+                        .map(|(_, _, side)| side)
+                        .unwrap_or(1.0);
                         let scale = window / 192.0;
-                        self.crop_pan[0] = (self.crop_pan[0] - (mouse[0] - previous[0]) * scale / (self.crop_size[0] as f32).max(1.0)).clamp(-1.0, 1.0);
-                        self.crop_pan[1] = (self.crop_pan[1] - (mouse[1] - previous[1]) * scale / (self.crop_size[1] as f32).max(1.0)).clamp(-1.0, 1.0);
+                        self.crop_pan[0] = (self.crop_pan[0]
+                            - (mouse[0] - previous[0]) * scale
+                                / (self.crop_size[0] as f32).max(1.0))
+                        .clamp(-1.0, 1.0);
+                        self.crop_pan[1] = (self.crop_pan[1]
+                            - (mouse[1] - previous[1]) * scale
+                                / (self.crop_size[1] as f32).max(1.0))
+                        .clamp(-1.0, 1.0);
                     }
                     self.crop_drag = Some(mouse);
                 } else {
@@ -6551,8 +8829,12 @@ impl App {
     }
 
     fn save_attachment(&mut self, id: i64, filename: &str) {
-        let Some(bytes) = self.note(self.client.attachment(id)) else { return };
-        let Some(path) = rfd::FileDialog::new().set_file_name(filename).save_file() else { return };
+        let Some(bytes) = self.note(self.client.attachment(id)) else {
+            return;
+        };
+        let Some(path) = rfd::FileDialog::new().set_file_name(filename).save_file() else {
+            return;
+        };
         if let Err(err) = std::fs::write(path, bytes) {
             self.status = err.to_string();
         }
@@ -6560,9 +8842,16 @@ impl App {
 
     fn name_of(&self, user_id: i64) -> String {
         if let Some(member) = self.members.iter().find(|member| member.user_id == user_id) {
-            return member.nickname.clone().unwrap_or_else(|| member.display_name.clone());
+            return member
+                .nickname
+                .clone()
+                .unwrap_or_else(|| member.display_name.clone());
         }
-        if let Some(account) = self.account.as_ref().filter(|account| account.id == user_id) {
+        if let Some(account) = self
+            .account
+            .as_ref()
+            .filter(|account| account.id == user_id)
+        {
             return account.display_name.clone();
         }
         if let Some(friend) = self.friends.iter().find(|friend| friend.id == user_id) {
@@ -6585,8 +8874,15 @@ impl App {
         {
             let draw = ui.get_window_draw_list();
             if active || ui.is_item_hovered() {
-                let fill = if active { [88.0 / 255.0, 101.0 / 255.0, 242.0 / 255.0, 0.45] } else { ROW_HOVER };
-                draw.add_rect(min, [min[0] + size, min[1] + size], fill).rounding(6.0).filled(true).build();
+                let fill = if active {
+                    [88.0 / 255.0, 101.0 / 255.0, 242.0 / 255.0, 0.45]
+                } else {
+                    ROW_HOVER
+                };
+                draw.add_rect(min, [min[0] + size, min[1] + size], fill)
+                    .rounding(6.0)
+                    .filled(true)
+                    .build();
             }
             if let Some(texture) = self.icon(name) {
                 let pad = 7.0;
@@ -6609,7 +8905,14 @@ impl App {
     }
 
     /// Reddit-style circular collapse control: (−) expanded, (+) collapsed.
-    fn comment_fold_control(&self, ui: &Ui, message_id: i64, min: [f32; 2], collapsed: bool, tip: &str) -> bool {
+    fn comment_fold_control(
+        &self,
+        ui: &Ui,
+        message_id: i64,
+        min: [f32; 2],
+        collapsed: bool,
+        tip: &str,
+    ) -> bool {
         let size = COMMENT_FOLD_HIT;
         ui.set_cursor_screen_pos(min);
         let clicked = ui.invisible_button(format!("fold-{message_id}"), [size, size]);
@@ -6656,7 +8959,11 @@ impl App {
     fn open_settings_section(&mut self, section: SettingsSection) {
         self.settings.open_section(section);
         self.settings_error.clear();
-        self.display_name = self.account.as_ref().map(|account| account.display_name.clone()).unwrap_or_default();
+        self.display_name = self
+            .account
+            .as_ref()
+            .map(|account| account.display_name.clone())
+            .unwrap_or_default();
         if section == SettingsSection::Account {
             if let Some(id) = self.account.as_ref().map(|account| account.id) {
                 if let Ok(profile) = self.client.user_profile(id, None) {
@@ -6690,12 +8997,18 @@ impl App {
     }
 
     fn profile_kind_for(&self, user_id: i64) -> ProfileKind {
-        if self.account.as_ref().is_some_and(|account| account.id == user_id) {
+        if self
+            .account
+            .as_ref()
+            .is_some_and(|account| account.id == user_id)
+        {
             return ProfileKind::SelfAccount;
         }
         let is_friend = self.friends.iter().any(|friend| friend.id == user_id)
             || self.dms.iter().any(|chat| chat.peer_id == user_id);
-        if matches!(self.place, Place::Server(_)) || self.members.iter().any(|member| member.user_id == user_id) {
+        if matches!(self.place, Place::Server(_))
+            || self.members.iter().any(|member| member.user_id == user_id)
+        {
             ProfileKind::ServerMember { is_friend }
         } else if is_friend {
             ProfileKind::Friend
@@ -6780,7 +9093,10 @@ impl App {
                 self.paint_profile_banner(
                     ui,
                     layout.identity.min,
-                    [layout.identity.max[0], layout.identity.min[1] + PROFILE_BANNER_H],
+                    [
+                        layout.identity.max[0],
+                        layout.identity.min[1] + PROFILE_BANNER_H,
+                    ],
                     view,
                     theme_primary,
                     theme_secondary,
@@ -6804,20 +9120,42 @@ impl App {
                     view.profile_frame_id.as_deref(),
                 );
                 let avatar = self.avatars.get(&view.id).map(|shot| shot.texture);
-                paint_avatar(ui, avatar, avatar_center, PROFILE_AVATAR, &initials(&heading), None);
+                paint_avatar(
+                    ui,
+                    avatar,
+                    avatar_center,
+                    PROFILE_AVATAR,
+                    &initials(&heading),
+                    None,
+                );
                 profile_paint::paint_avatar_decoration_art(
                     ui,
                     avatar_center,
                     PROFILE_AVATAR,
                     view.avatar_decoration_id.as_deref(),
                 );
-                let presence = self.presence.get(&view.id).map(|p| p.state).unwrap_or(Presence::Offline);
+                let presence = self
+                    .presence
+                    .get(&view.id)
+                    .map(|p| p.state)
+                    .unwrap_or(Presence::Offline);
                 paint_status_dot(ui, avatar_center, PROFILE_AVATAR, presence, FLOATING_BG);
 
-                if let Some(status) = view.custom_status.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                    let bubble_min = [avatar_center[0] + PROFILE_AVATAR + 10.0, avatar_center[1] - 18.0];
+                if let Some(status) = view
+                    .custom_status
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    let bubble_min = [
+                        avatar_center[0] + PROFILE_AVATAR + 10.0,
+                        avatar_center[1] - 18.0,
+                    ];
                     let size = ui.calc_text_size(status);
-                    let bubble_max = [bubble_min[0] + size[0] + 16.0, bubble_min[1] + size[1] + 10.0];
+                    let bubble_max = [
+                        bubble_min[0] + size[0] + 16.0,
+                        bubble_min[1] + size[1] + 10.0,
+                    ];
                     let draw = ui.get_window_draw_list();
                     draw.add_rect(bubble_min, bubble_max, STAGE_BG)
                         .rounding(8.0)
@@ -6835,7 +9173,12 @@ impl App {
                         .add_text([text_x, name_y], name_color, &heading);
                 }
                 let mut meta = format!("@{}", view.username);
-                if let Some(pronouns) = view.pronouns.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                if let Some(pronouns) = view
+                    .pronouns
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
                     meta.push_str(" • ");
                     meta.push_str(pronouns);
                 }
@@ -6846,13 +9189,20 @@ impl App {
                     let cap = profile_badge_row_visible_cap();
                     let mut bx = text_x;
                     for badge in view.badges.iter().take(cap) {
-                        profile_paint::paint_badge_icon(ui, [bx + PROFILE_BADGE, y + PROFILE_BADGE], badge);
+                        profile_paint::paint_badge_icon(
+                            ui,
+                            [bx + PROFILE_BADGE, y + PROFILE_BADGE],
+                            badge,
+                        );
                         bx += PROFILE_BADGE * 2.0 + 6.0;
                     }
                     if view.badges.len() > cap {
                         let extra = view.badges.len() - cap;
-                        ui.get_window_draw_list()
-                            .add_text([bx, y + 4.0], MUTED, &format!("+{extra}"));
+                        ui.get_window_draw_list().add_text(
+                            [bx, y + 4.0],
+                            MUTED,
+                            &format!("+{extra}"),
+                        );
                     }
                     y += PROFILE_BADGE * 2.0 + 10.0;
                 }
@@ -6893,17 +9243,24 @@ impl App {
                                 match action {
                                     ProfileAction::EditProfile => begin_customize = true,
                                     ProfileAction::Message => message_user = Some(view.id),
-                                    ProfileAction::AddFriend => add_friend = Some(view.username.clone()),
+                                    ProfileAction::AddFriend => {
+                                        add_friend = Some(view.username.clone())
+                                    }
                                 }
                             }
                             ui.dummy([0.0, BUTTON_H + 4.0]);
                         }
                         ui.separator();
-                        if let Some(about) =
-                            view.about_me.as_deref().map(str::trim).filter(|s| !s.is_empty())
+                        if let Some(about) = view
+                            .about_me
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
                         {
                             ui.text_colored(MUTED, "ABOUT ME");
-                            let _wrap = ui.push_text_wrap_pos(ui.cursor_screen_pos()[0] + ui.content_region_avail()[0]);
+                            let _wrap = ui.push_text_wrap_pos(
+                                ui.cursor_screen_pos()[0] + ui.content_region_avail()[0],
+                            );
                             ui.text_colored(TEXT, about);
                             ui.dummy([0.0, 6.0]);
                         }
@@ -6913,7 +9270,11 @@ impl App {
                         if !view.roles.is_empty() {
                             ui.text_colored(MUTED, "ROLES");
                             for role in &view.roles {
-                                let color = if role.color > 0 { rgb_u32_to_rgba(role.color as u32) } else { MUTED };
+                                let color = if role.color > 0 {
+                                    rgb_u32_to_rgba(role.color as u32)
+                                } else {
+                                    MUTED
+                                };
                                 ui.text_colored(color, &format!("● {}", role.name));
                             }
                             ui.dummy([0.0, 6.0]);
@@ -6936,8 +9297,10 @@ impl App {
                 drop(child_bg);
 
                 let board_bg = ui.push_style_color(StyleColor::ChildBg, STAGE_BG);
-                let board_pad =
-                    ui.push_style_var(StyleVar::WindowPadding([PROFILE_BOARD_CARD_PAD, PROFILE_BOARD_CARD_PAD]));
+                let board_pad = ui.push_style_var(StyleVar::WindowPadding([
+                    PROFILE_BOARD_CARD_PAD,
+                    PROFILE_BOARD_CARD_PAD,
+                ]));
                 let board_gap = ui.push_style_var(StyleVar::ItemSpacing([8.0, 8.0]));
                 ui.set_cursor_screen_pos(layout.board.min);
                 ui.child_window("profile-view-board")
@@ -6971,7 +9334,10 @@ impl App {
             self.close_profile();
         }
         if let Some(username) = add_friend {
-            if self.note(self.client.send_friend_request(&username)).is_some() {
+            if self
+                .note(self.client.send_friend_request(&username))
+                .is_some()
+            {
                 self.refresh_shell();
                 self.status = format!("Friend request sent to @{username}");
             }
@@ -7014,13 +9380,15 @@ impl App {
         match scope {
             ProfileEditScope::Main => {
                 if let Some(view) = self.profile_view.clone() {
-                    self.profile.set_draft_nickname(view.nickname.clone().unwrap_or_default());
+                    self.profile
+                        .set_draft_nickname(view.nickname.clone().unwrap_or_default());
                 }
             }
             ProfileEditScope::Server { id, .. } => {
                 if let Some(account) = self.account.clone() {
                     if let Ok(view) = self.client.user_profile(account.id, Some(id)) {
-                        self.profile.set_draft_nickname(view.nickname.unwrap_or_default());
+                        self.profile
+                            .set_draft_nickname(view.nickname.unwrap_or_default());
                     }
                 }
             }
@@ -7297,14 +9665,15 @@ impl App {
             .profile_badge_drafts
             .iter()
             .filter_map(|id| {
-                self.profile_badges_catalog.iter().find(|item| item.id == *id).map(|item| {
-                    banter_server::ProfileBadge {
+                self.profile_badges_catalog
+                    .iter()
+                    .find(|item| item.id == *id)
+                    .map(|item| banter_server::ProfileBadge {
                         id: item.id.clone(),
                         label: item.label.clone(),
                         color: item.color,
                         shape: item.shape,
-                    }
-                })
+                    })
             })
             .collect();
         preview.activity = self
@@ -7355,7 +9724,9 @@ impl App {
                 let slot_min = [x, y];
                 let slot_max = [x + size[0], y + size[1]];
                 self.paint_editor_slot_thumb(ui, slot_min, slot_max, *slot, view);
-                if ui.is_mouse_hovering_rect(slot_min, slot_max) && ui.is_mouse_clicked(MouseButton::Left) {
+                if ui.is_mouse_hovering_rect(slot_min, slot_max)
+                    && ui.is_mouse_clicked(MouseButton::Left)
+                {
                     self.profile_editor_slot = match self.profile_editor_slot {
                         Some(open) if open == *slot => None,
                         _ => Some(*slot),
@@ -7363,11 +9734,14 @@ impl App {
                 }
                 x += size[0] + PROFILE_SLOT_GAP;
             }
-            ui.dummy([0.0, if slots.len() == 1 && matches!(slots[0], ProfileEditorSlot::Nameplate) {
-                48.0
-            } else {
-                PROFILE_SLOT + 8.0
-            }]);
+            ui.dummy([
+                0.0,
+                if slots.len() == 1 && matches!(slots[0], ProfileEditorSlot::Nameplate) {
+                    48.0
+                } else {
+                    PROFILE_SLOT + 8.0
+                },
+            ]);
             if let Some(open) = self.profile_editor_slot {
                 if slots.contains(&open) {
                     self.draw_editor_slot_picker(ui, open, view, left_w);
@@ -7386,20 +9760,38 @@ impl App {
     ) {
         {
             let draw = ui.get_window_draw_list();
-            draw.add_rect(min, max, STAGE_BG).rounding(6.0).filled(true).build();
+            draw.add_rect(min, max, STAGE_BG)
+                .rounding(6.0)
+                .filled(true)
+                .build();
             let selected = self.profile_editor_slot == Some(slot);
             if selected {
-                draw.add_rect(min, max, BLURPLE).rounding(6.0).thickness(2.0).build();
+                draw.add_rect(min, max, BLURPLE)
+                    .rounding(6.0)
+                    .thickness(2.0)
+                    .build();
             }
         }
         match slot {
             ProfileEditorSlot::Nameplate => {
-                profile_paint::paint_nameplate_art(ui, min, max, self.profile.draft_nameplate().as_deref());
+                profile_paint::paint_nameplate_art(
+                    ui,
+                    min,
+                    max,
+                    self.profile.draft_nameplate().as_deref(),
+                );
             }
             ProfileEditorSlot::Avatar => {
                 let center = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
                 let avatar = self.avatars.get(&view.id).map(|shot| shot.texture);
-                paint_avatar(ui, avatar, center, 22.0, &initials(&view.display_name), None);
+                paint_avatar(
+                    ui,
+                    avatar,
+                    center,
+                    22.0,
+                    &initials(&view.display_name),
+                    None,
+                );
             }
             ProfileEditorSlot::AvatarDecoration => {
                 let center = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
@@ -7416,7 +9808,8 @@ impl App {
                 }
             }
             ProfileEditorSlot::DisplayNameStyle => {
-                let color = display_name_style_color(self.profile.draft_display_name_style().as_deref());
+                let color =
+                    display_name_style_color(self.profile.draft_display_name_style().as_deref());
                 let label = truncate_ui(self.profile.draft_display_name(), 10);
                 ui.get_window_draw_list()
                     .add_text([min[0] + 8.0, min[1] + 22.0], color, &label);
@@ -7453,7 +9846,10 @@ impl App {
                     );
                 } else {
                     let primary = rgb_u32_to_rgba(self.profile.draft_theme_primary());
-                    draw.add_rect(min, max, primary).rounding(6.0).filled(true).build();
+                    draw.add_rect(min, max, primary)
+                        .rounding(6.0)
+                        .filled(true)
+                        .build();
                     if !view.has_banner {
                         draw.add_text([min[0] + 18.0, min[1] + 22.0], MUTED, "+");
                     }
@@ -7506,7 +9902,13 @@ impl App {
         }
     }
 
-    fn draw_editor_slot_picker(&mut self, ui: &Ui, slot: ProfileEditorSlot, view: &UserProfile, left_w: f32) {
+    fn draw_editor_slot_picker(
+        &mut self,
+        ui: &Ui,
+        slot: ProfileEditorSlot,
+        view: &UserProfile,
+        left_w: f32,
+    ) {
         match slot {
             ProfileEditorSlot::Nameplate => {
                 self.draw_cosmetic_picker(ui, "Nameplate", CosmeticKind::Nameplate, left_w);
@@ -7521,10 +9923,20 @@ impl App {
                 }
             }
             ProfileEditorSlot::AvatarDecoration => {
-                self.draw_cosmetic_picker(ui, "Avatar Decoration", CosmeticKind::AvatarDecoration, left_w);
+                self.draw_cosmetic_picker(
+                    ui,
+                    "Avatar Decoration",
+                    CosmeticKind::AvatarDecoration,
+                    left_w,
+                );
             }
             ProfileEditorSlot::DisplayNameStyle => {
-                self.draw_cosmetic_picker(ui, "Display Name Style", CosmeticKind::DisplayNameStyle, left_w);
+                self.draw_cosmetic_picker(
+                    ui,
+                    "Display Name Style",
+                    CosmeticKind::DisplayNameStyle,
+                    left_w,
+                );
             }
             ProfileEditorSlot::Theme => {
                 ui.text_colored(MUTED, "THEME");
@@ -7555,7 +9967,12 @@ impl App {
                 let _ = view;
             }
             ProfileEditorSlot::ProfileEffect => {
-                self.draw_cosmetic_picker(ui, "Profile Effect", CosmeticKind::ProfileEffect, left_w);
+                self.draw_cosmetic_picker(
+                    ui,
+                    "Profile Effect",
+                    CosmeticKind::ProfileEffect,
+                    left_w,
+                );
             }
             ProfileEditorSlot::ProfileFrame => {
                 self.draw_cosmetic_picker(ui, "Profile Frame", CosmeticKind::ProfileFrame, left_w);
@@ -7601,7 +10018,12 @@ impl App {
             }
         }
         let row_w = profile_column_content_width(width);
-        for item in self.profile_cosmetics.iter().filter(|item| item.kind == kind).cloned() {
+        for item in self
+            .profile_cosmetics
+            .iter()
+            .filter(|item| item.kind == kind)
+            .cloned()
+        {
             let selected = current.as_deref() == Some(item.id.as_str());
             let swatch = rgb_u32_to_rgba(item.color);
             let origin = ui.cursor_screen_pos();
@@ -7719,7 +10141,8 @@ impl App {
                         }
                         let field_w = (ui.content_region_avail()[0]).max(80.0);
                         ui.set_next_item_width(field_w);
-                        ui.input_text(&format!("##widget-title-{index}"), &mut widget.title).build();
+                        ui.input_text(&format!("##widget-title-{index}"), &mut widget.title)
+                            .build();
                         match widget.kind {
                             ProfileWidgetKind::FavoriteGame => {
                                 let mut title = widget
@@ -7735,10 +10158,13 @@ impl App {
                                     .unwrap_or("")
                                     .to_string();
                                 ui.set_next_item_width(field_w);
-                                ui.input_text(&format!("##fav-title-{index}"), &mut title).build();
+                                ui.input_text(&format!("##fav-title-{index}"), &mut title)
+                                    .build();
                                 ui.set_next_item_width(field_w);
-                                ui.input_text(&format!("##fav-quote-{index}"), &mut quote).build();
-                                widget.payload = serde_json::json!({ "title": title, "quote": quote });
+                                ui.input_text(&format!("##fav-quote-{index}"), &mut quote)
+                                    .build();
+                                widget.payload =
+                                    serde_json::json!({ "title": title, "quote": quote });
                             }
                             ProfileWidgetKind::GamesInRotation | ProfileWidgetKind::GamesILike => {
                                 let cap = games_widget_cap(widget.kind);
@@ -7792,12 +10218,15 @@ impl App {
             for (index, connection) in self.profile_connection_drafts.iter_mut().enumerate() {
                 let field_w = ((content_w - 16.0) * 0.45).max(70.0);
                 ui.set_next_item_width(field_w);
-                ui.input_text(&format!("##conn-kind-{index}"), &mut connection.kind).build();
+                ui.input_text(&format!("##conn-kind-{index}"), &mut connection.kind)
+                    .build();
                 ui.same_line();
                 ui.set_next_item_width(field_w);
-                ui.input_text(&format!("##conn-name-{index}"), &mut connection.name).build();
+                ui.input_text(&format!("##conn-name-{index}"), &mut connection.name)
+                    .build();
                 ui.set_next_item_width(content_w - 16.0);
-                ui.input_text(&format!("##conn-url-{index}"), &mut connection.url).build();
+                ui.input_text(&format!("##conn-url-{index}"), &mut connection.url)
+                    .build();
                 if ui.small_button(&format!("Remove##conn-{index}")) {
                     remove_conn = Some(index);
                 }
@@ -7813,15 +10242,24 @@ impl App {
                 ui.text_colored(TEXT, &widget.title);
                 match widget.kind {
                     ProfileWidgetKind::FavoriteGame => {
-                        let title = widget.payload.get("title").and_then(|v| v.as_str()).unwrap_or("");
-                        let quote = widget.payload.get("quote").and_then(|v| v.as_str()).unwrap_or("");
+                        let title = widget
+                            .payload
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let quote = widget
+                            .payload
+                            .get("quote")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         if !title.is_empty() {
                             let origin = ui.cursor_screen_pos();
                             profile_paint::paint_game_card(ui, origin, title, "");
                             ui.dummy([PROFILE_GAME_CARD_W + 8.0, PROFILE_GAME_CARD_H + 4.0]);
                         }
                         if !quote.is_empty() {
-                            let _wrap = ui.push_text_wrap_pos(ui.cursor_screen_pos()[0] + content_w);
+                            let _wrap =
+                                ui.push_text_wrap_pos(ui.cursor_screen_pos()[0] + content_w);
                             ui.text_colored(MUTED, quote);
                         }
                     }
@@ -7838,9 +10276,10 @@ impl App {
                             profile_paint::paint_game_card(ui, [x, y], title, tag);
                             x += PROFILE_GAME_CARD_W + 8.0;
                         }
-                        let rows = ((games.len().max(1) as f32) * (PROFILE_GAME_CARD_W + 8.0) / content_w.max(1.0))
-                            .ceil()
-                            .max(1.0);
+                        let rows = ((games.len().max(1) as f32) * (PROFILE_GAME_CARD_W + 8.0)
+                            / content_w.max(1.0))
+                        .ceil()
+                        .max(1.0);
                         ui.dummy([0.0, rows * (PROFILE_GAME_CARD_H + 8.0)]);
                     }
                     ProfileWidgetKind::GamesILike => {
@@ -7866,8 +10305,16 @@ impl App {
         }
     }
 
-    fn draw_profile_connection_row(&mut self, ui: &Ui, connection: &banter_server::ProfileConnection) {
-        let label = format!("{}  {}  ↗", connection_kind_glyph(&connection.kind), connection.name);
+    fn draw_profile_connection_row(
+        &mut self,
+        ui: &Ui,
+        connection: &banter_server::ProfileConnection,
+    ) {
+        let label = format!(
+            "{}  {}  ↗",
+            connection_kind_glyph(&connection.kind),
+            connection.name
+        );
         if ui.small_button(&format!("{label}##conn-{}", connection.id)) {
             if let Err(err) = open_http_url(&connection.url) {
                 self.status = err;
@@ -7890,11 +10337,14 @@ impl App {
             for (index, entry) in self.profile_activity_drafts.iter_mut().enumerate() {
                 ui.separator();
                 ui.set_next_item_width(field_w);
-                ui.input_text(&format!("##act-kind-{index}"), &mut entry.kind).build();
+                ui.input_text(&format!("##act-kind-{index}"), &mut entry.kind)
+                    .build();
                 ui.set_next_item_width(field_w);
-                ui.input_text(&format!("##act-title-{index}"), &mut entry.title).build();
+                ui.input_text(&format!("##act-title-{index}"), &mut entry.title)
+                    .build();
                 ui.set_next_item_width(field_w);
-                ui.input_text(&format!("##act-detail-{index}"), &mut entry.detail).build();
+                ui.input_text(&format!("##act-detail-{index}"), &mut entry.detail)
+                    .build();
                 if ui.small_button(&format!("Remove##act-{index}")) {
                     remove = Some(index);
                 }
@@ -7937,10 +10387,12 @@ impl App {
             for (index, entry) in self.profile_wishlist_drafts.iter_mut().enumerate() {
                 let half = ((content_w - 40.0) * 0.5).max(70.0);
                 ui.set_next_item_width(half);
-                ui.input_text(&format!("##wish-title-{index}"), &mut entry.title).build();
+                ui.input_text(&format!("##wish-title-{index}"), &mut entry.title)
+                    .build();
                 ui.same_line();
                 ui.set_next_item_width(half);
-                ui.input_text(&format!("##wish-tag-{index}"), &mut entry.tag).build();
+                ui.input_text(&format!("##wish-tag-{index}"), &mut entry.tag)
+                    .build();
                 if ui.small_button(&format!("x##wish-{index}")) {
                     remove = Some(index);
                 }
@@ -7995,8 +10447,11 @@ impl App {
                 .filled(true)
                 .build();
             let mid = [max[0], min[1] + (max[1] - min[1]) * 0.45];
-            draw.add_rect([min[0], mid[1]], max, primary).filled(true).build();
-            let show_banner = view.has_banner && !matches!(self.profile_draft_banner, ProfileMediaDraft::Clear);
+            draw.add_rect([min[0], mid[1]], max, primary)
+                .filled(true)
+                .build();
+            let show_banner =
+                view.has_banner && !matches!(self.profile_draft_banner, ProfileMediaDraft::Clear);
             if show_banner {
                 if let Some(shot) = self.banners.get(&view.id) {
                     draw.add_image_rounded(
@@ -8019,12 +10474,21 @@ impl App {
         }
     }
 
-    fn paint_profile_preview_card(&self, ui: &Ui, min: [f32; 2], max: [f32; 2], view: &UserProfile) {
+    fn paint_profile_preview_card(
+        &self,
+        ui: &Ui,
+        min: [f32; 2],
+        max: [f32; 2],
+        view: &UserProfile,
+    ) {
         let width = (max[0] - min[0]).min(PROFILE_W);
         let card_max = [min[0] + width, max[1]];
         {
             let draw = ui.get_window_draw_list();
-            draw.add_rect(min, card_max, FLOATING_BG).rounding(PROFILE_RADIUS).filled(true).build();
+            draw.add_rect(min, card_max, FLOATING_BG)
+                .rounding(PROFILE_RADIUS)
+                .filled(true)
+                .build();
         }
         self.paint_profile_banner(
             ui,
@@ -8041,27 +10505,64 @@ impl App {
             view.profile_effect_id.as_deref(),
         );
         let heading = profile_heading(&view.display_name, view.nickname.as_deref());
-        let avatar_center = [min[0] + PROFILE_PAD + PROFILE_AVATAR, min[1] + PROFILE_BANNER_H];
+        let avatar_center = [
+            min[0] + PROFILE_PAD + PROFILE_AVATAR,
+            min[1] + PROFILE_BANNER_H,
+        ];
         {
             let draw = ui.get_window_draw_list();
-            draw.add_circle(avatar_center, PROFILE_AVATAR + 6.0, FLOATING_BG).filled(true).build();
+            draw.add_circle(avatar_center, PROFILE_AVATAR + 6.0, FLOATING_BG)
+                .filled(true)
+                .build();
         }
-        profile_paint::paint_profile_frame_art(ui, avatar_center, PROFILE_AVATAR, view.profile_frame_id.as_deref());
+        profile_paint::paint_profile_frame_art(
+            ui,
+            avatar_center,
+            PROFILE_AVATAR,
+            view.profile_frame_id.as_deref(),
+        );
         let avatar = self.avatars.get(&view.id).map(|shot| shot.texture);
-        paint_avatar(ui, avatar, avatar_center, PROFILE_AVATAR, &initials(&heading), None);
+        paint_avatar(
+            ui,
+            avatar,
+            avatar_center,
+            PROFILE_AVATAR,
+            &initials(&heading),
+            None,
+        );
         profile_paint::paint_avatar_decoration_art(
             ui,
             avatar_center,
             PROFILE_AVATAR,
             view.avatar_decoration_id.as_deref(),
         );
-        paint_status_dot(ui, avatar_center, PROFILE_AVATAR, Presence::Online, FLOATING_BG);
-        if let Some(status) = view.custom_status.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            let bubble_min = [avatar_center[0] + PROFILE_AVATAR + 10.0, avatar_center[1] - 18.0];
+        paint_status_dot(
+            ui,
+            avatar_center,
+            PROFILE_AVATAR,
+            Presence::Online,
+            FLOATING_BG,
+        );
+        if let Some(status) = view
+            .custom_status
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let bubble_min = [
+                avatar_center[0] + PROFILE_AVATAR + 10.0,
+                avatar_center[1] - 18.0,
+            ];
             let size = ui.calc_text_size(status);
-            let bubble_max = [bubble_min[0] + size[0] + 16.0, bubble_min[1] + size[1] + 10.0];
+            let bubble_max = [
+                bubble_min[0] + size[0] + 16.0,
+                bubble_min[1] + size[1] + 10.0,
+            ];
             let draw = ui.get_window_draw_list();
-            draw.add_rect(bubble_min, bubble_max, STAGE_BG).rounding(8.0).filled(true).build();
+            draw.add_rect(bubble_min, bubble_max, STAGE_BG)
+                .rounding(8.0)
+                .filled(true)
+                .build();
             draw.add_text([bubble_min[0] + 8.0, bubble_min[1] + 5.0], TEXT, status);
         }
         let text_x = min[0] + PROFILE_PAD;
@@ -8069,10 +10570,16 @@ impl App {
         let name_color = display_name_style_color(view.display_name_style_id.as_deref());
         {
             let _font = ui.push_font_with_size(self.bold_font, FONT_LG);
-            ui.get_window_draw_list().add_text([text_x, name_y], name_color, &heading);
+            ui.get_window_draw_list()
+                .add_text([text_x, name_y], name_color, &heading);
         }
         let mut meta = format!("@{}", view.username);
-        if let Some(pronouns) = view.pronouns.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(pronouns) = view
+            .pronouns
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             meta.push_str(" • ");
             meta.push_str(pronouns);
         }
@@ -8130,7 +10637,11 @@ impl App {
                         if y + 16.0 > card_max[1] {
                             break;
                         }
-                        let color = if role.color > 0 { rgb_u32_to_rgba(role.color as u32) } else { TEXT };
+                        let color = if role.color > 0 {
+                            rgb_u32_to_rgba(role.color as u32)
+                        } else {
+                            TEXT
+                        };
                         draw.add_text([text_x, y], color, &role.name);
                         y += 16.0;
                     }
@@ -8224,10 +10735,30 @@ impl App {
             theme_primary: Some(self.profile.draft_theme_primary()),
             theme_secondary: Some(self.profile.draft_theme_secondary()),
             nameplate_id: Some(self.profile.draft_nameplate().clone().unwrap_or_default()),
-            avatar_decoration_id: Some(self.profile.draft_avatar_decoration().clone().unwrap_or_default()),
-            display_name_style_id: Some(self.profile.draft_display_name_style().clone().unwrap_or_default()),
-            profile_effect_id: Some(self.profile.draft_profile_effect().clone().unwrap_or_default()),
-            profile_frame_id: Some(self.profile.draft_profile_frame().clone().unwrap_or_default()),
+            avatar_decoration_id: Some(
+                self.profile
+                    .draft_avatar_decoration()
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+            display_name_style_id: Some(
+                self.profile
+                    .draft_display_name_style()
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+            profile_effect_id: Some(
+                self.profile
+                    .draft_profile_effect()
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+            profile_frame_id: Some(
+                self.profile
+                    .draft_profile_frame()
+                    .clone()
+                    .unwrap_or_default(),
+            ),
             widgets: Some(self.profile_widget_drafts.clone()),
             connections: Some(self.profile_connection_drafts.clone()),
             badge_ids: Some(self.profile_badge_drafts.clone()),
@@ -8296,7 +10827,9 @@ impl App {
             self.banner_rev.remove(&view.id);
             return;
         }
-        if self.banner_rev.get(&view.id) == Some(&view.banner_rev) && self.banners.contains_key(&view.id) {
+        if self.banner_rev.get(&view.id) == Some(&view.banner_rev)
+            && self.banners.contains_key(&view.id)
+        {
             return;
         }
         if self.banner_miss.get(&view.id) == Some(&view.banner_rev) {
@@ -8334,7 +10867,11 @@ impl App {
         }
         match self.client.set_banner(&bytes) {
             Ok(()) => {
-                if let Ok(profile) = self.client.me().and_then(|account| self.client.user_profile(account.id, None)) {
+                if let Ok(profile) = self
+                    .client
+                    .me()
+                    .and_then(|account| self.client.user_profile(account.id, None))
+                {
                     if let Some(view) = self.profile_view.as_mut() {
                         view.has_banner = profile.has_banner;
                         view.banner_rev = profile.banner_rev;
@@ -8410,30 +10947,6 @@ impl App {
         }
     }
 
-    fn reload_voice_rosters(&mut self, server_id: i64) {
-        let Some(rows) = self.note(self.client.server_voice(server_id)) else {
-            return;
-        };
-        let mine: Vec<i64> = self
-            .layout
-            .iter()
-            .flat_map(|category| category.channels.iter())
-            .filter(|channel| channel.kind == ChannelKind::Voice)
-            .map(|channel| channel.id)
-            .collect();
-        for channel_id in mine {
-            self.voice_rosters.remove(&channel_id);
-        }
-        for row in rows {
-            apply_voice_roster(&mut self.voice_rosters, row.channel_id, row.members);
-        }
-        if let Some(channel_id) = self.voice_channel {
-            if let Some(members) = self.voice_rosters.get(&channel_id) {
-                self.voice_members = members.clone();
-            }
-        }
-    }
-
     fn end_media_place(&mut self) {
         self.call = None;
         self.camera = false;
@@ -8464,7 +10977,11 @@ impl App {
     fn refresh_cameras(&mut self) {
         self.cameras = media::camera_names();
         self.cameras_loaded = true;
-        if !self.cameras.iter().any(|(index, _)| *index == self.camera_choice.device_index()) {
+        if !self
+            .cameras
+            .iter()
+            .any(|(index, _)| *index == self.camera_choice.device_index())
+        {
             if let Some((index, _)) = self.cameras.first() {
                 self.camera_choice.select(*index);
             }
@@ -8476,12 +10993,53 @@ impl App {
             return;
         }
         for name in [
-            "mic", "mic-off", "headphones", "headphone-off", "video", "video-off", "monitor", "monitor-off",
-            "phone-off", "settings", "chevron-down", "chevron-up", "chevron-left", "plus", "hash", "volume-2", "users",
-            "search", "paperclip", "x", "user", "log-out", "pencil", "trash-2", "reply", "check", "chevron-right",
-            "circle-plus", "folder", "folder-plus", "message-circle", "phone", "user-plus", "signal", "ellipsis",
-            "minus", "home", "image", "file-text", "sticky-note", "circle", "square", "type", "mouse-pointer-2",
-            "maximize", "minimize", "picture-in-picture-2",
+            "mic",
+            "mic-off",
+            "headphones",
+            "headphone-off",
+            "video",
+            "video-off",
+            "monitor",
+            "monitor-off",
+            "phone-off",
+            "settings",
+            "chevron-down",
+            "chevron-up",
+            "chevron-left",
+            "plus",
+            "hash",
+            "volume-2",
+            "users",
+            "search",
+            "paperclip",
+            "x",
+            "user",
+            "log-out",
+            "pencil",
+            "trash-2",
+            "reply",
+            "check",
+            "chevron-right",
+            "circle-plus",
+            "folder",
+            "folder-plus",
+            "message-circle",
+            "phone",
+            "user-plus",
+            "signal",
+            "ellipsis",
+            "minus",
+            "home",
+            "image",
+            "file-text",
+            "sticky-note",
+            "circle",
+            "square",
+            "type",
+            "mouse-pointer-2",
+            "maximize",
+            "minimize",
+            "picture-in-picture-2",
         ] {
             if let Ok(rgba) = rasterize_lucide(name, 32, [255, 255, 255]) {
                 if let Some(shot) = upload_rgba(imgui, 32, 32, &rgba) {
@@ -8555,35 +11113,49 @@ impl App {
             .size(size, Condition::Always)
             .build(|| {
                 // Read before drawing: a dropdown that closes on this Escape is still open here.
-                self.settings_popup_open =
-                    ui.is_popup_open_with_flags("", PopupQueryFlags::ANY_POPUP) || ui.is_any_item_active();
+                self.settings_popup_open = ui
+                    .is_popup_open_with_flags("", PopupQueryFlags::ANY_POPUP)
+                    || ui.is_any_item_active();
                 ui.set_cursor_pos([layout.nav_x, 0.0]);
                 let nav_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
-                ui.child_window("settings-nav").size([layout.nav_w, size[1]]).build(ui, || {
-                    self.draw_settings_nav(ui, layout.nav_w);
-                });
+                ui.child_window("settings-nav")
+                    .size([layout.nav_w, size[1]])
+                    .build(ui, || {
+                        self.draw_settings_nav(ui, layout.nav_w);
+                    });
                 drop(nav_bg);
                 ui.set_cursor_pos([layout.body_x, 0.0]);
                 let body_bg = ui.push_style_color(StyleColor::ChildBg, STAGE_BG);
-                ui.child_window("settings-body").size([layout.body_w, size[1]]).build(ui, || {
-                    let window_pos = ui.window_pos();
-                    ui.set_cursor_pos([layout.content_x, SETTINGS_TOP_PAD]);
-                    ui.indent_by(layout.content_x);
-                    let _wrap = ui.push_text_wrap_pos(layout.content_x + layout.content_w);
-                    match self.settings.section() {
-                        SettingsSection::Account => self.draw_account_settings(ui, layout.content_w),
-                        SettingsSection::Voice => self.draw_voice_settings(ui, layout.content_w),
-                        SettingsSection::Mods => self.draw_mods_settings(ui, layout.content_w),
-                        SettingsSection::Developer => self.draw_developer_settings(ui, layout.content_w),
-                    }
-                    ui.dummy([layout.content_w, 80.0]);
-                    ui.unindent_by(layout.content_x);
-                    // Screen position, so the button stays put while the page scrolls.
-                    ui.set_cursor_screen_pos([window_pos[0] + layout.close_x - layout.body_x, window_pos[1] + layout.close_y]);
-                    if self.settings_close_button(ui, layout.close_size) {
-                        close = true;
-                    }
-                });
+                ui.child_window("settings-body")
+                    .size([layout.body_w, size[1]])
+                    .build(ui, || {
+                        let window_pos = ui.window_pos();
+                        ui.set_cursor_pos([layout.content_x, SETTINGS_TOP_PAD]);
+                        ui.indent_by(layout.content_x);
+                        let _wrap = ui.push_text_wrap_pos(layout.content_x + layout.content_w);
+                        match self.settings.section() {
+                            SettingsSection::Account => {
+                                self.draw_account_settings(ui, layout.content_w)
+                            }
+                            SettingsSection::Voice => {
+                                self.draw_voice_settings(ui, layout.content_w)
+                            }
+                            SettingsSection::Mods => self.draw_mods_settings(ui, layout.content_w),
+                            SettingsSection::Developer => {
+                                self.draw_developer_settings(ui, layout.content_w)
+                            }
+                        }
+                        ui.dummy([layout.content_w, 80.0]);
+                        ui.unindent_by(layout.content_x);
+                        // Screen position, so the button stays put while the page scrolls.
+                        ui.set_cursor_screen_pos([
+                            window_pos[0] + layout.close_x - layout.body_x,
+                            window_pos[1] + layout.close_y,
+                        ]);
+                        if self.settings_close_button(ui, layout.close_size) {
+                            close = true;
+                        }
+                    });
                 drop(body_bg);
             });
         if close {
@@ -8596,50 +11168,72 @@ impl App {
         let list_w = settings_nav_list_w(nav_w);
         ui.set_cursor_pos([list_x, SETTINGS_TOP_PAD]);
         ui.indent_by(list_x);
-        ui.child_window("settings-nav-list").size([list_w, 0.0]).build(ui, || {
-            settings_form_label(ui, self.bold_font, "USER SETTINGS");
-            ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
-            for section in [SettingsSection::Account, SettingsSection::Voice] {
-                let (id, icon, label) = match section {
-                    SettingsSection::Account => ("settings-account", "user", "My Account"),
-                    SettingsSection::Voice => ("settings-voice", "headphones", "Voice & Video"),
-                    SettingsSection::Mods => unreachable!("mods is under its own heading"),
-                    SettingsSection::Developer => unreachable!("developer is under its own heading"),
-                };
-                if nav_row(ui, id, self.icon(icon), label, self.settings.section() == section) {
-                    self.select_settings(section);
+        ui.child_window("settings-nav-list")
+            .size([list_w, 0.0])
+            .build(ui, || {
+                settings_form_label(ui, self.bold_font, "USER SETTINGS");
+                ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
+                for section in [SettingsSection::Account, SettingsSection::Voice] {
+                    let (id, icon, label) = match section {
+                        SettingsSection::Account => ("settings-account", "user", "My Account"),
+                        SettingsSection::Voice => ("settings-voice", "headphones", "Voice & Video"),
+                        SettingsSection::Mods => unreachable!("mods is under its own heading"),
+                        SettingsSection::Developer => {
+                            unreachable!("developer is under its own heading")
+                        }
+                    };
+                    if nav_row(
+                        ui,
+                        id,
+                        self.icon(icon),
+                        label,
+                        self.settings.section() == section,
+                    ) {
+                        self.select_settings(section);
+                    }
+                    ui.dummy([0.0, 4.0]);
                 }
-                ui.dummy([0.0, 4.0]);
-            }
-            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
-            settings_divider(ui, ui.content_region_avail()[0]);
-            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
-            settings_form_label(ui, self.bold_font, "MODS");
-            ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
-            if nav_row(ui, "settings-mods", self.icon("puzzle"), "Mods", self.settings.section() == SettingsSection::Mods) {
-                self.select_settings(SettingsSection::Mods);
-            }
-            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
-            settings_divider(ui, ui.content_region_avail()[0]);
-            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
-            settings_form_label(ui, self.bold_font, "DEVELOPER");
-            ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
-            if nav_row(
-                ui,
-                "settings-developer",
-                self.icon("signal"),
-                "Developer",
-                self.settings.section() == SettingsSection::Developer,
-            ) {
-                self.select_settings(SettingsSection::Developer);
-            }
-            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
-            settings_divider(ui, ui.content_region_avail()[0]);
-            ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
-            if nav_row(ui, "settings-logout", self.icon("log-out"), "Log Out", false) {
-                self.logout();
-            }
-        });
+                ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
+                settings_divider(ui, ui.content_region_avail()[0]);
+                ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
+                settings_form_label(ui, self.bold_font, "MODS");
+                ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
+                if nav_row(
+                    ui,
+                    "settings-mods",
+                    self.icon("puzzle"),
+                    "Mods",
+                    self.settings.section() == SettingsSection::Mods,
+                ) {
+                    self.select_settings(SettingsSection::Mods);
+                }
+                ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
+                settings_divider(ui, ui.content_region_avail()[0]);
+                ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
+                settings_form_label(ui, self.bold_font, "DEVELOPER");
+                ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
+                if nav_row(
+                    ui,
+                    "settings-developer",
+                    self.icon("signal"),
+                    "Developer",
+                    self.settings.section() == SettingsSection::Developer,
+                ) {
+                    self.select_settings(SettingsSection::Developer);
+                }
+                ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
+                settings_divider(ui, ui.content_region_avail()[0]);
+                ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
+                if nav_row(
+                    ui,
+                    "settings-logout",
+                    self.icon("log-out"),
+                    "Log Out",
+                    false,
+                ) {
+                    self.logout();
+                }
+            });
         ui.unindent_by(list_x);
     }
 
@@ -8651,15 +11245,30 @@ impl App {
         let center = [origin[0] + size * 0.5, origin[1] + size * 0.5];
         let ring = if hovered { TEXT } else { MUTED };
         if hovered {
-            draw.add_circle(center, size * 0.5, ROW_HOVER).filled(true).build();
+            draw.add_circle(center, size * 0.5, ROW_HOVER)
+                .filled(true)
+                .build();
         }
-        draw.add_circle(center, size * 0.5 - 1.0, ring).thickness(2.0).build();
+        draw.add_circle(center, size * 0.5 - 1.0, ring)
+            .thickness(2.0)
+            .build();
         if let Some(texture) = self.icon("x") {
-            draw.add_image(texture, [center[0] - 9.0, center[1] - 9.0], [center[0] + 9.0, center[1] + 9.0], [0.0, 0.0], [1.0, 1.0], ring);
+            draw.add_image(
+                texture,
+                [center[0] - 9.0, center[1] - 9.0],
+                [center[0] + 9.0, center[1] + 9.0],
+                [0.0, 0.0],
+                [1.0, 1.0],
+                ring,
+            );
         }
         let _font = ui.push_font_with_size(self.bold_font, 13.0);
         let label_w = ui.calc_text_size("ESC")[0];
-        draw.add_text([center[0] - label_w * 0.5, origin[1] + size + 6.0], MUTED, "ESC");
+        draw.add_text(
+            [center[0] - label_w * 0.5, origin[1] + size + 6.0],
+            MUTED,
+            "ESC",
+        );
         clicked
     }
 
@@ -8673,7 +11282,10 @@ impl App {
         settings_spacer(ui);
         settings_form_label(ui, self.bold_font, "FOLDER");
         ui.text(self.data_dir.join("mods").display().to_string());
-        ui.text_colored(MUTED, "Each mod is a folder with banter.mod.json. This page reloads when you open it.");
+        ui.text_colored(
+            MUTED,
+            "Each mod is a folder with banter.mod.json. This page reloads when you open it.",
+        );
         settings_spacer(ui);
 
         let rows = self.mods.rows();
@@ -8705,7 +11317,13 @@ impl App {
         }
     }
 
-    fn draw_mod_card(&mut self, ui: &Ui, width: f32, row: &crate::mods::ModRow, place: Option<(usize, usize)>) {
+    fn draw_mod_card(
+        &mut self,
+        ui: &Ui,
+        width: f32,
+        row: &crate::mods::ModRow,
+        place: Option<(usize, usize)>,
+    ) {
         let _title = ui.push_font_with_size(self.semibold_font, FONT_MD);
         ui.text(&row.name);
         drop(_title);
@@ -8725,7 +11343,13 @@ impl App {
         }
         if row.failed.is_none() {
             let mut on = row.enabled;
-            if settings_toggle_row(ui, &format!("mod-enabled-{}", row.id), "Enabled", &mut on, width) {
+            if settings_toggle_row(
+                ui,
+                &format!("mod-enabled-{}", row.id),
+                "Enabled",
+                &mut on,
+                width,
+            ) {
                 let before = self.mods.rows().iter().filter(|item| item.enabled).count();
                 self.mods.set_enabled(&row.id, on);
                 let after = self.mods.rows().iter().filter(|item| item.enabled).count();
@@ -8756,7 +11380,9 @@ impl App {
                 if index > 0 && index + 1 < len {
                     ui.same_line();
                 }
-                if index + 1 < len && settings_text_button(ui, &format!("mod-down-{}", row.id), "Move down") {
+                if index + 1 < len
+                    && settings_text_button(ui, &format!("mod-down-{}", row.id), "Move down")
+                {
                     self.mods.move_by(&row.id, false);
                 }
             }
@@ -8774,12 +11400,15 @@ impl App {
 
         settings_form_label(ui, self.bold_font, "SERVER");
         let local_selected = self.dev_server.target == ServerTarget::Local;
-        if settings_radio_row(ui, "dev-server-local", "Local", local_selected, width) && !local_selected {
+        if settings_radio_row(ui, "dev-server-local", "Local", local_selected, width)
+            && !local_selected
+        {
             self.dev_server.target = ServerTarget::Local;
             self.apply_dev_server();
         }
         let remote_selected = self.dev_server.target == ServerTarget::Remote;
-        if settings_radio_row(ui, "dev-server-remote", "Remote", remote_selected, width) && !remote_selected
+        if settings_radio_row(ui, "dev-server-remote", "Remote", remote_selected, width)
+            && !remote_selected
         {
             self.dev_server.target = ServerTarget::Remote;
             self.apply_dev_server();
@@ -8802,7 +11431,8 @@ impl App {
             .build();
         ui.same_line();
         let apply_clicked = {
-            let _disabled = ui.begin_disabled_with_cond(self.dev_server.target != ServerTarget::Remote);
+            let _disabled =
+                ui.begin_disabled_with_cond(self.dev_server.target != ServerTarget::Remote);
             ui.button(apply_label)
         };
         if (entered || apply_clicked) && self.dev_server.target == ServerTarget::Remote {
@@ -8850,9 +11480,14 @@ impl App {
 
     fn draw_account_settings(&mut self, ui: &Ui, width: f32) {
         settings_page_title(ui, self.bold_font, "My Account");
-        ui.text_colored(MUTED, "Display name, username, and avatar for this Banter account.");
+        ui.text_colored(
+            MUTED,
+            "Display name, username, and avatar for this Banter account.",
+        );
         settings_spacer(ui);
-        let Some(account) = self.account.clone() else { return };
+        let Some(account) = self.account.clone() else {
+            return;
+        };
         let avatar = self.avatars.get(&account.id).map(|shot| shot.texture);
 
         // Profile card: banner, avatar, and name, then the editable fields on an inner panel.
@@ -8867,7 +11502,9 @@ impl App {
         let name_left = card[0] + 124.0;
         let name_reserve = {
             let _font = ui.push_font_with_size(self.bold_font, 20.0);
-            ui.calc_text_size(&account.display_name)[0].min(width * 0.35).max(48.0)
+            ui.calc_text_size(&account.display_name)[0]
+                .min(width * 0.35)
+                .max(48.0)
         };
         let place = account_avatar_actions_place(
             card[0],
@@ -8889,18 +11526,37 @@ impl App {
         let panel_w = width - 32.0;
         {
             let draw = ui.get_window_draw_list();
-            draw.add_rect(card, [card[0] + width, card[1] + card_h], RAIL_BG).rounding(8.0).filled(true).build();
+            draw.add_rect(card, [card[0] + width, card[1] + card_h], RAIL_BG)
+                .rounding(8.0)
+                .filled(true)
+                .build();
             draw.add_rect(card, [card[0] + width, card[1] + banner_h], BLURPLE)
                 .rounding(8.0)
                 .flags(DrawFlags::ROUND_TOP)
                 .filled(true)
                 .build();
-            draw.add_circle(avatar_center, 46.0, RAIL_BG).filled(true).build();
-            draw.add_rect(panel, [panel[0] + panel_w, panel[1] + fields_h], SIDEBAR_BG).rounding(8.0).filled(true).build();
+            draw.add_circle(avatar_center, 46.0, RAIL_BG)
+                .filled(true)
+                .build();
+            draw.add_rect(panel, [panel[0] + panel_w, panel[1] + fields_h], SIDEBAR_BG)
+                .rounding(8.0)
+                .filled(true)
+                .build();
             let _font = ui.push_font_with_size(self.bold_font, 20.0);
-            draw.add_text([card[0] + 124.0, card[1] + banner_h + 14.0], TEXT, &account.display_name);
+            draw.add_text(
+                [card[0] + 124.0, card[1] + banner_h + 14.0],
+                TEXT,
+                &account.display_name,
+            );
         }
-        paint_avatar(ui, avatar, avatar_center, 40.0, &initials(&account.display_name), None);
+        paint_avatar(
+            ui,
+            avatar,
+            avatar_center,
+            40.0,
+            &initials(&account.display_name),
+            None,
+        );
         ui.set_cursor_screen_pos([place.x, place.y]);
         if ui.button(change_label) {
             self.status.clear();
@@ -8975,11 +11631,17 @@ impl App {
         ui.set_cursor_screen_pos([card[0], card[1] + card_h + 16.0]);
         settings_form_label(ui, self.bold_font, "CUSTOM STATUS");
         ui.set_next_item_width(width);
-        ui.input_text("##account-status", &mut self.status_draft).hint("What are you up to?").build();
+        ui.input_text("##account-status", &mut self.status_draft)
+            .hint("What are you up to?")
+            .build();
         settings_spacer(ui);
         settings_form_label(ui, self.bold_font, "ABOUT ME");
-        ui.input_text_multiline("##account-about", &mut self.about_draft, [width, 72.0]).build();
-        ui.text_colored(MUTED, "Shown on your profile. Custom status also sits under your name.");
+        ui.input_text_multiline("##account-about", &mut self.about_draft, [width, 72.0])
+            .build();
+        ui.text_colored(
+            MUTED,
+            "Shown on your profile. Custom status also sits under your name.",
+        );
         settings_spacer(ui);
         if ui.button("Save Profile") {
             let patch = ProfilePatch {
@@ -8992,9 +11654,22 @@ impl App {
                     self.about_draft = profile.about_me.clone().unwrap_or_default();
                     self.status_draft = profile.custom_status.clone().unwrap_or_default();
                     if let Some(id) = self.account.as_ref().map(|account| account.id) {
-                        let state = self.presence.get(&id).map(|info| info.state).unwrap_or(Presence::Online);
-                        let custom_status = profile.custom_status.clone().filter(|text| !text.trim().is_empty());
-                        self.presence.insert(id, PresenceInfo { state, custom_status });
+                        let state = self
+                            .presence
+                            .get(&id)
+                            .map(|info| info.state)
+                            .unwrap_or(Presence::Online);
+                        let custom_status = profile
+                            .custom_status
+                            .clone()
+                            .filter(|text| !text.trim().is_empty());
+                        self.presence.insert(
+                            id,
+                            PresenceInfo {
+                                state,
+                                custom_status,
+                            },
+                        );
                     }
                     self.settings_error.clear();
                 }
@@ -9009,16 +11684,30 @@ impl App {
 
     fn draw_voice_settings(&mut self, ui: &Ui, width: f32) {
         settings_page_title(ui, self.bold_font, "Voice & Video");
-        ui.text_colored(MUTED, "Devices, volumes, input mode, and camera for voice and video.");
+        ui.text_colored(
+            MUTED,
+            "Devices, volumes, input mode, and camera for voice and video.",
+        );
         settings_spacer(ui);
         self.ensure_audio_devices();
         let gap = 16.0;
         let two_columns = width >= 460.0;
-        let column_w = if two_columns { (width - gap) * 0.5 } else { width };
+        let column_w = if two_columns {
+            (width - gap) * 0.5
+        } else {
+            width
+        };
         let row = ui.cursor_pos();
 
         settings_form_label(ui, self.bold_font, "INPUT DEVICE");
-        self.draw_named_combo(ui, "input-device", "microphone", column_w, &self.audio_inputs.clone(), true);
+        self.draw_named_combo(
+            ui,
+            "input-device",
+            "microphone",
+            column_w,
+            &self.audio_inputs.clone(),
+            true,
+        );
         settings_spacer(ui);
         settings_form_label(ui, self.bold_font, "INPUT VOLUME");
         if settings_volume_slider(ui, "input-volume", &mut self.voice.input_volume, column_w) {
@@ -9029,10 +11718,22 @@ impl App {
             ui.set_cursor_pos([row[0] + column_w + gap, row[1]]);
             ui.group(|| {
                 settings_form_label(ui, self.bold_font, "OUTPUT DEVICE");
-                self.draw_named_combo(ui, "output-device", "speaker", column_w, &self.audio_outputs.clone(), false);
+                self.draw_named_combo(
+                    ui,
+                    "output-device",
+                    "speaker",
+                    column_w,
+                    &self.audio_outputs.clone(),
+                    false,
+                );
                 settings_spacer(ui);
                 settings_form_label(ui, self.bold_font, "OUTPUT VOLUME");
-                if settings_volume_slider(ui, "output-volume", &mut self.voice.output_volume, column_w) {
+                if settings_volume_slider(
+                    ui,
+                    "output-volume",
+                    &mut self.voice.output_volume,
+                    column_w,
+                ) {
                     self.save_voice();
                 }
             });
@@ -9040,15 +11741,27 @@ impl App {
         } else {
             settings_spacer(ui);
             settings_form_label(ui, self.bold_font, "OUTPUT DEVICE");
-            self.draw_named_combo(ui, "output-device", "speaker", column_w, &self.audio_outputs.clone(), false);
+            self.draw_named_combo(
+                ui,
+                "output-device",
+                "speaker",
+                column_w,
+                &self.audio_outputs.clone(),
+                false,
+            );
             settings_spacer(ui);
             settings_form_label(ui, self.bold_font, "OUTPUT VOLUME");
-            if settings_volume_slider(ui, "output-volume", &mut self.voice.output_volume, column_w) {
+            if settings_volume_slider(ui, "output-volume", &mut self.voice.output_volume, column_w)
+            {
                 self.save_voice();
             }
         }
         settings_spacer(ui);
-        let device_errors = self.media.as_ref().map(|media| media.errors()).unwrap_or_default();
+        let device_errors = self
+            .media
+            .as_ref()
+            .map(|media| media.errors())
+            .unwrap_or_default();
         for error in &device_errors {
             ui.text_colored(RED, device_error_text(error));
         }
@@ -9060,9 +11773,14 @@ impl App {
         ui.text_colored(MUTED, "Having mic issues? Start a test and say something. Banter plays your voice back to you.");
         settings_spacer(ui);
         let testing = self.settings.mic_test();
-        let test_label = if testing { "Stop Testing" } else { "Let's Check" };
+        let test_label = if testing {
+            "Stop Testing"
+        } else {
+            "Let's Check"
+        };
         let test_w = ui.calc_text_size("Stop Testing")[0] + 24.0;
-        let test_color = ui.push_style_color(StyleColor::Button, if testing { RED } else { BLURPLE });
+        let test_color =
+            ui.push_style_color(StyleColor::Button, if testing { RED } else { BLURPLE });
         let pressed = ui.button_with_size(test_label, [test_w, 0.0]);
         drop(test_color);
         if pressed {
@@ -9070,20 +11788,33 @@ impl App {
         }
         ui.same_line_with_spacing(0.0, 12.0);
         let meter_w = (width - test_w - 12.0).max(40.0);
-        let threshold = if self.voice.auto_sensitivity || self.push_to_talk { None } else { Some(self.voice.sensitivity) };
+        let threshold = if self.voice.auto_sensitivity || self.push_to_talk {
+            None
+        } else {
+            Some(self.voice.sensitivity)
+        };
         self.draw_input_meter(ui, meter_w, 36.0, threshold);
         settings_spacer(ui);
         settings_divider(ui, width);
 
         settings_form_label(ui, self.bold_font, "INPUT MODE");
-        if settings_radio_row(ui, "mode-activity", "Voice Activity", !self.push_to_talk, width) && self.push_to_talk {
+        if settings_radio_row(
+            ui,
+            "mode-activity",
+            "Voice Activity",
+            !self.push_to_talk,
+            width,
+        ) && self.push_to_talk
+        {
             self.push_to_talk = false;
             self.voice.push_to_talk = false;
             self.ptt_until = None;
             self.settings.finish_recording();
             self.save_voice();
         }
-        if settings_radio_row(ui, "mode-ptt", "Push to Talk", self.push_to_talk, width) && !self.push_to_talk {
+        if settings_radio_row(ui, "mode-ptt", "Push to Talk", self.push_to_talk, width)
+            && !self.push_to_talk
+        {
             self.push_to_talk = true;
             self.voice.push_to_talk = true;
             self.save_voice();
@@ -9098,15 +11829,33 @@ impl App {
         settings_spacer(ui);
 
         if settings_panel(ui, "Voice processing") {
-            if settings_toggle_row(ui, "echo-cancellation", "Echo Cancellation", &mut self.voice.echo_cancellation, width) {
+            if settings_toggle_row(
+                ui,
+                "echo-cancellation",
+                "Echo Cancellation",
+                &mut self.voice.echo_cancellation,
+                width,
+            ) {
                 self.save_voice();
             }
             settings_divider(ui, width);
-            if settings_toggle_row(ui, "noise-suppression", "Noise Suppression", &mut self.voice.noise_suppression, width) {
+            if settings_toggle_row(
+                ui,
+                "noise-suppression",
+                "Noise Suppression",
+                &mut self.voice.noise_suppression,
+                width,
+            ) {
                 self.save_voice();
             }
             settings_divider(ui, width);
-            if settings_toggle_row(ui, "auto-gain", "Automatic Gain Control", &mut self.voice.auto_gain, width) {
+            if settings_toggle_row(
+                ui,
+                "auto-gain",
+                "Automatic Gain Control",
+                &mut self.voice.auto_gain,
+                width,
+            ) {
                 self.save_voice();
             }
             settings_spacer(ui);
@@ -9153,8 +11902,16 @@ impl App {
             if ui.is_item_deactivated_after_edit() {
                 self.save_voice();
             }
-            self.draw_input_meter(ui, slider_track_width(width), 12.0, Some(self.voice.sensitivity));
-            ui.text_colored(MUTED, "Your voice is sent when the bar passes the white mark.");
+            self.draw_input_meter(
+                ui,
+                slider_track_width(width),
+                12.0,
+                Some(self.voice.sensitivity),
+            );
+            ui.text_colored(
+                MUTED,
+                "Your voice is sent when the bar passes the white mark.",
+            );
         }
         settings_spacer(ui);
     }
@@ -9190,23 +11947,57 @@ impl App {
         let recording = self.settings.recording();
         let origin = ui.cursor_screen_pos();
         let height = 40.0;
-        let button_label = if recording { "Stop Recording" } else { "Edit Keybind" };
+        let button_label = if recording {
+            "Stop Recording"
+        } else {
+            "Edit Keybind"
+        };
         let button_w = ui.calc_text_size("Stop Recording")[0] + 24.0;
         let clicked = ui.invisible_button("ptt-keybind", [width, height]);
         let hovered = ui.is_item_hovered();
         let draw = ui.get_window_draw_list();
-        let outline = if recording { RED } else if hovered { MUTED } else { [0.0, 0.0, 0.0, 0.0] };
-        draw.add_rect(origin, [origin[0] + width, origin[1] + height], RAIL_BG).rounding(4.0).filled(true).build();
-        draw.add_rect(origin, [origin[0] + width, origin[1] + height], outline).rounding(4.0).thickness(1.0).build();
-        let key_text = if recording { "Press a keyΓÇª".to_string() } else { self.voice.ptt_key.clone() };
+        let outline = if recording {
+            RED
+        } else if hovered {
+            MUTED
+        } else {
+            [0.0, 0.0, 0.0, 0.0]
+        };
+        draw.add_rect(origin, [origin[0] + width, origin[1] + height], RAIL_BG)
+            .rounding(4.0)
+            .filled(true)
+            .build();
+        draw.add_rect(origin, [origin[0] + width, origin[1] + height], outline)
+            .rounding(4.0)
+            .thickness(1.0)
+            .build();
+        let key_text = if recording {
+            "Press a keyΓÇª".to_string()
+        } else {
+            self.voice.ptt_key.clone()
+        };
         let text_h = ui.calc_text_size(&key_text)[1];
-        draw.add_text([origin[0] + 12.0, origin[1] + (height - text_h) * 0.5], if recording { RED } else { TEXT }, &key_text);
+        draw.add_text(
+            [origin[0] + 12.0, origin[1] + (height - text_h) * 0.5],
+            if recording { RED } else { TEXT },
+            &key_text,
+        );
         let button_min = [origin[0] + width - button_w - 4.0, origin[1] + 4.0];
         let button_max = [origin[0] + width - 4.0, origin[1] + height - 4.0];
-        draw.add_rect(button_min, button_max, if recording { RED } else { ROW_SELECTED }).rounding(4.0).filled(true).build();
+        draw.add_rect(
+            button_min,
+            button_max,
+            if recording { RED } else { ROW_SELECTED },
+        )
+        .rounding(4.0)
+        .filled(true)
+        .build();
         let label_size = ui.calc_text_size(button_label);
         draw.add_text(
-            [button_min[0] + (button_w - label_size[0]) * 0.5, origin[1] + (height - label_size[1]) * 0.5],
+            [
+                button_min[0] + (button_w - label_size[0]) * 0.5,
+                origin[1] + (height - label_size[1]) * 0.5,
+            ],
             WHITE,
             button_label,
         );
@@ -9252,15 +12043,39 @@ impl App {
         let origin = ui.cursor_screen_pos();
         ui.dummy([box_w, box_h]);
         let draw = ui.get_window_draw_list();
-        draw.add_rect(origin, [origin[0] + box_w, origin[1] + box_h], RAIL_BG).rounding(8.0).filled(true).build();
+        draw.add_rect(origin, [origin[0] + box_w, origin[1] + box_h], RAIL_BG)
+            .rounding(8.0)
+            .filled(true)
+            .build();
         if let Some(shot) = &self.local_camera {
             let fitted = fit_inside(shot.size, box_w, box_h);
-            let min = [origin[0] + (box_w - fitted[0]) * 0.5, origin[1] + (box_h - fitted[1]) * 0.5];
-            draw.add_image(shot.texture, min, [min[0] + fitted[0], min[1] + fitted[1]], [0.0, 0.0], [1.0, 1.0], WHITE);
+            let min = [
+                origin[0] + (box_w - fitted[0]) * 0.5,
+                origin[1] + (box_h - fitted[1]) * 0.5,
+            ];
+            draw.add_image(
+                shot.texture,
+                min,
+                [min[0] + fitted[0], min[1] + fitted[1]],
+                [0.0, 0.0],
+                [1.0, 1.0],
+                WHITE,
+            );
         } else {
-            let text = if self.cameras.is_empty() { "No camera" } else { "Starting cameraΓÇª" };
+            let text = if self.cameras.is_empty() {
+                "No camera"
+            } else {
+                "Starting cameraΓÇª"
+            };
             let size = ui.calc_text_size(text);
-            draw.add_text([origin[0] + (box_w - size[0]) * 0.5, origin[1] + (box_h - size[1]) * 0.5], MUTED, text);
+            draw.add_text(
+                [
+                    origin[0] + (box_w - size[0]) * 0.5,
+                    origin[1] + (box_h - size[1]) * 0.5,
+                ],
+                MUTED,
+                text,
+            );
         }
     }
 
@@ -9304,7 +12119,12 @@ impl App {
                 if let Some(reason) = &blocked {
                     reasons.push(reason.clone());
                 }
-                (format!("fps-{}", fps_key(*fps)), stream_fps_label(*fps).to_string(), self.stream_fps == *fps, blocked.is_none())
+                (
+                    format!("fps-{}", fps_key(*fps)),
+                    stream_fps_label(*fps).to_string(),
+                    self.stream_fps == *fps,
+                    blocked.is_none(),
+                )
             })
             .collect();
         if let Some(index) = settings_chip_row(ui, &choices, width) {
@@ -9321,7 +12141,10 @@ impl App {
         if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
             ui.text_colored(MUTED, reason);
         } else {
-            ui.text_colored(MUTED, "Hardware H.264 when this PC can encode Constrained Baseline. Otherwise OpenH264.");
+            ui.text_colored(
+                MUTED,
+                "Hardware H.264 when this PC can encode Constrained Baseline. Otherwise OpenH264.",
+            );
         }
     }
 
@@ -9351,7 +12174,10 @@ impl App {
 
                 let panel_w = (display[0] - 80.0).clamp(720.0, SHARE_MODAL_W);
                 let panel_h = (display[1] - 48.0).clamp(520.0, SHARE_MODAL_H);
-                let min = [((display[0] - panel_w) * 0.5).floor(), ((display[1] - panel_h) * 0.5).max(16.0).floor()];
+                let min = [
+                    ((display[0] - panel_w) * 0.5).floor(),
+                    ((display[1] - panel_h) * 0.5).max(16.0).floor(),
+                ];
                 let max = [min[0] + panel_w, min[1] + panel_h];
                 let semi = self.semibold_font;
                 let inner_w = panel_w - SHARE_PAD * 2.0;
@@ -9367,7 +12193,14 @@ impl App {
                     DrawFlags::ROUND_BOTTOM,
                 );
 
-                skin::text(ui, semi, FONT_LG, [min[0] + SHARE_PAD, min[1] + 16.0], TEXT, "Screen Share");
+                skin::text(
+                    ui,
+                    semi,
+                    FONT_LG,
+                    [min[0] + SHARE_PAD, min[1] + 16.0],
+                    TEXT,
+                    "Screen Share",
+                );
                 if skin::icon_button(
                     ui,
                     "close-share",
@@ -9394,8 +12227,13 @@ impl App {
 
                 let tab_y = min[1] + SHARE_HEADER_H;
                 let screens_w = skin::text_size(ui, semi, FONT_SM, "Screens")[0] + 8.0;
-                if self.share_tab_label(ui, "share-screens", "Screens", self.share_tab == 0, [min[0] + SHARE_PAD, tab_y])
-                    && self.share_tab != 0
+                if self.share_tab_label(
+                    ui,
+                    "share-screens",
+                    "Screens",
+                    self.share_tab == 0,
+                    [min[0] + SHARE_PAD, tab_y],
+                ) && self.share_tab != 0
                 {
                     self.share_tab = 0;
                     self.reload_share_sources();
@@ -9411,55 +12249,73 @@ impl App {
                     self.share_tab = 1;
                     self.reload_share_sources();
                 }
-                skin::line_h(ui, min[0] + SHARE_PAD, max[0] - SHARE_PAD, tab_y + SHARE_TAB_H - 1.0, DIVIDER);
+                skin::line_h(
+                    ui,
+                    min[0] + SHARE_PAD,
+                    max[0] - SHARE_PAD,
+                    tab_y + SHARE_TAB_H - 1.0,
+                    DIVIDER,
+                );
 
                 let body_top = tab_y + SHARE_TAB_H + 8.0;
                 let body_h = (max[1] - SHARE_FOOTER_H - 8.0 - body_top).max(120.0);
                 let body_origin = [min[0] + SHARE_PAD, body_top];
                 ui.set_cursor_screen_pos(body_origin);
                 let _body_pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
-                let _body_gap = ui.push_style_var(StyleVar::ItemSpacing([SHARE_TILE_GAP, SHARE_TILE_GAP]));
+                let _body_gap =
+                    ui.push_style_var(StyleVar::ItemSpacing([SHARE_TILE_GAP, SHARE_TILE_GAP]));
                 let _body_bg = ui.push_style_color(StyleColor::ChildBg, skin::CLEAR);
-                ui.child_window("share-body").size([inner_w, body_h]).build(ui, || {
-                    let sources = self
-                        .share_sources
-                        .iter()
-                        .map(|source| (source.kind, source.id, source.name.clone()))
-                        .collect::<Vec<_>>();
-                    if sources.is_empty() {
-                        let empty = if self.share_tab == 0 {
-                            "No screens were found."
+                ui.child_window("share-body")
+                    .size([inner_w, body_h])
+                    .build(ui, || {
+                        let sources = self
+                            .share_sources
+                            .iter()
+                            .map(|source| (source.kind, source.id, source.name.clone()))
+                            .collect::<Vec<_>>();
+                        if sources.is_empty() {
+                            let empty = if self.share_tab == 0 {
+                                "No screens were found."
+                            } else {
+                                "No application windows were found."
+                            };
+                            ui.dummy([0.0, 24.0]);
+                            let w = ui.content_region_avail()[0];
+                            let tw = skin::text_size(ui, None, FONT_SM, empty)[0];
+                            let origin = ui.cursor_screen_pos();
+                            skin::text(
+                                ui,
+                                None,
+                                FONT_SM,
+                                [origin[0] + (w - tw) * 0.5, origin[1]],
+                                MUTED,
+                                empty,
+                            );
+                            ui.dummy([0.0, 40.0]);
                         } else {
-                            "No application windows were found."
-                        };
-                        ui.dummy([0.0, 24.0]);
-                        let w = ui.content_region_avail()[0];
-                        let tw = skin::text_size(ui, None, FONT_SM, empty)[0];
-                        let origin = ui.cursor_screen_pos();
-                        skin::text(ui, None, FONT_SM, [origin[0] + (w - tw) * 0.5, origin[1]], MUTED, empty);
-                        ui.dummy([0.0, 40.0]);
-                    } else {
-                        let avail = ui.content_region_avail()[0];
-                        let cols = ((avail + SHARE_TILE_GAP) / (SHARE_TILE_W + SHARE_TILE_GAP)).floor().max(1.0) as usize;
-                        for (index, (kind, id, name)) in sources.iter().enumerate() {
-                            if index % cols != 0 {
-                                ui.same_line();
+                            let avail = ui.content_region_avail()[0];
+                            let cols = ((avail + SHARE_TILE_GAP) / (SHARE_TILE_W + SHARE_TILE_GAP))
+                                .floor()
+                                .max(1.0) as usize;
+                            for (index, (kind, id, name)) in sources.iter().enumerate() {
+                                if index % cols != 0 {
+                                    ui.same_line();
+                                }
+                                self.draw_share_tile(ui, *kind, *id, name);
                             }
-                            self.draw_share_tile(ui, *kind, *id, name);
+                            ui.dummy([0.0, 8.0]);
                         }
-                        ui.dummy([0.0, 8.0]);
-                    }
 
-                    settings_spacer(ui);
-                    let share_w = ui.content_region_avail()[0];
-                    if settings_panel(ui, "Quality") {
-                        self.draw_stream_quality(ui, share_w);
                         settings_spacer(ui);
-                    }
-                    if settings_panel(ui, "Stream audio") {
-                        self.draw_audio_sources(ui, share_w);
-                    }
-                });
+                        let share_w = ui.content_region_avail()[0];
+                        if settings_panel(ui, "Quality") {
+                            self.draw_stream_quality(ui, share_w);
+                            settings_spacer(ui);
+                        }
+                        if settings_panel(ui, "Stream audio") {
+                            self.draw_audio_sources(ui, share_w);
+                        }
+                    });
 
                 let footer_y = max[1] - SHARE_FOOTER_H + (SHARE_FOOTER_H - BUTTON_H) * 0.5;
                 if skin::button(
@@ -9477,12 +12333,22 @@ impl App {
 
                 if !self.status.is_empty() {
                     let status_x = min[0] + SHARE_PAD + 88.0;
-                    skin::text_in_row(ui, None, FONT_SM, status_x, max[1] - SHARE_FOOTER_H, SHARE_FOOTER_H, ERROR_TEXT, &self.status);
+                    skin::text_in_row(
+                        ui,
+                        None,
+                        FONT_SM,
+                        status_x,
+                        max[1] - SHARE_FOOTER_H,
+                        SHARE_FOOTER_H,
+                        ERROR_TEXT,
+                        &self.status,
+                    );
                 }
 
                 let mut right = max[0] - SHARE_PAD;
                 if self.share.is_live() {
-                    let stop_w = (skin::text_size(ui, semi, FONT_SM, "Stop Streaming")[0] + 32.0).max(140.0);
+                    let stop_w =
+                        (skin::text_size(ui, semi, FONT_SM, "Stop Streaming")[0] + 32.0).max(140.0);
                     right -= stop_w;
                     if skin::button(
                         ui,
@@ -9524,7 +12390,14 @@ impl App {
     }
 
     /// Underline tab like Discord's Screens / Applications row.
-    fn share_tab_label(&self, ui: &Ui, id: &str, label: &str, selected: bool, min: [f32; 2]) -> bool {
+    fn share_tab_label(
+        &self,
+        ui: &Ui,
+        id: &str,
+        label: &str,
+        selected: bool,
+        min: [f32; 2],
+    ) -> bool {
         let semi = self.semibold_font;
         let text_w = skin::text_size(ui, semi, FONT_SM, label)[0];
         let width = text_w + 8.0;
@@ -9538,7 +12411,16 @@ impl App {
         } else {
             MUTED
         };
-        skin::text_in_row(ui, semi, FONT_SM, min[0] + 4.0, min[1], SHARE_TAB_H - 2.0, color, label);
+        skin::text_in_row(
+            ui,
+            semi,
+            FONT_SM,
+            min[0] + 4.0,
+            min[1],
+            SHARE_TAB_H - 2.0,
+            color,
+            label,
+        );
         if selected {
             skin::rect(
                 ui,
@@ -9597,7 +12479,10 @@ impl App {
                 .rounding(SHARE_TILE_RADIUS)
                 .thickness(2.0)
                 .build();
-            let check_c = [thumb_max[0] - 4.0 - SHARE_CHECK * 0.5, thumb_min[1] + 4.0 + SHARE_CHECK * 0.5];
+            let check_c = [
+                thumb_max[0] - 4.0 - SHARE_CHECK * 0.5,
+                thumb_min[1] + 4.0 + SHARE_CHECK * 0.5,
+            ];
             ui.get_window_draw_list()
                 .add_circle(check_c, SHARE_CHECK * 0.5, BLURPLE)
                 .filled(true)
@@ -9612,8 +12497,21 @@ impl App {
         }
 
         let label_y = thumb_max[1] + 6.0;
-        let shown = skin::ellipsize(ui, self.semibold_font, FONT_SM, name, size[0] - thumb_pad * 2.0);
-        skin::text(ui, self.semibold_font, FONT_SM, [origin[0] + thumb_pad, label_y], TEXT_NORMAL, &shown);
+        let shown = skin::ellipsize(
+            ui,
+            self.semibold_font,
+            FONT_SM,
+            name,
+            size[0] - thumb_pad * 2.0,
+        );
+        skin::text(
+            ui,
+            self.semibold_font,
+            FONT_SM,
+            [origin[0] + thumb_pad, label_y],
+            TEXT_NORMAL,
+            &shown,
+        );
 
         if clicked {
             if self.share.is_live() {
@@ -9626,11 +12524,16 @@ impl App {
     }
 
     fn reload_share_sources(&mut self) {
-        self.retired_shots.extend(self.share_thumbs.drain().map(|(_, shot)| shot));
+        self.retired_shots
+            .extend(self.share_thumbs.drain().map(|(_, shot)| shot));
         self.share_miss.clear();
         self.thumb_queue.clear();
         self.share_thumb_next = 0;
-        self.share_sources = if self.share_tab == 0 { list_screens() } else { list_windows() };
+        self.share_sources = if self.share_tab == 0 {
+            list_screens()
+        } else {
+            list_windows()
+        };
     }
 
     fn queue_next_thumb(&mut self) {
@@ -9666,13 +12569,26 @@ impl App {
         );
         let hovered = ui.is_item_hovered();
         let min = [origin[0] + 32.0, origin[1] + 2.0];
-        let max = [origin[0] + width - ROW_INSET, origin[1] + VOICE_MEMBER_H - 2.0];
+        let max = [
+            origin[0] + width - ROW_INSET,
+            origin[1] + VOICE_MEMBER_H - 2.0,
+        ];
         if hovered {
             skin::rect(ui, min, max, ROW_HOVER, ROW_RADIUS);
         }
-        let center = [min[0] + 4.0 + VOICE_AVATAR * 0.5, origin[1] + VOICE_MEMBER_H * 0.5];
+        let center = [
+            min[0] + 4.0 + VOICE_AVATAR * 0.5,
+            origin[1] + VOICE_MEMBER_H * 0.5,
+        ];
         let avatar = self.avatars.get(&member.user_id).map(|shot| shot.texture);
-        paint_avatar(ui, avatar, center, VOICE_AVATAR * 0.5, &initials(&name), None);
+        paint_avatar(
+            ui,
+            avatar,
+            center,
+            VOICE_AVATAR * 0.5,
+            &initials(&name),
+            None,
+        );
         if self.member_talking(member) {
             ui.get_window_draw_list()
                 .add_circle(center, VOICE_AVATAR * 0.5 + 1.0, GREEN)
@@ -9683,7 +12599,11 @@ impl App {
         let icon_y = center[1] - 8.0;
         let mut icons_w = 0.0;
         if member.flags.muted || member.flags.deafened {
-            let icon = if member.flags.deafened { "headphone-off" } else { "mic-off" };
+            let icon = if member.flags.deafened {
+                "headphone-off"
+            } else {
+                "mic-off"
+            };
             skin::image(ui, self.icon(icon), [icon_x, icon_y], 16.0, MUTED);
             icon_x -= 20.0;
             icons_w += 20.0;
@@ -9696,23 +12616,59 @@ impl App {
         if member.flags.screen {
             let live_w = skin::text_size(ui, self.bold_font, 11.0, "LIVE")[0] + 12.0;
             let live_min = [icon_x + 16.0 - live_w, center[1] - 8.0];
-            skin::rect(ui, live_min, [live_min[0] + live_w, live_min[1] + 16.0], RED, 8.0);
-            skin::text_in_row(ui, self.bold_font, 11.0, live_min[0] + 6.0, live_min[1], 16.0, WHITE, "LIVE");
+            skin::rect(
+                ui,
+                live_min,
+                [live_min[0] + live_w, live_min[1] + 16.0],
+                RED,
+                8.0,
+            );
+            skin::text_in_row(
+                ui,
+                self.bold_font,
+                11.0,
+                live_min[0] + 6.0,
+                live_min[1],
+                16.0,
+                WHITE,
+                "LIVE",
+            );
             icons_w += live_w + 4.0;
         }
         let text_x = center[0] + VOICE_AVATAR * 0.5 + 8.0;
         let color = if hovered { TEXT_NORMAL } else { MUTED };
-        let shown = skin::ellipsize(ui, None, FONT_SM, &name, (max[0] - 4.0 - icons_w - text_x).max(16.0));
-        skin::text_in_row(ui, None, FONT_SM, text_x, origin[1], VOICE_MEMBER_H, color, &shown);
+        let shown = skin::ellipsize(
+            ui,
+            None,
+            FONT_SM,
+            &name,
+            (max[0] - 4.0 - icons_w - text_x).max(16.0),
+        );
+        skin::text_in_row(
+            ui,
+            None,
+            FONT_SM,
+            text_x,
+            origin[1],
+            VOICE_MEMBER_H,
+            color,
+            &shown,
+        );
     }
 
     fn draw_featured_screen_at(&mut self, ui: &Ui, origin: [f32; 2], width: f32, height: f32) {
         let max = [origin[0] + width, origin[1] + height];
         skin::rect(ui, origin, max, TILE_BG, TILE_RADIUS);
-        let Some(user_id) = self.focused_live_streamer() else { return };
+        let Some(user_id) = self.focused_live_streamer() else {
+            return;
+        };
         let name = self.name_of(user_id);
         if let Some((texture, size)) = self.stream_texture_for(user_id) {
-            let shown = if self.screen_shown[0] > 1.0 { self.screen_shown } else { size };
+            let shown = if self.screen_shown[0] > 1.0 {
+                self.screen_shown
+            } else {
+                size
+            };
             let fitted = fit_inside(shown, width, height);
             let x = origin[0] + (width - fitted[0]) * 0.5;
             let y = origin[1] + (height - fitted[1]) * 0.5;
@@ -9731,11 +12687,22 @@ impl App {
         if self.stream_fullscreen {
             return;
         }
-        self.name_tag(ui, [origin[0] + 8.0, max[1] - 8.0 - 24.0], &name, None, true);
+        self.name_tag(
+            ui,
+            [origin[0] + 8.0, max[1] - 8.0 - 24.0],
+            &name,
+            None,
+            true,
+        );
         self.draw_stream_watch_controls(ui, origin, width, 1.0);
         let me = self.account.as_ref().map(|account| account.id);
         if Some(user_id) != me {
-            self.quality_control(ui, user_id, MediaKind::Screen, [origin[0] + 8.0, origin[1] + 8.0]);
+            self.quality_control(
+                ui,
+                user_id,
+                MediaKind::Screen,
+                [origin[0] + 8.0, origin[1] + 8.0],
+            );
         }
     }
 
@@ -9747,7 +12714,11 @@ impl App {
                 .map(|member| (member.user_id, member.flags.screen))
                 .collect()
         } else if let Some(call) = &self.call {
-            let peer = if Some(call.caller) == me { call.callee } else { call.caller };
+            let peer = if Some(call.caller) == me {
+                call.callee
+            } else {
+                call.caller
+            };
             let mut rows = vec![(peer, false)];
             if let Some(me) = me {
                 rows.push((me, self.screen));
@@ -9791,7 +12762,10 @@ impl App {
     fn stream_texture_for(&self, user_id: i64) -> Option<(ManagedTextureId, [f32; 2])> {
         let me = self.account.as_ref().map(|account| account.id);
         if Some(user_id) == me {
-            return self.local_screen.as_ref().map(|shot| (shot.texture, shot.size));
+            return self
+                .local_screen
+                .as_ref()
+                .map(|shot| (shot.texture, shot.size));
         }
         self.remote_video
             .get(&(user_id, 3))
@@ -9837,7 +12811,11 @@ impl App {
         ));
         buttons.push((
             "stream-fullscreen",
-            if self.stream_fullscreen { "minimize" } else { "maximize" },
+            if self.stream_fullscreen {
+                "minimize"
+            } else {
+                "maximize"
+            },
             if self.stream_fullscreen {
                 "Exit Fullscreen"
             } else {
@@ -9848,8 +12826,18 @@ impl App {
             + buttons.len().saturating_sub(1) as f32 * STREAM_WATCH_BTN_GAP;
         let mut x = origin[0] + width - STREAM_WATCH_PAD - total_w;
         let y = origin[1] + STREAM_WATCH_PAD;
-        let fill = [CONTROL_BG[0], CONTROL_BG[1], CONTROL_BG[2], CONTROL_BG[3] * alpha];
-        let hover = [CONTROL_HOVER[0], CONTROL_HOVER[1], CONTROL_HOVER[2], CONTROL_HOVER[3] * alpha];
+        let fill = [
+            CONTROL_BG[0],
+            CONTROL_BG[1],
+            CONTROL_BG[2],
+            CONTROL_BG[3] * alpha,
+        ];
+        let hover = [
+            CONTROL_HOVER[0],
+            CONTROL_HOVER[1],
+            CONTROL_HOVER[2],
+            CONTROL_HOVER[3] * alpha,
+        ];
         let tint = [WHITE[0], WHITE[1], WHITE[2], alpha];
         let semi = self.semibold_font;
         for (id, icon, tip) in buttons {
@@ -9916,9 +12904,15 @@ impl App {
             .build(|| {
                 let origin = [0.0, 0.0];
                 skin::rect(ui, origin, display, CALL_BG, 0.0);
-                let Some(user_id) = self.focused_live_streamer() else { return };
+                let Some(user_id) = self.focused_live_streamer() else {
+                    return;
+                };
                 if let Some((texture, size)) = self.stream_texture_for(user_id) {
-                    let shown = if self.screen_shown[0] > 1.0 { self.screen_shown } else { size };
+                    let shown = if self.screen_shown[0] > 1.0 {
+                        self.screen_shown
+                    } else {
+                        size
+                    };
                     let fitted = fit_inside(shown, display[0], display[1]);
                     let x = (display[0] - fitted[0]) * 0.5;
                     let y = (display[1] - fitted[1]) * 0.5;
@@ -9931,14 +12925,15 @@ impl App {
                         WHITE,
                     );
                 }
-                let chrome = stream_chrome_alpha(
-                    self.stream_pointer_at.elapsed().as_secs_f32(),
-                    true,
-                );
+                let chrome =
+                    stream_chrome_alpha(self.stream_pointer_at.elapsed().as_secs_f32(), true);
                 if chrome > STREAM_CHROME_HIDE_ALPHA {
                     self.draw_stream_watch_people(
                         ui,
-                        [STREAM_WATCH_PAD, display[1] - STREAM_WATCH_PAD - STREAM_WATCH_AVATAR],
+                        [
+                            STREAM_WATCH_PAD,
+                            display[1] - STREAM_WATCH_PAD - STREAM_WATCH_AVATAR,
+                        ],
                         chrome,
                     );
                     self.draw_stream_watch_controls(ui, origin, display[0], chrome);
@@ -9979,14 +12974,15 @@ impl App {
                         WHITE,
                     );
                 }
-                let chrome = stream_chrome_alpha(
-                    self.stream_pointer_at.elapsed().as_secs_f32(),
-                    true,
-                );
+                let chrome =
+                    stream_chrome_alpha(self.stream_pointer_at.elapsed().as_secs_f32(), true);
                 if chrome > STREAM_CHROME_HIDE_ALPHA {
                     self.draw_stream_watch_people(
                         ui,
-                        [STREAM_WATCH_PAD, size[1] - STREAM_WATCH_PAD - STREAM_WATCH_AVATAR],
+                        [
+                            STREAM_WATCH_PAD,
+                            size[1] - STREAM_WATCH_PAD - STREAM_WATCH_AVATAR,
+                        ],
                         chrome,
                     );
                     // Pop-out window: cycle + close pop-out (no nested OS fullscreen here).
@@ -9996,7 +12992,12 @@ impl App {
                         x -= STREAM_WATCH_BTN + STREAM_WATCH_BTN_GAP;
                     }
                     let y = STREAM_WATCH_PAD;
-                    let fill = [CONTROL_BG[0], CONTROL_BG[1], CONTROL_BG[2], CONTROL_BG[3] * chrome];
+                    let fill = [
+                        CONTROL_BG[0],
+                        CONTROL_BG[1],
+                        CONTROL_BG[2],
+                        CONTROL_BG[3] * chrome,
+                    ];
                     let hover = [
                         CONTROL_HOVER[0],
                         CONTROL_HOVER[1],
@@ -10006,7 +13007,8 @@ impl App {
                     let tint = [WHITE[0], WHITE[1], WHITE[2], chrome];
                     if live.len() > 1 {
                         ui.set_cursor_screen_pos([x, y]);
-                        if ui.invisible_button("popout-cycle", [STREAM_WATCH_BTN, STREAM_WATCH_BTN]) {
+                        if ui.invisible_button("popout-cycle", [STREAM_WATCH_BTN, STREAM_WATCH_BTN])
+                        {
                             self.cycle_focused_streamer();
                         }
                         let color = if ui.is_item_hovered() { hover } else { fill };
@@ -10119,7 +13121,8 @@ impl App {
     }
 
     pub(crate) fn end_stream_popout_surface(&mut self) {
-        let Some((bold, semibold, italic, bold_italic)) = self.stream_popout_font_backup.take() else {
+        let Some((bold, semibold, italic, bold_italic)) = self.stream_popout_font_backup.take()
+        else {
             panic!("end_stream_popout_surface without begin_stream_popout_surface");
         };
         self.bold_font = bold;
@@ -10170,7 +13173,9 @@ impl App {
             let (talking, state_icon) = self.stream_watch_voice_state(user_id);
             ui.set_cursor_screen_pos([x, origin[1]]);
             let id = format!("stream-watch-avatar-{user_id}");
-            if ui.invisible_button(&id, [STREAM_WATCH_AVATAR, STREAM_WATCH_AVATAR]) && Some(user_id) != focus {
+            if ui.invisible_button(&id, [STREAM_WATCH_AVATAR, STREAM_WATCH_AVATAR])
+                && Some(user_id) != focus
+            {
                 self.focused_streamer = Some(user_id);
                 self.stream_pointer_at = Instant::now();
             }
@@ -10223,7 +13228,11 @@ impl App {
         let me = self.account.as_ref().map(|account| account.id);
         let flags = if Some(user_id) == me {
             self.flags
-        } else if let Some(member) = self.voice_members.iter().find(|member| member.user_id == user_id) {
+        } else if let Some(member) = self
+            .voice_members
+            .iter()
+            .find(|member| member.user_id == user_id)
+        {
             member.flags
         } else {
             VoiceFlags::default()
@@ -10256,7 +13265,11 @@ impl App {
     ) {
         let semi = self.semibold_font;
         let name_w = skin::text_size(ui, semi, FONT_SM, name)[0];
-        let live_w = if live { skin::text_size(ui, self.bold_font, 11.0, "LIVE")[0] + 12.0 } else { 0.0 };
+        let live_w = if live {
+            skin::text_size(ui, self.bold_font, 11.0, "LIVE")[0] + 12.0
+        } else {
+            0.0
+        };
         let icon_w = if state_icon.is_some() { 20.0 } else { 0.0 };
         let tag_w = 8.0 + name_w + 8.0 + icon_w + if live { live_w + 6.0 } else { 0.0 };
         let bg = [0.0, 0.0, 0.0, 0.6 * alpha];
@@ -10265,17 +13278,45 @@ impl App {
         skin::rect(ui, min, [min[0] + tag_w, min[1] + 24.0], bg, 4.0);
         let mut x = min[0] + 8.0;
         if live {
-            skin::rect(ui, [x, min[1] + 4.0], [x + live_w, min[1] + 20.0], live_fill, 4.0);
-            skin::text_in_row(ui, self.bold_font, 11.0, x + 6.0, min[1] + 4.0, 16.0, text, "LIVE");
+            skin::rect(
+                ui,
+                [x, min[1] + 4.0],
+                [x + live_w, min[1] + 20.0],
+                live_fill,
+                4.0,
+            );
+            skin::text_in_row(
+                ui,
+                self.bold_font,
+                11.0,
+                x + 6.0,
+                min[1] + 4.0,
+                16.0,
+                text,
+                "LIVE",
+            );
             x += live_w + 6.0;
         }
         skin::text_in_row(ui, semi, FONT_SM, x, min[1], 24.0, text, name);
         if let Some(icon) = state_icon {
-            skin::image(ui, self.icon(icon), [x + name_w + 6.0, min[1] + 4.0], 16.0, text);
+            skin::image(
+                ui,
+                self.icon(icon),
+                [x + name_w + 6.0, min[1] + 4.0],
+                16.0,
+                text,
+            );
         }
     }
 
-    fn draw_voice_tile_at(&mut self, ui: &Ui, member: &VoiceMember, origin: [f32; 2], tile_w: f32, tile_h: f32) {
+    fn draw_voice_tile_at(
+        &mut self,
+        ui: &Ui,
+        member: &VoiceMember,
+        origin: [f32; 2],
+        tile_w: f32,
+        tile_h: f32,
+    ) {
         let name = self.name_of(member.user_id);
         let me = self.account.as_ref().map(|account| account.id);
         let talking = self.member_talking(member);
@@ -10303,7 +13344,11 @@ impl App {
         }
         if talking {
             ui.get_window_draw_list()
-                .add_rect([origin[0] + 1.0, origin[1] + 1.0], [max[0] - 1.0, max[1] - 1.0], GREEN)
+                .add_rect(
+                    [origin[0] + 1.0, origin[1] + 1.0],
+                    [max[0] - 1.0, max[1] - 1.0],
+                    GREEN,
+                )
                 .rounding(TILE_RADIUS)
                 .thickness(2.0)
                 .build();
@@ -10315,10 +13360,21 @@ impl App {
         } else {
             None
         };
-        self.name_tag(ui, [origin[0] + 8.0, max[1] - 8.0 - 24.0], &name, state_icon, false);
+        self.name_tag(
+            ui,
+            [origin[0] + 8.0, max[1] - 8.0 - 24.0],
+            &name,
+            state_icon,
+            false,
+        );
         let me = self.account.as_ref().map(|account| account.id);
         if member.flags.camera && Some(member.user_id) != me {
-            self.quality_control(ui, member.user_id, MediaKind::Camera, [origin[0] + 8.0, origin[1] + 8.0]);
+            self.quality_control(
+                ui,
+                member.user_id,
+                MediaKind::Camera,
+                [origin[0] + 8.0, origin[1] + 8.0],
+            );
         }
     }
 
@@ -10327,7 +13383,12 @@ impl App {
         let open = self.quality_for == Some(key);
         let chosen = self.layers.get(publisher, track);
         ui.set_cursor_screen_pos(origin);
-        let label = format!("{}##quality-open-{}-{}", layer_word(chosen), publisher, track.code());
+        let label = format!(
+            "{}##quality-open-{}-{}",
+            layer_word(chosen),
+            publisher,
+            track.code()
+        );
         if ui.small_button(&label) {
             if open {
                 self.quality_for = None;
@@ -10359,7 +13420,11 @@ impl App {
                     self.quality_draft = banter_server::slider_position(snapped);
                 }
                 let note = if delivered != snapped {
-                    format!("{} (showing {})", layer_word(snapped), layer_word(delivered))
+                    format!(
+                        "{} (showing {})",
+                        layer_word(snapped),
+                        layer_word(delivered)
+                    )
                 } else {
                     layer_word(snapped).to_string()
                 };
@@ -10376,13 +13441,21 @@ impl App {
     fn send_subscribe(&self, publisher: i64, track: MediaKind, layer: LayerId) {
         let place = if let Some(channel_id) = self.voice_channel {
             Some(MediaPlace::VoiceChannel(channel_id))
-        } else if self.call.as_ref().is_some_and(|call| call.phase == CallPhase::Active) {
-            self.call.as_ref().map(|call| MediaPlace::DirectCall(call.dm_id))
+        } else if self
+            .call
+            .as_ref()
+            .is_some_and(|call| call.phase == CallPhase::Active)
+        {
+            self.call
+                .as_ref()
+                .map(|call| MediaPlace::DirectCall(call.dm_id))
         } else {
             None
         };
         let Some(place) = place else { return };
-        let Some(realtime) = &self.realtime else { return };
+        let Some(realtime) = &self.realtime else {
+            return;
+        };
         realtime.send(ClientSignal::SubscribeLayer {
             place,
             publisher,
@@ -10391,7 +13464,11 @@ impl App {
         });
     }
 
-    fn tile_camera(&self, member: &VoiceMember, me: Option<i64>) -> Option<(ManagedTextureId, [f32; 2])> {
+    fn tile_camera(
+        &self,
+        member: &VoiceMember,
+        me: Option<i64>,
+    ) -> Option<(ManagedTextureId, [f32; 2])> {
         let mine = me == Some(member.user_id);
         if !(member.flags.camera || (mine && self.camera)) {
             return None;
@@ -10489,7 +13566,13 @@ impl App {
             self.save_video();
         }
         settings_divider(ui, width);
-        if settings_toggle_row(ui, "video-fullscreen", "Fullscreen", &mut self.video.fullscreen, width) {
+        if settings_toggle_row(
+            ui,
+            "video-fullscreen",
+            "Fullscreen",
+            &mut self.video.fullscreen,
+            width,
+        ) {
             self.save_video();
         }
         settings_divider(ui, width);
@@ -10509,7 +13592,10 @@ impl App {
             .position(|&(w, h)| w == self.video.width && h == self.video.height)
             .unwrap_or(usize::MAX);
         if index == usize::MAX {
-            labels.push(format!("{} (current)", window_size_label(self.video.width, self.video.height)));
+            labels.push(format!(
+                "{} (current)",
+                window_size_label(self.video.width, self.video.height)
+            ));
             index = labels.len() - 1;
         }
         if settings_combo(ui, "##window-resolution", width, &labels, &mut index) {
@@ -10541,6 +13627,7 @@ impl App {
         let token = self.client.token().map(str::to_string);
         self.base = base.clone();
         self.client.set_base(&base);
+        self.shell.invalidate();
 
         self.friends.clear();
         self.incoming.clear();
@@ -10646,6 +13733,7 @@ impl App {
         self.end_media_place();
         self.media = None;
         self.realtime = None;
+        self.shell.invalidate();
         if self.account.is_some() || self.client.token().is_some() {
             self.client.set_token(None);
             let _ = clear_token(&self.data_dir);
@@ -10672,7 +13760,11 @@ impl App {
             output_device: self.voice.output_device.clone(),
             input_volume: self.voice.input_volume,
             output_volume: self.voice.output_volume,
-            sensitivity: if self.voice.auto_sensitivity { OPEN_MIC_RMS } else { self.voice.sensitivity },
+            sensitivity: if self.voice.auto_sensitivity {
+                OPEN_MIC_RMS
+            } else {
+                self.voice.sensitivity
+            },
             noise_suppression: self.voice.noise_suppression,
             echo_cancellation: self.voice.echo_cancellation,
             auto_gain: self.voice.auto_gain,
@@ -10719,11 +13811,32 @@ impl App {
             return;
         }
         for (name, key) in [
-            ("A", Key::A), ("B", Key::B), ("C", Key::C), ("D", Key::D), ("E", Key::E), ("F", Key::F),
-            ("G", Key::G), ("H", Key::H), ("I", Key::I), ("J", Key::J), ("K", Key::K), ("L", Key::L),
-            ("M", Key::M), ("N", Key::N), ("O", Key::O), ("P", Key::P), ("Q", Key::Q), ("R", Key::R),
-            ("S", Key::S), ("T", Key::T), ("U", Key::U), ("V", Key::V), ("W", Key::W), ("X", Key::X),
-            ("Y", Key::Y), ("Z", Key::Z),
+            ("A", Key::A),
+            ("B", Key::B),
+            ("C", Key::C),
+            ("D", Key::D),
+            ("E", Key::E),
+            ("F", Key::F),
+            ("G", Key::G),
+            ("H", Key::H),
+            ("I", Key::I),
+            ("J", Key::J),
+            ("K", Key::K),
+            ("L", Key::L),
+            ("M", Key::M),
+            ("N", Key::N),
+            ("O", Key::O),
+            ("P", Key::P),
+            ("Q", Key::Q),
+            ("R", Key::R),
+            ("S", Key::S),
+            ("T", Key::T),
+            ("U", Key::U),
+            ("V", Key::V),
+            ("W", Key::W),
+            ("X", Key::X),
+            ("Y", Key::Y),
+            ("Z", Key::Z),
         ] {
             if ui.is_key_pressed(key) {
                 self.voice.ptt_key = name.to_string();
@@ -10758,24 +13871,54 @@ impl App {
     }
 
     fn ensure_source(&mut self, id: String, name: String) {
-        if let Some(source) = self.stream.sources.iter_mut().find(|source| source.id == id) {
+        if let Some(source) = self
+            .stream
+            .sources
+            .iter_mut()
+            .find(|source| source.id == id)
+        {
             source.name = name;
             return;
         }
-        self.stream.sources.push(MixSource { id, name, enabled: false, volume: 1.0 });
+        self.stream.sources.push(MixSource {
+            id,
+            name,
+            enabled: false,
+            volume: 1.0,
+        });
     }
 
-    fn draw_named_combo(&mut self, ui: &Ui, id: &str, kind: &str, width: f32, devices: &[String], input: bool) {
+    fn draw_named_combo(
+        &mut self,
+        ui: &Ui,
+        id: &str,
+        kind: &str,
+        width: f32,
+        devices: &[String],
+        input: bool,
+    ) {
         if devices.is_empty() {
             ui.text_colored(MUTED, format!("No {kind} is available."));
             return;
         }
         let mut labels = vec!["Default".to_string()];
         labels.extend(devices.iter().cloned());
-        let current = if input { &self.voice.input_device } else { &self.voice.output_device };
-        let mut index = devices.iter().position(|name| name == current).map(|index| index + 1).unwrap_or(0);
+        let current = if input {
+            &self.voice.input_device
+        } else {
+            &self.voice.output_device
+        };
+        let mut index = devices
+            .iter()
+            .position(|name| name == current)
+            .map(|index| index + 1)
+            .unwrap_or(0);
         if settings_combo(ui, &format!("##{id}"), width, &labels, &mut index) {
-            let chosen = if index == 0 { String::new() } else { devices[index - 1].clone() };
+            let chosen = if index == 0 {
+                String::new()
+            } else {
+                devices[index - 1].clone()
+            };
             if input {
                 self.voice.input_device = chosen;
             } else {
@@ -10786,25 +13929,45 @@ impl App {
     }
 
     fn draw_input_meter(&self, ui: &Ui, width: f32, height: f32, threshold: Option<f32>) {
-        let rms = self.media.as_ref().map(|media| media.input_rms()).unwrap_or(0.0);
+        let rms = self
+            .media
+            .as_ref()
+            .map(|media| media.input_rms())
+            .unwrap_or(0.0);
         let level = meter_fraction(rms);
         let origin = ui.cursor_screen_pos();
         ui.dummy([width, height]);
         let bar_h = 8.0;
         let top = origin[1] + (height - bar_h) * 0.5;
         let draw = ui.get_window_draw_list();
-        draw.add_rect([origin[0], top], [origin[0] + width, top + bar_h], RAIL_BG).rounding(4.0).filled(true).build();
+        draw.add_rect([origin[0], top], [origin[0] + width, top + bar_h], RAIL_BG)
+            .rounding(4.0)
+            .filled(true)
+            .build();
         if level > 0.0 {
             let color = match threshold {
                 Some(gate) if rms < gate => LOW_LEVEL,
                 _ => GREEN,
             };
-            draw.add_rect([origin[0], top], [origin[0] + width * level, top + bar_h], color).rounding(4.0).filled(true).build();
+            draw.add_rect(
+                [origin[0], top],
+                [origin[0] + width * level, top + bar_h],
+                color,
+            )
+            .rounding(4.0)
+            .filled(true)
+            .build();
         }
         if let Some(gate) = threshold {
             // Same 5 px inset as the settings slider knob, so the mark sits under the knob.
             let mark_x = origin[0] + 5.0 + (width - 10.0).max(0.0) * meter_fraction(gate);
-            draw.add_rect([mark_x - 1.0, top - 4.0], [mark_x + 1.0, top + bar_h + 4.0], WHITE).filled(true).build();
+            draw.add_rect(
+                [mark_x - 1.0, top - 4.0],
+                [mark_x + 1.0, top + bar_h + 4.0],
+                WHITE,
+            )
+            .filled(true)
+            .build();
         }
     }
 
@@ -10836,7 +13999,8 @@ impl App {
                 }
                 if enabled {
                     let mut volume = self.stream.sources[index].volume;
-                    let release = settings_volume_slider(ui, &format!("vol-{id}"), &mut volume, width);
+                    let release =
+                        settings_volume_slider(ui, &format!("vol-{id}"), &mut volume, width);
                     self.stream.sources[index].volume = volume;
                     if release {
                         self.save_stream();
@@ -10855,40 +14019,48 @@ impl App {
         let x = self.stream_anchor[0];
         let y = (self.stream_anchor[1] - height - 8.0).max(8.0);
         ui.window("Stream options")
-            .flags(WindowFlags::NO_DECORATION | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE | WindowFlags::NO_SAVED_SETTINGS | WindowFlags::NO_DOCKING)
+            .flags(
+                WindowFlags::NO_DECORATION
+                    | WindowFlags::NO_MOVE
+                    | WindowFlags::NO_RESIZE
+                    | WindowFlags::NO_SAVED_SETTINGS
+                    | WindowFlags::NO_DOCKING,
+            )
             .position([x, y], Condition::Always)
             .size([width, height], Condition::Always)
             .build(|| {
                 ui.text("Stream options");
-                ui.child_window("stream-options-body").size([0.0, -36.0]).build(ui, || {
-                    // Same chips as Voice & Video / Stream Select; finish_voice_flags applies live.
-                    // Always visible so res/FPS are one click from the stage chevron while sharing.
-                    let quality_w = ui.content_region_avail()[0];
-                    self.draw_stream_quality(ui, quality_w);
-                    if settings_panel(ui, "Bitrate") {
-                        if ui.checkbox("Automatic bitrate", &mut self.stream.bitrate_auto) {
-                            self.save_stream();
+                ui.child_window("stream-options-body")
+                    .size([0.0, -36.0])
+                    .build(ui, || {
+                        // Same chips as Voice & Video / Stream Select; finish_voice_flags applies live.
+                        // Always visible so res/FPS are one click from the stage chevron while sharing.
+                        let quality_w = ui.content_region_avail()[0];
+                        self.draw_stream_quality(ui, quality_w);
+                        if settings_panel(ui, "Bitrate") {
+                            if ui.checkbox("Automatic bitrate", &mut self.stream.bitrate_auto) {
+                                self.save_stream();
+                            }
+                            if !self.stream.bitrate_auto {
+                                let mut kbps = self.stream.bitrate_kbps as f32;
+                                if ui.slider_f32("Bitrate kbps", &mut kbps, 200.0, 8000.0) {
+                                    self.stream.bitrate_kbps = kbps.round() as u32;
+                                    self.save_stream();
+                                }
+                            }
+                            if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
+                                ui.text_wrapped(reason);
+                            }
                         }
-                        if !self.stream.bitrate_auto {
-                            let mut kbps = self.stream.bitrate_kbps as f32;
-                            if ui.slider_f32("Bitrate kbps", &mut kbps, 200.0, 8000.0) {
-                                self.stream.bitrate_kbps = kbps.round() as u32;
+                        if settings_panel(ui, "Preview") {
+                            if ui.checkbox("Show cursor", &mut self.stream.show_cursor) {
+                                self.save_stream();
+                            }
+                            if ui.checkbox("Show my preview", &mut self.stream.show_preview) {
                                 self.save_stream();
                             }
                         }
-                        if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
-                            ui.text_wrapped(reason);
-                        }
-                    }
-                    if settings_panel(ui, "Preview") {
-                        if ui.checkbox("Show cursor", &mut self.stream.show_cursor) {
-                            self.save_stream();
-                        }
-                        if ui.checkbox("Show my preview", &mut self.stream.show_preview) {
-                            self.save_stream();
-                        }
-                    }
-                });
+                    });
                 if ui.button("Change source") {
                     self.open_share();
                 }
@@ -10987,7 +14159,10 @@ impl App {
                 ));
                 ui.text(format!(
                     "{}   loss {:.1}%   rtt {} ms   jitter {} ms",
-                    qos.step, qos.loss * 100.0, qos.rtt_ms, qos.jitter_ms
+                    qos.step,
+                    qos.loss * 100.0,
+                    qos.rtt_ms,
+                    qos.jitter_ms
                 ));
                 ui.text(format!(
                     "user {} kbps   stream {} kbps",
@@ -11004,24 +14179,30 @@ impl App {
                 ui.checkbox("ImGui Demo", &mut self.profiler_demo);
                 ui.separator();
                 ui.text_colored(TEXT_SECONDARY, "Recent expensive ops");
-                ui.child_window("profiler_ops").size([0.0, 0.0]).build(ui, || {
-                    if ops.is_empty() {
-                        ui.text_colored(MUTED, "Nothing slow yet.");
-                        return;
-                    }
-                    for op in &ops {
-                        ui.text(format!("{:.1} ms  {}", op.duration_ms, op.label));
-                        if !op.detail.is_empty() {
-                            ui.text_colored(MUTED, format!("    {}", op.detail));
+                ui.child_window("profiler_ops")
+                    .size([0.0, 0.0])
+                    .build(ui, || {
+                        if ops.is_empty() {
+                            ui.text_colored(MUTED, "Nothing slow yet.");
+                            return;
                         }
-                    }
-                });
+                        for op in &ops {
+                            ui.text(format!("{:.1} ms  {}", op.duration_ms, op.label));
+                            if !op.detail.is_empty() {
+                                ui.text_colored(MUTED, format!("    {}", op.detail));
+                            }
+                        }
+                    });
             });
     }
 
     fn selected_capture_limits(&self) -> (u32, u32) {
         if let Some((kind, id)) = self.share.selected().or(self.share.live_target()) {
-            if let Some(source) = self.share_sources.iter().find(|source| source.kind == kind && source.id == id) {
+            if let Some(source) = self
+                .share_sources
+                .iter()
+                .find(|source| source.kind == kind && source.id == id)
+            {
                 if source.height > 0 || source.hz > 0 {
                     return (source.height, source.hz);
                 }
@@ -11036,7 +14217,11 @@ impl App {
             self.screen_shown = lerp_size(self.screen_from, self.screen_target, t);
             return;
         }
-        self.screen_from = if self.screen_shown[0] > 1.0 { self.screen_shown } else { size };
+        self.screen_from = if self.screen_shown[0] > 1.0 {
+            self.screen_shown
+        } else {
+            size
+        };
         self.screen_target = size;
         self.screen_resize_at = Instant::now();
         self.screen_shown = self.screen_from;
@@ -11110,23 +14295,40 @@ fn source_key(kind: CaptureKind, id: u32) -> (u8, u32) {
 }
 
 fn list_screens() -> Vec<ShareSource> {
-    let Ok(monitors) = xcap::Monitor::all() else { return Vec::new() };
+    let Ok(monitors) = xcap::Monitor::all() else {
+        return Vec::new();
+    };
     let mut sources = Vec::new();
     for monitor in monitors {
         let Ok(id) = monitor.id() else { continue };
         let name = monitor.name().unwrap_or_else(|_| format!("Screen {id}"));
         let primary = monitor.is_primary().unwrap_or(false);
-        let label = if primary { format!("{name} (Primary)") } else { name };
+        let label = if primary {
+            format!("{name} (Primary)")
+        } else {
+            name
+        };
         let height = monitor.height().unwrap_or(0);
         let hz = monitor.frequency().unwrap_or(0.0).round() as u32;
-        sources.push((primary, ShareSource { kind: CaptureKind::Screen, id, name: label, height, hz }));
+        sources.push((
+            primary,
+            ShareSource {
+                kind: CaptureKind::Screen,
+                id,
+                name: label,
+                height,
+                hz,
+            },
+        ));
     }
     sources.sort_by(|left, right| right.0.cmp(&left.0));
     sources.into_iter().map(|(_, source)| source).collect()
 }
 
 fn list_windows() -> Vec<ShareSource> {
-    let Ok(windows) = xcap::Window::all() else { return Vec::new() };
+    let Ok(windows) = xcap::Window::all() else {
+        return Vec::new();
+    };
     let mut sources = Vec::new();
     for window in windows {
         if window.is_minimized().unwrap_or(true) {
@@ -11145,9 +14347,20 @@ fn list_windows() -> Vec<ShareSource> {
         let (height, hz) = window
             .current_monitor()
             .ok()
-            .map(|monitor| (monitor.height().unwrap_or(0), monitor.frequency().unwrap_or(0.0).round() as u32))
+            .map(|monitor| {
+                (
+                    monitor.height().unwrap_or(0),
+                    monitor.frequency().unwrap_or(0.0).round() as u32,
+                )
+            })
             .unwrap_or((0, 0));
-        sources.push(ShareSource { kind: CaptureKind::Window, id, name, height, hz });
+        sources.push(ShareSource {
+            kind: CaptureKind::Window,
+            id,
+            name,
+            height,
+            hz,
+        });
     }
     sources
 }
@@ -11155,12 +14368,18 @@ fn list_windows() -> Vec<ShareSource> {
 fn capture_source_jpeg(kind: CaptureKind, id: u32) -> Option<Vec<u8>> {
     match kind {
         CaptureKind::Screen => {
-            let monitor = xcap::Monitor::all().ok()?.into_iter().find(|monitor| monitor.id().ok() == Some(id))?;
+            let monitor = xcap::Monitor::all()
+                .ok()?
+                .into_iter()
+                .find(|monitor| monitor.id().ok() == Some(id))?;
             let image = monitor.capture_image().ok()?;
             encode_jpeg_rgba(image.width(), image.height(), image.as_raw(), 360).ok()
         }
         CaptureKind::Window => {
-            let window = xcap::Window::all().ok()?.into_iter().find(|window| window.id().ok() == Some(id))?;
+            let window = xcap::Window::all()
+                .ok()?
+                .into_iter()
+                .find(|window| window.id().ok() == Some(id))?;
             let image = window.capture_image().ok()?;
             encode_jpeg_rgba(image.width(), image.height(), image.as_raw(), 360).ok()
         }
@@ -11240,7 +14459,11 @@ fn settings_text_button(ui: &Ui, id: &str, label: &str) -> bool {
     let size = ui.calc_text_size(label);
     let clicked = ui.invisible_button(id, [size[0], 22.0]);
     let color = if ui.is_item_hovered() { WHITE } else { BLURPLE };
-    ui.get_window_draw_list().add_text([origin[0], origin[1] + (22.0 - size[1]) * 0.5], color, label);
+    ui.get_window_draw_list().add_text(
+        [origin[0], origin[1] + (22.0 - size[1]) * 0.5],
+        color,
+        label,
+    );
     clicked
 }
 
@@ -11248,7 +14471,11 @@ fn settings_divider(ui: &Ui, width: f32) {
     let origin = ui.cursor_screen_pos();
     ui.dummy([width, 17.0]);
     ui.get_window_draw_list()
-        .add_rect([origin[0], origin[1] + 8.0], [origin[0] + width, origin[1] + 9.0], SETTINGS_DIVIDER)
+        .add_rect(
+            [origin[0], origin[1] + 8.0],
+            [origin[0] + width, origin[1] + 9.0],
+            SETTINGS_DIVIDER,
+        )
         .filled(true)
         .build();
 }
@@ -11270,15 +14497,29 @@ fn settings_toggle_row(ui: &Ui, id: &str, label: &str, value: &mut bool, width: 
     let label_w = width - switch_w - 16.0;
     let shown = clip_label(ui, label, label_w);
     let text_h = ui.calc_text_size(&shown)[1];
-    draw.add_text([origin[0], origin[1] + (height - text_h) * 0.5], TEXT, &shown);
+    draw.add_text(
+        [origin[0], origin[1] + (height - text_h) * 0.5],
+        TEXT,
+        &shown,
+    );
     let x = origin[0] + width - switch_w;
     let y = origin[1] + (height - switch_h) * 0.5;
-    draw.add_rect([x, y], [x + switch_w, y + switch_h], if *value { GREEN } else { SWITCH_OFF })
-        .rounding(switch_h * 0.5)
+    draw.add_rect(
+        [x, y],
+        [x + switch_w, y + switch_h],
+        if *value { GREEN } else { SWITCH_OFF },
+    )
+    .rounding(switch_h * 0.5)
+    .filled(true)
+    .build();
+    let knob_x = if *value {
+        x + switch_w - switch_h * 0.5
+    } else {
+        x + switch_h * 0.5
+    };
+    draw.add_circle([knob_x, y + switch_h * 0.5], switch_h * 0.5 - 3.0, WHITE)
         .filled(true)
         .build();
-    let knob_x = if *value { x + switch_w - switch_h * 0.5 } else { x + switch_h * 0.5 };
-    draw.add_circle([knob_x, y + switch_h * 0.5], switch_h * 0.5 - 3.0, WHITE).filled(true).build();
     clicked
 }
 
@@ -11288,15 +14529,30 @@ fn settings_radio_row(ui: &Ui, id: &str, label: &str, selected: bool, width: f32
     let clicked = ui.invisible_button(id, [width, height]);
     let hovered = ui.is_item_hovered();
     let draw = ui.get_window_draw_list();
-    let fill = if selected { ROW_SELECTED } else if hovered { ROW_HOVER } else { SIDEBAR_BG };
-    draw.add_rect(origin, [origin[0] + width, origin[1] + height], fill).rounding(4.0).filled(true).build();
+    let fill = if selected {
+        ROW_SELECTED
+    } else if hovered {
+        ROW_HOVER
+    } else {
+        SIDEBAR_BG
+    };
+    draw.add_rect(origin, [origin[0] + width, origin[1] + height], fill)
+        .rounding(4.0)
+        .filled(true)
+        .build();
     let center = [origin[0] + 22.0, origin[1] + height * 0.5];
-    draw.add_circle(center, 10.0, if selected { WHITE } else { MUTED }).thickness(2.0).build();
+    draw.add_circle(center, 10.0, if selected { WHITE } else { MUTED })
+        .thickness(2.0)
+        .build();
     if selected {
         draw.add_circle(center, 5.0, WHITE).filled(true).build();
     }
     let text_h = ui.calc_text_size(label)[1];
-    draw.add_text([origin[0] + 44.0, origin[1] + (height - text_h) * 0.5], if selected { WHITE } else { TEXT }, label);
+    draw.add_text(
+        [origin[0] + 44.0, origin[1] + (height - text_h) * 0.5],
+        if selected { WHITE } else { TEXT },
+        label,
+    );
     ui.dummy([0.0, 4.0]);
     clicked
 }
@@ -11308,7 +14564,11 @@ fn settings_combo(ui: &Ui, id: &str, width: f32, labels: &[String], index: &mut 
     if let Some(token) = ui.begin_combo(id, preview) {
         for (position, label) in labels.iter().enumerate() {
             let selected = position == *index;
-            if ui.selectable_config(format!("{label}##{position}")).selected(selected).build() {
+            if ui
+                .selectable_config(format!("{label}##{position}"))
+                .selected(selected)
+                .build()
+            {
                 *index = position;
                 changed = true;
             }
@@ -11324,7 +14584,15 @@ fn settings_combo(ui: &Ui, id: &str, width: f32, labels: &[String], index: &mut 
     changed
 }
 
-fn settings_slider_i32(ui: &Ui, id: &str, value: &mut i32, min: i32, max: i32, width: f32, unit: &str) -> bool {
+fn settings_slider_i32(
+    ui: &Ui,
+    id: &str,
+    value: &mut i32,
+    min: i32,
+    max: i32,
+    width: f32,
+    unit: &str,
+) -> bool {
     let track_w = slider_track_width(width);
     let changed = {
         // Separate bindings, because locals drop in reverse order and Dear ImGui pops its color stack last-in first-out.
@@ -11345,19 +14613,37 @@ fn settings_slider_i32(ui: &Ui, id: &str, value: &mut i32, min: i32, max: i32, w
     let center_y = (item_min[1] + item_max[1]) * 0.5;
     let knob_x = item_min[0] + 5.0 + (track_w - 10.0).max(0.0) * slider_fraction(*value, min, max);
     let draw = ui.get_window_draw_list();
-    draw.add_rect([item_min[0], center_y - 4.0], [item_min[0] + track_w, center_y + 4.0], SWITCH_OFF)
-        .rounding(4.0)
-        .filled(true)
-        .build();
-    draw.add_rect([item_min[0], center_y - 4.0], [knob_x, center_y + 4.0], BLURPLE).rounding(4.0).filled(true).build();
-    draw.add_rect([knob_x - 5.0, center_y - 12.0], [knob_x + 5.0, center_y + 12.0], if active || hovered { WHITE } else { TEXT })
-        .rounding(3.0)
-        .filled(true)
-        .build();
+    draw.add_rect(
+        [item_min[0], center_y - 4.0],
+        [item_min[0] + track_w, center_y + 4.0],
+        SWITCH_OFF,
+    )
+    .rounding(4.0)
+    .filled(true)
+    .build();
+    draw.add_rect(
+        [item_min[0], center_y - 4.0],
+        [knob_x, center_y + 4.0],
+        BLURPLE,
+    )
+    .rounding(4.0)
+    .filled(true)
+    .build();
+    draw.add_rect(
+        [knob_x - 5.0, center_y - 12.0],
+        [knob_x + 5.0, center_y + 12.0],
+        if active || hovered { WHITE } else { TEXT },
+    )
+    .rounding(3.0)
+    .filled(true)
+    .build();
     let label = format!("{value}{unit}");
     let label_size = ui.calc_text_size(&label);
     draw.add_text(
-        [item_min[0] + width - label_size[0], center_y - label_size[1] * 0.5],
+        [
+            item_min[0] + width - label_size[0],
+            center_y - label_size[1] * 0.5,
+        ],
         if active { WHITE } else { TEXT },
         &label,
     );
@@ -11372,9 +14658,16 @@ fn settings_volume_slider(ui: &Ui, id: &str, volume: &mut f32, width: f32) -> bo
     ui.is_item_deactivated_after_edit()
 }
 
-fn settings_chip_row(ui: &Ui, choices: &[(String, String, bool, bool)], width: f32) -> Option<usize> {
+fn settings_chip_row(
+    ui: &Ui,
+    choices: &[(String, String, bool, bool)],
+    width: f32,
+) -> Option<usize> {
     let spacing = 8.0;
-    let widths: Vec<f32> = choices.iter().map(|(_, label, _, _)| ui.calc_text_size(label)[0] + 28.0).collect();
+    let widths: Vec<f32> = choices
+        .iter()
+        .map(|(_, label, _, _)| ui.calc_text_size(label)[0] + 28.0)
+        .collect();
     let rows = wrap_rows(&widths, width, spacing);
     let mut clicked = None;
     for (index, (id, label, selected, enabled)) in choices.iter().enumerate() {
@@ -11389,7 +14682,8 @@ fn settings_chip_row(ui: &Ui, choices: &[(String, String, bool, bool)], width: f
             let origin = ui.cursor_screen_pos();
             ui.dummy([widths[index], 32.0]);
             let dim = [MUTED[0], MUTED[1], MUTED[2], 0.45];
-            ui.get_window_draw_list().add_text([origin[0] + 14.0, origin[1] + 7.0], dim, label);
+            ui.get_window_draw_list()
+                .add_text([origin[0] + 14.0, origin[1] + 7.0], dim, label);
         }
     }
     clicked
@@ -11452,15 +14746,26 @@ fn nav_row(ui: &Ui, id: &str, icon: Option<ManagedTextureId>, label: &str, selec
     let draw = ui.get_window_draw_list();
     if selected || hovered {
         let fill = if selected { ROW_SELECTED } else { ROW_HOVER };
-        draw.add_rect([origin[0] + 8.0, origin[1]], [origin[0] + width - 8.0, origin[1] + 32.0], fill)
-            .rounding(4.0)
-            .filled(true)
-            .build();
+        draw.add_rect(
+            [origin[0] + 8.0, origin[1]],
+            [origin[0] + width - 8.0, origin[1] + 32.0],
+            fill,
+        )
+        .rounding(4.0)
+        .filled(true)
+        .build();
     }
     let mut text_x = origin[0] + 16.0;
     let icon_tint = if selected { TEXT } else { MUTED };
     if let Some(texture) = icon {
-        draw.add_image(texture, [text_x, origin[1] + 8.0], [text_x + 16.0, origin[1] + 24.0], [0.0, 0.0], [1.0, 1.0], icon_tint);
+        draw.add_image(
+            texture,
+            [text_x, origin[1] + 8.0],
+            [text_x + 16.0, origin[1] + 24.0],
+            [0.0, 0.0],
+            [1.0, 1.0],
+            icon_tint,
+        );
         text_x += 24.0;
     }
     let color = if selected { TEXT } else { MUTED };
@@ -11474,25 +14779,43 @@ fn chip(ui: &Ui, id: &str, label: &str, selected: bool) -> bool {
     let width = text_size[0] + 28.0;
     let origin = ui.cursor_screen_pos();
     let clicked = ui.invisible_button(id, [width, 32.0]);
-    let fill = if selected { BLURPLE } else { [0.0, 0.0, 0.0, 0.0] };
+    let fill = if selected {
+        BLURPLE
+    } else {
+        [0.0, 0.0, 0.0, 0.0]
+    };
     if selected || ui.is_item_hovered() {
         ui.get_window_draw_list()
-            .add_rect([origin[0], origin[1] + 2.0], [origin[0] + width, origin[1] + 30.0], if selected { fill } else { ROW_HOVER })
+            .add_rect(
+                [origin[0], origin[1] + 2.0],
+                [origin[0] + width, origin[1] + 30.0],
+                if selected { fill } else { ROW_HOVER },
+            )
             .rounding(4.0)
             .filled(true)
             .build();
     }
     let color = if selected { WHITE } else { MUTED };
-    ui.get_window_draw_list().add_text([origin[0] + 14.0, origin[1] + 7.0], color, label);
+    ui.get_window_draw_list()
+        .add_text([origin[0] + 14.0, origin[1] + 7.0], color, label);
     clicked
 }
 
+enum AvatarStep {
+    Upload(Vec<u8>),
+    Miss,
+    Want,
+}
 
 fn header_rule(ui: &Ui) {
     let pos = ui.window_pos();
     let size = ui.window_size();
     ui.get_window_draw_list()
-        .add_rect([pos[0], pos[1] + HEADER_H - 1.0], [pos[0] + size[0], pos[1] + HEADER_H], HEADER_SHADOW)
+        .add_rect(
+            [pos[0], pos[1] + HEADER_H - 1.0],
+            [pos[0] + size[0], pos[1] + HEADER_H],
+            HEADER_SHADOW,
+        )
         .filled(true)
         .build();
 }
@@ -11505,7 +14828,11 @@ fn list_label(ui: &Ui, text: &str, font: Option<FontId>) {
     let label = text.to_uppercase();
     let _font = ui.push_font_with_size(font, FONT_XS);
     let height = ui.calc_text_size(&label)[1];
-    ui.get_window_draw_list().add_text([origin[0] + 18.0, origin[1] + CATEGORY_H - height - 6.0], MUTED, &label);
+    ui.get_window_draw_list().add_text(
+        [origin[0] + 18.0, origin[1] + CATEGORY_H - height - 6.0],
+        MUTED,
+        &label,
+    );
 }
 
 fn connection_kind_glyph(kind: &str) -> &'static str {
@@ -11574,12 +14901,23 @@ fn format_member_since(ms: i64) -> String {
         return "Unknown".into();
     };
     let month = dt.format("%b").to_string();
-    let day = dt.format("%d").to_string().trim_start_matches('0').to_string();
+    let day = dt
+        .format("%d")
+        .to_string()
+        .trim_start_matches('0')
+        .to_string();
     let year = dt.format("%Y").to_string();
     format!("{month} {day}, {year}")
 }
 
-fn paint_avatar(ui: &Ui, texture: Option<ManagedTextureId>, center: [f32; 2], radius: f32, letters: &str, ring: Option<[f32; 4]>) {
+fn paint_avatar(
+    ui: &Ui,
+    texture: Option<ManagedTextureId>,
+    center: [f32; 2],
+    radius: f32,
+    letters: &str,
+    ring: Option<[f32; 4]>,
+) {
     paint_avatar_tinted(ui, texture, center, radius, letters, BLURPLE, WHITE);
     if let Some(color) = ring {
         ui.get_window_draw_list()
@@ -11613,28 +14951,51 @@ fn paint_avatar_tinted(
     } else {
         draw.add_circle(center, radius, fill).filled(true).build();
         let size = ui.calc_text_size(letters);
-        draw.add_text([center[0] - size[0] * 0.5, center[1] - size[1] * 0.5], tint, letters);
+        draw.add_text(
+            [center[0] - size[0] * 0.5, center[1] - size[1] * 0.5],
+            tint,
+            letters,
+        );
     }
 }
 
-fn paint_status_dot(ui: &Ui, center: [f32; 2], radius: f32, presence: Presence, backdrop: [f32; 4]) {
+fn paint_status_dot(
+    ui: &Ui,
+    center: [f32; 2],
+    radius: f32,
+    presence: Presence,
+    backdrop: [f32; 4],
+) {
     let dot = crate::theme::status_dot(center, radius);
     let draw = ui.get_window_draw_list();
-    draw.add_circle(dot.center, dot.cutout, backdrop).filled(true).build();
+    draw.add_circle(dot.center, dot.cutout, backdrop)
+        .filled(true)
+        .build();
     let color = presence_color(presence);
-    draw.add_circle(dot.center, dot.radius, color).filled(true).build();
+    draw.add_circle(dot.center, dot.radius, color)
+        .filled(true)
+        .build();
     match presence {
         Presence::Online => {}
         // Idle is a crescent: a backdrop-colored bite out of the upper left.
         Presence::Idle => {
             let bite = dot.radius * 0.62;
-            draw.add_circle([dot.center[0] - dot.radius * 0.42, dot.center[1] - dot.radius * 0.42], bite, backdrop)
-                .filled(true)
-                .build();
+            draw.add_circle(
+                [
+                    dot.center[0] - dot.radius * 0.42,
+                    dot.center[1] - dot.radius * 0.42,
+                ],
+                bite,
+                backdrop,
+            )
+            .filled(true)
+            .build();
         }
         // Offline is a hollow ring.
         Presence::Offline => {
-            draw.add_circle(dot.center, dot.radius * 0.45, backdrop).filled(true).build();
+            draw.add_circle(dot.center, dot.radius * 0.45, backdrop)
+                .filled(true)
+                .build();
         }
     }
 }
@@ -11650,9 +15011,16 @@ fn share_tip(live: bool) -> &'static str {
 }
 
 fn initials(name: &str) -> String {
-    let parts: Vec<&str> = name.split_whitespace().filter(|part| !part.is_empty()).collect();
+    let parts: Vec<&str> = name
+        .split_whitespace()
+        .filter(|part| !part.is_empty())
+        .collect();
     let source = if parts.len() >= 2 {
-        format!("{}{}", parts[0].chars().next().unwrap_or('?'), parts[1].chars().next().unwrap_or('?'))
+        format!(
+            "{}{}",
+            parts[0].chars().next().unwrap_or('?'),
+            parts[1].chars().next().unwrap_or('?')
+        )
     } else {
         name.chars().take(1).collect()
     };
@@ -11700,4 +15068,3 @@ mod uploads_unavailable_tests {
         assert_eq!(UPLOADS_UNAVAILABLE_MESSAGE, "Currently Unavailable");
     }
 }
-

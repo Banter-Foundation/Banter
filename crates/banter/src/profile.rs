@@ -106,10 +106,16 @@ pub fn profile_editor_layout(display: [f32; 2]) -> ProfileEditorLayout {
     let outer = PROFILE_EDITOR_OUTER_PAD;
     let frame = ProfilePanelRect {
         min: [outer, outer],
-        max: [(display[0] - outer).max(outer + 320.0), (display[1] - outer).max(outer + 240.0)],
+        max: [
+            (display[0] - outer).max(outer + 320.0),
+            (display[1] - outer).max(outer + 240.0),
+        ],
     };
     let inner_min = [frame.min[0] + PROFILE_PAD, frame.min[1] + PROFILE_PAD];
-    let inner_max = [frame.max[0] - PROFILE_PAD, frame.max[1] - PROFILE_EDITOR_FOOTER_H];
+    let inner_max = [
+        frame.max[0] - PROFILE_PAD,
+        frame.max[1] - PROFILE_EDITOR_FOOTER_H,
+    ];
     let footer = ProfilePanelRect {
         min: [frame.min[0], frame.max[1] - PROFILE_EDITOR_FOOTER_H],
         max: frame.max,
@@ -608,13 +614,22 @@ pub fn profile_editor_slot_rows() -> &'static [(&'static str, &'static [ProfileE
         ("Nameplate", &[ProfileEditorSlot::Nameplate]),
         (
             "Avatar",
-            &[ProfileEditorSlot::Avatar, ProfileEditorSlot::AvatarDecoration],
+            &[
+                ProfileEditorSlot::Avatar,
+                ProfileEditorSlot::AvatarDecoration,
+            ],
         ),
         ("Display Name Style", &[ProfileEditorSlot::DisplayNameStyle]),
-        ("Theme & Banner", &[ProfileEditorSlot::Theme, ProfileEditorSlot::Banner]),
+        (
+            "Theme & Banner",
+            &[ProfileEditorSlot::Theme, ProfileEditorSlot::Banner],
+        ),
         (
             "Profile Effect & Frame",
-            &[ProfileEditorSlot::ProfileEffect, ProfileEditorSlot::ProfileFrame],
+            &[
+                ProfileEditorSlot::ProfileEffect,
+                ProfileEditorSlot::ProfileFrame,
+            ],
         ),
         ("Badges", &[ProfileEditorSlot::Badges]),
     ]

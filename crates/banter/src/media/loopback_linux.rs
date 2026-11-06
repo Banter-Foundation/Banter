@@ -28,10 +28,21 @@ impl Drop for Loop {
     }
 }
 
-pub fn start_render(id: String, name: String, pcm: Arc<Mutex<HashMap<String, VecDeque<i16>>>>) -> Result<Loop, String> {
+pub fn start_render(
+    id: String,
+    name: String,
+    pcm: Arc<Mutex<HashMap<String, VecDeque<i16>>>>,
+) -> Result<Loop, String> {
     let device = monitor_source(&name)?;
     let mut child = Command::new("parec")
-        .args(["-d", &device, "--raw", "--format=s16le", "--rate=48000", "--channels=1"])
+        .args([
+            "-d",
+            &device,
+            "--raw",
+            "--format=s16le",
+            "--rate=48000",
+            "--channels=1",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -41,10 +52,25 @@ pub fn start_render(id: String, name: String, pcm: Arc<Mutex<HashMap<String, Vec
     spawn_reader(child, id, pcm)
 }
 
-pub fn start_process(id: String, pid: u32, pcm: Arc<Mutex<HashMap<String, VecDeque<i16>>>>) -> Result<Loop, String> {
+pub fn start_process(
+    id: String,
+    pid: u32,
+    pcm: Arc<Mutex<HashMap<String, VecDeque<i16>>>>,
+) -> Result<Loop, String> {
     let node = pipewire_node_for_pid(pid)?;
     let mut child = Command::new("pw-cat")
-        .args(["--record", "--target", &node, "--format", "s16", "--rate", "48000", "--channels", "1", "-"])
+        .args([
+            "--record",
+            "--target",
+            &node,
+            "--format",
+            "s16",
+            "--rate",
+            "48000",
+            "--channels",
+            "1",
+            "-",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -54,10 +80,17 @@ pub fn start_process(id: String, pid: u32, pcm: Arc<Mutex<HashMap<String, VecDeq
     spawn_reader(child, id, pcm)
 }
 
-fn spawn_reader(mut child: Child, id: String, pcm: Arc<Mutex<HashMap<String, VecDeque<i16>>>>) -> Result<Loop, String> {
+fn spawn_reader(
+    mut child: Child,
+    id: String,
+    pcm: Arc<Mutex<HashMap<String, VecDeque<i16>>>>,
+) -> Result<Loop, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
-    let stdout = child.stdout.take().ok_or_else(|| "capture produced no audio".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "capture produced no audio".to_string())?;
     let thread = thread::Builder::new()
         .name("banter-loopback".into())
         .spawn(move || {
@@ -73,7 +106,10 @@ fn spawn_reader(mut child: Child, id: String, pcm: Arc<Mutex<HashMap<String, Vec
             let _ = child.wait();
         })
         .map_err(|err| err.to_string())?;
-    Ok(Loop { stop, thread: Some(thread) })
+    Ok(Loop {
+        stop,
+        thread: Some(thread),
+    })
 }
 
 fn settle(child: &mut Child, what: &str) -> Result<(), String> {
@@ -123,7 +159,10 @@ fn monitor_source(name: &str) -> Result<String, String> {
     }
     let needle = name.trim().to_ascii_lowercase();
     if !needle.is_empty() {
-        if let Some(found) = monitors.iter().find(|source| source.to_ascii_lowercase().contains(&needle)) {
+        if let Some(found) = monitors
+            .iter()
+            .find(|source| source.to_ascii_lowercase().contains(&needle))
+        {
             return Ok((*found).to_string());
         }
     }

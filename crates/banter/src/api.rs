@@ -4,16 +4,17 @@ use std::io::Read;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use base64::Engine;
 use crate::profiler;
-use base64::engine::general_purpose::STANDARD;
 use banter_server::{
-    format_banter_notice, Account, BanterVersionReport, CallSnapshot, Category, CategoryLayout, Channel,
-    ChannelKind, ChatTarget, CosmeticItem, DirectChat, Friend, FriendRequest, GuildRole, Mention, Message,
-    PluginInfo, Presence, ProfilePatch, ServerDebug, ServerFolder, ServerFolderPatch, ServerHome, ServerRail,
-    ServerRailServer, ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember, VoiceRoster, ERR_HTTP_PARSE,
-    ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
+    format_banter_notice, Account, BanterVersionReport, CallSnapshot, Category, CategoryLayout,
+    Channel, ChannelKind, ChatTarget, CosmeticItem, DirectChat, Friend, FriendRequest, GuildRole,
+    Mention, Message, PluginInfo, Presence, ProfilePatch, ServerDebug, ServerFolder,
+    ServerFolderPatch, ServerHome, ServerRail, ServerRailServer, ServerSummary, Session,
+    UserProfile, VoiceFlags, VoiceMember, VoiceRoster, ERR_HTTP_PARSE, ERR_HTTP_STATUS,
+    ERR_HTTP_TRANSPORT, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
 };
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use serde::Deserialize;
 
 /// Client-side API failure with a catalog code (BA-88). Display is short user text + code.
@@ -50,7 +51,9 @@ impl ApiError {
     fn context(self, code: &'static str, message: impl Into<String>) -> Self {
         let call_site = message.into();
         let (message, detail) = if self.server_code.is_some() {
-            let detail = self.detail.or_else(|| Some(format!("{call_site} [{code}]")));
+            let detail = self
+                .detail
+                .or_else(|| Some(format!("{call_site} [{code}]")));
             (self.message, detail)
         } else {
             let prior = self.detail.unwrap_or(self.message);
@@ -89,11 +92,16 @@ impl std::fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
-/// Shared client with a short timeout. The shell polls from the UI thread, so a
-/// stuck read must not freeze or abort the window.
+/// Shared client with a short timeout. Shell list, message, and avatar GETs run
+/// on a background worker. Each call still times out so a stuck read cannot
+/// occupy that worker forever.
 fn http() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
-    AGENT.get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_millis(800)).build())
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout(Duration::from_millis(800))
+            .build()
+    })
 }
 
 /// Longer timeout for register/login. Those endpoints run Argon2 on the server;
@@ -101,7 +109,11 @@ fn http() -> &'static ureq::Agent {
 /// on `/v1/register`). Matches the foundation suite's 5 s HTTP client.
 fn http_auth() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
-    AGENT.get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_secs(5)).build())
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(5))
+            .build()
+    })
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -195,7 +207,11 @@ impl Client {
     }
 
     pub fn logout(&self) -> Result<(), ApiError> {
-        self.call_empty("POST", "/v1/logout", self.auth(http().post(&self.url("/v1/logout"))))
+        self.call_empty(
+            "POST",
+            "/v1/logout",
+            self.auth(http().post(&self.url("/v1/logout"))),
+        )
     }
 
     /// Unauthenticated health/version probe (`GET /v1/health`).
@@ -211,7 +227,11 @@ impl Client {
         self.get_json("/v1/me")
     }
 
-    pub fn user_profile(&self, user_id: i64, server_id: Option<i64>) -> Result<UserProfile, ApiError> {
+    pub fn user_profile(
+        &self,
+        user_id: i64,
+        server_id: Option<i64>,
+    ) -> Result<UserProfile, ApiError> {
         let path = match server_id {
             Some(server_id) => format!("/v1/users/{user_id}?server_id={server_id}"),
             None => format!("/v1/users/{user_id}"),
@@ -250,7 +270,11 @@ impl Client {
     }
 
     pub fn clear_avatar(&self) -> Result<(), ApiError> {
-        self.call_empty("DELETE", "/v1/me/avatar", self.auth(http().delete(&self.url("/v1/me/avatar"))))
+        self.call_empty(
+            "DELETE",
+            "/v1/me/avatar",
+            self.auth(http().delete(&self.url("/v1/me/avatar"))),
+        )
     }
 
     pub fn set_banner(&self, bytes: &[u8]) -> Result<(), ApiError> {
@@ -264,7 +288,11 @@ impl Client {
     }
 
     pub fn clear_banner(&self) -> Result<(), ApiError> {
-        self.call_empty("DELETE", "/v1/me/banner", self.auth(http().delete(&self.url("/v1/me/banner"))))
+        self.call_empty(
+            "DELETE",
+            "/v1/me/banner",
+            self.auth(http().delete(&self.url("/v1/me/banner"))),
+        )
     }
 
     pub fn avatar(&self, user_id: i64) -> Result<Vec<u8>, ApiError> {
@@ -408,10 +436,18 @@ impl Client {
     pub fn install_plugin(&self, server_id: i64, zip_bytes: &[u8]) -> Result<PluginInfo, ApiError> {
         let path = format!("/v1/servers/{server_id}/plugins");
         let start = Instant::now();
-        let request = self.auth(http().post(&self.url(&path))).set("Content-Type", "application/zip");
-        let response = request.send_bytes(zip_bytes).map_err(|err| self.http_error("POST", &path, err))?;
+        let request = self
+            .auth(http().post(&self.url(&path)))
+            .set("Content-Type", "application/zip");
+        let response = request
+            .send_bytes(zip_bytes)
+            .map_err(|err| self.http_error("POST", &path, err))?;
         let value = response.into_json().map_err(|err| {
-            ApiError::from_issue(ERR_HTTP_PARSE, "couldn't read the server reply", Some(err.to_string()))
+            ApiError::from_issue(
+                ERR_HTTP_PARSE,
+                "couldn't read the server reply",
+                Some(err.to_string()),
+            )
         })?;
         profiler::record_http("POST", &path, start.elapsed(), zip_bytes.len(), 0);
         Ok(value)
@@ -491,7 +527,12 @@ impl Client {
         self.call_empty("DELETE", &path, self.auth(http().delete(&self.url(&path))))
     }
 
-    pub fn set_member_roles(&self, server_id: i64, user_id: i64, role_ids: &[i64]) -> Result<(), ApiError> {
+    pub fn set_member_roles(
+        &self,
+        server_id: i64,
+        user_id: i64,
+        role_ids: &[i64],
+    ) -> Result<(), ApiError> {
         let path = format!("/v1/servers/{server_id}/members/{user_id}/roles");
         self.send_json_empty(
             "PUT",
@@ -545,9 +586,9 @@ impl Client {
         icon: Option<&str>,
     ) -> Result<Channel, ApiError> {
         self.send_json(
-            self.auth(http().patch(&self.url(&format!(
-                "/v1/servers/{server_id}/channels/{channel_id}"
-            )))),
+            self.auth(
+                http().patch(&self.url(&format!("/v1/servers/{server_id}/channels/{channel_id}"))),
+            ),
             serde_json::json!({ "name": name, "icon": icon }),
         )
     }
@@ -568,13 +609,19 @@ impl Client {
     ) -> Result<Vec<Message>, ApiError> {
         let path = target_messages_path(target);
         let start = Instant::now();
-        let mut request = self.auth(http().get(&self.url(&path))).query("limit", &limit.to_string());
+        let mut request = self
+            .auth(http().get(&self.url(&path)))
+            .query("limit", &limit.to_string());
         if let Some(query) = query.map(str::trim).filter(|query| !query.is_empty()) {
             request = request.query("q", query);
         }
-        let response = request.call().map_err(|err| self.http_error("GET", &path, err))?;
+        let response = request
+            .call()
+            .map_err(|err| self.http_error("GET", &path, err))?;
         let resp_hint = content_length(&response);
-        let value = response.into_json().map_err(|err| ApiError::new(err.to_string()))?;
+        let value = response
+            .into_json()
+            .map_err(|err| ApiError::new(err.to_string()))?;
         profiler::record_http("GET", &path, start.elapsed(), 0, resp_hint);
         Ok(value)
     }
@@ -665,8 +712,12 @@ impl Client {
     }
 
     pub fn leave_voice(&self) -> Result<(), ApiError> {
-        self.call_empty("POST", "/v1/voice/leave", self.auth(http().post(&self.url("/v1/voice/leave"))))
-            .map_err(|err| err.context(ERR_VC_LEAVE, "couldn't leave voice"))
+        self.call_empty(
+            "POST",
+            "/v1/voice/leave",
+            self.auth(http().post(&self.url("/v1/voice/leave"))),
+        )
+        .map_err(|err| err.context(ERR_VC_LEAVE, "couldn't leave voice"))
     }
 
     pub fn set_flags(&self, flags: VoiceFlags) -> Result<(), ApiError> {
@@ -680,7 +731,10 @@ impl Client {
     }
 
     pub fn start_call(&self, dm_id: i64) -> Result<CallSnapshot, ApiError> {
-        self.send_json(self.auth(http().post(&self.url(&format!("/v1/dms/{dm_id}/call")))), serde_json::json!({}))
+        self.send_json(
+            self.auth(http().post(&self.url(&format!("/v1/dms/{dm_id}/call")))),
+            serde_json::json!({}),
+        )
     }
 
     pub fn accept_call(&self, dm_id: i64) -> Result<CallSnapshot, ApiError> {
@@ -720,7 +774,11 @@ impl Client {
             .map_err(|err| self.http_error("GET", path, err))?;
         let resp_hint = content_length(&response);
         let value = response.into_json().map_err(|err| {
-            ApiError::from_issue(ERR_HTTP_PARSE, "couldn't read the server reply", Some(err.to_string()))
+            ApiError::from_issue(
+                ERR_HTTP_PARSE,
+                "couldn't read the server reply",
+                Some(err.to_string()),
+            )
         })?;
         profiler::record_http("GET", path, start.elapsed(), 0, resp_hint);
         Ok(value)
@@ -744,13 +802,19 @@ impl Client {
         body: serde_json::Value,
     ) -> Result<T, ApiError> {
         let start = Instant::now();
-        let req_bytes = serde_json::to_vec(&body).map(|bytes| bytes.len()).unwrap_or(0);
+        let req_bytes = serde_json::to_vec(&body)
+            .map(|bytes| bytes.len())
+            .unwrap_or(0);
         let response = request
             .send_json(body)
             .map_err(|err| self.http_error(method, path, err))?;
         let resp_hint = content_length(&response);
         let value = response.into_json().map_err(|err| {
-            ApiError::from_issue(ERR_HTTP_PARSE, "couldn't read the server reply", Some(err.to_string()))
+            ApiError::from_issue(
+                ERR_HTTP_PARSE,
+                "couldn't read the server reply",
+                Some(err.to_string()),
+            )
         })?;
         profiler::record_http(method, path, start.elapsed(), req_bytes, resp_hint);
         Ok(value)
@@ -764,7 +828,9 @@ impl Client {
         body: serde_json::Value,
     ) -> Result<(), ApiError> {
         let start = Instant::now();
-        let req_bytes = serde_json::to_vec(&body).map(|bytes| bytes.len()).unwrap_or(0);
+        let req_bytes = serde_json::to_vec(&body)
+            .map(|bytes| bytes.len())
+            .unwrap_or(0);
         let result = request.send_json(body);
         profiler::record_http(method, path, start.elapsed(), req_bytes, 0);
         self.finish(method, path, result)
@@ -783,7 +849,9 @@ impl Client {
         path: &str,
         result: Result<ureq::Response, ureq::Error>,
     ) -> Result<(), ApiError> {
-        result.map(|_| ()).map_err(|err| self.http_error(method, path, err))
+        result
+            .map(|_| ())
+            .map_err(|err| self.http_error(method, path, err))
     }
 
     fn http_error(&self, method: &str, path: &str, error: ureq::Error) -> ApiError {
@@ -814,7 +882,11 @@ impl Client {
                     )
                 }
             }
-            other => ApiError::from_issue(ERR_HTTP_TRANSPORT, "couldn't reach the Banter server", Some(other.to_string())),
+            other => ApiError::from_issue(
+                ERR_HTTP_TRANSPORT,
+                "couldn't reach the Banter server",
+                Some(other.to_string()),
+            ),
         }
     }
 }

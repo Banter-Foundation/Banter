@@ -244,7 +244,14 @@ impl Profiler {
         }
     }
 
-    pub fn record_http(&self, method: &str, path: &str, elapsed: Duration, req_bytes: usize, resp_bytes: usize) {
+    pub fn record_http(
+        &self,
+        method: &str,
+        path: &str,
+        elapsed: Duration,
+        req_bytes: usize,
+        resp_bytes: usize,
+    ) {
         let ms = elapsed.as_secs_f32() * 1000.0;
         self.http_tx.fetch_add(req_bytes as u64, Ordering::Relaxed);
         self.http_rx.fetch_add(resp_bytes as u64, Ordering::Relaxed);
@@ -253,7 +260,11 @@ impl Profiler {
             self.record_op(
                 format!("HTTP {method} {path}"),
                 ms,
-                format!("{} in / {} out", format_bytes(resp_bytes as u64), format_bytes(req_bytes as u64)),
+                format!(
+                    "{} in / {} out",
+                    format_bytes(resp_bytes as u64),
+                    format_bytes(req_bytes as u64)
+                ),
             );
         }
     }
@@ -314,20 +325,30 @@ impl Profiler {
         let ws_rx = self.ws_rx.load(Ordering::Relaxed);
         let ws_msgs = self.ws_msgs.load(Ordering::Relaxed);
         let scale = 1.0 / elapsed;
-        self.http_tx_per_s
-            .store(((http_tx.saturating_sub(mark.http_tx)) as f64 * scale) as u64, Ordering::Relaxed);
-        self.http_rx_per_s
-            .store(((http_rx.saturating_sub(mark.http_rx)) as f64 * scale) as u64, Ordering::Relaxed);
+        self.http_tx_per_s.store(
+            ((http_tx.saturating_sub(mark.http_tx)) as f64 * scale) as u64,
+            Ordering::Relaxed,
+        );
+        self.http_rx_per_s.store(
+            ((http_rx.saturating_sub(mark.http_rx)) as f64 * scale) as u64,
+            Ordering::Relaxed,
+        );
         self.http_count_per_s.store(
             ((http_count.saturating_sub(mark.http_count)) as f64 * scale) as u64,
             Ordering::Relaxed,
         );
-        self.ws_tx_per_s
-            .store(((ws_tx.saturating_sub(mark.ws_tx)) as f64 * scale) as u64, Ordering::Relaxed);
-        self.ws_rx_per_s
-            .store(((ws_rx.saturating_sub(mark.ws_rx)) as f64 * scale) as u64, Ordering::Relaxed);
-        self.ws_msgs_per_s
-            .store(((ws_msgs.saturating_sub(mark.ws_msgs)) as f64 * scale) as u64, Ordering::Relaxed);
+        self.ws_tx_per_s.store(
+            ((ws_tx.saturating_sub(mark.ws_tx)) as f64 * scale) as u64,
+            Ordering::Relaxed,
+        );
+        self.ws_rx_per_s.store(
+            ((ws_rx.saturating_sub(mark.ws_rx)) as f64 * scale) as u64,
+            Ordering::Relaxed,
+        );
+        self.ws_msgs_per_s.store(
+            ((ws_msgs.saturating_sub(mark.ws_msgs)) as f64 * scale) as u64,
+            Ordering::Relaxed,
+        );
         mark.at = Instant::now();
         mark.http_tx = http_tx;
         mark.http_rx = http_rx;
@@ -389,7 +410,13 @@ pub fn scope_section(section: Section) -> Scope {
     }
 }
 
-pub fn record_http(method: &str, path: &str, elapsed: Duration, req_bytes: usize, resp_bytes: usize) {
+pub fn record_http(
+    method: &str,
+    path: &str,
+    elapsed: Duration,
+    req_bytes: usize,
+    resp_bytes: usize,
+) {
     global().record_http(method, path, elapsed, req_bytes, resp_bytes);
 }
 
@@ -477,7 +504,10 @@ fn process_memory() -> (u64, u64) {
         let mut counters = PROCESS_MEMORY_COUNTERS::default();
         counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
         if GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb).is_ok() {
-            return (counters.WorkingSetSize as u64, counters.PagefileUsage as u64);
+            return (
+                counters.WorkingSetSize as u64,
+                counters.PagefileUsage as u64,
+            );
         }
     }
     (0, 0)

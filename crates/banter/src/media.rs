@@ -4,32 +4,36 @@
 //! A stream change is captured on a side thread and cut in only after that frame is encoded.
 
 mod encode;
-#[cfg(target_os = "linux")]
-mod loopback_linux;
-#[cfg(target_os = "linux")]
-mod screencast;
-#[cfg(target_os = "macos")]
-mod macos;
 #[cfg(windows)]
 mod loopback;
+#[cfg(target_os = "linux")]
+mod loopback_linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod mf;
 mod qos;
 mod rtc;
+#[cfg(target_os = "linux")]
+mod screencast;
 
-use std::collections::{HashMap, VecDeque};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use banter_server::{ClientSignal, LayerId, MediaKind, MediaPlace, ServerEvent, VoiceFlags, should_send_camera, should_send_screen, should_send_stream_audio};
+use banter_server::{
+    should_send_camera, should_send_screen, should_send_stream_audio, ClientSignal, LayerId,
+    MediaKind, MediaPlace, ServerEvent, VoiceFlags,
+};
 
 use crate::logic::{
-    AUDIO_FRAME_SAMPLES, CameraChoice, CaptureKind, MixSource, automatic_gain, cancel_echo, fade_gain, frame_rms,
-    mic_opus_frame, mix_equal_power, resample_mono_i16, scale_i16, stamp_cursor, suppress_noise,
+    automatic_gain, cancel_echo, fade_gain, frame_rms, mic_opus_frame, mix_equal_power,
+    resample_mono_i16, scale_i16, stamp_cursor, suppress_noise, CameraChoice, CaptureKind,
+    MixSource, AUDIO_FRAME_SAMPLES,
 };
 
 const FLAG_MUTED: u32 = 1;
@@ -203,7 +207,18 @@ impl Media {
             let flags = Arc::clone(&flags);
             let output_rate = Arc::clone(&output_rate);
             let errors = Arc::clone(&errors);
-            move || device_loop(stop, engine, captured, input_rate, playback, flags, output_rate, errors)
+            move || {
+                device_loop(
+                    stop,
+                    engine,
+                    captured,
+                    input_rate,
+                    playback,
+                    flags,
+                    output_rate,
+                    errors,
+                )
+            }
         });
 
         let audio = thread::spawn({
@@ -216,7 +231,12 @@ impl Media {
             let engine = Arc::clone(&engine);
             let user_pcm = Arc::clone(&user_pcm);
             let stream_pcm = Arc::clone(&stream_pcm);
-            move || audio_loop(flags, in_place, stop, captured, input_rate, playback, engine, user_pcm, stream_pcm)
+            move || {
+                audio_loop(
+                    flags, in_place, stop, captured, input_rate, playback, engine, user_pcm,
+                    stream_pcm,
+                )
+            }
         });
         let camera = thread::spawn({
             let flags = Arc::clone(&flags);
@@ -227,7 +247,18 @@ impl Media {
             let camera_index = Arc::clone(&camera_index);
             let camera_preview = Arc::clone(&camera_preview);
             let camera_picture = Arc::clone(&camera_picture);
-            move || camera_loop(flags, in_place, stop, local_camera, errors, camera_index, camera_preview, camera_picture)
+            move || {
+                camera_loop(
+                    flags,
+                    in_place,
+                    stop,
+                    local_camera,
+                    errors,
+                    camera_index,
+                    camera_preview,
+                    camera_picture,
+                )
+            }
         });
         let screen = thread::spawn({
             let flags = Arc::clone(&flags);
@@ -315,7 +346,8 @@ impl Media {
             *slot = target;
         }
         self.stream_edge.store(max_edge, Ordering::Relaxed);
-        self.stream_interval.store(interval_ms.max(1), Ordering::Relaxed);
+        self.stream_interval
+            .store(interval_ms.max(1), Ordering::Relaxed);
     }
 
     /// The recorder could not start (the share dialog was dismissed, or the source is gone).
@@ -325,19 +357,35 @@ impl Media {
     }
 
     pub fn apply_engine(&self, update: &EngineUpdate) {
-        store_f32(&self.engine.input_volume, update.input_volume.clamp(0.0, 2.0));
-        store_f32(&self.engine.output_volume, update.output_volume.clamp(0.0, 2.0));
+        store_f32(
+            &self.engine.input_volume,
+            update.input_volume.clamp(0.0, 2.0),
+        );
+        store_f32(
+            &self.engine.output_volume,
+            update.output_volume.clamp(0.0, 2.0),
+        );
         store_f32(&self.engine.sensitivity, update.sensitivity.max(0.0));
-        self.engine.noise.store(update.noise_suppression, Ordering::Relaxed);
-        self.engine.echo.store(update.echo_cancellation, Ordering::Relaxed);
+        self.engine
+            .noise
+            .store(update.noise_suppression, Ordering::Relaxed);
+        self.engine
+            .echo
+            .store(update.echo_cancellation, Ordering::Relaxed);
         self.engine.agc.store(update.auto_gain, Ordering::Relaxed);
-        self.engine.show_cursor.store(update.show_cursor, Ordering::Relaxed);
-        self.engine.show_preview.store(update.show_preview, Ordering::Relaxed);
+        self.engine
+            .show_cursor
+            .store(update.show_cursor, Ordering::Relaxed);
+        self.engine
+            .show_preview
+            .store(update.show_preview, Ordering::Relaxed);
         let changed = {
             let mut input = self.engine.input_name.lock().expect("input device");
             let mut output = self.engine.output_name.lock().expect("output device");
             let mut sources = self.engine.sources.lock().expect("stream sources");
-            let changed = *input != update.input_device || *output != update.output_device || *sources != update.sources;
+            let changed = *input != update.input_device
+                || *output != update.output_device
+                || *sources != update.sources;
             *input = update.input_device.clone();
             *output = update.output_device.clone();
             *sources = update.sources.clone();
@@ -371,7 +419,9 @@ impl Media {
     pub fn take_video(&self) -> Vec<VideoFrame> {
         let mut frames = Vec::new();
         let chosen = self.camera_index.load(Ordering::Relaxed);
-        if let Some((width, height, rgba)) = current_camera_frame(self.local_camera.lock().expect("camera").take(), chosen) {
+        if let Some((width, height, rgba)) =
+            current_camera_frame(self.local_camera.lock().expect("camera").take(), chosen)
+        {
             frames.push(VideoFrame {
                 sender: None,
                 kind: MediaKind::Camera,
@@ -389,7 +439,12 @@ impl Media {
                 layer: LayerId::Full,
             });
         }
-        for picture in self.remote_pictures.lock().expect("remote pictures").drain(..) {
+        for picture in self
+            .remote_pictures
+            .lock()
+            .expect("remote pictures")
+            .drain(..)
+        {
             frames.push(VideoFrame {
                 sender: Some(picture.sender),
                 kind: picture.kind,
@@ -426,12 +481,18 @@ fn push_mono(data: &[i16], channels: u16, store: &Mutex<VecDeque<i16>>) {
 
 fn pick_device(input: bool, name: &str) -> Result<cpal::Device, String> {
     let host = cpal::default_host();
-    let missing = if input { "no microphone is available" } else { "no speakers are available" };
+    let missing = if input {
+        "no microphone is available"
+    } else {
+        "no speakers are available"
+    };
     if name.is_empty() {
         return if input {
-            host.default_input_device().ok_or_else(|| missing.to_string())
+            host.default_input_device()
+                .ok_or_else(|| missing.to_string())
         } else {
-            host.default_output_device().ok_or_else(|| missing.to_string())
+            host.default_output_device()
+                .ok_or_else(|| missing.to_string())
         };
     }
     let devices = if input {
@@ -448,7 +509,12 @@ fn pick_device(input: bool, name: &str) -> Result<cpal::Device, String> {
 pub(crate) fn input_device_names() -> Vec<String> {
     let host = cpal::default_host();
     host.input_devices()
-        .map(|devices| devices.filter_map(|device| device.name().ok()).filter(|name| !name.trim().is_empty()).collect())
+        .map(|devices| {
+            devices
+                .filter_map(|device| device.name().ok())
+                .filter(|name| !name.trim().is_empty())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -462,12 +528,19 @@ pub(crate) fn output_device_names() -> Vec<String> {
     }
     let host = cpal::default_host();
     host.output_devices()
-        .map(|devices| devices.filter_map(|device| device.name().ok()).filter(|name| !name.trim().is_empty()).collect())
+        .map(|devices| {
+            devices
+                .filter_map(|device| device.name().ok())
+                .filter(|name| !name.trim().is_empty())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 pub(crate) fn app_audio_sources() -> Vec<(u32, String)> {
-    let Ok(windows) = xcap::Window::all() else { return Vec::new() };
+    let Ok(windows) = xcap::Window::all() else {
+        return Vec::new();
+    };
     let mut rows = Vec::new();
     for window in windows {
         if window.is_minimized().unwrap_or(true) || window.width().unwrap_or(0) < 80 {
@@ -490,11 +563,20 @@ pub(crate) fn app_audio_sources() -> Vec<(u32, String)> {
 }
 
 pub(crate) fn monitor_limits() -> (u32, u32) {
-    let Ok(monitors) = xcap::Monitor::all() else { return (0, 0) };
-    let Some(monitor) = monitors.iter().find(|monitor| monitor.is_primary().unwrap_or(false)).or_else(|| monitors.first()) else {
+    let Ok(monitors) = xcap::Monitor::all() else {
         return (0, 0);
     };
-    (monitor.height().unwrap_or(0), monitor.frequency().unwrap_or(0.0).round() as u32)
+    let Some(monitor) = monitors
+        .iter()
+        .find(|monitor| monitor.is_primary().unwrap_or(false))
+        .or_else(|| monitors.first())
+    else {
+        return (0, 0);
+    };
+    (
+        monitor.height().unwrap_or(0),
+        monitor.frequency().unwrap_or(0.0).round() as u32,
+    )
 }
 
 fn device_loop(
@@ -532,7 +614,13 @@ fn device_loop(
                     device_failed(&errors, "microphone", &err);
                 }
             }
-            match open_output(&output_name, Arc::clone(&playback), Arc::clone(&flags), Arc::clone(&engine), Arc::clone(&output_rate)) {
+            match open_output(
+                &output_name,
+                Arc::clone(&playback),
+                Arc::clone(&flags),
+                Arc::clone(&engine),
+                Arc::clone(&output_rate),
+            ) {
                 Ok(stream) => {
                     streams.push(stream);
                     device_recovered(&errors, "speakers");
@@ -542,41 +630,70 @@ fn device_loop(
             let sources = engine.sources.lock().expect("stream sources").clone();
             for source in sources.into_iter().filter(|source| source.enabled) {
                 if let Some(name) = source.id.strip_prefix("mic:") {
-                    match open_input_queue(name, source.id.clone(), Arc::clone(&engine.source_pcm)) {
+                    match open_input_queue(name, source.id.clone(), Arc::clone(&engine.source_pcm))
+                    {
                         Ok(stream) => streams.push(stream),
                         Err(err) => remember_loopback_error(&errors, &source.name, &err),
                     }
                 } else if let Some(name) = source.id.strip_prefix("loop:") {
                     #[cfg(windows)]
-                    match loopback::start_render(source.id.clone(), name.to_string(), Arc::clone(&engine.source_pcm)) {
+                    match loopback::start_render(
+                        source.id.clone(),
+                        name.to_string(),
+                        Arc::clone(&engine.source_pcm),
+                    ) {
                         Ok(handle) => loops.push(handle),
                         Err(err) => remember_loopback_error(&errors, &source.name, &err),
                     }
                     #[cfg(target_os = "linux")]
-                    match loopback_linux::start_render(source.id.clone(), name.to_string(), Arc::clone(&engine.source_pcm)) {
+                    match loopback_linux::start_render(
+                        source.id.clone(),
+                        name.to_string(),
+                        Arc::clone(&engine.source_pcm),
+                    ) {
                         Ok(handle) => loops.push(handle),
                         Err(err) => remember_loopback_error(&errors, &source.name, &err),
                     }
                     #[cfg(not(any(windows, target_os = "linux")))]
                     {
                         let _ = name;
-                        remember_loopback_error(&errors, &source.name, "speaker loopback is not available on this system");
+                        remember_loopback_error(
+                            &errors,
+                            &source.name,
+                            "speaker loopback is not available on this system",
+                        );
                     }
-                } else if let Some(pid) = source.id.strip_prefix("app:").and_then(|pid| pid.parse::<u32>().ok()) {
+                } else if let Some(pid) = source
+                    .id
+                    .strip_prefix("app:")
+                    .and_then(|pid| pid.parse::<u32>().ok())
+                {
                     #[cfg(windows)]
-                    match loopback::start_process(source.id.clone(), pid, Arc::clone(&engine.source_pcm)) {
+                    match loopback::start_process(
+                        source.id.clone(),
+                        pid,
+                        Arc::clone(&engine.source_pcm),
+                    ) {
                         Ok(handle) => loops.push(handle),
                         Err(err) => remember_loopback_error(&errors, &source.name, &err),
                     }
                     #[cfg(target_os = "linux")]
-                    match loopback_linux::start_process(source.id.clone(), pid, Arc::clone(&engine.source_pcm)) {
+                    match loopback_linux::start_process(
+                        source.id.clone(),
+                        pid,
+                        Arc::clone(&engine.source_pcm),
+                    ) {
                         Ok(handle) => loops.push(handle),
                         Err(err) => remember_loopback_error(&errors, &source.name, &err),
                     }
                     #[cfg(not(any(windows, target_os = "linux")))]
                     {
                         let _ = pid;
-                        remember_loopback_error(&errors, &source.name, "app audio is not available on this system");
+                        remember_loopback_error(
+                            &errors,
+                            &source.name,
+                            "app audio is not available on this system",
+                        );
                     }
                 }
             }
@@ -586,9 +703,15 @@ fn device_loop(
     }
 }
 
-fn open_input(name: &str, store: Arc<Mutex<VecDeque<i16>>>, rate: Arc<AtomicU32>) -> Result<cpal::Stream, String> {
+fn open_input(
+    name: &str,
+    store: Arc<Mutex<VecDeque<i16>>>,
+    rate: Arc<AtomicU32>,
+) -> Result<cpal::Stream, String> {
     let device = pick_device(true, name)?;
-    let config = device.default_input_config().map_err(|err| err.to_string())?;
+    let config = device
+        .default_input_config()
+        .map_err(|err| err.to_string())?;
     rate.store(config.sample_rate().0, Ordering::Relaxed);
     let channels = config.channels();
     let stream_config = config.config();
@@ -626,14 +749,26 @@ fn open_input(name: &str, store: Arc<Mutex<VecDeque<i16>>>, rate: Arc<AtomicU32>
     Ok(stream)
 }
 
-fn open_input_queue(name: &str, id: String, store: Arc<Mutex<HashMap<String, VecDeque<i16>>>>) -> Result<cpal::Stream, String> {
+fn open_input_queue(
+    name: &str,
+    id: String,
+    store: Arc<Mutex<HashMap<String, VecDeque<i16>>>>,
+) -> Result<cpal::Stream, String> {
     let device = pick_device(true, name)?;
-    let config = device.default_input_config().map_err(|err| err.to_string())?;
+    let config = device
+        .default_input_config()
+        .map_err(|err| err.to_string())?;
     let rate = config.sample_rate().0.max(1);
     let channels = config.channels();
     let stream_config = config.config();
     let queue = Arc::new(Mutex::new(VecDeque::new()));
-    let stream = build_input(&device, config.sample_format(), &stream_config, channels, Arc::clone(&queue))?;
+    let stream = build_input(
+        &device,
+        config.sample_format(),
+        &stream_config,
+        channels,
+        Arc::clone(&queue),
+    )?;
     let queued = Arc::clone(&queue);
     thread::spawn(move || {
         while Arc::strong_count(&queued) > 1 {
@@ -661,16 +796,30 @@ fn open_input_queue(name: &str, id: String, store: Arc<Mutex<HashMap<String, Vec
     Ok(stream)
 }
 
-fn build_input(device: &cpal::Device, format: cpal::SampleFormat, stream_config: &cpal::StreamConfig, channels: u16, store: Arc<Mutex<VecDeque<i16>>>) -> Result<cpal::Stream, String> {
+fn build_input(
+    device: &cpal::Device,
+    format: cpal::SampleFormat,
+    stream_config: &cpal::StreamConfig,
+    channels: u16,
+    store: Arc<Mutex<VecDeque<i16>>>,
+) -> Result<cpal::Stream, String> {
     let stream = match format {
         cpal::SampleFormat::I16 => device
-            .build_input_stream(stream_config, move |data: &[i16], _| push_mono(data, channels, &store), |_| {}, None)
+            .build_input_stream(
+                stream_config,
+                move |data: &[i16], _| push_mono(data, channels, &store),
+                |_| {},
+                None,
+            )
             .map_err(|err| err.to_string())?,
         cpal::SampleFormat::F32 => device
             .build_input_stream(
                 stream_config,
                 move |data: &[f32], _| {
-                    let samples: Vec<i16> = data.iter().map(|sample| (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).collect();
+                    let samples: Vec<i16> = data
+                        .iter()
+                        .map(|sample| (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+                        .collect();
                     push_mono(&samples, channels, &store);
                 },
                 |_| {},
@@ -683,9 +832,17 @@ fn build_input(device: &cpal::Device, format: cpal::SampleFormat, stream_config:
     Ok(stream)
 }
 
-fn open_output(name: &str, playback: Arc<Mutex<VecDeque<f32>>>, flags: Arc<AtomicU32>, engine: Arc<Engine>, rate_slot: Arc<AtomicU32>) -> Result<cpal::Stream, String> {
+fn open_output(
+    name: &str,
+    playback: Arc<Mutex<VecDeque<f32>>>,
+    flags: Arc<AtomicU32>,
+    engine: Arc<Engine>,
+    rate_slot: Arc<AtomicU32>,
+) -> Result<cpal::Stream, String> {
     let device = pick_device(false, name)?;
-    let config = device.default_output_config().map_err(|err| err.to_string())?;
+    let config = device
+        .default_output_config()
+        .map_err(|err| err.to_string())?;
     let rate = config.sample_rate().0;
     rate_slot.store(rate, Ordering::Relaxed);
     let channels = config.channels().max(1) as usize;
@@ -698,7 +855,9 @@ fn open_output(name: &str, playback: Arc<Mutex<VecDeque<f32>>>, flags: Arc<Atomi
             device
                 .build_output_stream(
                     &stream_config,
-                    move |output: &mut [f32], _| fill_output(output, channels, &playback, &flags, &engine),
+                    move |output: &mut [f32], _| {
+                        fill_output(output, channels, &playback, &flags, &engine)
+                    },
                     |_| {},
                     None,
                 )
@@ -707,27 +866,31 @@ fn open_output(name: &str, playback: Arc<Mutex<VecDeque<f32>>>, flags: Arc<Atomi
         cpal::SampleFormat::I16 => {
             let engine = Arc::clone(&engine);
             device
-            .build_output_stream(
-                &stream_config,
-                move |output: &mut [i16], _| {
-                    let deafened = unpack(flags.load(Ordering::Relaxed)).deafened;
-                    let volume = load_f32(&engine.output_volume);
-                    let mut queue = playback.lock().expect("playback");
-                    let mut played = Vec::with_capacity(output.len() / channels.max(1));
-                    for frame in output.chunks_mut(channels) {
-                        let sample = if deafened { 0.0 } else { queue.pop_front().unwrap_or(0.0) * volume };
-                        let value = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                        played.push(value);
-                        for slot in frame {
-                            *slot = value;
+                .build_output_stream(
+                    &stream_config,
+                    move |output: &mut [i16], _| {
+                        let deafened = unpack(flags.load(Ordering::Relaxed)).deafened;
+                        let volume = load_f32(&engine.output_volume);
+                        let mut queue = playback.lock().expect("playback");
+                        let mut played = Vec::with_capacity(output.len() / channels.max(1));
+                        for frame in output.chunks_mut(channels) {
+                            let sample = if deafened {
+                                0.0
+                            } else {
+                                queue.pop_front().unwrap_or(0.0) * volume
+                            };
+                            let value = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+                            played.push(value);
+                            for slot in frame {
+                                *slot = value;
+                            }
                         }
-                    }
-                    *engine.last_output.lock().expect("echo reference") = played;
-                },
-                |_| {},
-                None,
-            )
-            .map_err(|err| err.to_string())?
+                        *engine.last_output.lock().expect("echo reference") = played;
+                    },
+                    |_| {},
+                    None,
+                )
+                .map_err(|err| err.to_string())?
         }
         other => return Err(format!("speaker format {other} is not supported")),
     };
@@ -735,13 +898,23 @@ fn open_output(name: &str, playback: Arc<Mutex<VecDeque<f32>>>, flags: Arc<Atomi
     Ok(stream)
 }
 
-fn fill_output(output: &mut [f32], channels: usize, playback: &Mutex<VecDeque<f32>>, flags: &AtomicU32, engine: &Engine) {
+fn fill_output(
+    output: &mut [f32],
+    channels: usize,
+    playback: &Mutex<VecDeque<f32>>,
+    flags: &AtomicU32,
+    engine: &Engine,
+) {
     let deafened = unpack(flags.load(Ordering::Relaxed)).deafened;
     let volume = load_f32(&engine.output_volume);
     let mut queue = playback.lock().expect("playback");
     let mut played = Vec::with_capacity(output.len() / channels.max(1));
     for frame in output.chunks_mut(channels) {
-        let sample = if deafened { 0.0 } else { queue.pop_front().unwrap_or(0.0) * volume };
+        let sample = if deafened {
+            0.0
+        } else {
+            queue.pop_front().unwrap_or(0.0) * volume
+        };
         played.push((sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16);
         for slot in frame {
             *slot = sample;
@@ -787,7 +960,11 @@ fn audio_loop(
         let gain = load_f32(&engine.input_volume);
         let sensitivity = load_f32(&engine.sensitivity);
         samples = scale_i16(&samples, gain);
-        samples = suppress_noise(&samples, engine.noise.load(Ordering::Relaxed), sensitivity * 0.5);
+        samples = suppress_noise(
+            &samples,
+            engine.noise.load(Ordering::Relaxed),
+            sensitivity * 0.5,
+        );
         samples = automatic_gain(&samples, engine.agc.load(Ordering::Relaxed), 4_000.0);
         let reference = engine.last_output.lock().expect("echo reference").clone();
         samples = cancel_echo(&samples, &reference, engine.echo.load(Ordering::Relaxed));
@@ -836,7 +1013,9 @@ fn mix_stream_sources(engine: &Engine, fades: &mut HashMap<String, f32>) -> Vec<
         }
         let extra = {
             let mut map = engine.source_pcm.lock().expect("source audio");
-            let Some(queue) = map.get_mut(&source.id) else { continue };
+            let Some(queue) = map.get_mut(&source.id) else {
+                continue;
+            };
             let take = AUDIO_FRAME_SAMPLES.min(queue.len());
             let mut frame: Vec<i16> = queue.drain(0..take).collect();
             frame.resize(AUDIO_FRAME_SAMPLES, 0);
@@ -853,7 +1032,8 @@ fn add_i16(left: &[i16], right: &[i16]) -> Vec<i16> {
     let len = left.len().max(right.len());
     let mut out = Vec::with_capacity(len);
     for index in 0..len {
-        let sample = left.get(index).copied().unwrap_or(0) as i32 + right.get(index).copied().unwrap_or(0) as i32;
+        let sample = left.get(index).copied().unwrap_or(0) as i32
+            + right.get(index).copied().unwrap_or(0) as i32;
         out.push(sample.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
     }
     out
@@ -880,7 +1060,13 @@ fn remember_error(errors: &Mutex<Vec<String>>, message: String) {
 
 fn remember_loopback_error(errors: &Mutex<Vec<String>>, label: &str, raw: &str) {
     eprintln!("{label}: {raw}");
-    remember_error(errors, format!("{label}: {}", crate::settings::media_wasapi_notice(label, raw)));
+    remember_error(
+        errors,
+        format!(
+            "{label}: {}",
+            crate::settings::media_wasapi_notice(label, raw)
+        ),
+    );
 }
 
 fn camera_loop(
@@ -938,7 +1124,9 @@ fn camera_loop(
                 }
             }
         }
-        let Some(device) = camera.as_mut() else { continue };
+        let Some(device) = camera.as_mut() else {
+            continue;
+        };
         match capture_camera(device) {
             Ok((preview_w, preview_h, preview_rgba, width, height, i420)) => {
                 if reported {
@@ -947,11 +1135,17 @@ fn camera_loop(
                 }
                 if send && width >= 2 && height >= 2 && !i420.is_empty() {
                     let key = picture_needs_key(&mut keyed, width, height);
-                    pictures.store(rtc::RawPicture { width, height, i420, key });
+                    pictures.store(rtc::RawPicture {
+                        width,
+                        height,
+                        i420,
+                        key,
+                    });
                 } else if !send {
                     keyed = None;
                 }
-                *local.lock().expect("camera") = Some((choice.device_index(), preview_w, preview_h, preview_rgba));
+                *local.lock().expect("camera") =
+                    Some((choice.device_index(), preview_w, preview_h, preview_rgba));
             }
             // Reported once per failure run; a failing camera fails every frame, about 30 times a second.
             Err(err) if !reported => {
@@ -984,7 +1178,11 @@ pub(crate) fn camera_names() -> Vec<(u32, String)> {
                 return None;
             };
             let human = info.human_name();
-            let name = if human.trim().is_empty() { format!("Camera {index}") } else { human };
+            let name = if human.trim().is_empty() {
+                format!("Camera {index}")
+            } else {
+                human
+            };
             Some((index, name))
         })
         .collect()
@@ -1015,23 +1213,22 @@ pub fn pick_preferred_camera_mode(modes: &[CameraModeChoice]) -> Option<CameraMo
     const TARGET_FPS: u32 = 30;
     let target_w = preferred_camera_width();
     let target_h = preferred_camera_height();
-    modes
-        .iter()
-        .copied()
-        .min_by_key(|mode| {
-            let undersized = (mode.width < target_w || mode.height < target_h) as u64;
-            let dx = mode.width as i64 - target_w as i64;
-            let dy = mode.height as i64 - target_h as i64;
-            let distance = (dx * dx + dy * dy) as u64;
-            let fps_delta = (mode.fps as i64 - TARGET_FPS as i64).unsigned_abs() as u64;
-            let mjpeg_rank = if mode.mjpeg { 0u64 } else { 1 };
-            (undersized, distance, fps_delta, mjpeg_rank)
-        })
+    modes.iter().copied().min_by_key(|mode| {
+        let undersized = (mode.width < target_w || mode.height < target_h) as u64;
+        let dx = mode.width as i64 - target_w as i64;
+        let dy = mode.height as i64 - target_h as i64;
+        let distance = (dx * dx + dy * dy) as u64;
+        let fps_delta = (mode.fps as i64 - TARGET_FPS as i64).unsigned_abs() as u64;
+        let mjpeg_rank = if mode.mjpeg { 0u64 } else { 1 };
+        (undersized, distance, fps_delta, mjpeg_rank)
+    })
 }
 
 fn open_camera(index: u32) -> Result<nokhwa::Camera, String> {
     use nokhwa::pixel_format::RgbFormat;
-    use nokhwa::utils::{CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution};
+    use nokhwa::utils::{
+        CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution,
+    };
     static CAMERA_DENIED: AtomicBool = AtomicBool::new(false);
     nokhwa::nokhwa_initialize(|granted| {
         if !granted {
@@ -1118,12 +1315,18 @@ pub fn decode_camera_frame(frame: &nokhwa::Buffer) -> Result<(u32, u32, Vec<u8>)
             .into_rgb8();
         return Ok((image.width(), image.height(), image.into_raw()));
     }
-    let image = frame.decode_image::<RgbFormat>().map_err(|err| err.to_string())?;
+    let image = frame
+        .decode_image::<RgbFormat>()
+        .map_err(|err| err.to_string())?;
     Ok((image.width(), image.height(), image.into_raw()))
 }
 
 /// Shrink a camera RGBA frame for the local preview tile. Not a wire codec — outbound video is I420 → H.264.
-pub fn camera_preview_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+pub fn camera_preview_rgba(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<(u32, u32, Vec<u8>), String> {
     let expected = (width as usize)
         .checked_mul(height as usize)
         .and_then(|pixels| pixels.checked_mul(4))
@@ -1147,12 +1350,16 @@ pub fn current_camera_frame(
     chosen_device: u32,
 ) -> Option<(u32, u32, Vec<u8>)> {
     match slot {
-        Some((device, width, height, rgba)) if device == chosen_device => Some((width, height, rgba)),
+        Some((device, width, height, rgba)) if device == chosen_device => {
+            Some((width, height, rgba))
+        }
         _ => None,
     }
 }
 
-fn capture_camera(camera: &mut nokhwa::Camera) -> Result<(u32, u32, Vec<u8>, u32, u32, Vec<u8>), String> {
+fn capture_camera(
+    camera: &mut nokhwa::Camera,
+) -> Result<(u32, u32, Vec<u8>, u32, u32, Vec<u8>), String> {
     let frame = camera.frame().map_err(|err| err.to_string())?;
     let (width, height, rgb) = decode_camera_frame(&frame)?;
     let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
@@ -1248,7 +1455,11 @@ fn screen_loop(
         }
         let state = unpack(flags.load(Ordering::Relaxed));
         let enabled = in_place.load(Ordering::Relaxed) && should_send_screen(&state);
-        let pick = if enabled { stream_target.lock().expect("stream target").clone() } else { None };
+        let pick = if enabled {
+            stream_target.lock().expect("stream target").clone()
+        } else {
+            None
+        };
         let Some(pick) = pick else {
             if feed.is_some() {
                 settle_until = Some(Instant::now() + Duration::from_millis(150));
@@ -1319,7 +1530,9 @@ fn screen_loop(
         match feed.as_mut() {
             Some((_, Feed::Record { frames, .. })) => {
                 while let Ok(frame) = frames.try_recv() {
-                    let need = (frame.width as usize).saturating_mul(frame.height as usize).saturating_mul(4);
+                    let need = (frame.width as usize)
+                        .saturating_mul(frame.height as usize)
+                        .saturating_mul(4);
                     if frame.width >= 2 && frame.height >= 2 && frame.raw.len() >= need {
                         latest = Some((frame.width, frame.height, frame.raw));
                         fresh = true;
@@ -1340,7 +1553,9 @@ fn screen_loop(
                 // Scaling here would walk pixels the share is about to drop.
                 if cast.has_frame() {
                     cast_since = None;
-                } else if latest.is_none() && cast_since.is_some_and(|started| started.elapsed() > Duration::from_secs(3)) {
+                } else if latest.is_none()
+                    && cast_since.is_some_and(|started| started.elapsed() > Duration::from_secs(3))
+                {
                     remember_error(&errors, "screen: the desktop sent no picture".into());
                     capture_failed.store(true, Ordering::Relaxed);
                     failed = Some(pick);
@@ -1356,12 +1571,16 @@ fn screen_loop(
             continue;
         }
         let show_cursor = engine.show_cursor.load(Ordering::Relaxed);
-        let Some((_, current)) = feed.as_ref() else { continue };
+        let Some((_, current)) = feed.as_ref() else {
+            continue;
+        };
         match current {
             Feed::Still { grabber } => {
                 next_encode = Instant::now() + Duration::from_millis(interval);
                 match capture_rgba(grabber, show_cursor) {
-                    Ok((width, height, rgba)) => publish_screen(&pictures, &local, &engine, &mut keyed, &rgba, width, height, edge),
+                    Ok((width, height, rgba)) => publish_screen(
+                        &pictures, &local, &engine, &mut keyed, &rgba, width, height, edge,
+                    ),
                     Err(err) => remember_error(&errors, format!("screen: {err}")),
                 }
             }
@@ -1372,7 +1591,9 @@ fn screen_loop(
                     continue;
                 };
                 next_encode = Instant::now() + Duration::from_millis(interval);
-                publish_screen(&pictures, &local, &engine, &mut keyed, &rgba, width, height, edge);
+                publish_screen(
+                    &pictures, &local, &engine, &mut keyed, &rgba, width, height, edge,
+                );
             }
             Feed::Record { .. } => {
                 if !fresh {
@@ -1381,8 +1602,12 @@ fn screen_loop(
                 }
                 fresh = false;
                 next_encode = Instant::now() + Duration::from_millis(interval);
-                let Some((width, height, rgba)) = latest.as_ref() else { continue };
-                publish_screen(&pictures, &local, &engine, &mut keyed, rgba, *width, *height, edge);
+                let Some((width, height, rgba)) = latest.as_ref() else {
+                    continue;
+                };
+                publish_screen(
+                    &pictures, &local, &engine, &mut keyed, rgba, *width, *height, edge,
+                );
             }
         }
     }
@@ -1414,7 +1639,10 @@ fn open_feed(
     match pick {
         StreamPick::Portal => {
             let monitors = xcap::Monitor::all().map_err(|err| err.to_string())?;
-            let monitor = monitors.into_iter().next().ok_or_else(|| "no screen".to_string())?;
+            let monitor = monitors
+                .into_iter()
+                .next()
+                .ok_or_else(|| "no screen".to_string())?;
             start_recorder(pick, monitor, stream_target, stop)
         }
         StreamPick::Source(CaptureKind::Screen, id) => {
@@ -1425,12 +1653,16 @@ fn open_feed(
                 .ok_or_else(|| "that screen is gone".to_string())?;
             // X11 has no ScreenCast session. A paced grab is the capture; Wayland and Windows use a recorder.
             if cfg!(target_os = "linux") && !native_screen_picker() {
-                Ok(Some(Feed::Still { grabber: Grabber::Monitor { monitor } }))
+                Ok(Some(Feed::Still {
+                    grabber: Grabber::Monitor { monitor },
+                }))
             } else {
                 start_recorder(pick, monitor, stream_target, stop)
             }
         }
-        StreamPick::Source(CaptureKind::Window, id) => Ok(Some(Feed::Still { grabber: open_grabber(CaptureKind::Window, id)? })),
+        StreamPick::Source(CaptureKind::Window, id) => Ok(Some(Feed::Still {
+            grabber: open_grabber(CaptureKind::Window, id)?,
+        })),
     }
 }
 
@@ -1481,8 +1713,17 @@ fn publish_screen(
     } else {
         *local.lock().expect("screen") = None;
     }
-    pictures.store(rtc::RawPicture { width: out_w, height: out_h, i420, key });
-    crate::profiler::record_media("screen_capture", started.elapsed(), (out_w * out_h) as usize);
+    pictures.store(rtc::RawPicture {
+        width: out_w,
+        height: out_h,
+        i420,
+        key,
+    });
+    crate::profiler::record_media(
+        "screen_capture",
+        started.elapsed(),
+        (out_w * out_h) as usize,
+    );
 }
 
 #[cfg(test)]
@@ -1497,13 +1738,18 @@ mod picture_key_tests {
         assert!(picture_needs_key(&mut keyed, 640, 360));
         assert!(!picture_needs_key(&mut keyed, 640, 360));
         keyed = None;
-        assert!(picture_needs_key(&mut keyed, 640, 360), "reopen after stop must key again");
+        assert!(
+            picture_needs_key(&mut keyed, 640, 360),
+            "reopen after stop must key again"
+        );
     }
 }
 
 fn capture_rgba(grabber: &Grabber, show_cursor: bool) -> Result<(u32, u32, Vec<u8>), String> {
     let image = match grabber {
-        Grabber::Monitor { monitor, .. } => monitor.capture_image().map_err(|err| err.to_string())?,
+        Grabber::Monitor { monitor, .. } => {
+            monitor.capture_image().map_err(|err| err.to_string())?
+        }
         Grabber::Window { window, .. } => window.capture_image().map_err(|err| err.to_string())?,
     };
     let width = image.width();
@@ -1636,7 +1882,9 @@ fn x11_display() -> *mut std::os::raw::c_void {
     unsafe impl Send for Display {}
     unsafe impl Sync for Display {}
     static DISPLAY: OnceLock<Display> = OnceLock::new();
-    DISPLAY.get_or_init(|| unsafe { Display(XOpenDisplay(std::ptr::null())) }).0
+    DISPLAY
+        .get_or_init(|| unsafe { Display(XOpenDisplay(std::ptr::null())) })
+        .0
 }
 
 fn open_grabber(kind: CaptureKind, id: u32) -> Result<Grabber, String> {

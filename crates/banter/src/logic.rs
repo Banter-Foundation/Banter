@@ -3,7 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use banter_server::{
-    is_channel_icon, ChannelKind, Message, ServerFolder, ServerRail, ServerRailServer, VoiceFlags, VoiceMember,
+    is_channel_icon, ChannelKind, Message, ServerFolder, ServerRail, ServerRailServer, VoiceFlags,
+    VoiceMember,
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,17 +31,27 @@ pub fn parse_folder_color(raw: &str) -> Result<i64, String> {
 pub fn rail_tree_rows(rail: &ServerRail) -> Vec<RailTreeRow> {
     let mut folder_kids: HashMap<Option<i64>, Vec<&ServerFolder>> = HashMap::new();
     for folder in &rail.folders {
-        folder_kids.entry(folder.parent_id).or_default().push(folder);
+        folder_kids
+            .entry(folder.parent_id)
+            .or_default()
+            .push(folder);
     }
     for list in folder_kids.values_mut() {
         list.sort_by(|a, b| a.position.cmp(&b.position).then(a.id.cmp(&b.id)));
     }
     let mut server_kids: HashMap<Option<i64>, Vec<&ServerRailServer>> = HashMap::new();
     for server in &rail.servers {
-        server_kids.entry(server.folder_id).or_default().push(server);
+        server_kids
+            .entry(server.folder_id)
+            .or_default()
+            .push(server);
     }
     for list in server_kids.values_mut() {
-        list.sort_by(|a, b| a.position.cmp(&b.position).then(a.server.id.cmp(&b.server.id)));
+        list.sort_by(|a, b| {
+            a.position
+                .cmp(&b.position)
+                .then(a.server.id.cmp(&b.server.id))
+        });
     }
     let mut rows = Vec::new();
     walk_rail_tree(None, 0, &folder_kids, &server_kids, &mut rows);
@@ -134,7 +145,11 @@ fn comment_children(messages: &[Message]) -> (Vec<i64>, HashMap<i64, Vec<i64>>) 
     (roots, children)
 }
 
-fn comment_descendant_total(children: &HashMap<i64, Vec<i64>>, id: i64, stack: &mut HashSet<i64>) -> usize {
+fn comment_descendant_total(
+    children: &HashMap<i64, Vec<i64>>,
+    id: i64,
+    stack: &mut HashSet<i64>,
+) -> usize {
     if !stack.insert(id) {
         return 0;
     }
@@ -163,7 +178,9 @@ pub fn comment_tree_rows(messages: &[Message], collapsed: &HashSet<i64>) -> Vec<
     let mut stack = HashSet::new();
     let ancestors = Vec::new();
     for root in roots {
-        walk_comment_tree(root, 0, &children, collapsed, &ancestors, &mut stack, &mut rows);
+        walk_comment_tree(
+            root, 0, &children, collapsed, &ancestors, &mut stack, &mut rows,
+        );
     }
     rows
 }
@@ -357,10 +374,7 @@ pub fn capture_voice_rejoin_intent(
 /// True when a scheduled reconnect attempt should run.
 ///
 /// `next_at = None` means reconnect is not armed. `Some(at)` is ready when `now >= at`.
-pub fn reconnect_retry_ready(
-    next_at: Option<std::time::Instant>,
-    now: std::time::Instant,
-) -> bool {
+pub fn reconnect_retry_ready(next_at: Option<std::time::Instant>, now: std::time::Instant) -> bool {
     match next_at {
         None => false,
         Some(at) => now >= at,
@@ -379,10 +393,13 @@ pub fn frame_rms(samples: &[i16]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }
-    let energy: f64 = samples.iter().map(|sample| {
-        let value = *sample as f64;
-        value * value
-    }).sum();
+    let energy: f64 = samples
+        .iter()
+        .map(|sample| {
+            let value = *sample as f64;
+            value * value
+        })
+        .sum();
     (energy / samples.len() as f64).sqrt() as f32
 }
 
@@ -409,7 +426,10 @@ pub fn resample_mono_i16(input: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16
 }
 
 pub fn upsert_message(messages: &mut Vec<Message>, message: Message) {
-    if let Some(slot) = messages.iter_mut().find(|existing| existing.id == message.id) {
+    if let Some(slot) = messages
+        .iter_mut()
+        .find(|existing| existing.id == message.id)
+    {
         *slot = message;
     } else {
         messages.push(message);
@@ -426,7 +446,12 @@ pub fn remove_message(messages: &mut Vec<Message>, id: i64) {
     }
 }
 
-pub fn encode_jpeg_rgba(width: u32, height: u32, rgba: &[u8], max_edge: u32) -> Result<Vec<u8>, String> {
+pub fn encode_jpeg_rgba(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    max_edge: u32,
+) -> Result<Vec<u8>, String> {
     let expected = (width as usize)
         .checked_mul(height as usize)
         .and_then(|pixels| pixels.checked_mul(4))
@@ -434,7 +459,8 @@ pub fn encode_jpeg_rgba(width: u32, height: u32, rgba: &[u8], max_edge: u32) -> 
     if rgba.len() != expected {
         return Err("rgba size does not match the frame".into());
     }
-    let image = image::RgbaImage::from_raw(width, height, rgba.to_vec()).ok_or_else(|| "bad frame".to_string())?;
+    let image = image::RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or_else(|| "bad frame".to_string())?;
     let dynamic = image::DynamicImage::ImageRgba8(image);
     let scaled = if max_edge > 0 && (width > max_edge || height > max_edge) {
         dynamic.thumbnail(max_edge, max_edge)
@@ -443,7 +469,10 @@ pub fn encode_jpeg_rgba(width: u32, height: u32, rgba: &[u8], max_edge: u32) -> 
     };
     let mut bytes = Vec::new();
     scaled
-        .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Jpeg)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Jpeg,
+        )
         .map_err(|err| err.to_string())?;
     Ok(bytes)
 }
@@ -532,7 +561,10 @@ pub fn normalize_remote_base(input: &str) -> Result<String, String> {
         return Err("remote host is incomplete".into());
     }
 
-    let host_ok = if let Some(end) = authority.strip_prefix('[').and_then(|_| authority.find(']')) {
+    let host_ok = if let Some(end) = authority
+        .strip_prefix('[')
+        .and_then(|_| authority.find(']'))
+    {
         end > 1
     } else {
         let host = authority.split(':').next().unwrap_or("");
@@ -642,7 +674,13 @@ pub fn stream_resolutions() -> [StreamResolution; 6] {
 }
 
 pub fn stream_frame_rates() -> [StreamFps; 5] {
-    [StreamFps::Fps15, StreamFps::Fps30, StreamFps::Fps60, StreamFps::Fps120, StreamFps::Fps144]
+    [
+        StreamFps::Fps15,
+        StreamFps::Fps30,
+        StreamFps::Fps60,
+        StreamFps::Fps120,
+        StreamFps::Fps144,
+    ]
 }
 
 pub fn default_stream_resolution() -> StreamResolution {
@@ -736,7 +774,11 @@ impl ScreenShare {
     }
 
     pub fn live_target(&self) -> Option<(CaptureKind, u32)> {
-        if self.live { self.live_target } else { None }
+        if self.live {
+            self.live_target
+        } else {
+            None
+        }
     }
 
     pub fn go_live(&mut self) -> bool {
@@ -872,7 +914,9 @@ pub fn resolution_block(resolution: StreamResolution, monitor_height: u32) -> Op
         StreamResolution::Source => 0,
     };
     if monitor_height < needed {
-        Some(format!("This screen is {monitor_height}p, so {needed}p is not available."))
+        Some(format!(
+            "This screen is {monitor_height}p, so {needed}p is not available."
+        ))
     } else {
         None
     }
@@ -890,7 +934,9 @@ pub fn fps_block(fps: StreamFps, monitor_hz: u32) -> Option<String> {
         StreamFps::Fps144 => 144,
     };
     if wanted > monitor_hz {
-        Some(format!("This screen refreshes at {monitor_hz} Hz, so {wanted} FPS is not available."))
+        Some(format!(
+            "This screen refreshes at {monitor_hz} Hz, so {wanted} FPS is not available."
+        ))
     } else {
         None
     }
@@ -904,7 +950,13 @@ pub fn hardware_encoder_block(found: bool) -> Option<&'static str> {
     }
 }
 
-pub fn encode_jpeg_rgba_quality(width: u32, height: u32, rgba: &[u8], max_edge: u32, quality: u8) -> Result<Vec<u8>, String> {
+pub fn encode_jpeg_rgba_quality(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    max_edge: u32,
+    quality: u8,
+) -> Result<Vec<u8>, String> {
     let expected = (width as usize)
         .checked_mul(height as usize)
         .and_then(|pixels| pixels.checked_mul(4))
@@ -912,7 +964,8 @@ pub fn encode_jpeg_rgba_quality(width: u32, height: u32, rgba: &[u8], max_edge: 
     if rgba.len() != expected {
         return Err("rgba size does not match the frame".into());
     }
-    let image = image::RgbaImage::from_raw(width, height, rgba.to_vec()).ok_or_else(|| "bad frame".to_string())?;
+    let image = image::RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or_else(|| "bad frame".to_string())?;
     let dynamic = image::DynamicImage::ImageRgba8(image);
     let scaled = if max_edge > 0 && (width > max_edge || height > max_edge) {
         dynamic.thumbnail(max_edge, max_edge)
@@ -921,16 +974,25 @@ pub fn encode_jpeg_rgba_quality(width: u32, height: u32, rgba: &[u8], max_edge: 
     };
     let rgb = scaled.to_rgb8();
     let mut bytes = Vec::new();
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, quality.clamp(1, 100));
+    let mut encoder =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, quality.clamp(1, 100));
     encoder
-        .encode(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
+        .encode(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )
         .map_err(|err| err.to_string())?;
     Ok(bytes)
 }
 
 pub fn lerp_size(from: [f32; 2], to: [f32; 2], t: f32) -> [f32; 2] {
     let t = t.clamp(0.0, 1.0);
-    [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]
+    [
+        from[0] + (to[0] - from[0]) * t,
+        from[1] + (to[1] - from[1]) * t,
+    ]
 }
 
 pub fn stamp_cursor(rgba: &mut [u8], width: u32, height: u32, x: i32, y: i32, show: bool) {
@@ -998,7 +1060,11 @@ pub fn mic_opus_frame(flags: &VoiceFlags, samples: &[i16]) -> Option<Vec<i16>> {
 pub fn scale_i16(samples: &[i16], gain: f32) -> Vec<i16> {
     samples
         .iter()
-        .map(|sample| ((*sample as f32) * gain).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16)
+        .map(|sample| {
+            ((*sample as f32) * gain)
+                .round()
+                .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+        })
         .collect()
 }
 
@@ -1033,7 +1099,9 @@ pub fn cancel_echo(mic: &[i16], reference: &[i16], enabled: bool) -> Vec<i16> {
         .enumerate()
         .map(|(index, sample)| {
             let echo = reference.get(index).copied().unwrap_or(0) as f32 * 0.6;
-            ((*sample as f32) - echo).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16
+            ((*sample as f32) - echo)
+                .round()
+                .clamp(i16::MIN as f32, i16::MAX as f32) as i16
         })
         .collect()
 }
@@ -1080,25 +1148,22 @@ pub fn mix_source_group(id: &str) -> MixSourceGroup {
 /// Group indices for the UI: Audio channels first, then Apps. Empty groups are omitted.
 /// Relative order inside each group matches `sources`. Multi-select is unchanged.
 pub fn grouped_mix_sources(sources: &[MixSource]) -> Vec<(MixSourceGroup, Vec<usize>)> {
-    [
-        MixSourceGroup::AudioChannels,
-        MixSourceGroup::Apps,
-    ]
-    .into_iter()
-    .filter_map(|group| {
-        let indices: Vec<usize> = sources
-            .iter()
-            .enumerate()
-            .filter(|(_, source)| mix_source_group(&source.id) == group)
-            .map(|(index, _)| index)
-            .collect();
-        if indices.is_empty() {
-            None
-        } else {
-            Some((group, indices))
-        }
-    })
-    .collect()
+    [MixSourceGroup::AudioChannels, MixSourceGroup::Apps]
+        .into_iter()
+        .filter_map(|group| {
+            let indices: Vec<usize> = sources
+                .iter()
+                .enumerate()
+                .filter(|(_, source)| mix_source_group(&source.id) == group)
+                .map(|(index, _)| index)
+                .collect();
+            if indices.is_empty() {
+                None
+            } else {
+                Some((group, indices))
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1117,12 +1182,18 @@ mod debug_command_tests {
 
 #[cfg(test)]
 mod mix_source_group_tests {
-    use super::{MixSource, MixSourceGroup, grouped_mix_sources, mix_source_group};
+    use super::{grouped_mix_sources, mix_source_group, MixSource, MixSourceGroup};
 
     #[test]
     fn classifies_and_groups_channel_and_app_sources() {
-        assert_eq!(mix_source_group("mic:Headset"), MixSourceGroup::AudioChannels);
-        assert_eq!(mix_source_group("loop:Speakers"), MixSourceGroup::AudioChannels);
+        assert_eq!(
+            mix_source_group("mic:Headset"),
+            MixSourceGroup::AudioChannels
+        );
+        assert_eq!(
+            mix_source_group("loop:Speakers"),
+            MixSourceGroup::AudioChannels
+        );
         assert_eq!(mix_source_group("app:4242"), MixSourceGroup::Apps);
         assert_eq!(MixSourceGroup::AudioChannels.label(), "Audio channels");
         assert_eq!(MixSourceGroup::Apps.label(), "Apps");
@@ -1389,7 +1460,9 @@ pub fn move_home_section(layout: &mut HomeLayout, id: HomeSectionId, delta: i32)
 
 /// Push a recent destination to the front, dedupe by kind+id, and cap length.
 pub fn push_home_recent(layout: &mut HomeLayout, entry: HomeRecentEntry) {
-    layout.recent.retain(|item| !(item.kind == entry.kind && item.id == entry.id));
+    layout
+        .recent
+        .retain(|item| !(item.kind == entry.kind && item.id == entry.id));
     layout.recent.insert(0, entry);
     if layout.recent.len() > HOME_RECENT_LIMIT {
         layout.recent.truncate(HOME_RECENT_LIMIT);
@@ -1556,7 +1629,8 @@ pub fn load_json<T: for<'de> Deserialize<'de>>(path: &std::path::Path) -> Option
 pub const MESSAGE_GROUP_MS: i64 = 7 * 60 * 1000;
 
 fn zoned(ms: i64, offset_secs: i32) -> chrono::DateTime<chrono::FixedOffset> {
-    let offset = chrono::FixedOffset::east_opt(offset_secs).unwrap_or_else(|| chrono::FixedOffset::east_opt(0).expect("utc"));
+    let offset = chrono::FixedOffset::east_opt(offset_secs)
+        .unwrap_or_else(|| chrono::FixedOffset::east_opt(0).expect("utc"));
     let utc = chrono::DateTime::from_timestamp_millis(ms).unwrap_or(chrono::DateTime::UNIX_EPOCH);
     utc.with_timezone(&offset)
 }
@@ -1591,7 +1665,12 @@ pub fn chat_time_label(at_ms: i64, now_ms: i64, offset_secs: i32) -> String {
 
 pub fn chat_time_hover(at_ms: i64, offset_secs: i32) -> String {
     let time = zoned(at_ms, offset_secs);
-    format!("{}, {} at {}", time.format("%A"), long_date(at_ms, offset_secs), clock_face(at_ms, offset_secs))
+    format!(
+        "{}, {} at {}",
+        time.format("%A"),
+        long_date(at_ms, offset_secs),
+        clock_face(at_ms, offset_secs)
+    )
 }
 
 pub fn chat_date_separator(at_ms: i64, offset_secs: i32) -> String {
@@ -1602,15 +1681,31 @@ pub fn message_starts_new_day(previous_ms: i64, at_ms: i64, offset_secs: i32) ->
     zoned(previous_ms, offset_secs).date_naive() != zoned(at_ms, offset_secs).date_naive()
 }
 
-pub fn message_is_followup(previous_author: i64, previous_ms: i64, author: i64, at_ms: i64, offset_secs: i32) -> bool {
+pub fn message_is_followup(
+    previous_author: i64,
+    previous_ms: i64,
+    author: i64,
+    at_ms: i64,
+    offset_secs: i32,
+) -> bool {
     author == previous_author
         && at_ms >= previous_ms
         && at_ms - previous_ms <= MESSAGE_GROUP_MS
         && !message_starts_new_day(previous_ms, at_ms, offset_secs)
 }
 
-pub fn crop_avatar_rgba(width: u32, height: u32, rgba: &[u8], zoom: f32, pan_x: f32, pan_y: f32, edge: u32) -> Vec<u8> {
-    let pixels = (edge as usize).saturating_mul(edge as usize).saturating_mul(4);
+pub fn crop_avatar_rgba(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    zoom: f32,
+    pan_x: f32,
+    pan_y: f32,
+    edge: u32,
+) -> Vec<u8> {
+    let pixels = (edge as usize)
+        .saturating_mul(edge as usize)
+        .saturating_mul(4);
     let Some((origin_x, origin_y, window)) = crop_window(width, height, zoom, pan_x, pan_y) else {
         return vec![0; pixels];
     };
@@ -1632,7 +1727,13 @@ pub fn crop_avatar_rgba(width: u32, height: u32, rgba: &[u8], zoom: f32, pan_x: 
     out
 }
 
-pub fn crop_window(width: u32, height: u32, zoom: f32, pan_x: f32, pan_y: f32) -> Option<(f32, f32, f32)> {
+pub fn crop_window(
+    width: u32,
+    height: u32,
+    zoom: f32,
+    pan_x: f32,
+    pan_y: f32,
+) -> Option<(f32, f32, f32)> {
     if width == 0 || height == 0 {
         return None;
     }
@@ -1643,9 +1744,12 @@ pub fn crop_window(width: u32, height: u32, zoom: f32, pan_x: f32, pan_y: f32) -
     let pan_y = pan_y.clamp(-1.0, 1.0);
     let slack_x = (width as f32 - window).max(0.0);
     let slack_y = (height as f32 - window).max(0.0);
-    Some((slack_x * 0.5 + pan_x * slack_x * 0.5, slack_y * 0.5 + pan_y * slack_y * 0.5, window))
+    Some((
+        slack_x * 0.5 + pan_x * slack_x * 0.5,
+        slack_y * 0.5 + pan_y * slack_y * 0.5,
+        window,
+    ))
 }
-
 
 /// After a friend-add succeeds and the friends list is refreshed, return the peer
 /// id whose DM should open. Pending-only requests leave the peer off the list.
@@ -1686,39 +1790,94 @@ pub enum ContextMenuEntry {
 /// Actions the signed-in shell can run from a context menu. Kick and ban stay deferred.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContextMenuAction {
-    Reply { message_id: i64 },
-    Edit { message_id: i64 },
-    Delete { message_id: i64 },
-    CopyText { text: String },
-    CopyMessageId { message_id: i64 },
-    CopyUsername { username: String },
-    Mention { username: String },
-    MessageUser { user_id: i64 },
-    CallUser { user_id: i64 },
-    AddFriend { username: String },
-    InvitePeople { server_id: i64 },
-    AssignRoles { user_id: i64 },
-    CopyChannelName { name: String },
-    CopyChannelId { channel_id: i64 },
-    EditChannel { channel_id: i64 },
-    CreateServerFolder { parent_id: Option<i64> },
-    RenameServerFolder { folder_id: i64 },
-    RecolorServerFolder { folder_id: i64 },
-    DeleteServerFolder { folder_id: i64 },
+    Reply {
+        message_id: i64,
+    },
+    Edit {
+        message_id: i64,
+    },
+    Delete {
+        message_id: i64,
+    },
+    CopyText {
+        text: String,
+    },
+    CopyMessageId {
+        message_id: i64,
+    },
+    CopyUsername {
+        username: String,
+    },
+    Mention {
+        username: String,
+    },
+    MessageUser {
+        user_id: i64,
+    },
+    CallUser {
+        user_id: i64,
+    },
+    AddFriend {
+        username: String,
+    },
+    InvitePeople {
+        server_id: i64,
+    },
+    AssignRoles {
+        user_id: i64,
+    },
+    CopyChannelName {
+        name: String,
+    },
+    CopyChannelId {
+        channel_id: i64,
+    },
+    EditChannel {
+        channel_id: i64,
+    },
+    CreateServerFolder {
+        parent_id: Option<i64>,
+    },
+    RenameServerFolder {
+        folder_id: i64,
+    },
+    RecolorServerFolder {
+        folder_id: i64,
+    },
+    DeleteServerFolder {
+        folder_id: i64,
+    },
     MoveServerToFolder {
         server_id: i64,
         folder_id: Option<i64>,
     },
     /// Open the picker for packages in the data directory's `plugins` folder.
-    AddPlugin { server_id: i64 },
+    AddPlugin {
+        server_id: i64,
+    },
 }
 
-fn menu_item(id: &'static str, label: &'static str, tone: ContextMenuTone, action: ContextMenuAction) -> ContextMenuEntry {
-    ContextMenuEntry::Item { id, label, tone, action }
+fn menu_item(
+    id: &'static str,
+    label: &'static str,
+    tone: ContextMenuTone,
+    action: ContextMenuAction,
+) -> ContextMenuEntry {
+    ContextMenuEntry::Item {
+        id,
+        label,
+        tone,
+        action,
+    }
 }
 
 /// Right-click menu for a chat message. Own messages also get edit and delete.
-pub fn message_context_menu(message_id: i64, author_id: i64, body: &str, mine: Option<i64>) -> Vec<ContextMenuEntry> {
+pub fn message_context_menu(
+    message_id: i64,
+    author_id: i64,
+    body: &str,
+    mine: Option<i64>,
+) -> Vec<ContextMenuEntry> {
     let mut entries = vec![menu_item(
         "ctx-reply",
         "Reply",
@@ -1745,7 +1904,9 @@ pub fn message_context_menu(message_id: i64, author_id: i64, body: &str, mine: O
         "ctx-copy-text",
         "Copy Text",
         ContextMenuTone::Normal,
-        ContextMenuAction::CopyText { text: body.to_string() },
+        ContextMenuAction::CopyText {
+            text: body.to_string(),
+        },
     ));
     entries.push(menu_item(
         "ctx-copy-msg-id",
@@ -1829,7 +1990,10 @@ pub fn plan_member_groups(rows: &[(bool, Option<(i64, String)>)]) -> Vec<(String
             continue;
         }
         if let Some((position, name)) = key {
-            if let Some(group) = hoist.iter_mut().find(|group| group.0 == *position && group.1 == *name) {
+            if let Some(group) = hoist
+                .iter_mut()
+                .find(|group| group.0 == *position && group.1 == *name)
+            {
                 group.2.push(index);
             } else {
                 hoist.push((*position, name.clone(), vec![index]));
@@ -1856,7 +2020,10 @@ pub fn plan_member_groups(rows: &[(bool, Option<(i64, String)>)]) -> Vec<(String
 ///
 /// Custom icons that Banter does not recognize fall back to the kind glyph.
 pub fn channel_display_icon<'a>(kind: &ChannelKind, icon: Option<&'a str>) -> &'a str {
-    match icon.map(str::trim).filter(|name| !name.is_empty() && is_channel_icon(name)) {
+    match icon
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && is_channel_icon(name))
+    {
         Some(name) => name,
         None => channel_default_icon(kind),
     }
@@ -2146,7 +2313,10 @@ mod voice_roster_tests {
     use std::collections::HashMap;
 
     fn member(user_id: i64) -> VoiceMember {
-        VoiceMember { user_id, flags: VoiceFlags::default() }
+        VoiceMember {
+            user_id,
+            flags: VoiceFlags::default(),
+        }
     }
 
     #[test]
@@ -2173,7 +2343,7 @@ mod voice_roster_tests {
 mod reconnect_tests {
     use super::{
         capture_voice_rejoin_intent, next_reconnect_at, reconnect_retry_ready, VoiceRejoinIntent,
-        RECONNECT_INTERVAL, RECONNECTING_STATUS,
+        RECONNECTING_STATUS, RECONNECT_INTERVAL,
     };
     use banter_server::CallPhase;
     use std::time::{Duration, Instant};
@@ -2188,15 +2358,24 @@ mod reconnect_tests {
     fn reconnect_retry_waits_until_scheduled_instant() {
         let now = Instant::now();
         assert!(!reconnect_retry_ready(None, now));
-        assert!(!reconnect_retry_ready(Some(now + Duration::from_secs(1)), now));
+        assert!(!reconnect_retry_ready(
+            Some(now + Duration::from_secs(1)),
+            now
+        ));
         assert!(reconnect_retry_ready(Some(now), now));
-        assert!(reconnect_retry_ready(Some(now - Duration::from_millis(1)), now));
+        assert!(reconnect_retry_ready(
+            Some(now - Duration::from_millis(1)),
+            now
+        ));
     }
 
     #[test]
     fn next_reconnect_schedules_thirty_seconds_out() {
         let now = Instant::now();
-        assert_eq!(next_reconnect_at(now).saturating_duration_since(now), RECONNECT_INTERVAL);
+        assert_eq!(
+            next_reconnect_at(now).saturating_duration_since(now),
+            RECONNECT_INTERVAL
+        );
     }
 
     #[test]

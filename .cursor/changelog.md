@@ -1,3 +1,7 @@
+## 2026-11-05 19:20:24 -0500 [dust] — UI thread stays off shell HTTP
+
+Signed-in shell lists, channel/DM history, and avatar downloads run on one background worker. A frame only applies a snapshot whose generation is still current, so navigating and the 2-second refresh no longer freeze input behind a chain of GETs. One-shot writes (send, join, login) still run on the click that needs the response.
+
 ## 2026-11-05 16:30:00 -05:00 [ubuntu] — Purple Glow theme mod
 
 Sample client mod `purple_glow` restyles the Banter shell to a dark purple neon look (rail, sidebar, stage, channel rows, composer, accents) via `banter.theme.shell` / `banter.theme.set`. Host applies more shell tokens for members, rows, muted/text, and composer. Copy from `examples/mods/purple_glow` or enable from a fresh data dir seed. Docs: Settings → Mods.

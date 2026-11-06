@@ -14,10 +14,10 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use banter_server::LayerId;
-use openh264::OpenH264API;
 use openh264::decoder::Decoder;
 use openh264::encoder::{BitRate, Encoder, EncoderConfig, FrameRate, Profile, UsageType};
 use openh264::formats::{YUVBuffer, YUVSource};
+use openh264::OpenH264API;
 
 pub const OPUS_RATE: u32 = 48_000;
 pub const OPUS_FRAME: usize = 960;
@@ -60,29 +60,54 @@ pub struct OpusTrack {
 
 impl OpusTrack {
     pub fn user_audio() -> Result<Self, String> {
-        let mut encoder = opus::Encoder::new(OPUS_RATE, opus::Channels::Mono, opus::Application::Voip).map_err(|err| err.to_string())?;
-        encoder.set_bitrate(opus::Bitrate::Bits(USER_AUDIO_BPS)).map_err(|err| err.to_string())?;
-        encoder.set_inband_fec(true).map_err(|err| err.to_string())?;
+        let mut encoder =
+            opus::Encoder::new(OPUS_RATE, opus::Channels::Mono, opus::Application::Voip)
+                .map_err(|err| err.to_string())?;
+        encoder
+            .set_bitrate(opus::Bitrate::Bits(USER_AUDIO_BPS))
+            .map_err(|err| err.to_string())?;
+        encoder
+            .set_inband_fec(true)
+            .map_err(|err| err.to_string())?;
         encoder.set_dtx(true).map_err(|err| err.to_string())?;
-        Ok(Self { encoder, full_bps: USER_AUDIO_BPS })
+        Ok(Self {
+            encoder,
+            full_bps: USER_AUDIO_BPS,
+        })
     }
 
     pub fn stream_audio() -> Result<Self, String> {
-        let mut encoder = opus::Encoder::new(OPUS_RATE, opus::Channels::Mono, opus::Application::Audio).map_err(|err| err.to_string())?;
-        encoder.set_bitrate(opus::Bitrate::Bits(STREAM_AUDIO_BPS)).map_err(|err| err.to_string())?;
+        let mut encoder =
+            opus::Encoder::new(OPUS_RATE, opus::Channels::Mono, opus::Application::Audio)
+                .map_err(|err| err.to_string())?;
+        encoder
+            .set_bitrate(opus::Bitrate::Bits(STREAM_AUDIO_BPS))
+            .map_err(|err| err.to_string())?;
         encoder.set_dtx(true).map_err(|err| err.to_string())?;
-        Ok(Self { encoder, full_bps: STREAM_AUDIO_BPS })
+        Ok(Self {
+            encoder,
+            full_bps: STREAM_AUDIO_BPS,
+        })
     }
 
     /// `ratio` is 1, 0.5, or 0. Zero means the ladder cut the track.
     pub fn set_ratio(&mut self, ratio: f32) -> Result<(), String> {
-        let bps = if ratio <= 0.0 { 6_000 } else { (self.full_bps as f32 * ratio).round() as i32 };
-        self.encoder.set_bitrate(opus::Bitrate::Bits(bps.max(6_000))).map_err(|err| err.to_string())
+        let bps = if ratio <= 0.0 {
+            6_000
+        } else {
+            (self.full_bps as f32 * ratio).round() as i32
+        };
+        self.encoder
+            .set_bitrate(opus::Bitrate::Bits(bps.max(6_000)))
+            .map_err(|err| err.to_string())
     }
 
     pub fn encode(&mut self, pcm: &[i16]) -> Result<Vec<u8>, String> {
         let mut packet = vec![0u8; 4000];
-        let size = self.encoder.encode(pcm, &mut packet).map_err(|err| err.to_string())?;
+        let size = self
+            .encoder
+            .encode(pcm, &mut packet)
+            .map_err(|err| err.to_string())?;
         packet.truncate(size);
         Ok(packet)
     }
@@ -94,13 +119,17 @@ pub struct OpusListen {
 
 impl OpusListen {
     pub fn new() -> Result<Self, String> {
-        let decoder = opus::Decoder::new(OPUS_RATE, opus::Channels::Mono).map_err(|err| err.to_string())?;
+        let decoder =
+            opus::Decoder::new(OPUS_RATE, opus::Channels::Mono).map_err(|err| err.to_string())?;
         Ok(Self { decoder })
     }
 
     pub fn decode(&mut self, packet: &[u8]) -> Result<Vec<i16>, String> {
         let mut pcm = vec![0i16; OPUS_FRAME * 3];
-        let count = self.decoder.decode(packet, &mut pcm, false).map_err(|err| err.to_string())?;
+        let count = self
+            .decoder
+            .decode(packet, &mut pcm, false)
+            .map_err(|err| err.to_string())?;
         pcm.truncate(count);
         Ok(pcm)
     }
@@ -108,7 +137,13 @@ impl OpusListen {
 
 pub trait VideoEncoder: Send {
     fn backend(&self) -> Backend;
-    fn encode(&mut self, i420: &[u8], width: u32, height: u32, force_key: bool) -> Result<EncodedAu, String>;
+    fn encode(
+        &mut self,
+        i420: &[u8],
+        width: u32,
+        height: u32,
+        force_key: bool,
+    ) -> Result<EncodedAu, String>;
 }
 
 struct SoftwareEncoder {
@@ -128,7 +163,13 @@ impl VideoEncoder for SoftwareEncoder {
         Backend::Software
     }
 
-    fn encode(&mut self, i420: &[u8], width: u32, height: u32, force_key: bool) -> Result<EncodedAu, String> {
+    fn encode(
+        &mut self,
+        i420: &[u8],
+        width: u32,
+        height: u32,
+        force_key: bool,
+    ) -> Result<EncodedAu, String> {
         if force_key {
             self.encoder.force_intra_frame();
         }
@@ -155,9 +196,15 @@ impl LayerEncoder {
         let soft = SoftwareEncoder::open(screen, fps, bps)?;
         let hw = try_hardware(screen, width, height, fps, bps);
         if let Some(inner) = hw {
-            Ok(Self { inner, fallback: Some(soft) })
+            Ok(Self {
+                inner,
+                fallback: Some(soft),
+            })
         } else {
-            Ok(Self { inner: Box::new(soft), fallback: None })
+            Ok(Self {
+                inner: Box::new(soft),
+                fallback: None,
+            })
         }
     }
 
@@ -172,7 +219,13 @@ impl LayerEncoder {
         self.inner.backend()
     }
 
-    pub fn encode(&mut self, i420: &[u8], width: u32, height: u32, force_key: bool) -> Result<EncodedAu, String> {
+    pub fn encode(
+        &mut self,
+        i420: &[u8],
+        width: u32,
+        height: u32,
+        force_key: bool,
+    ) -> Result<EncodedAu, String> {
         match self.inner.encode(i420, width, height, force_key) {
             Ok(au) if is_constrained_baseline(&au.bytes) || self.fallback.is_none() => Ok(au),
             Ok(_) | Err(_) => {
@@ -193,7 +246,8 @@ pub struct VideoListen {
 
 impl VideoListen {
     pub fn software() -> Result<Self, String> {
-        let decoder = Decoder::with_api_config(OpenH264API::from_source(), Default::default()).map_err(|err| err.to_string())?;
+        let decoder = Decoder::with_api_config(OpenH264API::from_source(), Default::default())
+            .map_err(|err| err.to_string())?;
         Ok(Self { decoder })
     }
 
@@ -216,7 +270,8 @@ pub fn hardware_probe() -> Vec<&'static str> {
         if ffmpeg_has_encoder("h264_nvenc") && nvidia_encode_present() {
             found.push("nvenc");
         }
-        if ffmpeg_has_encoder("h264_vaapi") && std::path::Path::new("/dev/dri/renderD128").exists() {
+        if ffmpeg_has_encoder("h264_vaapi") && std::path::Path::new("/dev/dri/renderD128").exists()
+        {
             found.push("vaapi");
         }
     }
@@ -280,7 +335,9 @@ pub fn rgb_to_i420(rgb: &[u8], width: u32, height: u32) -> Vec<u8> {
 /// `max_edge == 0` keeps the source size, rounded down to even.
 pub fn fit_rgba(rgba: &[u8], width: u32, height: u32, max_edge: u32) -> (Vec<u8>, u32, u32) {
     let (dw, dh) = even_fit(width, height, max_edge);
-    let need = (width as usize).saturating_mul(height as usize).saturating_mul(4);
+    let need = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4);
     if dw < 2 || dh < 2 || rgba.len() < need {
         return (Vec::new(), 0, 0);
     }
@@ -309,7 +366,12 @@ pub fn fit_i420_rgba(rgba: &[u8], width: u32, height: u32, max_edge: u32) -> (Ve
     (rgba_to_i420(&scaled, dw, dh), dw, dh)
 }
 
-pub fn scale_i420(src: &[u8], width: u32, height: u32, layer: LayerId) -> Option<(Vec<u8>, u32, u32)> {
+pub fn scale_i420(
+    src: &[u8],
+    width: u32,
+    height: u32,
+    layer: LayerId,
+) -> Option<(Vec<u8>, u32, u32)> {
     let div = match layer {
         LayerId::Full => 1,
         LayerId::Half => 2,
@@ -351,7 +413,8 @@ pub fn scale_i420(src: &[u8], width: u32, height: u32, layer: LayerId) -> Option
 }
 
 pub fn is_constrained_baseline(annexb: &[u8]) -> bool {
-    nals(annexb).any(|nal| nal.len() >= 4 && nal[0] & 0x1f == 7 && nal[1] == 66 && nal[2] & 0x40 != 0)
+    nals(annexb)
+        .any(|nal| nal.len() >= 4 && nal[0] & 0x1f == 7 && nal[1] == 66 && nal[2] & 0x40 != 0)
 }
 
 pub fn access_unit_is_key(annexb: &[u8]) -> bool {
@@ -359,7 +422,11 @@ pub fn access_unit_is_key(annexb: &[u8]) -> bool {
 }
 
 fn build_openh264(screen: bool, fps: f32, bps: u32) -> Result<Encoder, String> {
-    let usage = if screen { UsageType::ScreenContentRealTime } else { UsageType::CameraVideoRealTime };
+    let usage = if screen {
+        UsageType::ScreenContentRealTime
+    } else {
+        UsageType::CameraVideoRealTime
+    };
     let config = EncoderConfig::new()
         .bitrate(BitRate::from_bps(bps.max(30_000)))
         .max_frame_rate(FrameRate::from_hz(fps.max(1.0)))
@@ -407,7 +474,10 @@ fn next_nal(bytes: &[u8], mut offset: usize) -> Option<(usize, &[u8])> {
             let header = nal_header_skip(&bytes[start..]);
             let nal_start = start + header;
             let mut end = nal_start + 1;
-            while end + 3 < bytes.len() && !bytes[end..].starts_with(&[0, 0, 1]) && !bytes[end..].starts_with(&[0, 0, 0, 1]) {
+            while end + 3 < bytes.len()
+                && !bytes[end..].starts_with(&[0, 0, 1])
+                && !bytes[end..].starts_with(&[0, 0, 0, 1])
+            {
                 end += 1;
             }
             if end + 3 >= bytes.len() {
@@ -421,7 +491,11 @@ fn next_nal(bytes: &[u8], mut offset: usize) -> Option<(usize, &[u8])> {
 }
 
 fn nal_header_skip(bytes: &[u8]) -> usize {
-    if bytes.starts_with(&[0, 0, 0, 1]) { 4 } else { 3 }
+    if bytes.starts_with(&[0, 0, 0, 1]) {
+        4
+    } else {
+        3
+    }
 }
 
 fn yuv_of(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
@@ -431,19 +505,30 @@ fn yuv_of(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     let y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
     let u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
     let v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
-    (y.clamp(0, 255) as u8, u.clamp(0, 255) as u8, v.clamp(0, 255) as u8)
+    (
+        y.clamp(0, 255) as u8,
+        u.clamp(0, 255) as u8,
+        v.clamp(0, 255) as u8,
+    )
 }
 
 pub(crate) fn even_fit(width: u32, height: u32, max_edge: u32) -> (u32, u32) {
     if width == 0 || height == 0 {
         return (2, 2);
     }
-    let edge = if max_edge == 0 { width.max(height) } else { max_edge };
+    let edge = if max_edge == 0 {
+        width.max(height)
+    } else {
+        max_edge
+    };
     let (mut dw, mut dh) = if width <= edge && height <= edge {
         (width, height)
     } else {
         let ratio = (edge as f64 / width as f64).min(edge as f64 / height as f64);
-        ((width as f64 * ratio).round() as u32, (height as f64 * ratio).round() as u32)
+        (
+            (width as f64 * ratio).round() as u32,
+            (height as f64 * ratio).round() as u32,
+        )
     };
     dw = (dw.max(2)) & !1;
     dh = (dh.max(2)) & !1;
@@ -464,16 +549,39 @@ fn planes(src: &[u8], width: u32, height: u32) -> Option<((&[u8], &[u8], &[u8]),
     Some(((y, u, v), uv_w, uv_h))
 }
 
-fn try_hardware(screen: bool, width: u32, height: u32, fps: f32, bps: u32) -> Option<Box<dyn VideoEncoder>> {
+fn try_hardware(
+    screen: bool,
+    width: u32,
+    height: u32,
+    fps: f32,
+    bps: u32,
+) -> Option<Box<dyn VideoEncoder>> {
     #[cfg(target_os = "linux")]
     {
         if ffmpeg_has_encoder("h264_nvenc") && nvidia_encode_present() {
-            if let Ok(encoder) = FfmpegEncoder::open("h264_nvenc", Backend::Nvenc, screen, width, height, fps, bps) {
+            if let Ok(encoder) = FfmpegEncoder::open(
+                "h264_nvenc",
+                Backend::Nvenc,
+                screen,
+                width,
+                height,
+                fps,
+                bps,
+            ) {
                 return Some(Box::new(encoder));
             }
         }
-        if ffmpeg_has_encoder("h264_vaapi") && std::path::Path::new("/dev/dri/renderD128").exists() {
-            if let Ok(encoder) = FfmpegEncoder::open("h264_vaapi", Backend::Vaapi, screen, width, height, fps, bps) {
+        if ffmpeg_has_encoder("h264_vaapi") && std::path::Path::new("/dev/dri/renderD128").exists()
+        {
+            if let Ok(encoder) = FfmpegEncoder::open(
+                "h264_vaapi",
+                Backend::Vaapi,
+                screen,
+                width,
+                height,
+                fps,
+                bps,
+            ) {
                 return Some(Box::new(encoder));
             }
         }
@@ -495,7 +603,10 @@ fn try_hardware(screen: bool, width: u32, height: u32, fps: f32, bps: u32) -> Op
 /// Linux NVENC/VAAPI path via ffmpeg. Windows uses Media Foundation instead.
 #[cfg(target_os = "linux")]
 fn ffmpeg_has_encoder(name: &str) -> bool {
-    let Ok(output) = Command::new("ffmpeg").args(["-hide_banner", "-encoders"]).output() else {
+    let Ok(output) = Command::new("ffmpeg")
+        .args(["-hide_banner", "-encoders"])
+        .output()
+    else {
         return false;
     };
     String::from_utf8_lossy(&output.stdout).contains(name)
@@ -505,7 +616,13 @@ fn ffmpeg_has_encoder(name: &str) -> bool {
 fn nvidia_encode_present() -> bool {
     std::path::Path::new("/usr/lib/libnvidia-encode.so").exists()
         || std::path::Path::new("/usr/lib64/libnvidia-encode.so").exists()
-        || Command::new("ldconfig").arg("-p").output().ok().is_some_and(|output| String::from_utf8_lossy(&output.stdout).contains("libnvidia-encode"))
+        || Command::new("ldconfig")
+            .arg("-p")
+            .output()
+            .ok()
+            .is_some_and(|output| {
+                String::from_utf8_lossy(&output.stdout).contains("libnvidia-encode")
+            })
 }
 
 #[cfg(target_os = "linux")]
@@ -525,7 +642,15 @@ struct FfmpegEncoder {
 
 #[cfg(target_os = "linux")]
 impl FfmpegEncoder {
-    fn open(name: &'static str, backend: Backend, screen: bool, width: u32, height: u32, fps: f32, bps: u32) -> Result<Self, String> {
+    fn open(
+        name: &'static str,
+        backend: Backend,
+        screen: bool,
+        width: u32,
+        height: u32,
+        fps: f32,
+        bps: u32,
+    ) -> Result<Self, String> {
         let mut command = Command::new("ffmpeg");
         command.args([
             "-hide_banner",
@@ -543,19 +668,39 @@ impl FfmpegEncoder {
             "pipe:0",
         ]);
         if name == "h264_vaapi" {
-            command.args(["-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload"]);
+            command.args([
+                "-vaapi_device",
+                "/dev/dri/renderD128",
+                "-vf",
+                "format=nv12,hwupload",
+            ]);
         }
-        command.args(["-c:v", name, "-bf", "0", "-g", &format!("{}", fps.max(1.0) as u32), "-b:v", &bps.to_string()]);
+        command.args([
+            "-c:v",
+            name,
+            "-bf",
+            "0",
+            "-g",
+            &format!("{}", fps.max(1.0) as u32),
+            "-b:v",
+            &bps.to_string(),
+        ]);
         if name == "h264_nvenc" {
             command.args(["-profile:v", "baseline", "-preset", "p1", "-tune", "ll"]);
         } else {
             command.args(["-profile:v", "constrained_baseline"]);
         }
         command.args(["-f", "h264", "pipe:1"]);
-        command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
         let mut child = command.spawn().map_err(|err| err.to_string())?;
         let stdin = child.stdin.take();
-        let stdout = child.stdout.take().ok_or_else(|| "ffmpeg produced no picture".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "ffmpeg produced no picture".to_string())?;
         let captured = Arc::new(Mutex::new(Vec::new()));
         let reader = thread::spawn({
             let captured = Arc::clone(&captured);
@@ -566,7 +711,10 @@ impl FfmpegEncoder {
                 loop {
                     match stdout.read(&mut buf) {
                         Ok(0) | Err(_) => break,
-                        Ok(n) => captured.lock().expect("ffmpeg bytes").extend_from_slice(&buf[..n]),
+                        Ok(n) => captured
+                            .lock()
+                            .expect("ffmpeg bytes")
+                            .extend_from_slice(&buf[..n]),
                     }
                 }
             }
@@ -605,23 +753,45 @@ impl VideoEncoder for FfmpegEncoder {
         self.backend
     }
 
-    fn encode(&mut self, i420: &[u8], width: u32, height: u32, force_key: bool) -> Result<EncodedAu, String> {
+    fn encode(
+        &mut self,
+        i420: &[u8],
+        width: u32,
+        height: u32,
+        force_key: bool,
+    ) -> Result<EncodedAu, String> {
         if force_key || width != self.width || height != self.height {
-            let replacement = FfmpegEncoder::open(self.name, self.backend, self.screen, width, height, self.fps, self.bps)?;
+            let replacement = FfmpegEncoder::open(
+                self.name,
+                self.backend,
+                self.screen,
+                width,
+                height,
+                self.fps,
+                self.bps,
+            )?;
             *self = replacement;
         }
         use std::io::Write;
-        let stdin = self.stdin.as_mut().ok_or_else(|| "encoder is closed".to_string())?;
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "encoder is closed".to_string())?;
         let before = self.captured.lock().expect("ffmpeg bytes").len();
         stdin.write_all(i420).map_err(|err| err.to_string())?;
         stdin.flush().map_err(|err| err.to_string())?;
         let deadline = std::time::Instant::now() + Duration::from_millis(800);
         loop {
             let bytes = self.captured.lock().expect("ffmpeg bytes");
-            if bytes.len() > before && access_unit_is_key(&bytes[before..]) || bytes.len() > before + 32 && nals(&bytes[before..]).count() >= 2 {
+            if bytes.len() > before && access_unit_is_key(&bytes[before..])
+                || bytes.len() > before + 32 && nals(&bytes[before..]).count() >= 2
+            {
                 let au = bytes[before..].to_vec();
                 drop(bytes);
-                return Ok(EncodedAu { keyframe: access_unit_is_key(&au), bytes: au });
+                return Ok(EncodedAu {
+                    keyframe: access_unit_is_key(&au),
+                    bytes: au,
+                });
             }
             drop(bytes);
             if std::time::Instant::now() > deadline {
@@ -641,7 +811,10 @@ pub struct PictureDecoder {
 
 impl PictureDecoder {
     pub fn open() -> Result<Self, String> {
-        Ok(Self { hardware: try_hardware_decoder(), software: VideoListen::software()? })
+        Ok(Self {
+            hardware: try_hardware_decoder(),
+            software: VideoListen::software()?,
+        })
     }
 
     pub fn decode_rgba(&mut self, annexb: &[u8]) -> Result<Option<(u32, u32, Vec<u8>)>, String> {
@@ -744,10 +917,16 @@ impl FfmpegDecoder {
             command.args(["-vf", "hwdownload,format=nv12"]);
         }
         command.args(["-f", "image2pipe", "-vcodec", "ppm", "pipe:1"]);
-        command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
         let mut child = command.spawn().map_err(|err| err.to_string())?;
         let stdin = child.stdin.take();
-        let stdout = child.stdout.take().ok_or_else(|| "hardware decoder produced no picture".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "hardware decoder produced no picture".to_string())?;
         let captured = Arc::new(Mutex::new(Vec::new()));
         let reader = thread::spawn({
             let captured = Arc::clone(&captured);
@@ -758,12 +937,22 @@ impl FfmpegDecoder {
                 loop {
                     match stdout.read(&mut buf) {
                         Ok(0) | Err(_) => break,
-                        Ok(n) => captured.lock().expect("decoder bytes").extend_from_slice(&buf[..n]),
+                        Ok(n) => captured
+                            .lock()
+                            .expect("decoder bytes")
+                            .extend_from_slice(&buf[..n]),
                     }
                 }
             }
         });
-        Ok(Self { child, stdin, captured, reader: Some(reader), failed: false, warmed: false })
+        Ok(Self {
+            child,
+            stdin,
+            captured,
+            reader: Some(reader),
+            failed: false,
+            warmed: false,
+        })
     }
 
     fn decode(&mut self, annexb: &[u8]) -> Result<Option<(u32, u32, Vec<u8>)>, String> {
@@ -771,11 +960,18 @@ impl FfmpegDecoder {
             return Err("hardware decoder already failed".into());
         }
         use std::io::Write;
-        let stdin = self.stdin.as_mut().ok_or_else(|| "decoder is closed".to_string())?;
-        stdin.write_all(annexb).and_then(|_| stdin.write_all(&[0, 0, 0, 1, 9, 0x10])).and_then(|_| stdin.flush()).map_err(|err| {
-            self.failed = true;
-            err.to_string()
-        })?;
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "decoder is closed".to_string())?;
+        stdin
+            .write_all(annexb)
+            .and_then(|_| stdin.write_all(&[0, 0, 0, 1, 9, 0x10]))
+            .and_then(|_| stdin.flush())
+            .map_err(|err| {
+                self.failed = true;
+                err.to_string()
+            })?;
         let wait = if self.warmed { 120 } else { 800 };
         let deadline = std::time::Instant::now() + Duration::from_millis(wait);
         loop {
@@ -812,15 +1008,22 @@ impl Drop for FfmpegDecoder {
 
 #[cfg(target_os = "linux")]
 fn take_ppm(bytes: &mut Vec<u8>) -> Option<(u32, u32, Vec<u8>)> {
-    let start = bytes.windows(3).position(|mark| mark == b"P6\n" || mark == b"P6 ")?;
+    let start = bytes
+        .windows(3)
+        .position(|mark| mark == b"P6\n" || mark == b"P6 ")?;
     let header = bytes.get(start..)?;
-    let rest = header.strip_prefix(b"P6").and_then(|rest| rest.strip_prefix(b"\n").or_else(|| rest.strip_prefix(b"\r\n")))?;
+    let rest = header.strip_prefix(b"P6").and_then(|rest| {
+        rest.strip_prefix(b"\n")
+            .or_else(|| rest.strip_prefix(b"\r\n"))
+    })?;
     let (dims, after_dims) = split_line(rest)?;
     let mut dims = dims.split_whitespace();
     let width: u32 = dims.next()?.parse().ok()?;
     let height: u32 = dims.next()?.parse().ok()?;
     let (_, pixels) = split_line(after_dims)?;
-    let need = (width as usize).saturating_mul(height as usize).saturating_mul(3);
+    let need = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(3);
     if pixels.len() < need || width == 0 || height == 0 {
         return None;
     }
@@ -842,7 +1045,10 @@ fn split_line(bytes: &[u8]) -> Option<(&str, &[u8])> {
 
 #[cfg(target_os = "linux")]
 fn ffmpeg_has(list: &str, name: &str) -> bool {
-    let Ok(output) = Command::new("ffmpeg").args(["-hide_banner", &format!("-{list}")]).output() else {
+    let Ok(output) = Command::new("ffmpeg")
+        .args(["-hide_banner", &format!("-{list}")])
+        .output()
+    else {
         return false;
     };
     String::from_utf8_lossy(&output.stdout).contains(name)
@@ -883,14 +1089,23 @@ mod tests {
         let rgba = vec![40u8, 80, 120, 255].repeat(16 * 16);
         let i420 = rgba_to_i420(&rgba, 16, 16);
         let au = encoder.encode(&i420, 16, 16, true).expect("encode");
-        assert!(is_constrained_baseline(&au.bytes), "sps was not constrained baseline");
+        assert!(
+            is_constrained_baseline(&au.bytes),
+            "sps was not constrained baseline"
+        );
         assert!(au.keyframe);
         let delta = encoder.encode(&i420, 16, 16, false).expect("delta");
         assert!(!delta.bytes.is_empty());
         let again = encoder.encode(&i420, 16, 16, true).expect("forced intra");
-        assert!(again.keyframe, "a requested keyframe has to stay an intra frame without rebuilding the encoder");
+        assert!(
+            again.keyframe,
+            "a requested keyframe has to stay an intra frame without rebuilding the encoder"
+        );
         let mut decoder = VideoListen::software().expect("decoder");
-        let picture = decoder.decode_rgba(&au.bytes).expect("decode").expect("frame");
+        let picture = decoder
+            .decode_rgba(&au.bytes)
+            .expect("decode")
+            .expect("frame");
         assert_eq!(picture.0, 16);
         assert_eq!(picture.1, 16);
         assert_eq!(picture.2.len(), 16 * 16 * 4);

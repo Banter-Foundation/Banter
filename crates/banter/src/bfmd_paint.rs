@@ -1,6 +1,6 @@
 //! ImGui drawing helpers for BFMD runs in chat message rows.
 
-use dear_imgui_rs::{Ui, fonts::FontId};
+use dear_imgui_rs::{fonts::FontId, Ui};
 
 use crate::bfmd::{self, Run, Style};
 use crate::skin;
@@ -38,7 +38,14 @@ pub fn measure(ui: &Ui, fonts: Fonts, source: &str, wrap_w: f32) -> f32 {
 }
 
 /// Draw BFMD body at `origin`; returns height used.
-pub fn draw(ui: &Ui, fonts: Fonts, source: &str, origin: [f32; 2], wrap_w: f32, edited_suffix: &str) -> f32 {
+pub fn draw(
+    ui: &Ui,
+    fonts: Fonts,
+    source: &str,
+    origin: [f32; 2],
+    wrap_w: f32,
+    edited_suffix: &str,
+) -> f32 {
     let mut runs = bfmd::parse(source).runs;
     if !edited_suffix.is_empty() {
         if let Some(last) = runs.last_mut() {
@@ -72,11 +79,7 @@ fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32;
                 line_h = 0.0;
             }
             if let Some(origin) = origin {
-                let color = run
-                    .style
-                    .color
-                    .map(|c| c.to_imgui())
-                    .unwrap_or(DIVIDER);
+                let color = run.style.color.map(|c| c.to_imgui()).unwrap_or(DIVIDER);
                 ui.get_window_draw_list()
                     .add_line(
                         [origin[0], origin[1] + y + 8.0],
@@ -102,7 +105,18 @@ fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32;
         let mut i = 0usize;
         while i < chars.len() {
             if chars[i] == '\n' {
-                flush_chunk(ui, font, size, color, &run.style, &pending, origin, &mut x, &mut y, &mut line_h);
+                flush_chunk(
+                    ui,
+                    font,
+                    size,
+                    color,
+                    &run.style,
+                    &pending,
+                    origin,
+                    &mut x,
+                    &mut y,
+                    &mut line_h,
+                );
                 pending.clear();
                 y += line_h.max(size) + LINE_GAP;
                 x = 0.0;
@@ -124,7 +138,11 @@ fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32;
             let word: String = chars[start..i].iter().collect();
             let candidate = format!("{pending}{word}");
             let width = skin::text_size(ui, font, size, &candidate)[0];
-            if x > 0.0 && pending.is_empty() && width > wrap_w - x && !word.chars().all(|c| c.is_whitespace()) {
+            if x > 0.0
+                && pending.is_empty()
+                && width > wrap_w - x
+                && !word.chars().all(|c| c.is_whitespace())
+            {
                 // Word alone does not fit on remainder — new line first.
                 y += line_h.max(size) + LINE_GAP;
                 x = 0.0;
@@ -132,7 +150,18 @@ fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32;
             }
             let width_from_line = skin::text_size(ui, font, size, &format!("{pending}{word}"))[0];
             if x + width_from_line > wrap_w && !pending.is_empty() {
-                flush_chunk(ui, font, size, color, &run.style, &pending, origin, &mut x, &mut y, &mut line_h);
+                flush_chunk(
+                    ui,
+                    font,
+                    size,
+                    color,
+                    &run.style,
+                    &pending,
+                    origin,
+                    &mut x,
+                    &mut y,
+                    &mut line_h,
+                );
                 pending.clear();
                 y += line_h.max(size) + LINE_GAP;
                 x = 0.0;
@@ -140,7 +169,18 @@ fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32;
             }
             pending.push_str(&word);
         }
-        flush_chunk(ui, font, size, color, &run.style, &pending, origin, &mut x, &mut y, &mut line_h);
+        flush_chunk(
+            ui,
+            font,
+            size,
+            color,
+            &run.style,
+            &pending,
+            origin,
+            &mut x,
+            &mut y,
+            &mut line_h,
+        );
     }
     y + line_h.max(0.0)
 }
@@ -167,7 +207,11 @@ fn flush_chunk(
         let pos = [origin[0] + *x, origin[1] + *y];
         if let Some(bg) = style.background {
             ui.get_window_draw_list()
-                .add_rect(pos, [pos[0] + measured[0], pos[1] + measured[1]], bg.to_imgui())
+                .add_rect(
+                    pos,
+                    [pos[0] + measured[0], pos[1] + measured[1]],
+                    bg.to_imgui(),
+                )
                 .filled(true)
                 .build();
         }

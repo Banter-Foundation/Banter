@@ -93,7 +93,12 @@ impl ShellColumns {
             Region::Rail => [self.rail_x, 0.0, self.rail_w, height],
             Region::Sidebar => [self.sidebar_x, 0.0, self.sidebar_w, height],
             Region::Stage => [self.stage_x, 0.0, self.stage_w, height],
-            Region::Members => [self.members_x, HEADER_H, self.members_w, (height - HEADER_H).max(0.0)],
+            Region::Members => [
+                self.members_x,
+                HEADER_H,
+                self.members_w,
+                (height - HEADER_H).max(0.0),
+            ],
             Region::Header => [
                 self.stage_x,
                 0.0,
@@ -107,7 +112,12 @@ impl ShellColumns {
             Region::VoicePanel => {
                 let user_h = USER_PANEL_H.min(height);
                 let voice_h = VOICE_PANEL_H.min((height - user_h).max(0.0));
-                [self.sidebar_x, height - user_h - voice_h, self.sidebar_w, voice_h]
+                [
+                    self.sidebar_x,
+                    height - user_h - voice_h,
+                    self.sidebar_w,
+                    voice_h,
+                ]
             }
             Region::Composer => {
                 let h = COMPOSER_H.min(height);

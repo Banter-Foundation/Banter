@@ -11,16 +11,20 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use windows::core::{implement, IUnknown, Interface, HRESULT, PROPVARIANT};
 use windows::Win32::Media::Audio::{
-    ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation, IActivateAudioInterfaceCompletionHandler,
-    IActivateAudioInterfaceCompletionHandler_Impl, IAudioCaptureClient, IAudioClient, AUDIOCLIENT_ACTIVATION_PARAMS,
-    AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
-    AUDCLNT_STREAMFLAGS_LOOPBACK, DEVICE_STATE_ACTIVE, IMMDeviceEnumerator, MMDeviceEnumerator,
-    PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX,
-    WAVEFORMATEXTENSIBLE, eConsole, eRender,
+    eConsole, eRender, ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
+    IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl,
+    IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator,
+    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_LOOPBACK,
+    AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+    DEVICE_STATE_ACTIVE, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
+    VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
 };
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemAlloc, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ};
-use windows::core::{implement, Interface, IUnknown, HRESULT, PROPVARIANT};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoTaskMemAlloc, CoTaskMemFree, CLSCTX_ALL,
+    COINIT_MULTITHREADED, STGM_READ,
+};
 
 use crate::logic::resample_mono_i16;
 use crate::settings::process_loopback_format;
@@ -43,7 +47,11 @@ pub fn render_devices() -> Vec<String> {
     unsafe { render_devices_inner().unwrap_or_default() }
 }
 
-pub fn start_render(id: String, name: String, pcm: Arc<Mutex<std::collections::HashMap<String, VecDeque<i16>>>>) -> Result<Loop, String> {
+pub fn start_render(
+    id: String,
+    name: String,
+    pcm: Arc<Mutex<std::collections::HashMap<String, VecDeque<i16>>>>,
+) -> Result<Loop, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -56,7 +64,10 @@ pub fn start_render(id: String, name: String, pcm: Arc<Mutex<std::collections::H
         })
         .map_err(|err| err.to_string())?;
     match ready_rx.recv_timeout(Duration::from_secs(3)) {
-        Ok(Ok(())) => Ok(Loop { stop, thread: Some(thread) }),
+        Ok(Ok(())) => Ok(Loop {
+            stop,
+            thread: Some(thread),
+        }),
         Ok(Err(err)) => {
             stop.store(true, Ordering::Relaxed);
             let _ = thread.join();
@@ -70,7 +81,11 @@ pub fn start_render(id: String, name: String, pcm: Arc<Mutex<std::collections::H
     }
 }
 
-pub fn start_process(id: String, pid: u32, pcm: Arc<Mutex<std::collections::HashMap<String, VecDeque<i16>>>>) -> Result<Loop, String> {
+pub fn start_process(
+    id: String,
+    pid: u32,
+    pcm: Arc<Mutex<std::collections::HashMap<String, VecDeque<i16>>>>,
+) -> Result<Loop, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -83,7 +98,10 @@ pub fn start_process(id: String, pid: u32, pcm: Arc<Mutex<std::collections::Hash
         })
         .map_err(|err| err.to_string())?;
     match ready_rx.recv_timeout(Duration::from_secs(3)) {
-        Ok(Ok(())) => Ok(Loop { stop, thread: Some(thread) }),
+        Ok(Ok(())) => Ok(Loop {
+            stop,
+            thread: Some(thread),
+        }),
         Ok(Err(err)) => {
             stop.store(true, Ordering::Relaxed);
             let _ = thread.join();
@@ -103,13 +121,19 @@ unsafe fn com_mta() {
 
 unsafe fn render_devices_inner() -> Result<Vec<String>, String> {
     com_mta();
-    let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None::<&IUnknown>, CLSCTX_ALL).map_err(|err| err.to_string())?;
-    let collection = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE).map_err(|err| err.to_string())?;
+    let enumerator: IMMDeviceEnumerator =
+        CoCreateInstance(&MMDeviceEnumerator, None::<&IUnknown>, CLSCTX_ALL)
+            .map_err(|err| err.to_string())?;
+    let collection = enumerator
+        .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
+        .map_err(|err| err.to_string())?;
     let count = collection.GetCount().map_err(|err| err.to_string())?;
     let mut names = Vec::new();
     for index in 0..count {
         let device = collection.Item(index).map_err(|err| err.to_string())?;
-        let store = device.OpenPropertyStore(STGM_READ).map_err(|err| err.to_string())?;
+        let store = device
+            .OpenPropertyStore(STGM_READ)
+            .map_err(|err| err.to_string())?;
         let key = windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
         let value = store.GetValue(&key).map_err(|err| err.to_string())?;
         let name = property_string(&value);
@@ -152,11 +176,12 @@ unsafe fn pump_render(
     ready: std::sync::mpsc::Sender<Result<(), String>>,
 ) -> Result<(), String> {
     com_mta();
-    let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None::<&IUnknown>, CLSCTX_ALL).map_err(|err| {
-        let message = err.to_string();
-        let _ = ready.send(Err(message.clone()));
-        message
-    })?;
+    let enumerator: IMMDeviceEnumerator =
+        CoCreateInstance(&MMDeviceEnumerator, None::<&IUnknown>, CLSCTX_ALL).map_err(|err| {
+            let message = err.to_string();
+            let _ = ready.send(Err(message.clone()));
+            message
+        })?;
     let device = match find_render(&enumerator, name) {
         Ok(device) => device,
         Err(err) => {
@@ -180,7 +205,14 @@ unsafe fn pump_render(
             return Err(message);
         }
     };
-    if let Err(err) = client.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 0, 0, format, None) {
+    if let Err(err) = client.Initialize(
+        AUDCLNT_SHAREMODE_SHARED,
+        AUDCLNT_STREAMFLAGS_LOOPBACK,
+        0,
+        0,
+        format,
+        None,
+    ) {
         CoTaskMemFree(Some(format as *const std::ffi::c_void));
         let message = err.to_string();
         let _ = ready.send(Err(message.clone()));
@@ -208,15 +240,24 @@ unsafe fn pump_render(
     result
 }
 
-unsafe fn find_render(enumerator: &IMMDeviceEnumerator, name: &str) -> Result<windows::Win32::Media::Audio::IMMDevice, String> {
+unsafe fn find_render(
+    enumerator: &IMMDeviceEnumerator,
+    name: &str,
+) -> Result<windows::Win32::Media::Audio::IMMDevice, String> {
     if name.is_empty() {
-        return enumerator.GetDefaultAudioEndpoint(eRender, eConsole).map_err(|err| err.to_string());
+        return enumerator
+            .GetDefaultAudioEndpoint(eRender, eConsole)
+            .map_err(|err| err.to_string());
     }
-    let collection = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE).map_err(|err| err.to_string())?;
+    let collection = enumerator
+        .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
+        .map_err(|err| err.to_string())?;
     let count = collection.GetCount().map_err(|err| err.to_string())?;
     for index in 0..count {
         let device = collection.Item(index).map_err(|err| err.to_string())?;
-        let store = device.OpenPropertyStore(STGM_READ).map_err(|err| err.to_string())?;
+        let store = device
+            .OpenPropertyStore(STGM_READ)
+            .map_err(|err| err.to_string())?;
         let key = windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
         let value = store.GetValue(&key).map_err(|err| err.to_string())?;
         if property_string(&value) == name {
@@ -236,9 +277,13 @@ struct ProcessSlot {
 }
 
 impl IActivateAudioInterfaceCompletionHandler_Impl for ProcessHandler {
-    fn ActivateCompleted(&self, activateoperation: Option<&IActivateAudioInterfaceAsyncOperation>) -> windows::core::Result<()> {
+    fn ActivateCompleted(
+        &self,
+        activateoperation: Option<&IActivateAudioInterfaceAsyncOperation>,
+    ) -> windows::core::Result<()> {
         let Some(operation) = activateoperation else {
-            *self.0.error.lock().expect("loopback error") = Some("process loopback returned nothing".into());
+            *self.0.error.lock().expect("loopback error") =
+                Some("process loopback returned nothing".into());
             self.0.done.store(true, Ordering::SeqCst);
             return Ok(());
         };
@@ -247,11 +292,14 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for ProcessHandler {
             let mut unknown: Option<IUnknown> = None;
             operation.GetActivateResult(&mut code, &mut unknown)?;
             if code.is_err() {
-                *self.0.error.lock().expect("loopback error") = Some(format!("process loopback failed ({code:?})"));
+                *self.0.error.lock().expect("loopback error") =
+                    Some(format!("process loopback failed ({code:?})"));
             } else if let Some(unknown) = unknown {
                 match unknown.cast::<IAudioClient>() {
                     Ok(client) => *self.0.client.lock().expect("loopback client") = Some(client),
-                    Err(err) => *self.0.error.lock().expect("loopback error") = Some(err.to_string()),
+                    Err(err) => {
+                        *self.0.error.lock().expect("loopback error") = Some(err.to_string())
+                    }
                 }
             }
         }
@@ -281,18 +329,24 @@ unsafe fn pump_process(
     ready: std::sync::mpsc::Sender<Result<(), String>>,
 ) -> Result<(), String> {
     com_mta();
-    let fail = |ready: &std::sync::mpsc::Sender<Result<(), String>>, message: String| -> Result<(), String> {
+    let fail = |ready: &std::sync::mpsc::Sender<Result<(), String>>,
+                message: String|
+     -> Result<(), String> {
         let _ = ready.send(Err(message.clone()));
         Err(message)
     };
     let mut params = AUDIOCLIENT_ACTIVATION_PARAMS::default();
     params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
     params.Anonymous.ProcessLoopbackParams.TargetProcessId = pid;
-    params.Anonymous.ProcessLoopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
+    params.Anonymous.ProcessLoopbackParams.ProcessLoopbackMode =
+        PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
     let bytes = std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>();
     let memory = CoTaskMemAlloc(bytes);
     if memory.is_null() {
-        return fail(&ready, "could not allocate process loopback parameters".into());
+        return fail(
+            &ready,
+            "could not allocate process loopback parameters".into(),
+        );
     }
     std::ptr::copy_nonoverlapping(&params as *const _ as *const u8, memory as *mut u8, bytes);
     let raw = windows::core::imp::PROPVARIANT {
@@ -303,7 +357,10 @@ unsafe fn pump_process(
                 wReserved2: 0,
                 wReserved3: 0,
                 Anonymous: windows::core::imp::PROPVARIANT_0_0_0 {
-                    blob: windows::core::imp::BLOB { cbSize: bytes as u32, pBlobData: memory as *mut u8 },
+                    blob: windows::core::imp::BLOB {
+                        cbSize: bytes as u32,
+                        pBlobData: memory as *mut u8,
+                    },
                 },
             },
         },
@@ -314,8 +371,14 @@ unsafe fn pump_process(
         error: Mutex::new(None),
         done: AtomicBool::new(false),
     });
-    let handler: IActivateAudioInterfaceCompletionHandler = ProcessHandler(Arc::clone(&slot)).into();
-    if let Err(err) = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, &IAudioClient::IID, Some(&activation), &handler) {
+    let handler: IActivateAudioInterfaceCompletionHandler =
+        ProcessHandler(Arc::clone(&slot)).into();
+    if let Err(err) = ActivateAudioInterfaceAsync(
+        VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+        &IAudioClient::IID,
+        Some(&activation),
+        &handler,
+    ) {
         return fail(&ready, err.to_string());
     }
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -367,7 +430,10 @@ unsafe fn pump_capture(
         let mut data = std::ptr::null_mut();
         let mut frames = 0u32;
         let mut flags = 0u32;
-        if capture.GetBuffer(&mut data, &mut frames, &mut flags, None, None).is_err() {
+        if capture
+            .GetBuffer(&mut data, &mut frames, &mut flags, None, None)
+            .is_err()
+        {
             thread::sleep(Duration::from_millis(5));
             continue;
         }

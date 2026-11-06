@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use banter_server::{format_banter_notice, ClientSignal, ServerEvent, ERR_WS_CONNECT, ERR_WS_DROPPED};
+use banter_server::{
+    format_banter_notice, ClientSignal, ServerEvent, ERR_WS_CONNECT, ERR_WS_DROPPED,
+};
 
 use crate::profiler;
 
@@ -89,7 +91,10 @@ fn mark_dropped(error: &Mutex<Option<String>>, connected: &AtomicBool, stop: &At
     }
     let mut slot = error.lock().expect("error lock");
     if slot.is_none() {
-        *slot = Some(format_banter_notice(ERR_WS_DROPPED, "realtime connection dropped"));
+        *slot = Some(format_banter_notice(
+            ERR_WS_DROPPED,
+            "realtime connection dropped",
+        ));
     }
 }
 
@@ -104,8 +109,10 @@ fn run(
     let mut socket = match tungstenite::connect(&url) {
         Ok((socket, _)) => socket,
         Err(err) => {
-            *error.lock().expect("error lock") =
-                Some(format_banter_notice(ERR_WS_CONNECT, "couldn't connect realtime"));
+            *error.lock().expect("error lock") = Some(format_banter_notice(
+                ERR_WS_CONNECT,
+                "couldn't connect realtime",
+            ));
             let _ = err;
             return;
         }
@@ -154,7 +161,10 @@ fn run(
                         Err(_) => continue,
                     };
                     profiler::record_ws_tx(text.len());
-                    if socket.send(tungstenite::Message::Text(text.into())).is_err() {
+                    if socket
+                        .send(tungstenite::Message::Text(text.into()))
+                        .is_err()
+                    {
                         mark_dropped(&error, &connected, &stop);
                         return;
                     }

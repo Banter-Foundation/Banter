@@ -176,11 +176,7 @@ pub fn parse(source: &str) -> ParseResult {
 
 /// Plain visible text (commands stripped). Useful for search previews / mentions.
 pub fn plain_text(source: &str) -> String {
-    parse(source)
-        .runs
-        .into_iter()
-        .map(|r| r.text)
-        .collect()
+    parse(source).runs.into_iter().map(|r| r.text).collect()
 }
 
 /// Serialize runs to canonical BFMD (§9). Empty / default-only → plain text.
@@ -202,7 +198,13 @@ pub fn serialize(runs: &[Run]) -> String {
 
 /// Apply or clear a boolean flag over a byte range of visible plain text mapped
 /// onto BFMD source. Operates on the run model then re-serializes.
-pub fn apply_flag(source: &str, plain_start: usize, plain_end: usize, flag: Flag, on: bool) -> String {
+pub fn apply_flag(
+    source: &str,
+    plain_start: usize,
+    plain_end: usize,
+    flag: Flag,
+    on: bool,
+) -> String {
     let parsed = parse(source);
     let mut runs = parsed.runs;
     if runs.is_empty() {
@@ -250,7 +252,11 @@ pub fn toggle_flag(source: &str, plain_start: usize, plain_end: usize, flag: Fla
         // an open group only; writers may leave it open (EOF closes).
         return open_flag_prefix(flag, true);
     }
-    let on = !flag_at(runs, start.saturating_sub(1).min(total.saturating_sub(1)), flag);
+    let on = !flag_at(
+        runs,
+        start.saturating_sub(1).min(total.saturating_sub(1)),
+        flag,
+    );
     apply_flag(source, start, total, flag, on)
 }
 
@@ -335,7 +341,9 @@ fn flag_at(runs: &[Run], plain_index: usize, flag: Flag) -> bool {
         }
         offset += len;
     }
-    runs.last().map(|r| flag_value(&r.style, flag)).unwrap_or(false)
+    runs.last()
+        .map(|r| flag_value(&r.style, flag))
+        .unwrap_or(false)
 }
 
 fn split_runs_at_plain(runs: &[Run], at: usize) -> Vec<Run> {
@@ -470,7 +478,10 @@ fn parse_group(
                 index: i,
             });
             // Skip until `>` or nested `<` or EOF.
-            while i < bytes.len() && bytes[i] != b'>' && !(bytes[i] == b'<' && group_starts_at(bytes, i)) {
+            while i < bytes.len()
+                && bytes[i] != b'>'
+                && !(bytes[i] == b'<' && group_starts_at(bytes, i))
+            {
                 i += 1;
             }
             if i < bytes.len() && bytes[i] == b'>' {
@@ -643,7 +654,9 @@ fn parse_value(
     }
     // Hex 0x or #
     if bytes[i] == b'#'
-        || (bytes[i] == b'0' && i + 1 < bytes.len() && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X'))
+        || (bytes[i] == b'0'
+            && i + 1 < bytes.len()
+            && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X'))
     {
         return parse_hex(bytes, i, diagnostics);
     }
@@ -726,7 +739,11 @@ fn parse_hex(
     let rgba = match n {
         6 => {
             let v = u32::from_str_radix(hex, 16).unwrap_or(0);
-            Rgba::rgb(((v >> 16) & 0xff) as u8, ((v >> 8) & 0xff) as u8, (v & 0xff) as u8)
+            Rgba::rgb(
+                ((v >> 16) & 0xff) as u8,
+                ((v >> 8) & 0xff) as u8,
+                (v & 0xff) as u8,
+            )
         }
         _ => {
             let v = u32::from_str_radix(hex, 16).unwrap_or(0);
@@ -955,10 +972,15 @@ fn diff_group(from: &Style, to: &Style) -> String {
     }
     if to.font != from.font {
         if let Some(f) = &to.font {
-            if f.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            if f.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
                 parts.push(format!("{{f:{f}}}"));
             } else {
-                parts.push(format!("{{f:\"{}\"}}", f.replace('\\', "\\\\").replace('"', "\\\"")));
+                parts.push(format!(
+                    "{{f:\"{}\"}}",
+                    f.replace('\\', "\\\\").replace('"', "\\\"")
+                ));
             }
         }
     }

@@ -147,8 +147,10 @@ impl ModHost {
     pub fn reload(&mut self) {
         self.installed = scan_mods(&self.root.join("mods"));
         let known: Vec<String> = self.installed.iter().map(|item| item.id.clone()).collect();
-        self.enabled.retain(|id| known.iter().any(|item| item == id));
-        self.order.retain(|id| self.enabled.iter().any(|item| item == id));
+        self.enabled
+            .retain(|id| known.iter().any(|item| item == id));
+        self.order
+            .retain(|id| self.enabled.iter().any(|item| item == id));
         for id in &self.enabled {
             if !self.order.iter().any(|item| item == id) {
                 self.order.push(id.clone());
@@ -164,7 +166,11 @@ impl ModHost {
                 rows.push(row);
             }
         }
-        let mut rest: Vec<&Installed> = self.installed.iter().filter(|item| !self.enabled.iter().any(|id| id == &item.id)).collect();
+        let mut rest: Vec<&Installed> = self
+            .installed
+            .iter()
+            .filter(|item| !self.enabled.iter().any(|id| id == &item.id))
+            .collect();
         rest.sort_by(|a, b| a.id.cmp(&b.id));
         for item in rest {
             rows.push(self.row_for(item));
@@ -174,7 +180,12 @@ impl ModHost {
 
     pub fn set_enabled(&mut self, id: &str, enabled: bool) {
         if enabled {
-            if self.enabled.len() >= 32 || !self.installed.iter().any(|item| item.id == id && item.failed.is_none()) {
+            if self.enabled.len() >= 32
+                || !self
+                    .installed
+                    .iter()
+                    .any(|item| item.id == id && item.failed.is_none())
+            {
                 return;
             }
             enable_mod(&mut self.order, id);
@@ -233,7 +244,11 @@ impl ModHost {
     }
 
     pub fn header_widgets(&self) -> Vec<Widget> {
-        self.widgets.iter().filter(|widget| widget.slot == "stage.header.actions").cloned().collect()
+        self.widgets
+            .iter()
+            .filter(|widget| widget.slot == "stage.header.actions")
+            .cloned()
+            .collect()
     }
 
     pub fn shell_color(&self, token: &str) -> Option<u32> {
@@ -241,7 +256,10 @@ impl ModHost {
     }
 
     fn row(&self, id: &str) -> Option<ModRow> {
-        self.installed.iter().find(|item| item.id == id).map(|item| self.row_for(item))
+        self.installed
+            .iter()
+            .find(|item| item.id == id)
+            .map(|item| self.row_for(item))
     }
 
     fn row_for(&self, item: &Installed) -> ModRow {
@@ -254,36 +272,65 @@ impl ModHost {
             memory_mb: item.memory_mb,
             warning: memory_warning(item.memory_mb),
             hard: running.and_then(|running| running.hard.clone()),
-            soft: running.map(|running| running.soft.clone()).unwrap_or_default(),
+            soft: running
+                .map(|running| running.soft.clone())
+                .unwrap_or_default(),
             failed: item.failed.clone(),
         }
     }
 
     fn sync_running(&mut self) {
         let order = self.order.clone();
-        self.running.retain(|id, _| order.iter().any(|item| item == id));
+        self.running
+            .retain(|id, _| order.iter().any(|item| item == id));
         for id in order {
             if self.running.contains_key(&id) {
                 continue;
             }
-            let Some(installed) = self.installed.iter().find(|item| item.id == id && item.failed.is_none()) else {
+            let Some(installed) = self
+                .installed
+                .iter()
+                .find(|item| item.id == id && item.failed.is_none())
+            else {
                 continue;
             };
             let unlocked = self.unlocked.iter().any(|item| item == &id);
             let mut addon = match Addon::open(
                 &installed.id,
                 &installed.permissions,
-                Limits { memory_mb: installed.memory_mb, unlocked, allow_shell: true },
+                Limits {
+                    memory_mb: installed.memory_mb,
+                    unlocked,
+                    allow_shell: true,
+                },
                 None,
             ) {
                 Ok(addon) => addon,
                 Err(message) => {
-                    self.running.insert(id, Running { addon: broken_addon(), hard: Some(message), soft: Vec::new() });
+                    self.running.insert(
+                        id,
+                        Running {
+                            addon: broken_addon(),
+                            hard: Some(message),
+                            soft: Vec::new(),
+                        },
+                    );
                     continue;
                 }
             };
-            let hard = if addon.exec(&installed.source).is_err() { addon.report_hard() } else { None };
-            self.running.insert(id.clone(), Running { addon, hard, soft: Vec::new() });
+            let hard = if addon.exec(&installed.source).is_err() {
+                addon.report_hard()
+            } else {
+                None
+            };
+            self.running.insert(
+                id.clone(),
+                Running {
+                    addon,
+                    hard,
+                    soft: Vec::new(),
+                },
+            );
         }
     }
 
@@ -300,7 +347,17 @@ impl ModHost {
 }
 
 fn broken_addon() -> Addon {
-    Addon::open("broken", &[], Limits { memory_mb: 8, unlocked: true, allow_shell: true }, None).expect("empty addon")
+    Addon::open(
+        "broken",
+        &[],
+        Limits {
+            memory_mb: 8,
+            unlocked: true,
+            allow_shell: true,
+        },
+        None,
+    )
+    .expect("empty addon")
 }
 
 fn load_order(root: &Path) -> OrderFile {
@@ -335,34 +392,88 @@ fn read_mod(folder: &Path) -> Installed {
         Ok(value) => value,
         Err(_) => return failed_mod(folder, "manifest is not json".into()),
     };
-    let id = value.get("id").and_then(|item| item.as_str()).unwrap_or("").to_string();
-    let name = value.get("name").and_then(|item| item.as_str()).unwrap_or("").to_string();
-    let banter = value.get("banter").and_then(|item| item.as_str()).unwrap_or("");
-    let entry = value.get("entry").and_then(|item| item.as_str()).unwrap_or("main.luau");
-    let memory_mb = value.get("memory_mb").and_then(|item| item.as_u64()).unwrap_or(8) as u32;
+    let id = value
+        .get("id")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .to_string();
+    let name = value
+        .get("name")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .to_string();
+    let banter = value
+        .get("banter")
+        .and_then(|item| item.as_str())
+        .unwrap_or("");
+    let entry = value
+        .get("entry")
+        .and_then(|item| item.as_str())
+        .unwrap_or("main.luau");
+    let memory_mb = value
+        .get("memory_mb")
+        .and_then(|item| item.as_u64())
+        .unwrap_or(8) as u32;
     let permissions = value
         .get("permissions")
         .and_then(|item| item.as_array())
-        .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_else(Vec::new);
-    let known = ["log", "storage", "ui", "read_screen", "messages", "voice", "presence", "io", "os"];
-    if !banter_server::ident_ok(&id) || !(1..=32).contains(&name.chars().count()) || banter != "1" || memory_mb < 1 {
+    let known = [
+        "log",
+        "storage",
+        "ui",
+        "read_screen",
+        "messages",
+        "voice",
+        "presence",
+        "io",
+        "os",
+    ];
+    if !banter_server::ident_ok(&id)
+        || !(1..=32).contains(&name.chars().count())
+        || banter != "1"
+        || memory_mb < 1
+    {
         return failed_mod(folder, "manifest is invalid".into());
     }
-    if permissions.iter().any(|item| !known.contains(&item.as_str())) {
+    if permissions
+        .iter()
+        .any(|item| !known.contains(&item.as_str()))
+    {
         return failed_mod(folder, "unknown permission".into());
     }
     let source = match fs::read_to_string(folder.join(entry)) {
         Ok(source) => source,
         Err(err) => return failed_mod(folder, err.to_string()),
     };
-    Installed { id, name, source, permissions, memory_mb, failed: None }
+    Installed {
+        id,
+        name,
+        source,
+        permissions,
+        memory_mb,
+        failed: None,
+    }
 }
 
 fn failed_mod(folder: &Path, reason: String) -> Installed {
     Installed {
-        id: folder.file_name().and_then(|name| name.to_str()).unwrap_or("mod").to_string(),
-        name: folder.file_name().and_then(|name| name.to_str()).unwrap_or("Mod").to_string(),
+        id: folder
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("mod")
+            .to_string(),
+        name: folder
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Mod")
+            .to_string(),
         source: String::new(),
         permissions: Vec::new(),
         memory_mb: 8,

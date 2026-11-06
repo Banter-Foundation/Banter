@@ -11,15 +11,19 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use banter_server::{
-    mids_by_track, sample_bytes, simulcast_extensions, ClientSignal, LayerId, MediaKind, MediaPlace, ServerEvent,
-    CAMERA_SSRC_Q, H264_PT, OPUS_PT, SCREEN_SSRC_Q, STREAM_AUDIO_SSRC, USER_AUDIO_SSRC,
+    mids_by_track, sample_bytes, simulcast_extensions, ClientSignal, LayerId, MediaKind,
+    MediaPlace, ServerEvent, CAMERA_SSRC_Q, H264_PT, OPUS_PT, SCREEN_SSRC_Q, STREAM_AUDIO_SSRC,
+    USER_AUDIO_SSRC,
 };
 use bytes::Bytes;
 use rtc::rtp::codec::h264::H264Packet;
 use rtc::rtp::packetizer::Depacketizer;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
-use webrtc::peer_connection::{PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceServer, RTCSessionDescription};
+use webrtc::peer_connection::{
+    PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder,
+    RTCIceCandidateInit, RTCIceServer, RTCSessionDescription,
+};
 
 use crate::logic::resample_mono_i16;
 use crate::profiler;
@@ -122,14 +126,25 @@ impl Control {
 }
 
 enum Cmd {
-    Session { place: Option<MediaPlace>, me: i64, offerer: bool },
+    Session {
+        place: Option<MediaPlace>,
+        me: i64,
+        offerer: bool,
+    },
     Event(ServerEvent),
     Stop,
 }
 
 enum Outgoing {
-    Audio { kind: MediaKind, bytes: Vec<u8> },
-    Video { kind: MediaKind, layer: LayerId, bytes: Vec<u8> },
+    Audio {
+        kind: MediaKind,
+        bytes: Vec<u8>,
+    },
+    Video {
+        kind: MediaKind,
+        layer: LayerId,
+        bytes: Vec<u8>,
+    },
 }
 
 pub struct Rtc {
@@ -184,14 +199,27 @@ impl Rtc {
             .spawn({
                 let control = Arc::clone(&control);
                 move || {
-                    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+                    let runtime = match tokio::runtime::Builder::new_multi_thread()
+                        .enable_all()
+                        .build()
+                    {
                         Ok(runtime) => runtime,
                         Err(err) => {
                             eprintln!("webrtc runtime: {err}");
                             return;
                         }
                     };
-                    runtime.block_on(run(cmd_rx, audio_rx, video_rx, signals, control, playback, remote, output_rate, flags));
+                    runtime.block_on(run(
+                        cmd_rx,
+                        audio_rx,
+                        video_rx,
+                        signals,
+                        control,
+                        playback,
+                        remote,
+                        output_rate,
+                        flags,
+                    ));
                 }
             })
             .expect("rtc thread");
@@ -244,21 +272,35 @@ fn audio_encode_loop(
             if let Some(frame) = take_frame(&user_pcm) {
                 sent = true;
                 if let Ok(packet) = encoder.encode(&frame) {
-                    control.user_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
-                    let _ = audio_tx.try_send(Outgoing::Audio { kind: MediaKind::UserAudio, bytes: packet });
+                    control
+                        .user_bytes
+                        .fetch_add(packet.len() as u64, Ordering::Relaxed);
+                    let _ = audio_tx.try_send(Outgoing::Audio {
+                        kind: MediaKind::UserAudio,
+                        bytes: packet,
+                    });
                 }
             }
         }
         let ratio = qos.lock().expect("qos").targets().stream_audio;
         let stream_wanted = wanted_of(&control, MediaKind::StreamAudio);
-        if ratio > 0.0 && stream_wanted.map(|layers| !layers.is_empty()).unwrap_or(true) {
+        if ratio > 0.0
+            && stream_wanted
+                .map(|layers| !layers.is_empty())
+                .unwrap_or(true)
+        {
             if let Some(encoder) = stream.as_mut() {
                 let _ = encoder.set_ratio(ratio);
                 if let Some(frame) = take_frame(&stream_pcm) {
                     sent = true;
                     if let Ok(packet) = encoder.encode(&frame) {
-                        control.stream_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
-                        let _ = audio_tx.try_send(Outgoing::Audio { kind: MediaKind::StreamAudio, bytes: packet });
+                        control
+                            .stream_bytes
+                            .fetch_add(packet.len() as u64, Ordering::Relaxed);
+                        let _ = audio_tx.try_send(Outgoing::Audio {
+                            kind: MediaKind::StreamAudio,
+                            bytes: packet,
+                        });
                     }
                 }
             }
@@ -293,8 +335,16 @@ fn video_encode_loop(
         let (camera_layers, screen_layers) = {
             let qos = qos.lock().expect("qos");
             (
-                highest_first(qos.active_layers(MediaKind::Camera, wanted_of(&control, MediaKind::Camera).as_deref(), peer_cap(&control, MediaKind::Camera))),
-                highest_first(qos.active_layers(MediaKind::Screen, wanted_of(&control, MediaKind::Screen).as_deref(), peer_cap(&control, MediaKind::Screen))),
+                highest_first(qos.active_layers(
+                    MediaKind::Camera,
+                    wanted_of(&control, MediaKind::Camera).as_deref(),
+                    peer_cap(&control, MediaKind::Camera),
+                )),
+                highest_first(qos.active_layers(
+                    MediaKind::Screen,
+                    wanted_of(&control, MediaKind::Screen).as_deref(),
+                    peer_cap(&control, MediaKind::Screen),
+                )),
             )
         };
         // Drop idle encoders so the next publish starts on a fresh IDR instead of
@@ -308,8 +358,26 @@ fn video_encode_loop(
         } else {
             screen_idle_ticks = 0;
         }
-        encode_video(&control, &video_tx, &camera, &mut camera_enc, &mut camera_gen, MediaKind::Camera, false, &camera_layers);
-        encode_video(&control, &video_tx, &screen, &mut screen_enc, &mut screen_gen, MediaKind::Screen, true, &screen_layers);
+        encode_video(
+            &control,
+            &video_tx,
+            &camera,
+            &mut camera_enc,
+            &mut camera_gen,
+            MediaKind::Camera,
+            false,
+            &camera_layers,
+        );
+        encode_video(
+            &control,
+            &video_tx,
+            &screen,
+            &mut screen_enc,
+            &mut screen_gen,
+            MediaKind::Screen,
+            true,
+            &screen_layers,
+        );
         let ms = encode_started.elapsed().as_secs_f32() * 1000.0;
         control.encode_ms.store(ms.to_bits(), Ordering::Relaxed);
         ticks = ticks.wrapping_add(1);
@@ -326,7 +394,14 @@ fn video_encode_loop(
             *control.ladder.lock().expect("ladder") = qos.step().label().to_string();
         }
         if reported.elapsed() >= Duration::from_secs(1) {
-            publish_qos(&control, &qos, &mut user_mark, &mut stream_mark, &mut camera_mark, &mut screen_mark);
+            publish_qos(
+                &control,
+                &qos,
+                &mut user_mark,
+                &mut stream_mark,
+                &mut camera_mark,
+                &mut screen_mark,
+            );
             reported = Instant::now();
         }
         drop(qos);
@@ -343,7 +418,14 @@ fn highest_first(mut layers: Vec<LayerId>) -> Vec<LayerId> {
     layers
 }
 
-fn publish_qos(control: &Control, qos: &SenderQos, user_mark: &mut u64, stream_mark: &mut u64, camera_mark: &mut u64, screen_mark: &mut u64) {
+fn publish_qos(
+    control: &Control,
+    qos: &SenderQos,
+    user_mark: &mut u64,
+    stream_mark: &mut u64,
+    camera_mark: &mut u64,
+    screen_mark: &mut u64,
+) {
     let user = control.user_bytes.load(Ordering::Relaxed);
     let stream = control.stream_bytes.load(Ordering::Relaxed);
     let camera = control.camera_bytes.load(Ordering::Relaxed);
@@ -397,7 +479,11 @@ fn layer_label(control: &Control) -> String {
             }
         }
     }
-    if parts.is_empty() { "all".into() } else { parts.join("  ") }
+    if parts.is_empty() {
+        "all".into()
+    } else {
+        parts.join("  ")
+    }
 }
 
 fn offer_video(tx: &tokio::sync::mpsc::Sender<Outgoing>, control: &Control, packet: Outgoing) {
@@ -418,11 +504,23 @@ fn take_frame(slot: &Mutex<VecDeque<i16>>) -> Option<Vec<i16>> {
 }
 
 fn wanted_of(control: &Control, kind: MediaKind) -> Option<Vec<LayerId>> {
-    control.wanted.lock().expect("wanted").get(&kind).cloned().flatten()
+    control
+        .wanted
+        .lock()
+        .expect("wanted")
+        .get(&kind)
+        .cloned()
+        .flatten()
 }
 
 fn peer_cap(control: &Control, kind: MediaKind) -> LayerId {
-    control.peer_cap.lock().expect("cap").get(&kind).copied().unwrap_or(LayerId::Full)
+    control
+        .peer_cap
+        .lock()
+        .expect("cap")
+        .get(&kind)
+        .copied()
+        .unwrap_or(LayerId::Full)
 }
 
 fn encode_video(
@@ -435,13 +533,17 @@ fn encode_video(
     screen: bool,
     layers: &[LayerId],
 ) {
-    let Some((generation, picture)) = slot.load_since(*seen) else { return };
+    let Some((generation, picture)) = slot.load_since(*seen) else {
+        return;
+    };
     if generation == *seen {
         return;
     }
     *seen = generation;
     for &layer in layers {
-        let Some((scaled, width, height)) = super::encode::scale_i420(&picture.i420, picture.width, picture.height, layer) else {
+        let Some((scaled, width, height)) =
+            super::encode::scale_i420(&picture.i420, picture.width, picture.height, layer)
+        else {
             continue;
         };
         let entry = encoders.entry(layer).or_insert_with(|| {
@@ -472,13 +574,33 @@ fn encode_video(
         entry.1 = height;
         let started = Instant::now();
         if let Ok(au) = entry.2.encode(&scaled, width, height, picture.key) {
-            profiler::record_media(if screen { "screen_encode" } else { "camera_encode" }, started.elapsed(), au.bytes.len());
+            profiler::record_media(
+                if screen {
+                    "screen_encode"
+                } else {
+                    "camera_encode"
+                },
+                started.elapsed(),
+                au.bytes.len(),
+            );
             if au.keyframe {
                 control.keyframes.fetch_add(1, Ordering::Relaxed);
             }
-            let counter = if screen { &control.screen_bytes } else { &control.camera_bytes };
+            let counter = if screen {
+                &control.screen_bytes
+            } else {
+                &control.camera_bytes
+            };
             counter.fetch_add(au.bytes.len() as u64, Ordering::Relaxed);
-            offer_video(tx, control, Outgoing::Video { kind, layer, bytes: au.bytes });
+            offer_video(
+                tx,
+                control,
+                Outgoing::Video {
+                    kind,
+                    layer,
+                    bytes: au.bytes,
+                },
+            );
         }
     }
 }
@@ -502,22 +624,50 @@ async fn run(
             again
         } else {
             loop {
-                let cmd = if let Some(cmd) = carry.take() { Some(cmd) } else { cmds.recv().await };
+                let cmd = if let Some(cmd) = carry.take() {
+                    Some(cmd)
+                } else {
+                    cmds.recv().await
+                };
                 match cmd {
                     Some(Cmd::Stop) | None => return,
                     Some(Cmd::Event(event)) => apply_control(&control, &event),
-                    Some(Cmd::Session { place: None, .. }) => control.topology.store(0, Ordering::Relaxed),
-                    Some(Cmd::Session { place: Some(place), me, offerer }) => {
-                        control.topology.store(match place {
-                            MediaPlace::VoiceChannel(_) => 1,
-                            MediaPlace::DirectCall(_) => 2,
-                        }, Ordering::Relaxed);
+                    Some(Cmd::Session { place: None, .. }) => {
+                        control.topology.store(0, Ordering::Relaxed)
+                    }
+                    Some(Cmd::Session {
+                        place: Some(place),
+                        me,
+                        offerer,
+                    }) => {
+                        control.topology.store(
+                            match place {
+                                MediaPlace::VoiceChannel(_) => 1,
+                                MediaPlace::DirectCall(_) => 2,
+                            },
+                            Ordering::Relaxed,
+                        );
                         break (place, me, offerer);
                     }
                 }
             }
         };
-        match run_call(place, me, offerer, &mut cmds, &mut audio_rx, &mut video_rx, &signals, &control, Arc::clone(&playback), Arc::clone(&remote), Arc::clone(&output_rate), Arc::clone(&flags)).await {
+        match run_call(
+            place,
+            me,
+            offerer,
+            &mut cmds,
+            &mut audio_rx,
+            &mut video_rx,
+            &signals,
+            &control,
+            Arc::clone(&playback),
+            Arc::clone(&remote),
+            Arc::clone(&output_rate),
+            Arc::clone(&flags),
+        )
+        .await
+        {
             Ok(Some(Cmd::Stop)) | Ok(None) => return,
             Ok(Some(cmd)) => {
                 logged = false;
@@ -559,7 +709,11 @@ async fn run_call(
     let (ice_tx, mut ice_rx) = tokio::sync::mpsc::unbounded_channel();
     let peer = Arc::new(AtomicI64::new(0));
     let mut media = crate_media_engine()?;
-    let registry = webrtc::peer_connection::register_default_interceptors(rtc::interceptor::Registry::new(), &mut media).map_err(|err| err.to_string())?;
+    let registry = webrtc::peer_connection::register_default_interceptors(
+        rtc::interceptor::Registry::new(),
+        &mut media,
+    )
+    .map_err(|err| err.to_string())?;
     let handler = Arc::new(Handler {
         ice_tx,
         playback,
@@ -570,7 +724,11 @@ async fn run_call(
         me,
     });
     let pc = PeerConnectionBuilder::new()
-        .with_configuration(RTCConfigurationBuilder::default().with_ice_servers(ice_servers()).build())
+        .with_configuration(
+            RTCConfigurationBuilder::default()
+                .with_ice_servers(ice_servers())
+                .build(),
+        )
         .with_media_engine(media)
         .with_interceptor_registry(registry)
         .with_handler(handler)
@@ -584,9 +742,14 @@ async fn run_call(
     let mut mids = HashMap::new();
     if offerer {
         let offer = pc.create_offer(None).await.map_err(|err| err.to_string())?;
-        pc.set_local_description(offer.clone()).await.map_err(|err| err.to_string())?;
+        pc.set_local_description(offer.clone())
+            .await
+            .map_err(|err| err.to_string())?;
         mids.extend(mids_by_track(&offer.sdp));
-        let _ = signals.send(ClientSignal::RtcOffer { place, sdp: offer.sdp });
+        let _ = signals.send(ClientSignal::RtcOffer {
+            place,
+            sdp: offer.sdp,
+        });
     }
     loop {
         tokio::select! {
@@ -673,18 +836,40 @@ async fn run_call(
 
 fn apply_control(control: &Control, event: &ServerEvent) {
     match event {
-        ServerEvent::WantedLayers { track, layers, subscribers, .. } => {
-            control.wanted.lock().expect("wanted").insert(*track, Some(layers.clone()));
+        ServerEvent::WantedLayers {
+            track,
+            layers,
+            subscribers,
+            ..
+        } => {
+            control
+                .wanted
+                .lock()
+                .expect("wanted")
+                .insert(*track, Some(layers.clone()));
             control.subscribers.store(*subscribers, Ordering::Relaxed);
         }
-        ServerEvent::SubscribeLayer { publisher: _, track, max_layer, .. } => {
-            control.peer_cap.lock().expect("cap").insert(*track, *max_layer);
+        ServerEvent::SubscribeLayer {
+            publisher: _,
+            track,
+            max_layer,
+            ..
+        } => {
+            control
+                .peer_cap
+                .lock()
+                .expect("cap")
+                .insert(*track, *max_layer);
         }
         _ => {}
     }
 }
 
-async fn write_packet(tracks: &banter_server::PublishTracks, packet: Outgoing, mids: &HashMap<String, String>) {
+async fn write_packet(
+    tracks: &banter_server::PublishTracks,
+    packet: Outgoing,
+    mids: &HashMap<String, String>,
+) {
     match packet {
         Outgoing::Audio { kind, bytes } => {
             let (track, ssrc) = if kind == MediaKind::StreamAudio {
@@ -699,7 +884,11 @@ async fn write_packet(tracks: &banter_server::PublishTracks, packet: Outgoing, m
             let Some(rid) = layer.rid() else {
                 return;
             };
-            let track_id = if kind == MediaKind::Screen { "screen" } else { "camera" };
+            let track_id = if kind == MediaKind::Screen {
+                "screen"
+            } else {
+                "camera"
+            };
             let Some(mid) = mids.get(track_id) else {
                 return;
             };
@@ -716,7 +905,9 @@ async fn write_packet(tracks: &banter_server::PublishTracks, packet: Outgoing, m
             };
             let sample = sample_bytes(bytes, 33);
             let extensions = simulcast_extensions(mid, rid);
-            let _ = track.write_sample(ssrc, H264_PT, &sample, &extensions).await;
+            let _ = track
+                .write_sample(ssrc, H264_PT, &sample, &extensions)
+                .await;
         }
     }
 }
@@ -725,19 +916,31 @@ fn ice_servers() -> Vec<RTCIceServer> {
     let mut servers = Vec::new();
     let stun = banter_server::stun_url();
     if !stun.is_empty() {
-        servers.push(RTCIceServer { urls: vec![stun], ..Default::default() });
+        servers.push(RTCIceServer {
+            urls: vec![stun],
+            ..Default::default()
+        });
     }
     if let Some((url, username, credential)) = banter_server::turn_server() {
         if !username.is_empty() && !credential.is_empty() {
-            servers.push(RTCIceServer { urls: vec![url], username, credential });
+            servers.push(RTCIceServer {
+                urls: vec![url],
+                username,
+                credential,
+            });
         }
     }
     servers
 }
 
-fn crate_media_engine() -> Result<rtc::peer_connection::configuration::media_engine::MediaEngine, String> {
-    use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_H264, MIME_TYPE_OPUS, MediaEngine};
-    use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodecParameters, RTCRtpHeaderExtensionCapability, RtpCodecKind};
+fn crate_media_engine(
+) -> Result<rtc::peer_connection::configuration::media_engine::MediaEngine, String> {
+    use rtc::peer_connection::configuration::media_engine::{
+        MediaEngine, MIME_TYPE_H264, MIME_TYPE_OPUS,
+    };
+    use rtc::rtp_transceiver::rtp_sender::{
+        RTCRtpCodec, RTCRtpCodecParameters, RTCRtpHeaderExtensionCapability, RtpCodecKind,
+    };
     let mut media = MediaEngine::default();
     media
         .register_codec(
@@ -779,7 +982,13 @@ fn crate_media_engine() -> Result<rtc::peer_connection::configuration::media_eng
             "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
         ] {
             media
-                .register_header_extension(RTCRtpHeaderExtensionCapability { uri: uri.to_owned() }, kind, None)
+                .register_header_extension(
+                    RTCRtpHeaderExtensionCapability {
+                        uri: uri.to_owned(),
+                    },
+                    kind,
+                    None,
+                )
                 .map_err(|err| err.to_string())?;
         }
     }
@@ -821,7 +1030,8 @@ impl PeerConnectionEventHandler for Handler {
             while let Some(event) = track.poll().await {
                 match event {
                     TrackRemoteEvent::OnRtpPacket(packet) => {
-                        let sender = remote_picture_sender(&id, parsed_sender, peer.load(Ordering::Relaxed));
+                        let sender =
+                            remote_picture_sender(&id, parsed_sender, peer.load(Ordering::Relaxed));
                         if sender == me && sender != 0 {
                             continue;
                         }
@@ -841,10 +1051,21 @@ impl PeerConnectionEventHandler for Handler {
                             }
                             if packet.header.marker && !access.is_empty() {
                                 let started = std::time::Instant::now();
-                                if let Ok(Some((width, height, rgba))) = decoder.decode_rgba(&access) {
-                                    crate::profiler::note_decode(started.elapsed().as_secs_f32() * 1000.0);
+                                if let Ok(Some((width, height, rgba))) =
+                                    decoder.decode_rgba(&access)
+                                {
+                                    crate::profiler::note_decode(
+                                        started.elapsed().as_secs_f32() * 1000.0,
+                                    );
                                     let mut frames = remote.lock().expect("remote video");
-                                    frames.push(RemotePicture { sender, kind, width, height, rgba, layer });
+                                    frames.push(RemotePicture {
+                                        sender,
+                                        kind,
+                                        width,
+                                        height,
+                                        rgba,
+                                        layer,
+                                    });
                                     while frames.len() > 8 {
                                         frames.remove(0);
                                     }
@@ -889,7 +1110,11 @@ fn parse_fwd_track(rest: &str, peer: i64) -> (i64, MediaKind, LayerId) {
     let sender = publisher.parse().unwrap_or(peer);
     if let Some((kind_token, rid)) = after.rsplit_once('-') {
         if LayerId::from_rid(rid).is_some() {
-            return (sender, kind_of(kind_token), LayerId::from_rid(rid).unwrap_or(LayerId::Full));
+            return (
+                sender,
+                kind_of(kind_token),
+                LayerId::from_rid(rid).unwrap_or(LayerId::Full),
+            );
         }
     }
     (sender, kind_of(after), LayerId::Full)

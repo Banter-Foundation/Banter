@@ -19,16 +19,14 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use glfw::Context as _;
 use dear_imgui_glow::GlowRenderer;
-use dear_imgui_rs::{
-    ClipboardBackend, ConfigFlags, Context, Key, MouseButton, SuspendedContext,
-};
+use dear_imgui_rs::{ClipboardBackend, ConfigFlags, Context, Key, MouseButton, SuspendedContext};
+use glfw::Context as _;
 use glow::HasContext;
 
 use crate::logic::{
-    DisplayRefresh, VideoPrefs, clamp_window_size, either_key_held, load_json, pick_display_refresh_hz,
-    ui_swap_needs_update,
+    clamp_window_size, either_key_held, load_json, pick_display_refresh_hz, ui_swap_needs_update,
+    DisplayRefresh, VideoPrefs,
 };
 use crate::settings::{settings_window_default_size, SETTINGS_WINDOW_TITLE};
 use crate::stream_watch::{stream_popout_default_size, STREAM_POPOUT_WINDOW_TITLE};
@@ -36,7 +34,8 @@ use crate::ui::App;
 
 pub(crate) fn run() -> Result<(), String> {
     let data_dir = banter_server::default_data_dir();
-    let prefs = crate::load_json::<crate::DevServerPrefs>(&data_dir.join("dev-server.json")).unwrap_or_default();
+    let prefs = crate::load_json::<crate::DevServerPrefs>(&data_dir.join("dev-server.json"))
+        .unwrap_or_default();
     let has_saved_session = crate::load_token(&data_dir).is_some();
     let base = crate::startup_api_base(&prefs);
     let local_available = match crate::startup_local_policy(&prefs, has_saved_session) {
@@ -44,16 +43,24 @@ pub(crate) fn run() -> Result<(), String> {
         crate::StartupLocalPolicy::StartLocal => ensure_local_server().is_ok(),
         crate::StartupLocalPolicy::PreferRunningLocalElseAskRemote => local_server_listening(),
     };
-    let ask_remote = crate::startup_should_prompt_remote(&prefs, local_available, has_saved_session);
+    let ask_remote =
+        crate::startup_should_prompt_remote(&prefs, local_available, has_saved_session);
     let startup_video = load_video_prefs(&data_dir);
     let (start_w, start_h) = clamp_window_size(startup_video.width, startup_video.height);
 
     let mut glfw = glfw::init(glfw_error).map_err(|err| format!("GLFW init failed: {err}"))?;
     glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
-    glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
+    glfw.window_hint(glfw::WindowHint::OpenGlProfile(
+        glfw::OpenGlProfileHint::Core,
+    ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
     let (mut window, events) = glfw
-        .create_window(start_w as u32, start_h as u32, "Banter", glfw::WindowMode::Windowed)
+        .create_window(
+            start_w as u32,
+            start_h as u32,
+            "Banter",
+            glfw::WindowMode::Windowed,
+        )
         .ok_or_else(|| "GLFW could not open a window. Banter needs a display.".to_string())?;
     window.make_current();
     window.set_all_polling(true);
@@ -83,9 +90,12 @@ pub(crate) fn run() -> Result<(), String> {
     imgui.io_mut().set_config_flags(flags);
     imgui.set_clipboard_backend(GlfwClipboard);
     let ini = data_dir.join("banter-dock.ini");
-    imgui.set_ini_filename(Some(ini)).map_err(|err| err.to_string())?;
+    imgui
+        .set_ini_filename(Some(ini))
+        .map_err(|err| err.to_string())?;
     let fonts = install_ui_fonts(&mut imgui);
-    let mut renderer = GlowRenderer::with_shared_context(Rc::clone(&gl), &mut imgui).map_err(|err| err.to_string())?;
+    let mut renderer = GlowRenderer::with_shared_context(Rc::clone(&gl), &mut imgui)
+        .map_err(|err| err.to_string())?;
 
     let mut app = App::open(base, data_dir);
     if ask_remote {
@@ -131,14 +141,24 @@ pub(crate) fn run() -> Result<(), String> {
             &gl,
         )?;
 
-        let main_events: Vec<_> = glfw::flush_messages(&events).map(|(_, event)| event).collect();
+        let main_events: Vec<_> = glfw::flush_messages(&events)
+            .map(|(_, event)| event)
+            .collect();
         let settings_events: Vec<_> = settings_host
             .as_ref()
-            .map(|host| glfw::flush_messages(&host.events).map(|(_, event)| event).collect())
+            .map(|host| {
+                glfw::flush_messages(&host.events)
+                    .map(|(_, event)| event)
+                    .collect()
+            })
             .unwrap_or_default();
         let stream_events: Vec<_> = stream_popout_host
             .as_ref()
-            .map(|host| glfw::flush_messages(&host.events).map(|(_, event)| event).collect())
+            .map(|host| {
+                glfw::flush_messages(&host.events)
+                    .map(|(_, event)| event)
+                    .collect()
+            })
             .unwrap_or_default();
 
         let (width, height) = window.get_size();
@@ -172,10 +192,9 @@ pub(crate) fn run() -> Result<(), String> {
         if let Some(host) = settings_host.as_mut() {
             // dear-imgui-rs: only one Context may be active. Suspend main, run Settings, restore.
             let suspended_main = imgui.suspend().map_err(|err| err.to_string())?;
-            let settings_result = draw_settings_surface(host, &gl, &mut window, &settings_events, &mut app, delta);
-            imgui = suspended_main
-                .activate()
-                .map_err(|err| err.to_string())?;
+            let settings_result =
+                draw_settings_surface(host, &gl, &mut window, &settings_events, &mut app, delta);
+            imgui = suspended_main.activate().map_err(|err| err.to_string())?;
             settings_result?;
         }
 
@@ -183,9 +202,7 @@ pub(crate) fn run() -> Result<(), String> {
             let suspended_main = imgui.suspend().map_err(|err| err.to_string())?;
             let stream_result =
                 draw_stream_popout_surface(host, &gl, &mut window, &stream_events, &mut app, delta);
-            imgui = suspended_main
-                .activate()
-                .map_err(|err| err.to_string())?;
+            imgui = suspended_main.activate().map_err(|err| err.to_string())?;
             stream_result?;
         }
 
@@ -249,7 +266,11 @@ fn draw_main_surface(
     }
     {
         let _gl = crate::profiler::scope_section(crate::profiler::Section::Gl);
-        let pending = imgui.render(renderer.renderer_consumer().map_err(|err| err.to_string())?);
+        let pending = imgui.render(
+            renderer
+                .renderer_consumer()
+                .map_err(|err| err.to_string())?,
+        );
         renderer.render(pending).map_err(|err| err.to_string())?;
     }
     window.swap_buffers();
@@ -315,7 +336,11 @@ fn draw_settings_surface(
                     let ui = imgui.frame();
                     app.draw_settings_window(&ui);
                 }
-                let pending = imgui.render(renderer.renderer_consumer().map_err(|err| err.to_string())?);
+                let pending = imgui.render(
+                    renderer
+                        .renderer_consumer()
+                        .map_err(|err| err.to_string())?,
+                );
                 renderer.render(pending).map_err(|err| err.to_string())?;
                 Ok(())
             })();
@@ -436,12 +461,19 @@ fn create_settings_window(
 ) -> Result<(Context, SettingsHost), String> {
     let (width, height) = settings_window_default_size();
     glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
-    glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
+    glfw.window_hint(glfw::WindowHint::OpenGlProfile(
+        glfw::OpenGlProfileHint::Core,
+    ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
     glfw.window_hint(glfw::WindowHint::Visible(true));
     glfw.window_hint(glfw::WindowHint::Focused(true));
     let (mut window, events) = main
-        .create_shared(width as u32, height as u32, SETTINGS_WINDOW_TITLE, glfw::WindowMode::Windowed)
+        .create_shared(
+            width as u32,
+            height as u32,
+            SETTINGS_WINDOW_TITLE,
+            glfw::WindowMode::Windowed,
+        )
         .ok_or_else(|| "GLFW could not open the Banter Settings window.".to_string())?;
     window.set_all_polling(true);
     if let Some((x, y)) = window_origin(glfw, main) {
@@ -455,8 +487,8 @@ fn create_settings_window(
     let mut settings_imgui = Context::create();
     settings_imgui.set_clipboard_backend(GlfwClipboard);
     let fonts = install_ui_fonts(&mut settings_imgui);
-    let renderer =
-        GlowRenderer::with_shared_context(Rc::clone(gl), &mut settings_imgui).map_err(|err| err.to_string())?;
+    let renderer = GlowRenderer::with_shared_context(Rc::clone(gl), &mut settings_imgui)
+        .map_err(|err| err.to_string())?;
     let settings_imgui = settings_imgui.suspend().map_err(|err| err.to_string())?;
     let main_imgui = suspended_main.activate().map_err(|err| err.to_string())?;
 
@@ -555,7 +587,9 @@ fn create_stream_popout_window(
 ) -> Result<(Context, StreamPopoutHost), String> {
     let (width, height) = stream_popout_default_size();
     glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
-    glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
+    glfw.window_hint(glfw::WindowHint::OpenGlProfile(
+        glfw::OpenGlProfileHint::Core,
+    ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
     glfw.window_hint(glfw::WindowHint::Visible(true));
     glfw.window_hint(glfw::WindowHint::Focused(true));
@@ -578,8 +612,8 @@ fn create_stream_popout_window(
     let mut stream_imgui = Context::create();
     stream_imgui.set_clipboard_backend(GlfwClipboard);
     let fonts = install_ui_fonts(&mut stream_imgui);
-    let renderer =
-        GlowRenderer::with_shared_context(Rc::clone(gl), &mut stream_imgui).map_err(|err| err.to_string())?;
+    let renderer = GlowRenderer::with_shared_context(Rc::clone(gl), &mut stream_imgui)
+        .map_err(|err| err.to_string())?;
     let stream_imgui = stream_imgui.suspend().map_err(|err| err.to_string())?;
     let main_imgui = suspended_main.activate().map_err(|err| err.to_string())?;
 
@@ -642,7 +676,12 @@ fn draw_stream_popout_surface(
                 delta,
                 /* receive_pointer */ true,
             );
-            app.begin_stream_popout_surface(fonts.bold, fonts.semibold, fonts.italic, fonts.bold_italic);
+            app.begin_stream_popout_surface(
+                fonts.bold,
+                fonts.semibold,
+                fonts.italic,
+                fonts.bold_italic,
+            );
             let prepare_draw = (|| -> Result<(), String> {
                 app.prepare_stream_popout(imgui);
                 unsafe {
@@ -653,7 +692,11 @@ fn draw_stream_popout_surface(
                     let ui = imgui.frame();
                     app.draw_stream_popout_window(&ui);
                 }
-                let pending = imgui.render(renderer.renderer_consumer().map_err(|err| err.to_string())?);
+                let pending = imgui.render(
+                    renderer
+                        .renderer_consumer()
+                        .map_err(|err| err.to_string())?,
+                );
                 renderer.render(pending).map_err(|err| err.to_string())?;
                 Ok(())
             })();
@@ -734,7 +777,10 @@ fn feed_frame_io(
             Key::ModShift,
             either_key_held(held(glfw::Key::LeftShift), held(glfw::Key::RightShift)),
         );
-        io.add_key_event(Key::ModAlt, either_key_held(held(glfw::Key::LeftAlt), held(glfw::Key::RightAlt)));
+        io.add_key_event(
+            Key::ModAlt,
+            either_key_held(held(glfw::Key::LeftAlt), held(glfw::Key::RightAlt)),
+        );
         io.add_key_event(
             Key::ModSuper,
             either_key_held(held(glfw::Key::LeftSuper), held(glfw::Key::RightSuper)),
@@ -786,7 +832,8 @@ fn apply_video(
     windowed: &mut WindowedPlace,
 ) {
     let (width, height) = clamp_window_size(video.width, video.height);
-    let currently_fullscreen = window.with_window_mode(|mode| matches!(mode, glfw::WindowMode::FullScreen(_)));
+    let currently_fullscreen =
+        window.with_window_mode(|mode| matches!(mode, glfw::WindowMode::FullScreen(_)));
     if video.fullscreen {
         if !currently_fullscreen {
             if let Some((x, y)) = window_origin(glfw, window) {
@@ -974,13 +1021,18 @@ impl ClipboardBackend for GlfwClipboard {
             if text.is_null() {
                 None
             } else {
-                std::ffi::CStr::from_ptr(text).to_str().ok().map(str::to_string)
+                std::ffi::CStr::from_ptr(text)
+                    .to_str()
+                    .ok()
+                    .map(str::to_string)
             }
         }
     }
 
     fn set(&mut self, value: &str) {
-        let Ok(text) = std::ffi::CString::new(value) else { return };
+        let Ok(text) = std::ffi::CString::new(value) else {
+            return;
+        };
         unsafe { glfw::ffi::glfwSetClipboardString(std::ptr::null_mut(), text.as_ptr()) }
     }
 }
@@ -1124,7 +1176,11 @@ fn load_first_face(
     paths.iter().find_map(|path| load_face(atlas, path, size))
 }
 
-fn load_face(atlas: &dear_imgui_rs::fonts::FontAtlas, path: &str, size: f32) -> Option<dear_imgui_rs::fonts::FontId> {
+fn load_face(
+    atlas: &dear_imgui_rs::fonts::FontAtlas,
+    path: &str,
+    size: f32,
+) -> Option<dear_imgui_rs::fonts::FontId> {
     let bytes = std::fs::read(path).ok()?;
     let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
     Some(atlas.add_font(&[unsafe { dear_imgui_rs::FontSource::ttf_data_with_size(leaked, size) }]))
@@ -1258,7 +1314,9 @@ mod tests {
         assert!(wayland_position_unavailable(
             "Wayland: The platform does not provide the window position"
         ));
-        assert!(!wayland_position_unavailable("GLFW: an OpenGL context could not be created"));
+        assert!(!wayland_position_unavailable(
+            "GLFW: an OpenGL context could not be created"
+        ));
     }
 
     #[test]
@@ -1310,7 +1368,11 @@ mod tests {
         assert_eq!(fed, [640.0, 480.0]);
         drop(settings);
         let main = suspended_main.activate_or_panic();
-        assert_ne!(main.io().display_size(), [640.0, 480.0], "main context IO stays separate");
+        assert_ne!(
+            main.io().display_size(),
+            [640.0, 480.0],
+            "main context IO stays separate"
+        );
         drop(main);
     }
 
@@ -1329,11 +1391,16 @@ mod tests {
             return;
         };
         glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
-        glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
+        glfw.window_hint(glfw::WindowHint::OpenGlProfile(
+            glfw::OpenGlProfileHint::Core,
+        ));
         glfw.window_hint(glfw::WindowHint::Visible(false));
-        let Some((mut main, _)) =
-            glfw.create_window(64, 64, "banter-settings-destroy-main", glfw::WindowMode::Windowed)
-        else {
+        let Some((mut main, _)) = glfw.create_window(
+            64,
+            64,
+            "banter-settings-destroy-main",
+            glfw::WindowMode::Windowed,
+        ) else {
             return;
         };
         main.make_current();

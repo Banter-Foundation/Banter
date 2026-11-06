@@ -24,7 +24,8 @@ Banter/
 | `settings.rs` | User Settings rules and `SettingsState` (OS-window host desire, layout, mic test, keybinds) — kept drawable-free for unit tests |
 | `profile.rs` | Discord-parity profile card + customization editor state (`ProfileCard`, cosmetics drafts, board tabs, media drafts, editor slots) plus view/editor layout contracts (`profile_view_layout`, `profile_editor_layout`) — drawable-free for unit tests |
 | `profile_paint.rs` | Procedural Banter-owned paint for nameplates, decorations, frames, effects, badges, and board game cards |
-| `api.rs` | HTTP client (`ureq`) for `/v1/*`; maps failures to catalog codes (voice join/leave/flags first) |
+| `api.rs` | HTTP client (`ureq`) for `/v1/*`; maps failures to catalog codes (voice join/leave/flags first). Shell list, message, and avatar GETs run on a background worker |
+| `shell_sync.rs` | One in-flight shell snapshot (lists, place, messages, up to four avatars). The UI applies it only when its generation is still current |
 | `realtime.rs` | WebSocket client for presence, chat events, and WebRTC signaling |
 | `session.rs` | Load/save/clear `client-session.json`; `persist_login` honors Stay signed in |
 | `media.rs` (+ `media/encode.rs`, `rtc.rs`, …) | Mic/speakers (cpal), camera (nokhwa), screen share (xcap), I420→H.264 encode, WebRTC publish/subscribe |
@@ -32,7 +33,7 @@ Banter/
 | `icons.rs` | Lucide SVG → texture |
 | `session` / prefs | Voice, stream, and `dev-server.json` live under the data dir, not in git |
 
-Flow: `platform::run` loads `dev-server.json` and the saved session token, applies `startup_local_policy` (skip local for Remote; start local only when logged in on Local; otherwise reuse a running loopback or ask for remote), opens the window, builds `ui::App` against the chosen API base, then frames ImGui each tick. When User Settings is open, a second GLFW window titled **Banter Settings** is created (shared GL context) with its **own Dear ImGui context** (main is suspended for that pass) so input is not shared with the shell. Closing that window (chrome, Escape, or the in-UI X) clears settings state and focuses the main window. Developer settings (and the sign-in Server options overlay) can reconnect the client mid-session and start local when the user picks Local.
+Flow: `platform::run` loads `dev-server.json` and the saved session token, applies `startup_local_policy` (skip local for Remote; start local only when logged in on Local; otherwise reuse a running loopback or ask for remote), opens the window, builds `ui::App` against the chosen API base, then frames ImGui each tick. Shell list, message, and avatar GETs run on the `shell_sync` worker; a frame only applies a finished snapshot whose generation still matches, so those reads do not block input or present. When User Settings is open, a second GLFW window titled **Banter Settings** is created (shared GL context) with its **own Dear ImGui context** (main is suspended for that pass) so input is not shared with the shell. Closing that window (chrome, Escape, or the in-UI X) clears settings state and focuses the main window. Developer settings (and the sign-in Server options overlay) can reconnect the client mid-session and start local when the user picks Local.
 
 The signed-in layout is a **fixed column shell** (server rail, sidebar, stage, members). Panels are not treated as free-floating docks for day-to-day use even though docking is enabled and `banter-dock.ini` is written. Theme tokens, region names, and how to iterate on this shell are documented in [ui-theme-layout.md](ui-theme-layout.md). Branch `cursor/ui-theme-layout-cf5e` / worktree `D:\Projects\Banter-ui-theme` is the dedicated line for that work.
 

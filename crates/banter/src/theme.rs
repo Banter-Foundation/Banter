@@ -287,7 +287,11 @@ pub fn rail_pill_height(selected: bool, hovered: bool) -> f32 {
 
 /// Rail icons are circles at rest and morph into a rounded square on hover or select.
 pub fn rail_corner_radius(active: bool) -> f32 {
-    if active { 16.0 } else { RAIL_ICON * 0.5 }
+    if active {
+        16.0
+    } else {
+        RAIL_ICON * 0.5
+    }
 }
 
 /// Discord's acronym for a server without an icon: `'s ` is dropped, each word
@@ -333,7 +337,11 @@ pub fn dm_call_takes_stage(call_dm_id: Option<i64>, viewing_dm_id: Option<i64>) 
 
 /// Participant tiles for an active 1:1 call (caller and callee). Ringing uses the large avatar layout.
 pub fn dm_call_participant_tiles(active: bool) -> usize {
-    if active { 2 } else { 0 }
+    if active {
+        2
+    } else {
+        0
+    }
 }
 
 /// Center of the large peer avatar while a 1:1 call is ringing, above the control bar.
@@ -344,7 +352,12 @@ pub fn call_ring_avatar_center(origin: [f32; 2], width: f32, height: f32, bar_h:
 
 /// The column count that gives the largest 16:9 tiles inside the stage.
 pub fn voice_tile_grid(count: usize, area_w: f32, area_h: f32, gap: f32) -> TileGrid {
-    let mut best = TileGrid { cols: 0, rows: 0, tile_w: 0.0, tile_h: 0.0 };
+    let mut best = TileGrid {
+        cols: 0,
+        rows: 0,
+        tile_w: 0.0,
+        tile_h: 0.0,
+    };
     if count == 0 || area_w <= 0.0 || area_h <= 0.0 {
         return best;
     }
@@ -354,7 +367,12 @@ pub fn voice_tile_grid(count: usize, area_w: f32, area_h: f32, gap: f32) -> Tile
         let fit_h = (area_h - gap * (rows - 1) as f32) / rows as f32;
         let tile_w = fit_w.min(fit_h * 16.0 / 9.0);
         if tile_w > best.tile_w {
-            best = TileGrid { cols, rows, tile_w, tile_h: tile_w * 9.0 / 16.0 };
+            best = TileGrid {
+                cols,
+                rows,
+                tile_w,
+                tile_h: tile_w * 9.0 / 16.0,
+            };
         }
     }
     best
@@ -425,11 +443,21 @@ pub fn tooltip_rect(
     let w = text[0] + TOOLTIP_PAD_X * 2.0;
     let h = text[1] + TOOLTIP_PAD_Y * 2.0;
     let (mut x, mut y) = match side {
-        TooltipSide::Right => (anchor_max[0] + TOOLTIP_GAP, (anchor_min[1] + anchor_max[1]) * 0.5 - h * 0.5),
+        TooltipSide::Right => (
+            anchor_max[0] + TOOLTIP_GAP,
+            (anchor_min[1] + anchor_max[1]) * 0.5 - h * 0.5,
+        ),
         TooltipSide::Top => {
             let x = (anchor_min[0] + anchor_max[0]) * 0.5 - w * 0.5;
             let above = anchor_min[1] - TOOLTIP_GAP - h;
-            (x, if above < 0.0 { anchor_max[1] + TOOLTIP_GAP } else { above })
+            (
+                x,
+                if above < 0.0 {
+                    anchor_max[1] + TOOLTIP_GAP
+                } else {
+                    above
+                },
+            )
         }
     };
     x = x.clamp(0.0, (display[0] - w).max(0.0));

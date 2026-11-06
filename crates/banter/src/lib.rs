@@ -16,8 +16,8 @@ mod bfmd_paint;
 mod icons;
 pub mod layout;
 mod logic;
-mod mods;
 mod media;
+mod mods;
 mod platform;
 mod plugins;
 mod profile;
@@ -26,6 +26,7 @@ mod profiler;
 mod realtime;
 mod session;
 mod settings;
+mod shell_sync;
 mod skin;
 mod stream_watch;
 pub mod theme;
@@ -33,26 +34,29 @@ mod ui;
 
 pub use api::{websocket_url, ApiError, Client};
 pub use banter_server::{
-    format_banter_notice, ServerFolder, ServerRail, ServerRailServer, ServerSummary, ERR_HTTP_PARSE,
-    ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_DEVICE, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
-    ERR_VC_LOOPBACK, ERR_VC_PUBLISH, ERR_WS_CONNECT, ERR_WS_DROPPED,
+    format_banter_notice, ServerFolder, ServerRail, ServerRailServer, ServerSummary,
+    ERR_HTTP_PARSE, ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_DEVICE, ERR_VC_FLAGS, ERR_VC_JOIN,
+    ERR_VC_LEAVE, ERR_VC_LOOPBACK, ERR_VC_PUBLISH, ERR_WS_CONNECT, ERR_WS_DROPPED,
 };
 pub use bfmd::{parse as parse_bfmd, plain_text as bfmd_plain_text, Flag as BfmdFlag};
 pub use icons::rasterize_lucide;
-pub use layout::{Region, ShellColumns, discord_shell_columns, shell_columns};
+pub use layout::{discord_shell_columns, shell_columns, Region, ShellColumns};
 pub use logic::*;
-pub use mods::{default_mod_order, disable_mod, enable_mod, memory_warning, move_mod, ModHost};
-pub use plugins::{
-    ensure_plugin_samples, local_plugins, plugin_file_lines, plugin_server_lines, plugin_usage, plugin_version_is_newer,
-    LocalPlugin,
-};
 pub use media::{
     camera_preview_rgba, current_camera_frame, decode_camera_frame, hardware_encoder_available,
     pick_preferred_camera_mode, preferred_camera_height, preferred_camera_width, CameraModeChoice,
 };
+pub use mods::{default_mod_order, disable_mod, enable_mod, memory_warning, move_mod, ModHost};
+pub use plugins::{
+    ensure_plugin_samples, local_plugins, plugin_file_lines, plugin_server_lines, plugin_usage,
+    plugin_version_is_newer, LocalPlugin,
+};
 pub use profile::*;
 pub use session::{clear_token, load_token, persist_login, save_token};
 pub use settings::*;
+pub use shell_sync::{
+    avatar_fetch_batch, first_shell_channel, shell_poll_due, snapshot_applies, ShellGate,
+};
 pub use stream_watch::*;
 
 /// This client's Banter release label (same constant as the embedded server).

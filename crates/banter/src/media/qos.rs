@@ -18,7 +18,12 @@ pub struct SenderQos {
 
 impl SenderQos {
     pub fn new() -> Self {
-        Self { ladder: CongestionLadder::new(), loss: 0.0, rtt_ms: 0, jitter_ms: 0 }
+        Self {
+            ladder: CongestionLadder::new(),
+            loss: 0.0,
+            rtt_ms: 0,
+            jitter_ms: 0,
+        }
     }
 
     pub fn loss(&self) -> f32 {
@@ -45,7 +50,8 @@ impl SenderQos {
         self.jitter_ms = self.rtt_ms.abs_diff(rtt_ms);
         self.loss = loss;
         self.rtt_ms = rtt_ms;
-        self.ladder.note(sample_is_congested(loss, rtt_ms, available_ratio));
+        self.ladder
+            .note(sample_is_congested(loss, rtt_ms, available_ratio));
         self.ladder.targets()
     }
 
@@ -58,7 +64,12 @@ impl SenderQos {
     }
 
     /// Layers to encode: every requested layer at or below the ladder and the peer cap.
-    pub fn active_layers(&self, track: MediaKind, wanted: Option<&[LayerId]>, peer_cap: LayerId) -> Vec<LayerId> {
+    pub fn active_layers(
+        &self,
+        track: MediaKind,
+        wanted: Option<&[LayerId]>,
+        peer_cap: LayerId,
+    ) -> Vec<LayerId> {
         let sender_max = match track {
             MediaKind::Camera => self.targets().camera,
             MediaKind::Screen => {
@@ -70,12 +81,19 @@ impl SenderQos {
             _ => return Vec::new(),
         };
         let published: Vec<LayerId> = match wanted {
-            Some(layers) => layers.iter().copied().filter(|layer| *layer != LayerId::Off).collect(),
+            Some(layers) => layers
+                .iter()
+                .copied()
+                .filter(|layer| *layer != LayerId::Off)
+                .collect(),
             None => vec![LayerId::Quarter, LayerId::Half, LayerId::Full],
         };
         let mut chosen = Vec::new();
         for layer in published {
-            if layer.rank() > 0 && layer.rank() <= sender_max.rank() && layer.rank() <= peer_cap.rank() {
+            if layer.rank() > 0
+                && layer.rank() <= sender_max.rank()
+                && layer.rank() <= peer_cap.rank()
+            {
                 chosen.push(layer);
             }
         }
@@ -86,7 +104,12 @@ impl SenderQos {
 
     /// Highest layer that the ladder, the receiver, and dynacast all still want.
     #[allow(dead_code)]
-    pub fn active_layer(&self, track: MediaKind, wanted: Option<&[LayerId]>, peer_cap: LayerId) -> LayerId {
+    pub fn active_layer(
+        &self,
+        track: MediaKind,
+        wanted: Option<&[LayerId]>,
+        peer_cap: LayerId,
+    ) -> LayerId {
         self.active_layers(track, wanted, peer_cap)
             .into_iter()
             .max_by_key(|layer| layer.rank())
@@ -152,9 +175,16 @@ mod tests {
         for _ in 0..LADDER_DOWN_TICKS {
             qos.observe(0.2, 10, 1.0);
         }
-        let layer = qos.active_layer(MediaKind::Camera, Some(&[LayerId::Full, LayerId::Half]), LayerId::Full);
+        let layer = qos.active_layer(
+            MediaKind::Camera,
+            Some(&[LayerId::Full, LayerId::Half]),
+            LayerId::Full,
+        );
         assert_eq!(layer, LayerId::Half);
-        assert_eq!(qos.active_layer(MediaKind::Camera, Some(&[]), LayerId::Full), LayerId::Off);
+        assert_eq!(
+            qos.active_layer(MediaKind::Camera, Some(&[]), LayerId::Full),
+            LayerId::Off
+        );
     }
 
     #[test]
@@ -168,6 +198,8 @@ mod tests {
         qos.reset_ladder();
         assert_eq!(qos.step(), LadderStep::Nominal);
         assert!(qos.targets().screen_published);
-        assert!(!qos.active_layers(MediaKind::Screen, None, LayerId::Full).is_empty());
+        assert!(!qos
+            .active_layers(MediaKind::Screen, None, LayerId::Full)
+            .is_empty());
     }
 }

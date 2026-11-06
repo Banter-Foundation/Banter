@@ -10,8 +10,10 @@ pub fn rasterize_lucide(name: &str, size: u32, tint: [u8; 3]) -> Result<Vec<u8>,
         "currentColor",
         &format!("#{:02x}{:02x}{:02x}", tint[0], tint[1], tint[2]),
     );
-    let tree = resvg::usvg::Tree::from_str(&colored, &resvg::usvg::Options::default()).map_err(|err| err.to_string())?;
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).ok_or_else(|| "could not allocate the icon".to_string())?;
+    let tree = resvg::usvg::Tree::from_str(&colored, &resvg::usvg::Options::default())
+        .map_err(|err| err.to_string())?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)
+        .ok_or_else(|| "could not allocate the icon".to_string())?;
     let width = tree.size().width().max(1.0);
     let scale = size as f32 / width;
     resvg::render(

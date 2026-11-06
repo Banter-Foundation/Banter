@@ -24,7 +24,11 @@ pub fn stream_popout_default_size() -> (i32, i32) {
 /// User ids currently publishing a screen share, local first when the viewer is live.
 ///
 /// `members` is `(user_id, screen_flag)` for everyone in the active voice/call roster.
-pub fn streaming_user_ids(local_streaming: bool, me: Option<i64>, members: &[(i64, bool)]) -> Vec<i64> {
+pub fn streaming_user_ids(
+    local_streaming: bool,
+    me: Option<i64>,
+    members: &[(i64, bool)],
+) -> Vec<i64> {
     let mut ids = Vec::new();
     if local_streaming {
         if let Some(me) = me {
@@ -133,9 +137,19 @@ mod tests {
         assert_eq!(stream_chrome_alpha(10.0, false), 1.0);
         assert_eq!(stream_chrome_alpha(0.5, true), 1.0);
         assert_eq!(stream_chrome_alpha(STREAM_CHROME_IDLE_SECS, true), 1.0);
-        assert!((stream_chrome_alpha(STREAM_CHROME_IDLE_SECS + STREAM_CHROME_FADE_SECS * 0.5, true) - 0.5).abs() < 0.01);
+        assert!(
+            (stream_chrome_alpha(
+                STREAM_CHROME_IDLE_SECS + STREAM_CHROME_FADE_SECS * 0.5,
+                true
+            ) - 0.5)
+                .abs()
+                < 0.01
+        );
         assert_eq!(
-            stream_chrome_alpha(STREAM_CHROME_IDLE_SECS + STREAM_CHROME_FADE_SECS + 1.0, true),
+            stream_chrome_alpha(
+                STREAM_CHROME_IDLE_SECS + STREAM_CHROME_FADE_SECS + 1.0,
+                true
+            ),
             0.0
         );
     }
@@ -143,7 +157,13 @@ mod tests {
     #[test]
     fn stream_watch_avatars_lay_out_left_to_right() {
         assert_eq!(stream_watch_avatar_x(10.0, 0), 10.0);
-        assert_eq!(stream_watch_avatar_x(10.0, 1), 10.0 + STREAM_WATCH_AVATAR_PITCH);
-        assert_eq!(stream_watch_avatar_x(10.0, 2), 10.0 + 2.0 * STREAM_WATCH_AVATAR_PITCH);
+        assert_eq!(
+            stream_watch_avatar_x(10.0, 1),
+            10.0 + STREAM_WATCH_AVATAR_PITCH
+        );
+        assert_eq!(
+            stream_watch_avatar_x(10.0, 2),
+            10.0 + 2.0 * STREAM_WATCH_AVATAR_PITCH
+        );
     }
 }

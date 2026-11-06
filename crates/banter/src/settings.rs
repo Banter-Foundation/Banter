@@ -69,9 +69,17 @@ pub fn settings_layout(width: f32, height: f32) -> SettingsLayout {
     let group = SETTINGS_NAV_LIST_W + SETTINGS_PAD + SETTINGS_CONTENT_MAX_W + SETTINGS_CLOSE_COL;
     let (nav_w, pad, content_w) = if width >= group {
         let side = (width - group) * 0.5;
-        (side + SETTINGS_NAV_LIST_W, SETTINGS_PAD, SETTINGS_CONTENT_MAX_W)
+        (
+            side + SETTINGS_NAV_LIST_W,
+            SETTINGS_PAD,
+            SETTINGS_CONTENT_MAX_W,
+        )
     } else {
-        let pad = if width >= 640.0 { SETTINGS_PAD } else { SETTINGS_NARROW_PAD };
+        let pad = if width >= 640.0 {
+            SETTINGS_PAD
+        } else {
+            SETTINGS_NARROW_PAD
+        };
         let fixed = pad + SETTINGS_CLOSE_COL;
         let nav_w = if width - SETTINGS_NAV_LIST_W - fixed >= SETTINGS_MIN_CONTENT_W {
             SETTINGS_NAV_LIST_W
@@ -243,15 +251,54 @@ pub fn meter_fraction(rms: f32) -> f32 {
 }
 
 const PTT_KEYS: [(&str, Key); 48] = [
-    ("A", Key::A), ("B", Key::B), ("C", Key::C), ("D", Key::D), ("E", Key::E), ("F", Key::F),
-    ("G", Key::G), ("H", Key::H), ("I", Key::I), ("J", Key::J), ("K", Key::K), ("L", Key::L),
-    ("M", Key::M), ("N", Key::N), ("O", Key::O), ("P", Key::P), ("Q", Key::Q), ("R", Key::R),
-    ("S", Key::S), ("T", Key::T), ("U", Key::U), ("V", Key::V), ("W", Key::W), ("X", Key::X),
-    ("Y", Key::Y), ("Z", Key::Z),
-    ("0", Key::Key0), ("1", Key::Key1), ("2", Key::Key2), ("3", Key::Key3), ("4", Key::Key4),
-    ("5", Key::Key5), ("6", Key::Key6), ("7", Key::Key7), ("8", Key::Key8), ("9", Key::Key9),
-    ("F1", Key::F1), ("F2", Key::F2), ("F3", Key::F3), ("F4", Key::F4), ("F5", Key::F5), ("F6", Key::F6),
-    ("F7", Key::F7), ("F8", Key::F8), ("F9", Key::F9), ("F10", Key::F10), ("F11", Key::F11), ("F12", Key::F12),
+    ("A", Key::A),
+    ("B", Key::B),
+    ("C", Key::C),
+    ("D", Key::D),
+    ("E", Key::E),
+    ("F", Key::F),
+    ("G", Key::G),
+    ("H", Key::H),
+    ("I", Key::I),
+    ("J", Key::J),
+    ("K", Key::K),
+    ("L", Key::L),
+    ("M", Key::M),
+    ("N", Key::N),
+    ("O", Key::O),
+    ("P", Key::P),
+    ("Q", Key::Q),
+    ("R", Key::R),
+    ("S", Key::S),
+    ("T", Key::T),
+    ("U", Key::U),
+    ("V", Key::V),
+    ("W", Key::W),
+    ("X", Key::X),
+    ("Y", Key::Y),
+    ("Z", Key::Z),
+    ("0", Key::Key0),
+    ("1", Key::Key1),
+    ("2", Key::Key2),
+    ("3", Key::Key3),
+    ("4", Key::Key4),
+    ("5", Key::Key5),
+    ("6", Key::Key6),
+    ("7", Key::Key7),
+    ("8", Key::Key8),
+    ("9", Key::Key9),
+    ("F1", Key::F1),
+    ("F2", Key::F2),
+    ("F3", Key::F3),
+    ("F4", Key::F4),
+    ("F5", Key::F5),
+    ("F6", Key::F6),
+    ("F7", Key::F7),
+    ("F8", Key::F8),
+    ("F9", Key::F9),
+    ("F10", Key::F10),
+    ("F11", Key::F11),
+    ("F12", Key::F12),
 ];
 
 /// Keys that can be bound to push to talk. Escape is left out because it cancels recording.
@@ -260,7 +307,10 @@ pub fn ptt_key_names() -> Vec<&'static str> {
 }
 
 pub fn ptt_key(name: &str) -> Option<Key> {
-    PTT_KEYS.iter().find(|(known, _)| *known == name).map(|(_, key)| *key)
+    PTT_KEYS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, key)| *key)
 }
 
 /// The saved camera name wins, then the open camera, then the first one found.
@@ -282,7 +332,11 @@ pub fn wrap_rows(widths: &[f32], available: f32, spacing: f32) -> Vec<usize> {
     let mut row = 0;
     let mut used = 0.0_f32;
     for (index, width) in widths.iter().enumerate() {
-        let needed = if used > 0.0 { used + spacing + width } else { *width };
+        let needed = if used > 0.0 {
+            used + spacing + width
+        } else {
+            *width
+        };
         if index > 0 && used > 0.0 && needed > available {
             row += 1;
             used = *width;
@@ -334,32 +388,35 @@ pub fn voice_bar_error_lines(errors: &[String]) -> Vec<&str> {
 }
 
 /// Screen Y for each voice-bar error, stacked upward from the bottom of the panel so lines never share a row.
-pub fn voice_bar_error_ys(panel_origin_y: f32, panel_h: f32, count: usize, line_h: f32) -> Vec<f32> {
+pub fn voice_bar_error_ys(
+    panel_origin_y: f32,
+    panel_h: f32,
+    count: usize,
+    line_h: f32,
+) -> Vec<f32> {
     if count == 0 || line_h <= 0.0 {
         return Vec::new();
     }
     let bottom = panel_origin_y + panel_h - line_h;
-    (0..count).map(|index| bottom - index as f32 * line_h).collect()
+    (0..count)
+        .map(|index| bottom - index as f32 * line_h)
+        .collect()
 }
 
 /// What the Voice & Video page says when a device will not open. Library errors go to stderr instead,
 /// because they name internals (for example nokhwa's "Not available on WASM") rather than what to do.
 pub fn friendly_device_error(device: &str) -> Option<&'static str> {
     match device {
-        "camera" => Some(
-            if cfg!(target_os = "macos") {
-                "Banter could not use this camera. Check System Settings → Privacy & Security → Camera for Banter, or pick another camera."
-            } else {
-                "Banter could not use this camera. Another app may be using it. Pick another camera or close that app."
-            },
-        ),
-        "microphone" => Some(
-            if cfg!(target_os = "macos") {
-                "Banter could not open this microphone. Check System Settings → Privacy & Security → Microphone for Banter, or pick another input."
-            } else {
-                "Banter could not open this microphone. Pick another input device."
-            },
-        ),
+        "camera" => Some(if cfg!(target_os = "macos") {
+            "Banter could not use this camera. Check System Settings → Privacy & Security → Camera for Banter, or pick another camera."
+        } else {
+            "Banter could not use this camera. Another app may be using it. Pick another camera or close that app."
+        }),
+        "microphone" => Some(if cfg!(target_os = "macos") {
+            "Banter could not open this microphone. Check System Settings → Privacy & Security → Microphone for Banter, or pick another input."
+        } else {
+            "Banter could not open this microphone. Pick another input device."
+        }),
         "speakers" => Some("Banter could not open these speakers. Pick another output device."),
         _ => None,
     }
@@ -378,7 +435,8 @@ pub fn media_wasapi_notice(label: &str, raw: &str) -> String {
 /// Mic / speakers / camera open failure as a `BANTER_VC_DEVICE_FAILED` notice (BA-92).
 pub fn media_device_notice(device: &str, raw: &str) -> String {
     use banter_server::{BanterIssue, ERR_VC_DEVICE};
-    let message = friendly_device_error(device).unwrap_or("Banter could not open that audio or video device.");
+    let message = friendly_device_error(device)
+        .unwrap_or("Banter could not open that audio or video device.");
     BanterIssue::new(ERR_VC_DEVICE, message)
         .with_detail(raw)
         .user_text()

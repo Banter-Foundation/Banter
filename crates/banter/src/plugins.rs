@@ -18,13 +18,18 @@ pub struct LocalPlugin {
 
 /// Plain lines for the admin allow dialog. `io` and `os` are omitted; they use the second dialog.
 pub fn plugin_server_lines(permissions: &[String]) -> Vec<String> {
-    permissions.iter().filter_map(|name| server_line(name)).collect()
+    permissions
+        .iter()
+        .filter_map(|name| server_line(name))
+        .collect()
 }
 
 fn server_line(name: &str) -> Option<String> {
     let line = match name {
         "storage" => "Save data for this plugin on this server.",
-        "messages" => "Send messages as this plugin, and change messages people post on this server.",
+        "messages" => {
+            "Send messages as this plugin, and change messages people post on this server."
+        }
         "channels" => "Create and delete channels on this server.",
         "members_read" => "Read the member list of this server.",
         "events" => "Run when someone posts, joins, or leaves this server.",
@@ -54,7 +59,9 @@ pub fn plugin_file_lines(permissions: &[String]) -> Vec<String> {
 pub fn plugin_usage(id: &str) -> &'static str {
     match id {
         "welcome" => "New channel messages become test.",
-        "roll" => "Declares a roll command. Banter does not run plugin commands from the composer yet.",
+        "roll" => {
+            "Declares a roll command. Banter does not run plugin commands from the composer yet."
+        }
         "notes" => "Stores a note on this server. The client half is not shown in the window yet.",
         _ => "The server script runs on this server after you allow it.",
     }
@@ -92,13 +99,34 @@ pub fn ensure_plugin_samples(data_dir: &Path) {
         return;
     }
     let files = [
-        ("welcome/banter.plugin.json", include_str!("../../../examples/plugins/welcome/banter.plugin.json")),
-        ("welcome/server/main.luau", include_str!("../../../examples/plugins/welcome/server/main.luau")),
-        ("roll/banter.plugin.json", include_str!("../../../examples/plugins/roll/banter.plugin.json")),
-        ("roll/server/main.luau", include_str!("../../../examples/plugins/roll/server/main.luau")),
-        ("notes/banter.plugin.json", include_str!("../../../examples/plugins/notes/banter.plugin.json")),
-        ("notes/server/main.luau", include_str!("../../../examples/plugins/notes/server/main.luau")),
-        ("notes/client/main.luau", include_str!("../../../examples/plugins/notes/client/main.luau")),
+        (
+            "welcome/banter.plugin.json",
+            include_str!("../../../examples/plugins/welcome/banter.plugin.json"),
+        ),
+        (
+            "welcome/server/main.luau",
+            include_str!("../../../examples/plugins/welcome/server/main.luau"),
+        ),
+        (
+            "roll/banter.plugin.json",
+            include_str!("../../../examples/plugins/roll/banter.plugin.json"),
+        ),
+        (
+            "roll/server/main.luau",
+            include_str!("../../../examples/plugins/roll/server/main.luau"),
+        ),
+        (
+            "notes/banter.plugin.json",
+            include_str!("../../../examples/plugins/notes/banter.plugin.json"),
+        ),
+        (
+            "notes/server/main.luau",
+            include_str!("../../../examples/plugins/notes/server/main.luau"),
+        ),
+        (
+            "notes/client/main.luau",
+            include_str!("../../../examples/plugins/notes/client/main.luau"),
+        ),
     ];
     for (path, body) in files {
         let dest = root.join(path);
@@ -125,7 +153,10 @@ fn from_dir(dir: &Path) -> LocalPlugin {
     if let Err(reason) = collect_files(dir, dir, &mut files) {
         return named_failure(parsed.as_ref(), fallback, &reason);
     }
-    let borrowed: Vec<(&str, &[u8])> = files.iter().map(|(path, bytes)| (path.as_str(), bytes.as_slice())).collect();
+    let borrowed: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
+        .collect();
     let zip = match zip_files(&borrowed) {
         Ok(zip) => zip,
         Err(_) => return named_failure(parsed.as_ref(), fallback, "could not pack this plugin"),
@@ -178,7 +209,10 @@ fn collect_files(dir: &Path, root: &Path, out: &mut Vec<(String, Vec<u8>)>) -> R
         if name.is_empty() || name.starts_with('/') || name.contains("..") {
             return Err("invalid path".into());
         }
-        let allowed = name.ends_with(".luau") || name.ends_with(".json") || name.ends_with(".png") || name.ends_with(".webp");
+        let allowed = name.ends_with(".luau")
+            || name.ends_with(".json")
+            || name.ends_with(".png")
+            || name.ends_with(".webp");
         if !allowed {
             continue;
         }
@@ -188,7 +222,11 @@ fn collect_files(dir: &Path, root: &Path, out: &mut Vec<(String, Vec<u8>)>) -> R
     Ok(())
 }
 
-fn named_failure(parsed: Option<&banter_server::PluginManifest>, fallback: String, reason: &str) -> LocalPlugin {
+fn named_failure(
+    parsed: Option<&banter_server::PluginManifest>,
+    fallback: String,
+    reason: &str,
+) -> LocalPlugin {
     match parsed {
         Some(manifest) => LocalPlugin {
             id: manifest.id.clone(),
@@ -216,5 +254,8 @@ fn failed(label: String, reason: &str) -> LocalPlugin {
 }
 
 fn file_label(path: &Path) -> String {
-    path.file_stem().and_then(|name| name.to_str()).unwrap_or("plugin").to_string()
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plugin")
+        .to_string()
 }
