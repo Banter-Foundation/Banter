@@ -1,6 +1,6 @@
 //! Embedded Banter UI sound assets decode and map to sound events.
 
-use banter::{decode_all_assets, SoundEvent, RINGTONE_ASSET};
+use banter::{decode_all_assets, ringtone_duration, SoundEvent, RINGTONE_ASSET};
 
 #[test]
 fn sound_event_files_match_adam_audio_pack() {
@@ -21,4 +21,13 @@ fn every_sfx_asset_decodes_to_pcm() {
         assert!(rate >= 8_000, "{name} sample rate");
         assert!(frames > 100, "{name} should have audible length");
     }
+}
+
+#[test]
+fn ringtone_duration_matches_one_playthrough() {
+    let secs = ringtone_duration().as_secs_f64();
+    assert!(
+        (60.0..90.0).contains(&secs),
+        "BanterRingtone should be ~70s (call times out when it ends), got {secs}"
+    );
 }

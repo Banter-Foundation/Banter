@@ -3,6 +3,9 @@
 //! Clips are embedded Ogg Vorbis under `assets/sfx/`. Playback uses a dedicated
 //! cpal output stream so local feedback still works while deafened and before a
 //! voice media session is up.
+//!
+//! The DM ringtone plays once (no loop). Call UI times out when
+//! [`ringtone_duration`] elapses while still ringing.
 
 use std::collections::VecDeque;
 use std::io::Cursor;
@@ -15,7 +18,7 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use lewton::inside_ogg::OggStreamReader;
 
-/// One-shot Banter UI sounds. Ringtone is controlled separately (loop while ringing).
+/// One-shot Banter UI sounds. Ringtone is controlled separately (plays once while ringing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SoundEvent {
     Join,
@@ -51,8 +54,19 @@ impl SoundEvent {
     }
 }
 
-/// Embedded ringtone asset name (loops while a DM call is ringing).
+/// Embedded ringtone asset name (plays once while a DM call is ringing).
 pub const RINGTONE_ASSET: &str = "BanterRingtone.ogg";
+
+/// Wall-clock length of [`RINGTONE_ASSET`]. Used to time out unanswered calls.
+pub fn ringtone_duration() -> Duration {
+    match decode_ogg(asset_bytes(RINGTONE_ASSET)) {
+        Ok(clip) if clip.rate > 0 && !clip.samples.is_empty() => {
+            let secs = clip.samples.len() as f64 / clip.rate as f64;
+            Duration::from_secs_f64(secs.max(0.1))
+        }
+        _ => Duration::from_secs(70),
+    }
+}
 
 fn asset_bytes(name: &str) -> &'static [u8] {
     match name {
@@ -238,9 +252,12 @@ impl Mixer {
         let mut sample = self.oneshots.pop_front().unwrap_or(0.0);
         if self.ringing {
             if let Some(ring) = &self.ringtone {
-                if !ring.samples.is_empty() {
-                    sample += ring.samples[self.ringtone_pos % ring.samples.len()];
-                    self.ringtone_pos = (self.ringtone_pos + 1) % ring.samples.len();
+                if self.ringtone_pos < ring.samples.len() {
+                    sample += ring.samples[self.ringtone_pos];
+                    self.ringtone_pos += 1;
+                } else {
+                    // One play-through finished; do not loop.
+                    self.ringing = false;
                 }
             }
         }
@@ -398,13 +415,19 @@ fn run_worker(rx: mpsc::Receiver<Command>) {
                     );
                 }
                 let mut mix = mixer.lock().expect("sfx mixer");
-                if ringing && mix.ringtone.is_none() {
-                    mix.set_ringtone(&catalog.ringtone, device_rate);
-                }
-                if !ringing {
+                if ringing {
+                    // Start (or restart) a single play-through from the beginning.
+                    if mix.ringtone.is_none() {
+                        mix.set_ringtone(&catalog.ringtone, device_rate);
+                    }
+                    if !mix.ringing {
+                        mix.ringtone_pos = 0;
+                        mix.ringing = true;
+                    }
+                } else {
+                    mix.ringing = false;
                     mix.ringtone_pos = 0;
                 }
-                mix.ringing = ringing;
             }
             Command::Config { device, volume } => {
                 mixer.lock().expect("sfx mixer").volume = volume;
@@ -466,5 +489,34 @@ mod tests {
             assert!(rate >= 8_000, "{name} rate");
             assert!(frames > 0, "{name} has samples");
         }
+    }
+
+    #[test]
+    fn ringtone_duration_is_about_one_playthrough() {
+        let secs = ringtone_duration().as_secs_f64();
+        assert!(
+            (60.0..90.0).contains(&secs),
+            "expected ~70s BanterRingtone, got {secs}"
+        );
+    }
+
+    #[test]
+    fn ringtone_mixer_plays_once_then_stops() {
+        let clip = decode_ogg(asset_bytes(RINGTONE_ASSET)).expect("ringtone");
+        let short = Clip {
+            rate: clip.rate,
+            samples: Arc::from(clip.samples[..4800.min(clip.samples.len())].to_vec()),
+        };
+        let mut mix = Mixer::new();
+        mix.ringtone = Some(short.clone());
+        mix.ringing = true;
+        mix.ringtone_pos = 0;
+        for _ in 0..short.samples.len() {
+            let _ = mix.next_sample();
+            assert!(mix.ringing || mix.ringtone_pos >= short.samples.len());
+        }
+        let _ = mix.next_sample();
+        assert!(!mix.ringing, "ringtone must not loop");
+        assert_eq!(mix.ringtone_pos, short.samples.len());
     }
 }

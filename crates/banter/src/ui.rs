@@ -55,7 +55,7 @@ use crate::logic::{
     VoiceRejoinIntent, OPEN_MIC_RMS, RECONNECTING_STATUS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
-use crate::sfx::{Sfx, SoundEvent};
+use crate::sfx::{ringtone_duration, Sfx, SoundEvent};
 use crate::profile::{
     display_name_style_color, games_from_payload, games_to_payload, games_widget_cap,
     profile_badge_row_visible_cap, profile_board_tabs, profile_column_content_width,
@@ -450,6 +450,8 @@ pub(crate) struct App {
     media: Option<Media>,
     /// Local UI sounds (join/leave/mute/stream) and DM call ringtone.
     sfx: Sfx,
+    /// When the one-shot ringtone started; unanswered calls time out at start + ringtone length.
+    ring_deadline: Option<Instant>,
     /// When set, the websocket is down and the next connect attempt runs at this instant.
     reconnect_at: Option<Instant>,
     /// Guild VC or DM call to rejoin after a successful reconnect (server clears seats on drop).
@@ -701,6 +703,7 @@ impl App {
             realtime: None,
             media: None,
             sfx: Sfx::open(),
+            ring_deadline: None,
             reconnect_at: None,
             pending_voice_rejoin: None,
             shell: ShellHost::start(),
@@ -803,7 +806,7 @@ impl App {
             return;
         }
         self.pump_events();
-        self.sync_call_ringtone();
+        self.tick_call_ringtone();
         if !self.stream.show_preview {
             if let Some(shot) = self.local_screen.take() {
                 let _ = imgui.remove_texture(shot.texture);
@@ -3094,7 +3097,7 @@ impl App {
                         semi,
                     ) {
                         if self.note(self.client.decline_call(call.dm_id)).is_some() {
-                            self.sfx.set_ringing(false);
+                            self.stop_ringing();
                             self.end_media_place();
                         }
                     }
@@ -3212,7 +3215,7 @@ impl App {
             // While reconnecting the server already ended the call; clear local UI anyway.
             let was_active = call.phase == CallPhase::Active;
             self.call = None;
-            self.sfx.set_ringing(false);
+            self.stop_ringing();
             if was_active {
                 self.sfx.play(SoundEvent::Leave);
             }
@@ -3245,7 +3248,7 @@ impl App {
             if !was_active {
                 self.voice_channel = None;
                 self.drop_self_from_rosters(None);
-                self.sfx.set_ringing(false);
+                self.stop_ringing();
                 self.sfx.play(SoundEvent::Join);
             }
             self.voice_members = vec![
@@ -3261,9 +3264,9 @@ impl App {
                 },
             ];
         } else if ringing {
-            self.sfx.set_ringing(true);
+            self.begin_ringing();
         } else {
-            self.sfx.set_ringing(false);
+            self.stop_ringing();
         }
         self.call = Some(call);
         if open_dm_if_needed && !matches!(self.place, Place::Direct(id) if id == dm_id) {
@@ -3284,12 +3287,63 @@ impl App {
             .configure(&self.voice.output_device, self.voice.output_volume);
     }
 
-    fn sync_call_ringtone(&self) {
+    fn begin_ringing(&mut self) {
+        if self.ring_deadline.is_some() {
+            return;
+        }
+        self.sfx.set_ringing(true);
+        self.ring_deadline = Some(Instant::now() + ringtone_duration());
+    }
+
+    fn stop_ringing(&mut self) {
+        self.sfx.set_ringing(false);
+        self.ring_deadline = None;
+    }
+
+    /// Keep ringtone in sync with call phase; time out unanswered calls when the clip ends.
+    fn tick_call_ringtone(&mut self) {
         let ringing = self
             .call
             .as_ref()
             .is_some_and(|call| call.phase == CallPhase::Ringing);
-        self.sfx.set_ringing(ringing);
+        if !ringing {
+            if self.ring_deadline.is_some() {
+                self.stop_ringing();
+            }
+            return;
+        }
+        if self.ring_deadline.is_none() {
+            self.begin_ringing();
+        }
+        if self
+            .ring_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.timeout_ringing_call();
+        }
+    }
+
+    /// Ringtone finished with nobody answering — cancel/decline the ringing call.
+    fn timeout_ringing_call(&mut self) {
+        let me = self.account.as_ref().map(|account| account.id);
+        let Some(call) = self.call.clone() else {
+            self.stop_ringing();
+            return;
+        };
+        if call.phase != CallPhase::Ringing {
+            self.stop_ringing();
+            return;
+        }
+        let ended = if Some(call.callee) == me {
+            self.note(self.client.decline_call(call.dm_id)).is_some()
+        } else {
+            self.note(self.client.end_call(call.dm_id)).is_some()
+        };
+        self.stop_ringing();
+        if ended || self.reconnect_at.is_some() {
+            self.call = None;
+            self.end_media_place();
+        }
     }
 
     /// The 48 px bar over the stage and the member list.
@@ -5623,7 +5677,7 @@ impl App {
             self.voice_members = members;
             self.voice_channel = Some(channel_id);
             self.call = None;
-            self.sfx.set_ringing(false);
+            self.stop_ringing();
             self.sfx.play(SoundEvent::Join);
             self.flags_failed_at = None;
             self.sent_flags = VoiceFlags {
@@ -5833,7 +5887,7 @@ impl App {
                         WHITE,
                     ) {
                         if self.note(self.client.decline_call(call.dm_id)).is_some() {
-                            self.sfx.set_ringing(false);
+                            self.stop_ringing();
                             self.end_media_place();
                         }
                     }
@@ -8746,7 +8800,7 @@ impl App {
                         .call
                         .as_ref()
                         .is_some_and(|call| call.phase == CallPhase::Active);
-                    self.sfx.set_ringing(false);
+                    self.stop_ringing();
                     if was_active {
                         self.sfx.play(SoundEvent::Leave);
                     }
