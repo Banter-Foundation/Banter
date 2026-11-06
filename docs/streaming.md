@@ -9,6 +9,8 @@ Voice channels and direct calls use WebRTC. The websocket carries signaling only
 - **Opt-in guild P2P video** (Voice & Video → Prefer P2P video; **off by default**): when exactly two people are in a voice channel and **both** enable it, that pair meshes WebRTC peer-to-peer instead of the SFU. A third joiner or either peer turning the setting off returns the channel to the SFU. Preference is signaled with `ClientSignal::GuildP2pVideo` and appears on `VoiceMember.prefer_p2p_video`.
 - Group calls are not a product surface. The direct-call messages are the mesh shape a later group call would use.
 
+Protocol: this work bumps `PROTOCOL` to `2` (call flags + guild P2P signaling). Older clients that omit the new serde-default fields still connect (`MIN_CLIENT_PROTOCOL` remains `1`).
+
 Both sides offer the same four tracks: `user_audio`, `stream_audio`, `camera`, and `screen`. Simulcast RIDs are `q`, `h`, and `f` (quarter, half, full), in that order on the `a=simulcast` line. The H.264 profile is Constrained Baseline, `profile-level-id=42e01f`. Opus is 48 kHz mono with in-band FEC and DTX on the microphone.
 
 Voice-channel SFU notes (reliability):
@@ -34,6 +36,8 @@ The publisher encodes each wanted spatial layer once. The sender congestion ladd
 A viewer’s quality slider on a remote screen or camera snaps to full, half, quarter, or off. The choice is kept for that publisher and track until the app quits. It sends `SubscribeLayer`. The SFU forwards only that layer, so the viewer’s downlink follows the slider. Off stops video for that track and leaves audio alone. The slider cannot ask for a layer the sender has paused. The tile shows the layer that actually arrived when it is lower than the slider.
 
 If nobody wants a layer, the publisher is told to pause it (dynacast). The first subscriber to a paused layer asks the publisher for a keyframe.
+
+P2P (DM DirectCall, and guild voice when both peers opted into P2P video) never receives SFU `WantedLayers`. A new or changed peer `SubscribeLayer` cap therefore forces a local IDR so Go Live / camera after the call is up (or a late watcher) can decode. Encode loops also skip camera/screen layers while the matching `publishing_*` flag is off, so a restart after toggle starts on a fresh keyframe instead of orphaned P-frames.
 
 ## Capture
 
