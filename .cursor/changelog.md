@@ -1,3 +1,9 @@
+## 2026-11-06 02:10:00 -05:00 [ubuntu] — Fix DM P2P streaming + opt-in guild P2P video
+
+DM Go Live/camera stayed invisible because call flag posts never reached the peer (`set_flags` only published voice-channel rosters) and P2P `SubscribeLayer` never forced an IDR. Active calls now rebroadcast `Call` with `caller_flags`/`callee_flags`; the stage seeds `voice_members` from those flags and still infers from remote textures. Publishers force a keyframe when a P2P peer cap changes, and idle camera/screen encoders clear when not publishing.
+
+Guild voice stays on the SFU by default. Voice & Video gains **Prefer P2P video (1:1 voice channels)** (off by default): when both seated peers opt in and the channel has exactly two people, RTC meshes P2P and skips the SFU; otherwise SFU. Protocol bumped to 2 for `GuildP2pVideo` / roster `prefer_p2p_video`.
+
 ## 2026-11-06 01:55:00 -05:00 [ubuntu] — Late-join Go Live + SFU ports in /debugnow
 
 Joining a voice channel while someone is already streaming now PLIs the publisher (accept_offer drained keyframe queue; BindPeer re-asks; client re-subscribes live screen/camera). `/debugnow` lists configured SFU UDP range and ports currently claimed. Publisher forces an IDR when WantedLayers subscriber count rises.

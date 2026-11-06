@@ -5,7 +5,8 @@ Voice channels and direct calls use WebRTC. The websocket carries signaling only
 ## Topology
 
 - A server voice channel terminates on the embedded SFU. The SFU forwards RTP. It does not decode or transcode.
-- A direct call is peer to peer. The server relays the offer, the answer, ICE, and `SubscribeLayer`.
+- A direct call is peer to peer. The server relays the offer, the answer, ICE, and `SubscribeLayer`. Active-call `VoiceFlags` (mute, camera, Go Live) are rebroadcast on the `Call` event so both peers keep a live roster; P2P `SubscribeLayer` forces a publisher IDR when the peer cap changes.
+- **Opt-in guild P2P video** (Voice & Video → Prefer P2P video; **off by default**): when exactly two people are in a voice channel and **both** enable it, that pair meshes WebRTC peer-to-peer instead of the SFU. A third joiner or either peer turning the setting off returns the channel to the SFU. Preference is signaled with `ClientSignal::GuildP2pVideo` and appears on `VoiceMember.prefer_p2p_video`.
 - Group calls are not a product surface. The direct-call messages are the mesh shape a later group call would use.
 
 Both sides offer the same four tracks: `user_audio`, `stream_audio`, `camera`, and `screen`. Simulcast RIDs are `q`, `h`, and `f` (quarter, half, full), in that order on the `a=simulcast` line. The H.264 profile is Constrained Baseline, `profile-level-id=42e01f`. Opus is 48 kHz mono with in-band FEC and DTX on the microphone.

@@ -466,18 +466,25 @@ fn video_encode_loop(
         let encode_started = Instant::now();
         let (camera_layers, screen_layers) = {
             let qos = qos.lock().expect("qos");
-            (
+            let camera = if control.publishing_camera.load(Ordering::Relaxed) {
                 highest_first(qos.active_layers(
                     MediaKind::Camera,
                     wanted_of(&control, MediaKind::Camera).as_deref(),
                     peer_cap(&control, MediaKind::Camera),
-                )),
+                ))
+            } else {
+                Vec::new()
+            };
+            let screen = if control.publishing_screen.load(Ordering::Relaxed) {
                 highest_first(qos.active_layers(
                     MediaKind::Screen,
                     wanted_of(&control, MediaKind::Screen).as_deref(),
                     peer_cap(&control, MediaKind::Screen),
-                )),
-            )
+                ))
+            } else {
+                Vec::new()
+            };
+            (camera, screen)
         };
         // Drop idle encoders so the next publish starts on a fresh IDR instead of
         // P-frames that reference a GOP remotes never saw (camera toggle / Go Live restart).
@@ -1021,11 +1028,16 @@ fn apply_control(control: &Control, event: &ServerEvent) {
             max_layer,
             ..
         } => {
-            control
+            let prev = control
                 .peer_cap
                 .lock()
                 .expect("cap")
                 .insert(*track, *max_layer);
+            // P2P never sends WantedLayers; a new/changed peer cap must force an IDR so
+            // late watchers (or Go Live after the call is up) can decode.
+            if prev != Some(*max_layer) {
+                control.force_key.store(true, Ordering::Relaxed);
+            }
         }
         _ => {}
     }

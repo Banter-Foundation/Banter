@@ -1349,8 +1349,17 @@ async fn set_flags(
     Auth(account): Auth,
     Json(flags): Json<VoiceFlags>,
 ) -> StatusCode {
-    if let Some(channel_id) = state.live.set_flags(account.id, flags) {
-        state.live.publish_voice(&state.store, account.id, channel_id).await;
+    match state.live.set_flags(account.id, flags) {
+        crate::live::FlagPublish::Voice(channel_id) => {
+            state.live.publish_voice(&state.store, account.id, channel_id).await;
+        }
+        crate::live::FlagPublish::Call(call) => {
+            state.live.send_event(
+                &[call.caller, call.callee],
+                &ServerEvent::Call { call },
+            );
+        }
+        crate::live::FlagPublish::None => {}
     }
     StatusCode::NO_CONTENT
 }
@@ -1456,6 +1465,16 @@ async fn handle_socket(state: HttpState, account: Account, socket: WebSocket) {
                     }
                     let signal_for_room = signal.clone();
                     if state.live.handle_signal(user_id, signal).is_ok() {
+                        if matches!(signal_for_room, ClientSignal::GuildP2pVideo { .. }) {
+                            if let Some(MediaPlace::VoiceChannel(channel_id)) =
+                                state.live.current_place(user_id)
+                            {
+                                state
+                                    .live
+                                    .publish_voice(&state.store, user_id, channel_id)
+                                    .await;
+                            }
+                        }
                         apply_voice_signal(&state, user_id, signal_for_room);
                     }
                 } else if text.contains("activity") {
@@ -1494,17 +1513,42 @@ fn apply_voice_signal(state: &HttpState, user_id: i64, signal: ClientSignal) {
         ClientSignal::RtcOffer {
             place: MediaPlace::VoiceChannel(channel_id),
             sdp,
-        } => crate::room::accept_offer(Arc::clone(&state.live), user_id, channel_id, sdp),
+        } => {
+            // Pair opted into guild P2P video: mesh via relay_p2p, skip the SFU.
+            if state.live.voice_uses_p2p_video(channel_id) {
+                return;
+            }
+            crate::room::accept_offer(Arc::clone(&state.live), user_id, channel_id, sdp);
+        }
         ClientSignal::RtcAnswer {
-            place: MediaPlace::VoiceChannel(_),
+            place: MediaPlace::VoiceChannel(channel_id),
             sdp,
-        } => crate::room::accept_answer(user_id, sdp),
+        } => {
+            if state.live.voice_uses_p2p_video(channel_id) {
+                return;
+            }
+            crate::room::accept_answer(user_id, sdp);
+        }
         ClientSignal::RtcIce {
-            place: MediaPlace::VoiceChannel(_),
+            place: MediaPlace::VoiceChannel(channel_id),
             candidate,
             sdp_mid,
             sdp_mline_index,
-        } => crate::room::accept_ice(user_id, candidate, sdp_mid, sdp_mline_index),
+        } => {
+            if state.live.voice_uses_p2p_video(channel_id) {
+                return;
+            }
+            crate::room::accept_ice(user_id, candidate, sdp_mid, sdp_mline_index);
+        }
+        ClientSignal::SubscribeLayer {
+            place: MediaPlace::VoiceChannel(channel_id),
+            ..
+        } => {
+            if state.live.voice_uses_p2p_video(channel_id) {
+                return;
+            }
+            crate::room::flush_keyframe_plis(&state.live);
+        }
         ClientSignal::SubscribeLayer { .. } => {
             crate::room::flush_keyframe_plis(&state.live);
         }

@@ -234,6 +234,8 @@ pub(crate) struct App {
     screen: bool,
     flags: VoiceFlags,
     sent_flags: VoiceFlags,
+    /// Last GuildP2pVideo preference pushed over the websocket (None until first send).
+    sent_guild_p2p_video: Option<bool>,
     /// Last failed `POST /v1/voice/flags` time; backs off retries so the notice is not spammed.
     flags_failed_at: Option<Instant>,
     v_held: bool,
@@ -519,6 +521,7 @@ impl App {
             screen: false,
             flags: VoiceFlags::default(),
             sent_flags: VoiceFlags::default(),
+            sent_guild_p2p_video: None,
             flags_failed_at: None,
             v_held: false,
             talk_held: false,
@@ -3205,26 +3208,45 @@ impl App {
 
     fn start_call(&mut self, dm_id: i64) {
         if let Some(call) = self.note(self.client.start_call(dm_id)) {
-            self.call = Some(call);
-            self.voice_channel = None;
-            self.voice_members.clear();
-            self.drop_self_from_rosters(None);
-            // Keep (or open) the DM so the center stage can show the 1:1 call view.
-            if !matches!(self.place, Place::Direct(id) if id == dm_id) {
-                self.open_dm(dm_id);
-            }
+            self.apply_call_snapshot(call, true);
         }
     }
 
     fn accept_call(&mut self, dm_id: i64) {
         if let Some(call) = self.note(self.client.accept_call(dm_id)) {
-            self.call = Some(call);
-            self.voice_channel = None;
-            self.voice_members.clear();
-            self.drop_self_from_rosters(None);
-            if !matches!(self.place, Place::Direct(id) if id == dm_id) {
-                self.open_dm(dm_id);
+            self.apply_call_snapshot(call, true);
+        }
+    }
+
+    /// Seed DM call roster from snapshot flags so Go Live / camera are visible to the peer.
+    fn apply_call_snapshot(&mut self, call: CallSnapshot, open_dm_if_needed: bool) {
+        let dm_id = call.dm_id;
+        let was_active = self
+            .call
+            .as_ref()
+            .is_some_and(|prior| prior.phase == CallPhase::Active && prior.dm_id == dm_id);
+        let active = call.phase == CallPhase::Active;
+        if active {
+            if !was_active {
+                self.voice_channel = None;
+                self.drop_self_from_rosters(None);
             }
+            self.voice_members = vec![
+                VoiceMember {
+                    user_id: call.caller,
+                    flags: call.caller_flags,
+                    prefer_p2p_video: false,
+                },
+                VoiceMember {
+                    user_id: call.callee,
+                    flags: call.callee_flags,
+                    prefer_p2p_video: false,
+                },
+            ];
+        }
+        self.call = Some(call);
+        if open_dm_if_needed && !matches!(self.place, Place::Direct(id) if id == dm_id) {
+            self.open_dm(dm_id);
         }
     }
 
@@ -5630,6 +5652,7 @@ impl App {
             vec![banter_server::VoiceMember {
                 user_id: me,
                 flags: self.flags,
+                prefer_p2p_video: self.voice.guild_p2p_video,
             }]
         } else {
             members
@@ -5777,7 +5800,9 @@ impl App {
                 let pad = 16.0;
                 let area_w = (width - pad * 2.0).max(80.0);
                 let area_h = (height - CALL_BAR_H - pad).max(80.0);
-                let sharing = self.screen || people.iter().any(|member| member.flags.screen);
+                let sharing = self.screen
+                    || people.iter().any(|member| member.flags.screen)
+                    || self.has_live_stream();
                 let featured_h = if sharing {
                     (area_h * 0.62).floor()
                 } else {
@@ -5835,14 +5860,29 @@ impl App {
     }
 
     fn dm_call_members(&self, me: i64, peer: i64) -> Vec<VoiceMember> {
+        let mut peer_flags = self
+            .voice_members
+            .iter()
+            .find(|member| member.user_id == peer)
+            .map(|member| member.flags)
+            .unwrap_or_default();
+        // Flag WS can lag; remote textures already prove camera / Go Live.
+        if self.remote_video.contains_key(&(peer, 3)) {
+            peer_flags.screen = true;
+        }
+        if self.remote_video.contains_key(&(peer, 2)) {
+            peer_flags.camera = true;
+        }
         vec![
             VoiceMember {
                 user_id: peer,
-                flags: VoiceFlags::default(),
+                flags: peer_flags,
+                prefer_p2p_video: false,
             },
             VoiceMember {
                 user_id: me,
                 flags: self.flags,
+                prefer_p2p_video: false,
             },
         ]
     }
@@ -7553,8 +7593,7 @@ impl App {
                 None
             };
             let me = self.account.as_ref().map(|account| account.id).unwrap_or(0);
-            let offerer = self.voice_channel.is_some()
-                || self.call.as_ref().is_some_and(|call| call.caller == me);
+            let offerer = self.webrtc_offerer(me);
             // Do not offer WebRTC while reconnect is armed: the server seat is gone until
             // finish_reconnect HTTP-rejoins, and a premature offer is never retried.
             let rtc_ready = voice_rtc_session_ready(in_place, self.reconnect_at.is_some());
@@ -7563,6 +7602,7 @@ impl App {
         if in_place && self.reconnect_at.is_none() && self.media.is_some() {
             self.ensure_remote_stream_subs();
         }
+        self.sync_guild_p2p_video_pref();
         // Skip flag posts while the websocket is down — the server already cleared the seat.
         if in_place && self.reconnect_at.is_none() && self.flags != self.sent_flags {
             let now = Instant::now();
@@ -7954,6 +7994,8 @@ impl App {
         let media = Media::start(realtime.signal_sender());
         self.media = Some(media);
         self.realtime = Some(realtime);
+        self.sent_guild_p2p_video = None;
+        self.sync_guild_p2p_video_pref();
     }
 
     /// Drop the dead socket/media, keep local voice/call for UI, and schedule reconnect.
@@ -8646,17 +8688,8 @@ impl App {
             ServerEvent::Call { call } => {
                 let me = self.account.as_ref().map(|account| account.id);
                 if Some(call.caller) == me || Some(call.callee) == me {
-                    if call.phase == CallPhase::Active {
-                        self.voice_channel = None;
-                        self.voice_members.clear();
-                        self.drop_self_from_rosters(None);
-                    }
-                    let dm_id = call.dm_id;
-                    self.call = Some(call);
-                    // Open the DM so the one-on-one call stage appears (incoming or accepted).
-                    if !matches!(self.place, Place::Direct(id) if id == dm_id) {
-                        self.open_dm(dm_id);
-                    }
+                    // Rebroadcasts carry live Go Live / camera flags during an active call.
+                    self.apply_call_snapshot(call, true);
                 }
             }
             ServerEvent::CallEnded { dm_id } => {
@@ -11988,6 +12021,22 @@ impl App {
         settings_divider(ui, width);
         settings_spacer(ui);
 
+        if settings_panel(ui, "Guild voice video") {
+            if settings_toggle_row(
+                ui,
+                "guild-p2p-video",
+                "Prefer P2P video (1:1 voice channels)",
+                &mut self.voice.guild_p2p_video,
+                width,
+            ) {
+                self.save_voice();
+            }
+            ui.text_colored(
+                MUTED,
+                "Off by default. When both people enable this and you are alone together in a voice channel, screen and camera mesh peer-to-peer instead of through the SFU. Groups of three or more always use the SFU.",
+            );
+            settings_spacer(ui);
+        }
         if settings_panel(ui, "Voice processing") {
             if settings_toggle_row(
                 ui,
@@ -13479,7 +13528,11 @@ impl App {
         } else {
             VoiceFlags::default()
         };
-        let member = VoiceMember { user_id, flags };
+        let member = VoiceMember {
+            user_id,
+            flags,
+            prefer_p2p_video: false,
+        };
         let talking = self.member_talking(&member);
         let icon = if flags.deafened {
             Some("headphone-off")
@@ -13782,10 +13835,63 @@ impl App {
         let _ = save_json(&self.data_dir.join("home.json"), &self.home_layout);
     }
 
-    fn save_voice(&self) {
+    fn save_voice(&mut self) {
         let mut voice = self.voice.clone();
         voice.push_to_talk = self.push_to_talk;
         let _ = save_json(&self.data_dir.join("voice.json"), &voice);
+        self.sync_guild_p2p_video_pref();
+    }
+
+    /// Lower user id offers when guild P2P video is active; otherwise SFU (everyone) or DM caller.
+    fn webrtc_offerer(&self, me: i64) -> bool {
+        if self.guild_p2p_video_active() {
+            let peer = self
+                .voice_members
+                .iter()
+                .map(|member| member.user_id)
+                .find(|id| *id != me)
+                .unwrap_or(me);
+            return me < peer;
+        }
+        self.voice_channel.is_some()
+            || self.call.as_ref().is_some_and(|call| call.caller == me)
+    }
+
+    /// Local setting on, exactly two seated, and the peer also opted in (roster field).
+    fn guild_p2p_video_active(&self) -> bool {
+        if !self.voice.guild_p2p_video
+            || self.voice_channel.is_none()
+            || self.voice_members.len() != 2
+        {
+            return false;
+        }
+        let me = self.account.as_ref().map(|account| account.id);
+        self.voice_members.iter().all(|member| {
+            if Some(member.user_id) == me {
+                true
+            } else {
+                member.prefer_p2p_video
+            }
+        })
+    }
+
+    fn sync_guild_p2p_video_pref(&mut self) {
+        let enabled = self.voice.guild_p2p_video;
+        if self.sent_guild_p2p_video == Some(enabled) {
+            return;
+        }
+        let Some(realtime) = &self.realtime else {
+            return;
+        };
+        realtime.send(ClientSignal::GuildP2pVideo { enabled });
+        self.sent_guild_p2p_video = Some(enabled);
+        if let Some(me) = self.account.as_ref().map(|account| account.id) {
+            for member in &mut self.voice_members {
+                if member.user_id == me {
+                    member.prefer_p2p_video = enabled;
+                }
+            }
+        }
     }
 
     fn save_video(&mut self) {

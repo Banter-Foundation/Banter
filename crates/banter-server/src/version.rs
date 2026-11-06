@@ -21,7 +21,7 @@ pub const BANTER_VERSION: &str = "Version-1-test-12";
 /// Bump when the client requires server behavior older hosts lack (SFU RTP rewrite,
 /// badges API, ICE advertise, debug endpoint era, …). Missing `protocol` on health
 /// is treated as `0`.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// Oldest client protocol this server accepts.
 pub const MIN_CLIENT_PROTOCOL: u32 = 1;

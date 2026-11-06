@@ -1714,6 +1714,10 @@ pub struct VoicePrefs {
     /// GLFW-style letter or "V". Missing older files keep V.
     #[serde(default = "default_ptt_key")]
     pub ptt_key: String,
+    /// Opt into guild voice-channel P2P video when alone with one other opted-in peer.
+    /// Off by default — guild VC stays on the SFU.
+    #[serde(default)]
+    pub guild_p2p_video: bool,
 }
 
 fn default_ptt_key() -> String {
@@ -1736,6 +1740,7 @@ impl Default for VoicePrefs {
             auto_gain: false,
             camera: String::new(),
             ptt_key: default_ptt_key(),
+            guild_p2p_video: false,
         }
     }
 }
@@ -2443,6 +2448,7 @@ mod voice_roster_tests {
         VoiceMember {
             user_id,
             flags: VoiceFlags::default(),
+            prefer_p2p_video: false,
         }
     }
 
