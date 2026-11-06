@@ -1,3 +1,7 @@
+## 2026-11-06 04:00:00 -05:00 [ubuntu] — Version-1-test-13.1 pre-release
+
+Shipped pre-release Version-1-test-13.1 from main after hardware encode stays on VA-API (#76 / BAN-30) and RTC restarts on guild P2P↔SFU flips (#77 / BAN-31). Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
 ## 2026-11-06 03:50:00 -05:00 [ubuntu] — Restart RTC when guild P2P↔SFU flips (BAN-31)
 
 Go Live / camera stayed dead after guild opt-in P2P toggled or a third person joined because `Rtc::set_session` ignored topology when the offerer bit was unchanged (lower user id). Session key now includes `mesh`; P2P↔SFU flips rebuild the PeerConnection and clear stale WantedLayers / peer caps so multi-person guild SFU streams work again alongside DM mesh.
