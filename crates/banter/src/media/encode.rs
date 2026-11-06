@@ -266,7 +266,14 @@ impl LayerEncoder {
         force_key: bool,
     ) -> Result<EncodedAu, String> {
         match self.inner.encode(i420, width, height, force_key) {
-            Ok(au) if is_constrained_baseline(&au.bytes) || self.fallback.is_none() => Ok(au),
+            // Delta AUs omit SPS. Only reject hardware when an SPS is present and is
+            // not Constrained Baseline — otherwise every P-frame silently fell back
+            // to OpenH264 and the GPU sat idle after the first keyframe.
+            Ok(au)
+                if self.fallback.is_none() || !sps_rejects_constrained_baseline(&au.bytes) =>
+            {
+                Ok(au)
+            }
             Ok(_) | Err(_) => {
                 if let Some(soft) = self.fallback.take() {
                     self.inner = Box::new(soft);
@@ -456,6 +463,20 @@ pub fn is_constrained_baseline(annexb: &[u8]) -> bool {
         .any(|nal| nal.len() >= 4 && nal[0] & 0x1f == 7 && nal[1] == 66 && nal[2] & 0x40 != 0)
 }
 
+/// True when this AU carries an SPS that is *not* Constrained Baseline.
+///
+/// P-frames usually omit SPS. Treating “no SPS” as a profile failure made every
+/// hardware session fall back to OpenH264 after the first keyframe, so the GPU
+/// sat idle even though the probe had found VA-API / NVENC.
+pub fn sps_rejects_constrained_baseline(annexb: &[u8]) -> bool {
+    for nal in nals(annexb) {
+        if nal.len() >= 4 && nal[0] & 0x1f == 7 {
+            return !(nal[1] == 66 && nal[2] & 0x40 != 0);
+        }
+    }
+    false
+}
+
 pub fn access_unit_is_key(annexb: &[u8]) -> bool {
     nals(annexb).any(|nal| !nal.is_empty() && nal[0] & 0x1f == 5)
 }
@@ -610,7 +631,13 @@ fn try_hardware(
                 return Some(Box::new(encoder));
             }
         }
-        if ffmpeg_has_encoder("h264_vaapi") && std::path::Path::new("/dev/dri/renderD128").exists()
+        // AMD VA-API H.264 encode rejects sizes below 128×128 (see vainfo /
+        // ffmpeg). Opening smaller layers (e.g. Quarter on a short edge) fails
+        // and must not block Full/Half from using the GPU.
+        if ffmpeg_has_encoder("h264_vaapi")
+            && std::path::Path::new("/dev/dri/renderD128").exists()
+            && width >= 128
+            && height >= 128
         {
             if let Ok(encoder) = FfmpegEncoder::open(
                 "h264_vaapi",
@@ -707,11 +734,16 @@ impl FfmpegEncoder {
             "pipe:0",
         ]);
         if name == "h264_vaapi" {
+            // async_depth defaults to 2, which holds the first AU until a second
+            // frame is submitted. Realtime WebRTC can't wait that long — Banter
+            // timed out and fell back to OpenH264 after every keyframe open.
             command.args([
                 "-vaapi_device",
                 "/dev/dri/renderD128",
                 "-vf",
                 "format=nv12,hwupload",
+                "-async_depth",
+                "1",
             ]);
         }
         command.args([
@@ -799,7 +831,12 @@ impl VideoEncoder for FfmpegEncoder {
         height: u32,
         force_key: bool,
     ) -> Result<EncodedAu, String> {
-        if force_key || width != self.width || height != self.height {
+        // Reopen only on size change. Fresh ffmpeg already starts with an IDR;
+        // killing the process on every force_key reintroduced VA-API's first-AU
+        // delay and caused LayerEncoder to fall back to OpenH264. Mid-stream
+        // keys rely on the GOP (`-g`) unless a clean force-IDR path appears.
+        let _ = force_key;
+        if width != self.width || height != self.height {
             let replacement = FfmpegEncoder::open(
                 self.name,
                 self.backend,
@@ -820,6 +857,7 @@ impl VideoEncoder for FfmpegEncoder {
         stdin.write_all(i420).map_err(|err| err.to_string())?;
         stdin.flush().map_err(|err| err.to_string())?;
         let deadline = std::time::Instant::now() + Duration::from_millis(800);
+        let mut flushed = false;
         loop {
             let bytes = self.captured.lock().expect("ffmpeg bytes");
             if bytes.len() > before && access_unit_is_key(&bytes[before..])
@@ -833,6 +871,17 @@ impl VideoEncoder for FfmpegEncoder {
                 });
             }
             drop(bytes);
+            // Some VA-API stacks still hold the first AU until a second write.
+            // Duplicate the frame once to flush, then keep waiting.
+            if !flushed && std::time::Instant::now() + Duration::from_millis(400) > deadline {
+                let stdin = self
+                    .stdin
+                    .as_mut()
+                    .ok_or_else(|| "encoder is closed".to_string())?;
+                stdin.write_all(i420).map_err(|err| err.to_string())?;
+                stdin.flush().map_err(|err| err.to_string())?;
+                flushed = true;
+            }
             if std::time::Instant::now() > deadline {
                 return Err("hardware encoder produced no access unit".into());
             }
@@ -1156,5 +1205,70 @@ mod tests {
         let i420 = rgba_to_i420(&rgba, 32, 32);
         let (_scaled, width, height) = scale_i420(&i420, 32, 32, LayerId::Quarter).expect("scale");
         assert_eq!((width, height), (8, 8));
+    }
+
+    #[test]
+    fn p_frame_without_sps_does_not_reject_hardware() {
+        // Annex-B P-slice only (NAL type 1) — what VA-API emits on deltas.
+        let p_au = [0u8, 0, 0, 1, 0x01, 0x9a, 0x10, 0x00];
+        assert!(!is_constrained_baseline(&p_au));
+        assert!(
+            !sps_rejects_constrained_baseline(&p_au),
+            "missing SPS must not trigger OpenH264 fallback"
+        );
+    }
+
+    #[test]
+    fn high_profile_sps_rejects_hardware() {
+        // NAL type 7, profile_idc=100 (High), constraint_set1_flag clear.
+        let high = [0u8, 0, 0, 1, 0x67, 100, 0x0c, 0x1f];
+        assert!(!is_constrained_baseline(&high));
+        assert!(sps_rejects_constrained_baseline(&high));
+    }
+
+    #[test]
+    fn constrained_baseline_sps_keeps_hardware() {
+        let cb = [0u8, 0, 0, 1, 0x67, 66, 0x40, 0x15];
+        assert!(is_constrained_baseline(&cb));
+        assert!(!sps_rejects_constrained_baseline(&cb));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn vaapi_key_then_delta_stays_on_hardware() {
+        if hardware_probe().is_empty() {
+            return;
+        }
+        let width = 1280u32;
+        let height = 720u32;
+        let mut encoder = match LayerEncoder::open_with(
+            true,
+            width,
+            height,
+            30.0,
+            2_000_000,
+            EncoderPick::Hardware,
+        ) {
+            Ok(encoder) if matches!(encoder.backend(), Backend::Vaapi | Backend::Nvenc) => encoder,
+            _ => return,
+        };
+        let rgba = vec![40u8, 80, 120, 255].repeat((width * height) as usize);
+        let i420 = rgba_to_i420(&rgba, width, height);
+        let key = encoder.encode(&i420, width, height, true).expect("key");
+        assert!(
+            is_constrained_baseline(&key.bytes),
+            "first AU must be Constrained Baseline"
+        );
+        assert!(matches!(
+            encoder.backend(),
+            Backend::Vaapi | Backend::Nvenc
+        ));
+        let delta = encoder.encode(&i420, width, height, false).expect("delta");
+        assert!(!delta.bytes.is_empty());
+        assert!(
+            matches!(encoder.backend(), Backend::Vaapi | Backend::Nvenc),
+            "delta without SPS must not fall back to OpenH264; got {}",
+            encoder.backend().label()
+        );
     }
 }
