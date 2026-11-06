@@ -245,6 +245,10 @@ enum Cmd {
         place: Option<MediaPlace>,
         me: i64,
         offerer: bool,
+        /// True for DM DirectCall and guild opt-in P2P mesh. Must be part of the
+        /// session key: offerer often stays the same when flipping P2P↔SFU (lower
+        /// user id, or 2→3 people), and a stuck PeerConnection leaves streams dead.
+        mesh: bool,
     },
     Event(ServerEvent),
     Stop,
@@ -268,7 +272,8 @@ pub struct Rtc {
     threads: Vec<JoinHandle<()>>,
     control: Arc<Control>,
     /// Last session handed to the network thread. The UI calls this every frame.
-    session: Mutex<Option<(Option<MediaPlace>, i64, bool)>>,
+    /// Tuple is (place, me, offerer, mesh).
+    session: Mutex<Option<(Option<MediaPlace>, i64, bool, bool)>>,
 }
 
 impl Rtc {
@@ -361,14 +366,25 @@ impl Rtc {
             .store(screen, Ordering::Relaxed);
     }
 
-    pub fn set_session(&self, place: Option<MediaPlace>, me: i64, offerer: bool) {
-        let next = (place, me, offerer);
+    pub fn set_session(&self, place: Option<MediaPlace>, me: i64, offerer: bool, mesh: bool) {
+        let next = (place, me, offerer, mesh);
         let mut current = self.session.lock().expect("rtc session");
         if *current == Some(next) {
             return;
         }
         *current = Some(next);
-        let _ = self.cmd.send(Cmd::Session { place, me, offerer });
+        // Drop SFU WantedLayers / P2P caps from the prior topology so encode does not
+        // stay gated on an empty dynacast set after a mesh flip.
+        self.control.wanted.lock().expect("wanted").clear();
+        self.control.peer_cap.lock().expect("cap").clear();
+        self.control.subscribers.store(0, Ordering::Relaxed);
+        self.control.force_key.store(true, Ordering::Relaxed);
+        let _ = self.cmd.send(Cmd::Session {
+            place,
+            me,
+            offerer,
+            mesh,
+        });
     }
 
     pub fn ingest(&self, event: ServerEvent) {
@@ -788,10 +804,10 @@ async fn run(
     flags: Arc<AtomicU32>,
 ) {
     let mut carry = None;
-    let mut retry: Option<(MediaPlace, i64, bool)> = None;
+    let mut retry: Option<(MediaPlace, i64, bool, bool)> = None;
     let mut logged = false;
     loop {
-        let (place, me, offerer) = if let Some(again) = retry.take() {
+        let (place, me, offerer, mesh) = if let Some(again) = retry.take() {
             again
         } else {
             loop {
@@ -810,15 +826,18 @@ async fn run(
                         place: Some(place),
                         me,
                         offerer,
+                        mesh,
                     }) => {
+                        // Mesh (DM / guild P2P) reports as P2P; otherwise SFU.
                         control.topology.store(
-                            match place {
-                                MediaPlace::VoiceChannel(_) => 1,
-                                MediaPlace::DirectCall(_) => 2,
+                            if mesh || matches!(place, MediaPlace::DirectCall(_)) {
+                                2
+                            } else {
+                                1
                             },
                             Ordering::Relaxed,
                         );
-                        break (place, me, offerer);
+                        break (place, me, offerer, mesh);
                     }
                 }
             }
@@ -827,6 +846,7 @@ async fn run(
             place,
             me,
             offerer,
+            mesh,
             &mut cmds,
             &mut audio_rx,
             &mut video_rx,
@@ -852,7 +872,7 @@ async fn run(
                 // A failed bind used to restart on the next frame and leak a socket each time.
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(2)) => {
-                        retry = Some((place, me, offerer));
+                        retry = Some((place, me, offerer, mesh));
                     }
                     cmd = cmds.recv() => {
                         carry = cmd;
@@ -867,6 +887,7 @@ async fn run_call(
     place: MediaPlace,
     me: i64,
     offerer: bool,
+    mesh: bool,
     cmds: &mut UnboundedReceiver<Cmd>,
     audio_rx: &mut tokio::sync::mpsc::Receiver<Outgoing>,
     video_rx: &mut tokio::sync::mpsc::Receiver<Outgoing>,
@@ -934,12 +955,26 @@ async fn run_call(
                         let _ = pc.close().await;
                         return Ok(Some(Cmd::Stop));
                     }
-                    Cmd::Session { place: next, me: next_me, offerer: next_offerer } => {
-                        if next == Some(place) && next_me == me && next_offerer == offerer {
+                    Cmd::Session {
+                        place: next,
+                        me: next_me,
+                        offerer: next_offerer,
+                        mesh: next_mesh,
+                    } => {
+                        if next == Some(place)
+                            && next_me == me
+                            && next_offerer == offerer
+                            && next_mesh == mesh
+                        {
                             continue;
                         }
                         let _ = pc.close().await;
-                        return Ok(Some(Cmd::Session { place: next, me: next_me, offerer: next_offerer }));
+                        return Ok(Some(Cmd::Session {
+                            place: next,
+                            me: next_me,
+                            offerer: next_offerer,
+                            mesh: next_mesh,
+                        }));
                     }
                     Cmd::Event(event) => {
                         apply_control(control, &event);

@@ -396,6 +396,22 @@ pub fn voice_rtc_session_ready(in_place: bool, reconnect_armed: bool) -> bool {
     in_place && !reconnect_armed
 }
 
+/// Whether the RTC session key must treat this seat as a mesh (P2P) topology.
+///
+/// Guild opt-in P2P is pair-only; a third joiner must flip `mesh` off so the
+/// PeerConnection restarts onto the SFU even when the offerer bit is unchanged.
+pub fn voice_rtc_mesh(direct_call: bool, guild_p2p_pair_active: bool) -> bool {
+    direct_call || guild_p2p_pair_active
+}
+
+/// True when `(place, me, offerer, mesh)` differs enough to rebuild the PeerConnection.
+pub fn voice_rtc_session_changed(
+    previous: Option<(Option<i64>, i64, bool, bool)>,
+    next: (Option<i64>, i64, bool, bool),
+) -> bool {
+    previous != Some(next)
+}
+
 /// Open-mic frames quieter than this RMS are not sent. Push-to-talk does not use this gate.
 pub const OPEN_MIC_RMS: f32 = 180.0;
 
@@ -2475,8 +2491,9 @@ mod voice_roster_tests {
 #[cfg(test)]
 mod reconnect_tests {
     use super::{
-        capture_voice_rejoin_intent, next_reconnect_at, reconnect_retry_ready,
-        voice_rtc_session_ready, VoiceRejoinIntent, RECONNECTING_STATUS, RECONNECT_INTERVAL,
+        capture_voice_rejoin_intent, next_reconnect_at, reconnect_retry_ready, voice_rtc_mesh,
+        voice_rtc_session_changed, voice_rtc_session_ready, VoiceRejoinIntent, RECONNECTING_STATUS,
+        RECONNECT_INTERVAL,
     };
     use banter_server::CallPhase;
     use std::time::{Duration, Instant};
@@ -2537,6 +2554,31 @@ mod reconnect_tests {
         assert!(!voice_rtc_session_ready(false, true));
         // Seated and socket stable — offer/attach allowed.
         assert!(voice_rtc_session_ready(true, false));
+    }
+
+    #[test]
+    fn mesh_flag_covers_dm_and_guild_p2p_pair() {
+        assert!(voice_rtc_mesh(true, false));
+        assert!(voice_rtc_mesh(false, true));
+        assert!(voice_rtc_mesh(true, true));
+        assert!(!voice_rtc_mesh(false, false));
+    }
+
+    #[test]
+    fn session_restarts_when_mesh_flips_even_if_offerer_stays() {
+        // Lower user id stays offerer when a third person joins and guild P2P drops.
+        let place = Some(42_i64);
+        let me = 1_i64;
+        let offerer = true;
+        let previous = Some((place, me, offerer, true));
+        let next = (place, me, offerer, false);
+        assert!(voice_rtc_session_changed(previous, next));
+        assert!(!voice_rtc_session_changed(Some(next), next));
+        // Opting into guild P2P mid-call with the same offerer must also rebuild.
+        assert!(voice_rtc_session_changed(
+            Some((place, me, offerer, false)),
+            (place, me, offerer, true)
+        ));
     }
 }
 
