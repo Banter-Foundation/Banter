@@ -326,6 +326,8 @@ async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> R
     let (users, servers, channels, messages) = state.store.table_counts().await?;
     let (pool_size, pool_idle) = state.store.pool_usage();
     let (media_slots, media_forwards) = crate::room::media_snapshot();
+    let udp_ports = crate::room::claimed_udp_ports();
+    let (udp_min, udp_max) = crate::room::configured_udp_range().unwrap_or((0, 0));
     Ok(Json(ServerDebug {
         version: crate::BANTER_VERSION.to_string(),
         protocol: crate::PROTOCOL,
@@ -346,6 +348,9 @@ async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> R
         pool_size,
         pool_idle,
         traffic: crate::debuglog::traffic_snapshot(),
+        udp_ports,
+        udp_min,
+        udp_max,
         logs: crate::debuglog::recent(),
     }))
 }
@@ -1501,9 +1506,7 @@ fn apply_voice_signal(state: &HttpState, user_id: i64, signal: ClientSignal) {
             sdp_mline_index,
         } => crate::room::accept_ice(user_id, candidate, sdp_mid, sdp_mline_index),
         ClientSignal::SubscribeLayer { .. } => {
-            for request in state.live.take_keyframes() {
-                crate::room::request_pli(request.publisher, request.layer);
-            }
+            crate::room::flush_keyframe_plis(&state.live);
         }
         _ => {}
     }

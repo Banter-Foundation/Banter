@@ -141,6 +141,8 @@ struct Control {
     publishing_camera: AtomicBool,
     encoder_pref: Mutex<String>,
     rate_control: Mutex<String>,
+    /// Set when WantedLayers gains a subscriber so the next AU is an IDR for late joiners.
+    force_key: AtomicBool,
 }
 
 impl Control {
@@ -171,6 +173,7 @@ impl Control {
             publishing_camera: AtomicBool::new(false),
             encoder_pref: Mutex::new("auto".into()),
             rate_control: Mutex::new("cbr".into()),
+            force_key: AtomicBool::new(false),
         }
     }
 
@@ -699,6 +702,7 @@ fn encode_video(
     *seen = generation;
     let fps = control.encode_fps.load(Ordering::Relaxed).max(1) as f32;
     let pick = control.encoder_pick();
+    let join_key = control.force_key.swap(false, Ordering::Relaxed);
     let mut sent_key = false;
     for &layer in layers {
         let Some((scaled, width, height)) =
@@ -728,7 +732,7 @@ fn encode_video(
             control.encode_h.store(height, Ordering::Relaxed);
         }
         let started = Instant::now();
-        let want_key = force_key || picture.key;
+        let want_key = force_key || picture.key || join_key;
         if let Ok(au) = entry.2.encode(&scaled, width, height, want_key) {
             profiler::record_media(
                 if screen {
@@ -1000,12 +1004,16 @@ fn apply_control(control: &Control, event: &ServerEvent) {
             subscribers,
             ..
         } => {
+            let prev = control.subscribers.load(Ordering::Relaxed);
             control
                 .wanted
                 .lock()
                 .expect("wanted")
                 .insert(*track, Some(layers.clone()));
             control.subscribers.store(*subscribers, Ordering::Relaxed);
+            if *subscribers > prev {
+                control.force_key.store(true, Ordering::Relaxed);
+            }
         }
         ServerEvent::SubscribeLayer {
             publisher: _,

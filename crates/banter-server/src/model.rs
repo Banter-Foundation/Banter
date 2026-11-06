@@ -1201,6 +1201,14 @@ pub struct ServerDebug {
     pub pool_idle: i64,
     #[serde(default)]
     pub traffic: ServerTraffic,
+    /// Live SFU UDP ports claimed for voice PeerConnections (empty when unbound / ephemeral).
+    #[serde(default)]
+    pub udp_ports: Vec<u16>,
+    /// Configured SFU UDP range (`BANTER_UDP_MIN`, `BANTER_UDP_MAX`) when set.
+    #[serde(default)]
+    pub udp_min: u16,
+    #[serde(default)]
+    pub udp_max: u16,
     pub logs: Vec<DebugLogLine>,
 }
 
@@ -1233,6 +1241,9 @@ mod server_debug_tests {
         assert_eq!(view.version, "");
         assert_eq!(view.protocol, 0);
         assert_eq!(view.traffic, ServerTraffic::default());
+        assert!(view.udp_ports.is_empty());
+        assert_eq!(view.udp_min, 0);
+        assert_eq!(view.udp_max, 0);
         assert_eq!(view.uptime_ms, 1000);
     }
 }

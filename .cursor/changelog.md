@@ -1,3 +1,7 @@
+## 2026-11-06 01:55:00 -05:00 [ubuntu] — Late-join Go Live + SFU ports in /debugnow
+
+Joining a voice channel while someone is already streaming now PLIs the publisher (accept_offer drained keyframe queue; BindPeer re-asks; client re-subscribes live screen/camera). `/debugnow` lists configured SFU UDP range and ports currently claimed. Publisher forces an IDR when WantedLayers subscriber count rises.
+
 ## 2026-11-06 01:45:00 -05:00 [ubuntu] — /debugnow stream info + OBS-like encoder settings
 
 `/debugnow` shows a Stream section when local Go Live/camera is up or someone else is publishing: encoder backend, preference, rate control, keyframe interval, target vs measured kbps, encode size/FPS, and remote tile summary. Voice & Video / Stream options gain OBS-style encoder (auto/hardware/software), CBR/VBR, bitrate, and keyframe interval; those knobs feed the live H.264 encode path (still Constrained Baseline; OpenH264 fallback).

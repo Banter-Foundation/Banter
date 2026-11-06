@@ -459,6 +459,8 @@ pub(crate) struct App {
     debug_view: Option<ServerDebug>,
     debug_error: String,
     debug_fetched: Instant,
+    /// Last time we re-subscribed to live remote screen/camera (late-join / stall recovery).
+    stream_resub_at: Instant,
     layers: LayerPreferences,
     delivered: HashMap<(i64, MediaKind), LayerId>,
     quality_for: Option<(i64, MediaKind)>,
@@ -703,6 +705,9 @@ impl App {
             debug_view: None,
             debug_error: String::new(),
             debug_fetched: Instant::now(),
+            stream_resub_at: Instant::now()
+                .checked_sub(Duration::from_secs(10))
+                .unwrap_or_else(Instant::now),
             layers: LayerPreferences::new(),
             delivered: HashMap::new(),
             quality_for: None,
@@ -7555,6 +7560,9 @@ impl App {
             let rtc_ready = voice_rtc_session_ready(in_place, self.reconnect_at.is_some());
             media.set_session(place.filter(|_| rtc_ready), me, offerer);
         }
+        if in_place && self.reconnect_at.is_none() && self.media.is_some() {
+            self.ensure_remote_stream_subs();
+        }
         // Skip flag posts while the websocket is down — the server already cleared the seat.
         if in_place && self.reconnect_at.is_none() && self.flags != self.sent_flags {
             let now = Instant::now();
@@ -7719,6 +7727,25 @@ impl App {
                         "media slots {}    forwards {}",
                         view.media_slots, view.media_forwards
                     ));
+                    if view.udp_min > 0 && view.udp_max >= view.udp_min {
+                        ui.text(format!(
+                            "SFU UDP range {}–{}",
+                            view.udp_min, view.udp_max
+                        ));
+                    } else {
+                        ui.text_colored(MUTED, "SFU UDP range  (ephemeral / unset)");
+                    }
+                    if view.udp_ports.is_empty() {
+                        ui.text_colored(MUTED, "SFU UDP in use  (none)");
+                    } else {
+                        let ports = view
+                            .udp_ports
+                            .iter()
+                            .map(|port| port.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        ui.text(format!("SFU UDP in use  {ports}"));
+                    }
                     ui.text(format!(
                         "users {}    servers {}    channels {}    messages {}",
                         view.users, view.servers, view.channels, view.messages
@@ -13677,6 +13704,34 @@ impl App {
             track,
             max_layer: layer,
         });
+    }
+
+    /// Re-subscribe to peers who are Go Live / camera so the SFU PLIs an IDR.
+    /// Covers late join (publisher already mid-GOP) and receive stalls with no tiles.
+    fn ensure_remote_stream_subs(&mut self) {
+        if self.stream_resub_at.elapsed() < Duration::from_secs(2) {
+            return;
+        }
+        let me = self.account.as_ref().map(|account| account.id);
+        let mut sent = false;
+        for member in &self.voice_members {
+            if Some(member.user_id) == me {
+                continue;
+            }
+            if member.flags.screen {
+                let layer = self.layers.get(member.user_id, MediaKind::Screen);
+                self.send_subscribe(member.user_id, MediaKind::Screen, layer);
+                sent = true;
+            }
+            if member.flags.camera {
+                let layer = self.layers.get(member.user_id, MediaKind::Camera);
+                self.send_subscribe(member.user_id, MediaKind::Camera, layer);
+                sent = true;
+            }
+        }
+        if sent {
+            self.stream_resub_at = Instant::now();
+        }
     }
 
     fn tile_camera(
