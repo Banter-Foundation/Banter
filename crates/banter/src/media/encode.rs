@@ -191,20 +191,59 @@ pub struct LayerEncoder {
     fallback: Option<SoftwareEncoder>,
 }
 
+/// How [`LayerEncoder::open_with`] picks hardware vs OpenH264.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncoderPick {
+    Auto,
+    Hardware,
+    Software,
+}
+
 impl LayerEncoder {
+    #[allow(dead_code)]
     pub fn open(screen: bool, width: u32, height: u32, fps: f32, bps: u32) -> Result<Self, String> {
-        let soft = SoftwareEncoder::open(screen, fps, bps)?;
-        let hw = try_hardware(screen, width, height, fps, bps);
-        if let Some(inner) = hw {
-            Ok(Self {
-                inner,
-                fallback: Some(soft),
-            })
-        } else {
-            Ok(Self {
-                inner: Box::new(soft),
-                fallback: None,
-            })
+        Self::open_with(screen, width, height, fps, bps, EncoderPick::Auto)
+    }
+
+    pub fn open_with(
+        screen: bool,
+        width: u32,
+        height: u32,
+        fps: f32,
+        bps: u32,
+        pick: EncoderPick,
+    ) -> Result<Self, String> {
+        match pick {
+            EncoderPick::Software => Self::software(screen, fps, bps),
+            EncoderPick::Hardware => {
+                let soft = SoftwareEncoder::open(screen, fps, bps)?;
+                if let Some(inner) = try_hardware(screen, width, height, fps, bps) {
+                    Ok(Self {
+                        inner,
+                        fallback: Some(soft),
+                    })
+                } else {
+                    Ok(Self {
+                        inner: Box::new(soft),
+                        fallback: None,
+                    })
+                }
+            }
+            EncoderPick::Auto => {
+                let soft = SoftwareEncoder::open(screen, fps, bps)?;
+                let hw = try_hardware(screen, width, height, fps, bps);
+                if let Some(inner) = hw {
+                    Ok(Self {
+                        inner,
+                        fallback: Some(soft),
+                    })
+                } else {
+                    Ok(Self {
+                        inner: Box::new(soft),
+                        fallback: None,
+                    })
+                }
+            }
         }
     }
 

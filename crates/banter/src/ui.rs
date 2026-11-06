@@ -36,21 +36,23 @@ use crate::logic::{
     chat_time_hover, chat_time_label, clamp_context_menu_pos, clamp_window_size, comment_tree_rows,
     context_menu_height, crop_avatar_rgba, crop_window, default_stream_fps,
     default_stream_resolution, dismiss_stream_overlays, encode_jpeg_rgba, folder_context_menu,
-    fps_block, fps_from_key, fps_key, grouped_mix_sources, hardware_encoder_block,
-    home_section_is_visible, home_section_label, insert_mention, is_debug_command, lerp_size,
-    load_json, local_api_base, member_context_menu, message_context_menu, message_starts_new_day,
-    mirror_rgba, move_home_section, next_reconnect_at, parse_folder_color, password_blocks_copy,
-    password_is_masked, plan_member_groups, push_home_recent, push_to_talk_held, rail_tree_rows,
-    reconnect_retry_ready, remove_message, resolution_block, resolution_from_key, resolution_key,
-    save_json, server_rail_context_menu, server_rail_item_menu, set_home_section_visible,
-    speaking_from_level, stream_fps_label, stream_frame_rates, stream_interval_ms, stream_max_edge,
-    stream_resolution_label, stream_resolutions, toggle_comment_collapsed, upsert_message,
-    visible_home_sections, voice_flags_retry_ready, voice_occupancy_line, voice_rtc_session_ready,
-    window_size_label, window_size_presets, CameraChoice, CaptureKind, ContextMenuAction,
-    ContextMenuEntry, ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind,
-    HomeSectionId, MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection,
-    StreamDefaults, StreamFps, StreamResolution, VideoPrefs, VoicePrefs, VoiceRejoinIntent,
-    OPEN_MIC_RMS, RECONNECTING_STATUS,
+    encoder_mode_from_key, encoder_mode_key, encoder_mode_label, fps_block, fps_from_key, fps_key,
+    grouped_mix_sources, hardware_encoder_block, home_section_is_visible, home_section_label,
+    insert_mention, is_debug_command, lerp_size, load_json, local_api_base, member_context_menu,
+    message_context_menu, message_starts_new_day, mirror_rgba, move_home_section, next_reconnect_at,
+    parse_folder_color, password_blocks_copy, password_is_masked, plan_member_groups,
+    push_home_recent, push_to_talk_held, rail_tree_rows, rate_control_from_key, rate_control_key,
+    rate_control_label, reconnect_retry_ready, remove_message, resolution_block, resolution_from_key,
+    resolution_key, save_json, server_rail_context_menu, server_rail_item_menu,
+    set_home_section_visible, speaking_from_level, stream_fps_label, stream_frame_rates,
+    stream_full_bps, stream_interval_ms, stream_max_edge, stream_resolution_label,
+    stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,
+    voice_flags_retry_ready, voice_occupancy_line, voice_rtc_session_ready, window_size_label,
+    window_size_presets, CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry,
+    ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind, HomeSectionId,
+    MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection, StreamDefaults,
+    StreamEncoderMode, StreamFps, StreamRateControl, StreamResolution, VideoPrefs, VoicePrefs,
+    VoiceRejoinIntent, OPEN_MIC_RMS, RECONNECTING_STATUS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::profile::{
@@ -7527,6 +7529,8 @@ impl App {
                 stream_max_edge(self.stream_resolution),
                 stream_interval_ms(self.stream_fps),
             );
+            media.apply_encode(self.encode_settings());
+            media.note_publishing(self.flags.camera, self.flags.screen);
             media.apply_engine(&self.engine_update());
             media.set_mic_test(self.settings.mic_test());
             media.set_state(self.flags, in_place);
@@ -7763,6 +7767,8 @@ impl App {
                         traffic.media_packets_out
                     ));
                     ui.separator();
+                    self.draw_debug_stream_section(ui);
+                    ui.separator();
                     ui.text_colored(TEXT_SECONDARY, "Logs");
                     let _log_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
                     ui.child_window("server-debug-logs")
@@ -7793,6 +7799,124 @@ impl App {
                 }
             });
         self.debug_open = open;
+    }
+
+    /// Local Go Live / camera publish + any remote video tile Banter is decoding.
+    fn draw_debug_stream_section(&self, ui: &Ui) {
+        ui.text_colored(TEXT_SECONDARY, "Stream");
+        let qos = profiler::qos();
+        let local_live = self.flags.screen || self.flags.camera || qos.publishing_screen || qos.publishing_camera;
+        let remote_live = !qos.remote_stream.is_empty()
+            || self
+                .voice_members
+                .iter()
+                .any(|member| member.flags.screen || member.flags.camera);
+        if !local_live && !remote_live {
+            ui.text_colored(MUTED, "No local or remote stream right now.");
+            return;
+        }
+        if local_live {
+            ui.text_colored(TEXT, "Local publish");
+            let parts: Vec<&str> = [
+                self.flags.screen.then_some("screen"),
+                self.flags.camera.then_some("camera"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            ui.text(format!(
+                "publishing {}    topology {}    ladder {}",
+                if parts.is_empty() {
+                    "idle".into()
+                } else {
+                    parts.join("+")
+                },
+                qos.topology,
+                qos.ladder
+            ));
+            ui.text(format!(
+                "encoder {} ({})    rate {}    keyframe {}s",
+                qos.backend, qos.encoder_pref, qos.rate_control, qos.keyframe_secs
+            ));
+            if qos.encode_width > 0 && qos.encode_height > 0 {
+                ui.text(format!(
+                    "encode {}x{} @ {} FPS    target {} kbps",
+                    qos.encode_width, qos.encode_height, qos.encode_fps, qos.target_kbps
+                ));
+            } else {
+                ui.text(format!(
+                    "target {} kbps    fps {}    (waiting for first frame)",
+                    qos.target_kbps, qos.encode_fps
+                ));
+            }
+            ui.text(format!(
+                "measured  screen {} kbps   camera {} kbps   stream-audio {} kbps",
+                qos.screen_kbps, qos.camera_kbps, qos.stream_kbps
+            ));
+            ui.text(format!(
+                "encode {:.1} ms   keyframes {}   layers {}",
+                qos.encode_ms, qos.keyframes, qos.layers
+            ));
+        }
+        if remote_live {
+            if local_live {
+                settings_spacer(ui);
+            }
+            ui.text_colored(TEXT, "Remote / watching");
+            if !qos.remote_stream.is_empty() {
+                ui.text(&qos.remote_stream);
+            }
+            for member in &self.voice_members {
+                if member.user_id == self.account.as_ref().map(|a| a.id).unwrap_or(-1) {
+                    continue;
+                }
+                if !(member.flags.screen || member.flags.camera) {
+                    continue;
+                }
+                let name = self.name_of(member.user_id);
+                let kinds = [
+                    member.flags.screen.then_some("screen"),
+                    member.flags.camera.then_some("camera"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("+");
+                ui.text(format!("{name}  ({kinds})"));
+            }
+            if qos.decode_ms > 0.0 {
+                ui.text(format!("decode {:.1} ms", qos.decode_ms));
+            }
+            ui.text_colored(
+                MUTED,
+                "Remote encoder/bitrate is not signaled; numbers above are what this client receives.",
+            );
+        }
+    }
+
+    fn encode_settings(&self) -> media::EncodeSettings {
+        let mode = encoder_mode_from_key(&self.stream.encoder);
+        let rate = rate_control_from_key(&self.stream.rate_control);
+        let fps = match self.stream_fps {
+            StreamFps::Fps15 => 15,
+            StreamFps::Fps30 => 30,
+            StreamFps::Fps60 => 60,
+            StreamFps::Fps120 => 120,
+            StreamFps::Fps144 => 144,
+        };
+        media::EncodeSettings {
+            full_bps: stream_full_bps(self.stream.bitrate_auto, self.stream.bitrate_kbps),
+            pick: match mode {
+                StreamEncoderMode::Auto => media::EncoderPick::Auto,
+                StreamEncoderMode::Hardware => media::EncoderPick::Hardware,
+                StreamEncoderMode::Software => media::EncoderPick::Software,
+            },
+            keyframe_ms: u64::from(self.stream.keyframe_secs.clamp(1, 10)) * 1000,
+            fps,
+            cbr: rate == StreamRateControl::Cbr,
+            pref_label: encoder_mode_key(mode),
+            rate_label: rate_control_key(rate),
+        }
     }
 
     fn connect_live(&mut self) {
@@ -12147,14 +12271,96 @@ impl App {
         }
         settings_spacer(ui);
         settings_form_label(ui, self.bold_font, "ENCODER");
+        let modes = [
+            StreamEncoderMode::Auto,
+            StreamEncoderMode::Hardware,
+            StreamEncoderMode::Software,
+        ];
+        let current = encoder_mode_from_key(&self.stream.encoder);
+        let choices: Vec<(String, String, bool, bool)> = modes
+            .iter()
+            .map(|mode| {
+                let enabled = *mode != StreamEncoderMode::Hardware || self.stream.hardware;
+                (
+                    format!("enc-{}", encoder_mode_key(*mode)),
+                    encoder_mode_label(*mode).to_string(),
+                    current == *mode,
+                    enabled,
+                )
+            })
+            .collect();
+        if let Some(index) = settings_chip_row(ui, &choices, width) {
+            let next = encoder_mode_key(modes[index]).to_string();
+            if self.stream.encoder != next {
+                self.stream.encoder = next;
+                self.save_stream();
+            }
+        }
         if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
             ui.text_colored(MUTED, reason);
         } else {
             ui.text_colored(
                 MUTED,
-                "Hardware H.264 when this PC can encode Constrained Baseline. Otherwise OpenH264.",
+                "Wire is always H.264 Constrained Baseline. Hardware when available, else OpenH264.",
             );
         }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "RATE CONTROL");
+        let rates = [StreamRateControl::Cbr, StreamRateControl::Vbr];
+        let current_rate = rate_control_from_key(&self.stream.rate_control);
+        let rate_choices: Vec<(String, String, bool, bool)> = rates
+            .iter()
+            .map(|mode| {
+                (
+                    format!("rc-{}", rate_control_key(*mode)),
+                    rate_control_label(*mode).to_string(),
+                    current_rate == *mode,
+                    true,
+                )
+            })
+            .collect();
+        if let Some(index) = settings_chip_row(ui, &rate_choices, width) {
+            let next = rate_control_key(rates[index]).to_string();
+            if self.stream.rate_control != next {
+                self.stream.rate_control = next;
+                self.save_stream();
+            }
+        }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "BITRATE");
+        let mut auto = self.stream.bitrate_auto;
+        if settings_toggle_row(ui, "bitrate-auto", "Automatic bitrate", &mut auto, width) {
+            self.stream.bitrate_auto = auto;
+            self.save_stream();
+        }
+        if !self.stream.bitrate_auto {
+            let mut kbps = self.stream.bitrate_kbps as f32;
+            if ui.slider_f32("Bitrate (kbps)", &mut kbps, 200.0, 8000.0) {
+                self.stream.bitrate_kbps = kbps.round() as u32;
+            }
+            if ui.is_item_deactivated_after_edit() {
+                self.save_stream();
+            }
+            ui.text_colored(
+                MUTED,
+                format!("Target ~{} kbps on the full layer.", self.stream.bitrate_kbps),
+            );
+        } else {
+            ui.text_colored(MUTED, "Auto targets ~2500 kbps on the full layer.");
+        }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "KEYFRAME INTERVAL");
+        let mut secs = self.stream.keyframe_secs.clamp(1, 10) as f32;
+        if ui.slider_f32("Keyframe (seconds)", &mut secs, 1.0, 10.0) {
+            self.stream.keyframe_secs = secs.round() as u32;
+        }
+        if ui.is_item_deactivated_after_edit() {
+            self.save_stream();
+        }
+        ui.text_colored(
+            MUTED,
+            "Force an IDR this often while Go Live / camera is publishing (OBS-style).",
+        );
     }
 
     /// Discord-style Screen Share / Go Live picker: overlay card, underline tabs,
@@ -13540,6 +13746,11 @@ impl App {
         self.stream.fps = fps_key(self.stream_fps).to_string();
         // Capability flag for the UI — wire encode is always H.264 (hardware when present, else OpenH264).
         self.stream.hardware = media::hardware_encoder_available();
+        self.stream.encoder = encoder_mode_key(encoder_mode_from_key(&self.stream.encoder)).into();
+        self.stream.rate_control =
+            rate_control_key(rate_control_from_key(&self.stream.rate_control)).into();
+        self.stream.keyframe_secs = self.stream.keyframe_secs.clamp(1, 10);
+        self.stream.bitrate_kbps = self.stream.bitrate_kbps.clamp(200, 20_000);
         let _ = save_json(&self.data_dir.join("stream.json"), &self.stream);
     }
 
@@ -14046,21 +14257,6 @@ impl App {
                         // Always visible so res/FPS are one click from the stage chevron while sharing.
                         let quality_w = ui.content_region_avail()[0];
                         self.draw_stream_quality(ui, quality_w);
-                        if settings_panel(ui, "Bitrate") {
-                            if ui.checkbox("Automatic bitrate", &mut self.stream.bitrate_auto) {
-                                self.save_stream();
-                            }
-                            if !self.stream.bitrate_auto {
-                                let mut kbps = self.stream.bitrate_kbps as f32;
-                                if ui.slider_f32("Bitrate kbps", &mut kbps, 200.0, 8000.0) {
-                                    self.stream.bitrate_kbps = kbps.round() as u32;
-                                    self.save_stream();
-                                }
-                            }
-                            if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
-                                ui.text_wrapped(reason);
-                            }
-                        }
                         if settings_panel(ui, "Preview") {
                             if ui.checkbox("Show cursor", &mut self.stream.show_cursor) {
                                 self.save_stream();
@@ -14167,6 +14363,16 @@ impl App {
                     qos.subscribers, qos.layers, qos.backend
                 ));
                 ui.text(format!(
+                    "pref {}   rate {}   keyframe {}s   target {} kbps",
+                    qos.encoder_pref, qos.rate_control, qos.keyframe_secs, qos.target_kbps
+                ));
+                if qos.encode_width > 0 {
+                    ui.text(format!(
+                        "encode {}x{} @ {} FPS",
+                        qos.encode_width, qos.encode_height, qos.encode_fps
+                    ));
+                }
+                ui.text(format!(
                     "{}   loss {:.1}%   rtt {} ms   jitter {} ms",
                     qos.step,
                     qos.loss * 100.0,
@@ -14182,6 +14388,9 @@ impl App {
                     qos.camera_kbps, qos.screen_kbps, qos.encode_ms, qos.decode_ms
                 ));
                 ui.text(format!("keyframes {}", qos.keyframes));
+                if !qos.remote_stream.is_empty() {
+                    ui.text(format!("remote {}", qos.remote_stream));
+                }
                 ui.separator();
                 ui.checkbox("ImGui Metrics", &mut self.profiler_metrics);
                 ui.same_line();

@@ -1,3 +1,7 @@
+## 2026-11-06 01:45:00 -05:00 [ubuntu] — /debugnow stream info + OBS-like encoder settings
+
+`/debugnow` shows a Stream section when local Go Live/camera is up or someone else is publishing: encoder backend, preference, rate control, keyframe interval, target vs measured kbps, encode size/FPS, and remote tile summary. Voice & Video / Stream options gain OBS-style encoder (auto/hardware/software), CBR/VBR, bitrate, and keyframe interval; those knobs feed the live H.264 encode path (still Constrained Baseline; OpenH264 fallback).
+
 ## 2026-11-06 00:08:11 -05:00 [ubuntu] — Version-1-test-12 pre-release
 
 Shipped pre-release Version-1-test-12 from main after restore A/V after auto-reconnect (#72 / BAN-18), UI shell HTTP off the main thread, Purple Glow theme mod, and Version-1-test-11.3 features. Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.

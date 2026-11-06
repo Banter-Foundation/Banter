@@ -28,7 +28,7 @@ use webrtc::peer_connection::{
 use crate::logic::resample_mono_i16;
 use crate::profiler;
 
-use super::encode::{LayerEncoder, OpusListen, OpusTrack, OPUS_FRAME};
+use super::encode::{EncoderPick, LayerEncoder, OpusListen, OpusTrack, OPUS_FRAME};
 use super::qos::SenderQos;
 
 const FLAG_DEAFENED: u32 = 2;
@@ -89,6 +89,32 @@ pub struct RemotePicture {
     pub layer: LayerId,
 }
 
+/// Live encode knobs from Voice & Video / Stream options (OBS-like).
+#[derive(Clone, Copy, Debug)]
+pub struct EncodeSettings {
+    pub full_bps: u32,
+    pub pick: EncoderPick,
+    pub keyframe_ms: u64,
+    pub fps: u32,
+    pub cbr: bool,
+    pub pref_label: &'static str,
+    pub rate_label: &'static str,
+}
+
+impl Default for EncodeSettings {
+    fn default() -> Self {
+        Self {
+            full_bps: 2_500_000,
+            pick: EncoderPick::Auto,
+            keyframe_ms: 2_000,
+            fps: 30,
+            cbr: true,
+            pref_label: "auto",
+            rate_label: "cbr",
+        }
+    }
+}
+
 struct Control {
     wanted: Mutex<HashMap<MediaKind, Option<Vec<LayerId>>>>,
     peer_cap: Mutex<HashMap<MediaKind, LayerId>>,
@@ -103,6 +129,18 @@ struct Control {
     keyframes: AtomicU64,
     encode_ms: AtomicU32,
     congested_drops: AtomicU32,
+    full_bps: AtomicU32,
+    encoder_pick: AtomicU8,
+    keyframe_ms: AtomicU64,
+    encode_fps: AtomicU32,
+    rate_cbr: AtomicBool,
+    encode_gen: AtomicU64,
+    encode_w: AtomicU32,
+    encode_h: AtomicU32,
+    publishing_screen: AtomicBool,
+    publishing_camera: AtomicBool,
+    encoder_pref: Mutex<String>,
+    rate_control: Mutex<String>,
 }
 
 impl Control {
@@ -121,6 +159,80 @@ impl Control {
             keyframes: AtomicU64::new(0),
             encode_ms: AtomicU32::new(0),
             congested_drops: AtomicU32::new(0),
+            full_bps: AtomicU32::new(2_500_000),
+            encoder_pick: AtomicU8::new(0),
+            keyframe_ms: AtomicU64::new(2_000),
+            encode_fps: AtomicU32::new(30),
+            rate_cbr: AtomicBool::new(true),
+            encode_gen: AtomicU64::new(0),
+            encode_w: AtomicU32::new(0),
+            encode_h: AtomicU32::new(0),
+            publishing_screen: AtomicBool::new(false),
+            publishing_camera: AtomicBool::new(false),
+            encoder_pref: Mutex::new("auto".into()),
+            rate_control: Mutex::new("cbr".into()),
+        }
+    }
+
+    fn apply_encode(&self, settings: EncodeSettings) {
+        let pick = match settings.pick {
+            EncoderPick::Auto => 0u8,
+            EncoderPick::Hardware => 1,
+            EncoderPick::Software => 2,
+        };
+        let mut changed = false;
+        if self.full_bps.swap(settings.full_bps.max(30_000), Ordering::Relaxed) != settings.full_bps
+        {
+            changed = true;
+        }
+        if self.encoder_pick.swap(pick, Ordering::Relaxed) != pick {
+            changed = true;
+        }
+        let key_ms = settings.keyframe_ms.clamp(500, 10_000);
+        if self.keyframe_ms.swap(key_ms, Ordering::Relaxed) != key_ms {
+            changed = true;
+        }
+        let fps = settings.fps.clamp(1, 144);
+        if self.encode_fps.swap(fps, Ordering::Relaxed) != fps {
+            changed = true;
+        }
+        if self.rate_cbr.swap(settings.cbr, Ordering::Relaxed) != settings.cbr {
+            changed = true;
+        }
+        {
+            let mut pref = self.encoder_pref.lock().expect("encoder pref");
+            if *pref != settings.pref_label {
+                *pref = settings.pref_label.into();
+                changed = true;
+            }
+        }
+        {
+            let mut rate = self.rate_control.lock().expect("rate control");
+            if *rate != settings.rate_label {
+                *rate = settings.rate_label.into();
+                changed = true;
+            }
+        }
+        if changed {
+            self.encode_gen.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn encoder_pick(&self) -> EncoderPick {
+        match self.encoder_pick.load(Ordering::Relaxed) {
+            1 => EncoderPick::Hardware,
+            2 => EncoderPick::Software,
+            _ => EncoderPick::Auto,
+        }
+    }
+
+    fn layer_bps(&self, layer: LayerId) -> u32 {
+        let full = self.full_bps.load(Ordering::Relaxed).max(30_000);
+        match layer {
+            LayerId::Full => full,
+            LayerId::Half => (full / 4).max(80_000),
+            LayerId::Quarter => (full / 16).max(40_000),
+            LayerId::Off => 0,
         }
     }
 }
@@ -151,6 +263,7 @@ pub struct Rtc {
     cmd: UnboundedSender<Cmd>,
     stop: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
+    control: Arc<Control>,
     /// Last session handed to the network thread. The UI calls this every frame.
     session: Mutex<Option<(Option<MediaPlace>, i64, bool)>>,
 }
@@ -226,9 +339,23 @@ impl Rtc {
         Self {
             cmd: cmd_tx,
             stop,
+            control: Arc::clone(&control),
             threads: vec![audio, video, net],
             session: Mutex::new(None),
         }
+    }
+
+    pub fn apply_encode(&self, settings: EncodeSettings) {
+        self.control.apply_encode(settings);
+    }
+
+    pub fn note_publishing(&self, camera: bool, screen: bool) {
+        self.control
+            .publishing_camera
+            .store(camera, Ordering::Relaxed);
+        self.control
+            .publishing_screen
+            .store(screen, Ordering::Relaxed);
     }
 
     pub fn set_session(&self, place: Option<MediaPlace>, me: i64, offerer: bool) {
@@ -323,6 +450,8 @@ fn video_encode_loop(
     let mut screen_enc: HashMap<LayerId, (u32, u32, LayerEncoder)> = HashMap::new();
     let mut camera_gen = 0u64;
     let mut screen_gen = 0u64;
+    let mut encode_cfg_gen = 0u64;
+    let mut last_keyframe = Instant::now();
     let mut ticks = 0u32;
     let mut screen_idle_ticks = 0u32;
     let mut reported = Instant::now();
@@ -358,7 +487,19 @@ fn video_encode_loop(
         } else {
             screen_idle_ticks = 0;
         }
-        encode_video(
+        let cfg_gen = control.encode_gen.load(Ordering::Relaxed);
+        if cfg_gen != encode_cfg_gen {
+            camera_enc.clear();
+            screen_enc.clear();
+            encode_cfg_gen = cfg_gen;
+            last_keyframe = Instant::now()
+                .checked_sub(Duration::from_secs(60))
+                .unwrap_or_else(Instant::now);
+        }
+        let key_ms = control.keyframe_ms.load(Ordering::Relaxed).max(500);
+        let force_key = last_keyframe.elapsed() >= Duration::from_millis(key_ms);
+        let mut keyed = false;
+        keyed |= encode_video(
             &control,
             &video_tx,
             &camera,
@@ -367,8 +508,9 @@ fn video_encode_loop(
             MediaKind::Camera,
             false,
             &camera_layers,
+            force_key,
         );
-        encode_video(
+        keyed |= encode_video(
             &control,
             &video_tx,
             &screen,
@@ -377,7 +519,11 @@ fn video_encode_loop(
             MediaKind::Screen,
             true,
             &screen_layers,
+            force_key,
         );
+        if keyed {
+            last_keyframe = Instant::now();
+        }
         let ms = encode_started.elapsed().as_secs_f32() * 1000.0;
         control.encode_ms.store(ms.to_bits(), Ordering::Relaxed);
         ticks = ticks.wrapping_add(1);
@@ -448,6 +594,16 @@ fn publish_qos(
         stream_kbps: ((stream.saturating_sub(*stream_mark)) * 8 / 1000) as u32,
         camera_kbps: ((camera.saturating_sub(*camera_mark)) * 8 / 1000) as u32,
         screen_kbps: ((screen.saturating_sub(*screen_mark)) * 8 / 1000) as u32,
+        publishing_screen: control.publishing_screen.load(Ordering::Relaxed),
+        publishing_camera: control.publishing_camera.load(Ordering::Relaxed),
+        target_kbps: control.full_bps.load(Ordering::Relaxed) / 1000,
+        encode_width: control.encode_w.load(Ordering::Relaxed),
+        encode_height: control.encode_h.load(Ordering::Relaxed),
+        encode_fps: control.encode_fps.load(Ordering::Relaxed),
+        encoder_pref: control.encoder_pref.lock().expect("encoder pref").clone(),
+        rate_control: control.rate_control.lock().expect("rate control").clone(),
+        keyframe_secs: (control.keyframe_ms.load(Ordering::Relaxed) / 1000).max(1) as u32,
+        remote_stream: String::new(),
         keyframes: control.keyframes.load(Ordering::Relaxed) as u32,
         encode_ms: f32::from_bits(control.encode_ms.load(Ordering::Relaxed)),
         decode_ms: 0.0,
@@ -532,48 +688,48 @@ fn encode_video(
     kind: MediaKind,
     screen: bool,
     layers: &[LayerId],
-) {
+    force_key: bool,
+) -> bool {
     let Some((generation, picture)) = slot.load_since(*seen) else {
-        return;
+        return false;
     };
     if generation == *seen {
-        return;
+        return false;
     }
     *seen = generation;
+    let fps = control.encode_fps.load(Ordering::Relaxed).max(1) as f32;
+    let pick = control.encoder_pick();
+    let mut sent_key = false;
     for &layer in layers {
         let Some((scaled, width, height)) =
             super::encode::scale_i420(&picture.i420, picture.width, picture.height, layer)
         else {
             continue;
         };
+        let bps = control.layer_bps(layer);
         let entry = encoders.entry(layer).or_insert_with(|| {
-            let bps = match layer {
-                LayerId::Full => 2_500_000,
-                LayerId::Half => 600_000,
-                LayerId::Quarter => 150_000,
-                LayerId::Off => 0,
-            };
-            let encoder = match LayerEncoder::open(screen, width, height, 30.0, bps) {
+            let encoder = match LayerEncoder::open_with(screen, width, height, fps, bps, pick) {
                 Ok(encoder) => encoder,
-                Err(_) => LayerEncoder::software(screen, 30.0, bps).expect("openh264"),
+                Err(_) => LayerEncoder::software(screen, fps, bps).expect("openh264"),
             };
             *control.backend.lock().expect("backend") = encoder.backend().label().into();
             (width, height, encoder)
         });
         if entry.0 != width || entry.1 != height {
-            let bps = match layer {
-                LayerId::Full => 2_500_000,
-                LayerId::Half => 600_000,
-                _ => 150_000,
-            };
-            if let Ok(encoder) = LayerEncoder::open(screen, width, height, 30.0, bps) {
+            if let Ok(encoder) = LayerEncoder::open_with(screen, width, height, fps, bps, pick) {
                 *entry = (width, height, encoder);
+                *control.backend.lock().expect("backend") = entry.2.backend().label().into();
             }
         }
         entry.0 = width;
         entry.1 = height;
+        if screen && layer == LayerId::Full {
+            control.encode_w.store(width, Ordering::Relaxed);
+            control.encode_h.store(height, Ordering::Relaxed);
+        }
         let started = Instant::now();
-        if let Ok(au) = entry.2.encode(&scaled, width, height, picture.key) {
+        let want_key = force_key || picture.key;
+        if let Ok(au) = entry.2.encode(&scaled, width, height, want_key) {
             profiler::record_media(
                 if screen {
                     "screen_encode"
@@ -585,6 +741,7 @@ fn encode_video(
             );
             if au.keyframe {
                 control.keyframes.fetch_add(1, Ordering::Relaxed);
+                sent_key = true;
             }
             let counter = if screen {
                 &control.screen_bytes
@@ -603,6 +760,7 @@ fn encode_video(
             );
         }
     }
+    sent_key
 }
 
 async fn run(
@@ -1057,6 +1215,15 @@ impl PeerConnectionEventHandler for Handler {
                                     crate::profiler::note_decode(
                                         started.elapsed().as_secs_f32() * 1000.0,
                                     );
+                                    let kind_label = match kind {
+                                        MediaKind::Screen => "screen",
+                                        MediaKind::Camera => "camera",
+                                        _ => "video",
+                                    };
+                                    crate::profiler::note_remote_stream(format!(
+                                        "user {sender} {kind_label} {width}x{height} layer {}",
+                                        layer.rid().unwrap_or("-")
+                                    ));
                                     let mut frames = remote.lock().expect("remote video");
                                     frames.push(RemotePicture {
                                         sender,

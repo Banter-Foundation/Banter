@@ -45,6 +45,18 @@ pub struct QosView {
     pub encode_ms: f32,
     pub decode_ms: f32,
     pub step: String,
+    /// Local Go Live / camera publish snapshot for `/debugnow`.
+    pub publishing_screen: bool,
+    pub publishing_camera: bool,
+    pub target_kbps: u32,
+    pub encode_width: u32,
+    pub encode_height: u32,
+    pub encode_fps: u32,
+    pub encoder_pref: String,
+    pub rate_control: String,
+    pub keyframe_secs: u32,
+    /// Latest remote video tile summary (empty when nobody is sending video).
+    pub remote_stream: String,
 }
 
 impl Default for QosView {
@@ -66,6 +78,16 @@ impl Default for QosView {
             encode_ms: 0.0,
             decode_ms: 0.0,
             step: "nominal".into(),
+            publishing_screen: false,
+            publishing_camera: false,
+            target_kbps: 0,
+            encode_width: 0,
+            encode_height: 0,
+            encode_fps: 0,
+            encoder_pref: "auto".into(),
+            rate_control: "cbr".into(),
+            keyframe_secs: 2,
+            remote_stream: String::new(),
         }
     }
 }
@@ -174,11 +196,16 @@ impl Profiler {
     pub fn set_qos(&self, mut view: QosView) {
         let mut guard = self.qos.lock().expect("qos");
         view.decode_ms = guard.decode_ms;
+        view.remote_stream = guard.remote_stream.clone();
         *guard = view;
     }
 
     pub fn note_decode(&self, ms: f32) {
         self.qos.lock().expect("qos").decode_ms = ms;
+    }
+
+    pub fn note_remote_stream(&self, summary: String) {
+        self.qos.lock().expect("qos").remote_stream = summary;
     }
 
     pub fn qos(&self) -> QosView {
@@ -434,6 +461,10 @@ pub fn set_qos(view: QosView) {
 
 pub fn note_decode(ms: f32) {
     global().note_decode(ms);
+}
+
+pub fn note_remote_stream(summary: String) {
+    global().note_remote_stream(summary);
 }
 
 pub fn qos() -> QosView {
