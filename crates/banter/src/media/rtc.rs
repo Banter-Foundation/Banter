@@ -741,6 +741,8 @@ fn encode_video(
         let started = Instant::now();
         let want_key = force_key || picture.key || join_key;
         if let Ok(au) = entry.2.encode(&scaled, width, height, want_key) {
+            // Refresh after encode: LayerEncoder may have fallen back to OpenH264.
+            *control.backend.lock().expect("backend") = entry.2.backend().label().into();
             profiler::record_media(
                 if screen {
                     "screen_encode"
