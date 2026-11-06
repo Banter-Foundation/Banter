@@ -1,3 +1,10 @@
+## 2026-11-06 00:08:11 -05:00 [ubuntu] — Version-1-test-12 pre-release
+
+Shipped pre-release Version-1-test-12 from main after restore A/V after auto-reconnect (#72 / BAN-18), UI shell HTTP off the main thread, Purple Glow theme mod, and Version-1-test-11.3 features. Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
+- Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-12
+- Assets: Banter-windows-version-1-test-12.zip, Banter-linux-version-1-test-12.zip, Banter-macos-arm-version-1-test-12.zip (Banter.app), banter-server.exe, banter-server-linux, banter-server-macos-arm
+
 ## 2026-11-05 19:20:24 -0500 [dust] — UI thread stays off shell HTTP
 
 Signed-in shell lists, channel/DM history, and avatar downloads run on one background worker. A frame only applies a snapshot whose generation is still current, so navigating and the 2-second refresh no longer freeze input behind a chain of GETs. One-shot writes (send, join, login) still run on the click that needs the response.
