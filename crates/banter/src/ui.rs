@@ -47,7 +47,8 @@ use crate::logic::{
     set_home_section_visible, speaking_from_level, stream_fps_label, stream_frame_rates,
     stream_full_bps, stream_interval_ms, stream_max_edge, stream_resolution_label,
     stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,
-    voice_flags_retry_ready, voice_occupancy_line, voice_rtc_session_ready, window_size_label,
+    voice_flags_retry_ready, voice_occupancy_line, voice_rtc_mesh, voice_rtc_session_ready,
+    window_size_label,
     window_size_presets, CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry,
     ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind, HomeSectionId,
     MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection, StreamDefaults,
@@ -7696,10 +7697,14 @@ impl App {
             };
             let me = self.account.as_ref().map(|account| account.id).unwrap_or(0);
             let offerer = self.webrtc_offerer(me);
+            let mesh = voice_rtc_mesh(
+                matches!(place, Some(MediaPlace::DirectCall(_))),
+                self.guild_p2p_video_active(),
+            );
             // Do not offer WebRTC while reconnect is armed: the server seat is gone until
             // finish_reconnect HTTP-rejoins, and a premature offer is never retried.
             let rtc_ready = voice_rtc_session_ready(in_place, self.reconnect_at.is_some());
-            media.set_session(place.filter(|_| rtc_ready), me, offerer);
+            media.set_session(place.filter(|_| rtc_ready), me, offerer, mesh);
         }
         if in_place && self.reconnect_at.is_none() && self.media.is_some() {
             self.ensure_remote_stream_subs();
@@ -8163,7 +8168,7 @@ impl App {
         // (connect_live recreates Media before HTTP rejoin). Same place would otherwise
         // dedupe and never re-offer after join_voice / start_call.
         if let Some(media) = &self.media {
-            media.set_session(None, 0, false);
+            media.set_session(None, 0, false, false);
         }
         let Some(intent) = self.pending_voice_rejoin.take() else {
             return;

@@ -327,8 +327,8 @@ impl Media {
         }
     }
 
-    pub fn set_session(&self, place: Option<MediaPlace>, me: i64, offerer: bool) {
-        self.session.set_session(place, me, offerer);
+    pub fn set_session(&self, place: Option<MediaPlace>, me: i64, offerer: bool, mesh: bool) {
+        self.session.set_session(place, me, offerer, mesh);
     }
 
     pub fn ingest(&self, event: ServerEvent) {
