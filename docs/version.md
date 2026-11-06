@@ -20,7 +20,7 @@ Bump `PROTOCOL` (and floors as needed) when the client requires server behavior 
 ```json
 {
   "ok": true,
-  "version": "Version-1-test-11.3",
+  "version": "Version-1-test-12",
   "protocol": 1,
   "min_client_protocol": 1
 }
