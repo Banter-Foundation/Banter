@@ -308,6 +308,7 @@ fn every_voice_setting_survives_a_restart() {
         auto_gain: true,
         ptt_key: "F5".into(),
         camera: "Front Camera".into(),
+        guild_p2p_video: true,
     };
     save_json(&path, &saved).unwrap();
     let loaded: VoicePrefs = load_json(&path).expect("voice.json loads");
