@@ -1,4 +1,6 @@
 # Session memory
+- 2026-11-07 BA-101: Video encoder quality/CPU. Branch `cursor/encoder-quality-aa4c` stacked on #85 → PR TBD. Cached HW probe, HW-first without dual OpenH264 open, deferred soft decode, screen/camera QP floors, Half/Quarter bitrate above area share, Linux NVENC/VA-API CBR/VBR + zerolatency. Keeps #85 latency presets. Report: store `internal/banter-encoder-improvements.md`. Do not merge until Owl says so.
+
 - 2026-11-07 BA-97: Interactive VC latency. Branch `cursor/vc-latency-0648` → PR https://github.com/Banter-Foundation/Banter/pull/85. Playout ~60 ms, PCM backlog ~200 ms, FPS-matched video RTP duration, 1 s keyframes, OpenH264/Opus low-latency presets, SFU queues 24/16. Report: store `internal/banter-vc-latency.md`. Do not merge until Owl says so. Did not touch Emote Library / BA-95 theme / cover-flow #80.
 
 - 2026-11-05 BA-91: Version system + checker. `banter-server` `version.rs` (`BANTER_VERSION`, `PROTOCOL`, min floors); health/version JSON; client blocks stale hosts with `BANTER_SERVER_TOO_OLD` / `BANTER_CLIENT_TOO_OLD` / `BANTER_VERSION_UNREACHABLE`. Docs: `docs/version.md`. Branch `cursor/version-system-checker-dae0`. Do not merge until Owl says so.

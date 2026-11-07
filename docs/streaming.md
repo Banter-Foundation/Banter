@@ -51,11 +51,12 @@ Camera and screen frames are I420, then H.264. Local previews are RGBA (mirrored
 
 Viewers can **pop out** the focused share into a Banter Stream OS window, **cycle** among users who are currently sharing, and enter **fullscreen** theater where watch chrome fades after pointer idle and returns on mouse movement. Pop-out and fullscreen chrome include profile icons and voice indicators (talking ring, mute/deafen) for live sharers; those fade with the rest of the UI. Those controls do not change encoder resolution or capture FPS.
 
-Hardware encode is scanned at startup / when stream settings load. Voice & Video, Stream Select, and Stream options list only backends this process can see (plus **Auto** and **Software (OpenH264)**). Choosing a specific backend (NVENC, VA-API, Media Foundation) opens that encoder; if it is missing or fails to open, Banter falls back to OpenH264 instead of pretending a missing encoder exists.
+Hardware encode is probed (cached for the process) at startup / when stream settings load. Voice & Video, Stream Select, and Stream options list only backends this process can see (plus **Auto** and **Software (OpenH264)**). Choosing a specific backend (NVENC, VA-API, Media Foundation) opens that encoder; if it is missing or fails to open, Banter falls back to OpenH264 instead of pretending a missing encoder exists.
 
-- Linux: `h264_nvenc` when `libnvidia-encode` is present; `h264_vaapi` when `/dev/dri/renderD128` and ffmpeg’s VA-API encoder exist. **Any hardware** tries NVENC then VA-API.
+- Linux: `h264_nvenc` when `libnvidia-encode` is present; `h264_vaapi` when `/dev/dri/renderD128` and ffmpeg’s VA-API encoder exist. **Any hardware** tries NVENC then VA-API. NVENC uses low-latency `p1` + CBR/VBR from stream prefs + `-zerolatency 1`; VA-API sets `-rc_mode CBR|VBR`.
 - Windows: a synchronous Media Foundation hardware H.264 MFT, asked for Constrained Baseline. Async-only MFTs are not driven. Mid-stream `force_key` uses CodecAPI when available; size change or CodecAPI failure reopens the MFT for a fresh IDR instead of erroring into a mid-stream OpenH264 swap.
-- Otherwise OpenH264. A hardware encoder that emits a different profile is dropped for that layer.
+- Auto/Hardware opens GPU first and defers OpenH264 until the hardware path is missing or emits an unusable AU (no dual-open on every layer cutover). Same idea on receive: OpenH264 decode is deferred while a hardware decoder is present.
+- Otherwise OpenH264. A hardware encoder that emits a different profile is dropped for that layer. Screen vs camera use distinct QP floors (tighter screen max for text); simulcast Half/Quarter get more than a pure area share of the Full bitrate.
 
 Receive tries a hardware decoder when one is present: NVDEC or VA-API through ffmpeg on Linux, and a synchronous Media Foundation hardware decoder on Windows. The Linux decoder must return a picture for the first access unit within 800 ms and later frames within 120 ms. The Windows decoder must advertise an NV12 output type before the first sample. Either failure leaves that track on OpenH264.
 

@@ -18,11 +18,16 @@ use std::borrow::Cow;
 use banter_server::LayerId;
 use openh264::decoder::Decoder;
 use openh264::encoder::{
-    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Profile,
+    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Profile, QpRange,
     RateControlMode, UsageType,
 };
 use openh264::formats::{YUVSlices, YUVSource};
 use openh264::OpenH264API;
+use std::sync::OnceLock;
+
+/// Process-wide hardware encoder probe. ffmpeg / MF enumeration is expensive; cold
+/// start and stream-settings saves used to re-run it every time.
+static HARDWARE_PROBE: OnceLock<Vec<&'static str>> = OnceLock::new();
 
 pub const OPUS_RATE: u32 = 48_000;
 pub const OPUS_FRAME: usize = 960;
@@ -203,11 +208,22 @@ impl VideoEncoder for SoftwareEncoder {
     }
 }
 
+/// Deferred OpenH264 open — built only if hardware fails or emits an unusable AU.
+#[derive(Clone, Copy)]
+struct SoftParams {
+    screen: bool,
+    fps: f32,
+    bps: u32,
+    keyframe_ms: u64,
+}
+
 /// Picks a hardware encoder when the probe finds one, and replaces it with
 /// OpenH264 if the first access unit is not Constrained Baseline.
 pub struct LayerEncoder {
     inner: Box<dyn VideoEncoder>,
-    fallback: Option<SoftwareEncoder>,
+    /// Soft params kept until a hardware AU proves unusable; avoids dual-open on
+    /// every layer bring-up / resolution cutover (eager-init audit #7).
+    soft: Option<SoftParams>,
 }
 
 /// How [`LayerEncoder::open_with`] picks hardware vs OpenH264.
@@ -305,7 +321,16 @@ impl LayerEncoder {
         bps: u32,
         keyframe_ms: u64,
     ) -> Result<Self, String> {
-        Self::open_with(screen, width, height, fps, bps, keyframe_ms, EncoderPick::Auto)
+        Self::open_with(
+            screen,
+            width,
+            height,
+            fps,
+            bps,
+            keyframe_ms,
+            EncoderPick::Auto,
+            true,
+        )
     }
 
     pub fn open_with(
@@ -316,29 +341,18 @@ impl LayerEncoder {
         bps: u32,
         keyframe_ms: u64,
         pick: EncoderPick,
+        cbr: bool,
     ) -> Result<Self, String> {
         match pick {
             EncoderPick::Software => Self::software(screen, fps, bps, keyframe_ms),
-            EncoderPick::Auto | EncoderPick::Hardware => {
-                Self::with_optional_hardware(screen, width, height, fps, bps, keyframe_ms, None)
-            }
+            EncoderPick::Auto | EncoderPick::Hardware => Self::with_optional_hardware(
+                screen, width, height, fps, bps, keyframe_ms, None, cbr,
+            ),
             EncoderPick::Nvenc => Self::with_optional_hardware(
-                screen,
-                width,
-                height,
-                fps,
-                bps,
-                keyframe_ms,
-                Some(HardwareKind::Nvenc),
+                screen, width, height, fps, bps, keyframe_ms, Some(HardwareKind::Nvenc), cbr,
             ),
             EncoderPick::Vaapi => Self::with_optional_hardware(
-                screen,
-                width,
-                height,
-                fps,
-                bps,
-                keyframe_ms,
-                Some(HardwareKind::Vaapi),
+                screen, width, height, fps, bps, keyframe_ms, Some(HardwareKind::Vaapi), cbr,
             ),
             EncoderPick::MediaFoundation => Self::with_optional_hardware(
                 screen,
@@ -348,6 +362,7 @@ impl LayerEncoder {
                 bps,
                 keyframe_ms,
                 Some(HardwareKind::MediaFoundation),
+                cbr,
             ),
         }
     }
@@ -360,25 +375,30 @@ impl LayerEncoder {
         bps: u32,
         keyframe_ms: u64,
         only: Option<HardwareKind>,
+        cbr: bool,
     ) -> Result<Self, String> {
-        let soft = SoftwareEncoder::open(screen, fps, bps, keyframe_ms)?;
-        if let Some(inner) = try_hardware(screen, width, height, fps, bps, keyframe_ms, only) {
+        // HW-first: do not construct OpenH264 until hardware is missing or
+        // the first usable AU fails the Constrained Baseline / Annex-B check.
+        if let Some(inner) = try_hardware(screen, width, height, fps, bps, keyframe_ms, only, cbr)
+        {
             Ok(Self {
                 inner,
-                fallback: Some(soft),
+                soft: Some(SoftParams {
+                    screen,
+                    fps,
+                    bps,
+                    keyframe_ms,
+                }),
             })
         } else {
-            Ok(Self {
-                inner: Box::new(soft),
-                fallback: None,
-            })
+            Self::software(screen, fps, bps, keyframe_ms)
         }
     }
 
     pub fn software(screen: bool, fps: f32, bps: u32, keyframe_ms: u64) -> Result<Self, String> {
         Ok(Self {
             inner: Box::new(SoftwareEncoder::open(screen, fps, bps, keyframe_ms)?),
-            fallback: None,
+            soft: None,
         })
     }
 
@@ -399,14 +419,15 @@ impl LayerEncoder {
             // is not Constrained Baseline. Treating “no SPS” alone as failure made
             // every P-frame fall back to OpenH264 (BAN-30); keeping non-Annex-B
             // bytes after that change broke Windows remotes (BAN-35).
-            Ok(au)
-                if self.fallback.is_none() || !hardware_au_unusable(&au.bytes) =>
-            {
-                Ok(au)
-            }
+            Ok(au) if self.soft.is_none() || !hardware_au_unusable(&au.bytes) => Ok(au),
             Ok(_) | Err(_) => {
-                if let Some(soft) = self.fallback.take() {
-                    self.inner = Box::new(soft);
+                if let Some(params) = self.soft.take() {
+                    self.inner = Box::new(SoftwareEncoder::open(
+                        params.screen,
+                        params.fps,
+                        params.bps,
+                        params.keyframe_ms,
+                    )?);
                     self.inner.encode(i420, width, height, true)
                 } else {
                     self.inner.encode(i420, width, height, force_key)
@@ -447,18 +468,52 @@ enum HardwareKind {
 }
 
 /// Names the hardware encoders this process can see. Empty means OpenH264 only.
+///
+/// Result is cached for the process lifetime (eager-init audit #6).
 pub fn hardware_probe() -> Vec<&'static str> {
-    list_available_encoders()
-        .into_iter()
-        .filter(|entry| {
-            entry.available
-                && !matches!(
-                    entry.pick,
-                    EncoderPick::Auto | EncoderPick::Hardware | EncoderPick::Software
-                )
+    HARDWARE_PROBE
+        .get_or_init(|| {
+            list_available_encoders()
+                .into_iter()
+                .filter(|entry| {
+                    entry.available
+                        && !matches!(
+                            entry.pick,
+                            EncoderPick::Auto | EncoderPick::Hardware | EncoderPick::Software
+                        )
+                })
+                .map(|entry| entry.key)
+                .collect()
         })
-        .map(|entry| entry.key)
-        .collect()
+        .clone()
+}
+
+/// Simulcast layer target bitrate from the Full-layer budget.
+///
+/// Half/Quarter get more than a pure pixel-area share so dynacast mid/thumbnail
+/// layers stay readable without raising Full.
+pub fn layer_target_bps(full: u32, layer: LayerId) -> u32 {
+    let full = full.max(30_000);
+    match layer {
+        LayerId::Full => full,
+        // Half is ~1/4 of the pixels; ~1/3 of the bits keeps the mid layer sharp.
+        LayerId::Half => (full / 3).max(100_000),
+        // Quarter is ~1/16 of the pixels; ~1/10 keeps thumbnails usable.
+        LayerId::Quarter => (full / 10).max(50_000),
+        LayerId::Off => 0,
+    }
+}
+
+/// OpenH264 QP floor/ceiling for interactive VC (min..=max, 0=best, 51=hardest).
+///
+/// Camera raises min so bits are not wasted on imperceptible detail. Screen keeps
+/// a lower max so UI text does not mush when rate control is stressed.
+pub fn openh264_qp_bounds(screen: bool) -> (u8, u8) {
+    if screen {
+        (12, 38)
+    } else {
+        (16, 42)
+    }
 }
 
 fn nvenc_present() -> bool {
@@ -494,15 +549,26 @@ fn media_foundation_present() -> bool {
     }
 }
 
+static AVAILABLE_ENCODERS: OnceLock<Vec<AvailableEncoder>> = OnceLock::new();
+
 /// Scan this process for selectable H.264 encoders (Auto / Software always; HW when present).
 ///
 /// Specific backends that are not installed are omitted so the UI cannot offer a missing encoder.
 /// Pass `prefer` when reloading a saved key that is no longer present — it is appended disabled.
 pub fn list_available_encoders() -> Vec<AvailableEncoder> {
-    list_available_encoders_preferring(None)
+    AVAILABLE_ENCODERS
+        .get_or_init(|| list_available_encoders_uncached(None))
+        .clone()
 }
 
 pub fn list_available_encoders_preferring(prefer: Option<&str>) -> Vec<AvailableEncoder> {
+    match prefer {
+        None => list_available_encoders(),
+        Some(_) => list_available_encoders_uncached(prefer),
+    }
+}
+
+fn list_available_encoders_uncached(prefer: Option<&str>) -> Vec<AvailableEncoder> {
     let mut out = vec![
         AvailableEncoder {
             pick: EncoderPick::Auto,
@@ -741,7 +807,9 @@ fn build_openh264(screen: bool, fps: f32, bps: u32, keyframe_ms: u64) -> Result<
         UsageType::CameraVideoRealTime
     };
     let gop = gop_frames(fps, keyframe_ms);
-    // Bitrate RC + single thread + Low complexity favor interactive delay over archive quality.
+    let (qp_min, qp_max) = openh264_qp_bounds(screen);
+    // Bitrate RC + single thread + Low complexity favor interactive delay over archive quality
+    // (BA-97 / PR #85). QP floors improve quality-per-bitrate without raising complexity.
     // ScreenContentRealTime rejects AdaptiveQuant / BackgroundDetection (harmless ParamValidation
     // warnings) — turn those off for screen so the encoder stays on the validated path.
     let mut config = EncoderConfig::new()
@@ -753,6 +821,7 @@ fn build_openh264(screen: bool, fps: f32, bps: u32, keyframe_ms: u64) -> Result<
         .complexity(Complexity::Low)
         .num_threads(1)
         .long_term_reference(false)
+        .qp(QpRange::new(qp_min, qp_max))
         .intra_frame_period(IntraFramePeriod::from_num_frames(gop));
     if screen {
         // Keep scene-change detect on (OpenH264 asks for it). AQ / background
@@ -893,6 +962,7 @@ fn try_hardware(
     bps: u32,
     keyframe_ms: u64,
     only: Option<HardwareKind>,
+    cbr: bool,
 ) -> Option<Box<dyn VideoEncoder>> {
     let want_nvenc = matches!(only, None | Some(HardwareKind::Nvenc));
     let want_vaapi = matches!(only, None | Some(HardwareKind::Vaapi));
@@ -909,6 +979,7 @@ fn try_hardware(
                 fps,
                 bps,
                 keyframe_ms,
+                cbr,
             ) {
                 return Some(Box::new(encoder));
             }
@@ -929,6 +1000,7 @@ fn try_hardware(
                 fps,
                 bps,
                 keyframe_ms,
+                cbr,
             ) {
                 return Some(Box::new(encoder));
             }
@@ -940,7 +1012,7 @@ fn try_hardware(
     }
     #[cfg(windows)]
     {
-        let _ = (screen, keyframe_ms, want_nvenc, want_vaapi);
+        let _ = (screen, keyframe_ms, cbr, want_nvenc, want_vaapi);
         if want_mf {
             if let Ok(encoder) = super::mf::open(width, height, fps, bps) {
                 return Some(Box::new(encoder));
@@ -949,7 +1021,7 @@ fn try_hardware(
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let _ = (screen, width, height, fps, bps, keyframe_ms, want_nvenc, want_vaapi, want_mf);
+        let _ = (screen, width, height, fps, bps, keyframe_ms, cbr, want_nvenc, want_vaapi, want_mf);
     }
     None
 }
@@ -992,6 +1064,7 @@ struct FfmpegEncoder {
     bps: u32,
     keyframe_ms: u64,
     screen: bool,
+    cbr: bool,
     name: &'static str,
 }
 
@@ -1006,6 +1079,7 @@ impl FfmpegEncoder {
         fps: f32,
         bps: u32,
         keyframe_ms: u64,
+        cbr: bool,
     ) -> Result<Self, String> {
         let gop = gop_frames(fps, keyframe_ms);
         let mut command = Command::new("ffmpeg");
@@ -1049,6 +1123,7 @@ impl FfmpegEncoder {
         ]);
         if name == "h264_nvenc" {
             // forced-idr: when a key is requested (reopen path), emit a true IDR.
+            // p1 + ll + zerolatency keep interactive delay; CBR/VBR follows stream prefs.
             command.args([
                 "-profile:v",
                 "baseline",
@@ -1056,11 +1131,21 @@ impl FfmpegEncoder {
                 "p1",
                 "-tune",
                 "ll",
+                "-rc",
+                if cbr { "cbr" } else { "vbr" },
+                "-zerolatency",
+                "1",
                 "-forced-idr",
                 "1",
             ]);
         } else {
-            command.args(["-profile:v", "constrained_baseline"]);
+            // VA-API constrained baseline + explicit RC (was bitrate-label only).
+            command.args([
+                "-profile:v",
+                "constrained_baseline",
+                "-rc_mode",
+                if cbr { "CBR" } else { "VBR" },
+            ]);
         }
         command.args(["-f", "h264", "pipe:1"]);
         command
@@ -1103,6 +1188,7 @@ impl FfmpegEncoder {
             bps,
             keyframe_ms,
             screen,
+            cbr,
             name,
         })
     }
@@ -1149,6 +1235,7 @@ impl VideoEncoder for FfmpegEncoder {
                 self.fps,
                 self.bps,
                 self.keyframe_ms,
+                self.cbr,
             )?;
             *self = replacement;
         }
@@ -1198,15 +1285,31 @@ impl VideoEncoder for FfmpegEncoder {
 /// accepts the stream. The first failure drops that decoder for the track.
 pub struct PictureDecoder {
     hardware: Option<HwDecoder>,
-    software: VideoListen,
+    /// OpenH264 is deferred while hardware is present (eager-init audit #8).
+    software: Option<VideoListen>,
 }
 
 impl PictureDecoder {
     pub fn open() -> Result<Self, String> {
+        let hardware = try_hardware_decoder();
         Ok(Self {
-            hardware: try_hardware_decoder(),
-            software: VideoListen::software()?,
+            // Only pre-build OpenH264 when no HW decoder answered.
+            software: if hardware.is_none() {
+                Some(VideoListen::software()?)
+            } else {
+                None
+            },
+            hardware,
         })
+    }
+
+    fn ensure_software(&mut self) -> Result<&mut VideoListen, String> {
+        if self.software.is_none() {
+            self.software = Some(VideoListen::software()?);
+        }
+        self.software
+            .as_mut()
+            .ok_or_else(|| "openh264 decoder missing".into())
     }
 
     pub fn decode_rgba(&mut self, annexb: &[u8]) -> Result<Option<(u32, u32, Vec<u8>)>, String> {
@@ -1221,9 +1324,9 @@ impl PictureDecoder {
             Decoded::Ready(picture) => Ok(picture),
             Decoded::GiveUp => {
                 self.hardware = None;
-                self.software.decode_rgba(annexb)
+                self.ensure_software()?.decode_rgba(annexb)
             }
-            Decoded::Software => self.software.decode_rgba(annexb),
+            Decoded::Software => self.ensure_software()?.decode_rgba(annexb),
         }
     }
 }
@@ -1604,6 +1707,7 @@ mod tests {
             2_000_000,
             2_000,
             EncoderPick::Hardware,
+            true,
         ) {
             Ok(encoder) if matches!(encoder.backend(), Backend::Vaapi | Backend::Nvenc) => encoder,
             _ => return,
