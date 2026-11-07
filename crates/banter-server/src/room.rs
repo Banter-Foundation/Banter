@@ -318,10 +318,12 @@ fn encoding(codec: &RTCRtpCodecParameters, ssrc: u32, rid: &str, scale: f64, bit
 
 fn video_encodings(base: u32) -> Vec<RTCRtpEncodingParameters> {
     let codec = h264_codec();
+    // SDP max_bitrate ceilings for simulcast layers (full up to 40 Mbps manual).
+    // Half/quarter keep the same 1/4 and 1/16 fractions of full as encode `layer_bps`.
     vec![
-        encoding(&codec, base, "q", 4.0, 150_000),
-        encoding(&codec, base + 1, "h", 2.0, 600_000),
-        encoding(&codec, base + 2, "f", 1.0, 2_500_000),
+        encoding(&codec, base, "q", 4.0, 2_500_000),
+        encoding(&codec, base + 1, "h", 2.0, 10_000_000),
+        encoding(&codec, base + 2, "f", 1.0, 40_000_000),
     ]
 }
 
@@ -734,9 +736,9 @@ async fn attach_forward(pc: &impl PeerConnection, subscriber: i64, publisher: i6
             32_000
         } else {
             match rid {
-                "q" => 150_000,
-                "h" => 600_000,
-                _ => 2_500_000,
+                "q" => 2_500_000,
+                "h" => 10_000_000,
+                _ => 40_000_000,
             }
         };
         let local = Arc::new(TrackLocalStaticRTP::new(stream_track(
