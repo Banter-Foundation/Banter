@@ -511,14 +511,16 @@ pub const AUDIO_FRAME_SAMPLES: usize = 960;
 pub enum SettingsSection {
     Account,
     Voice,
+    Appearance,
     Mods,
     Developer,
 }
 
-pub fn settings_sections() -> [SettingsSection; 4] {
+pub fn settings_sections() -> [SettingsSection; 5] {
     [
         SettingsSection::Account,
         SettingsSection::Voice,
+        SettingsSection::Appearance,
         SettingsSection::Mods,
         SettingsSection::Developer,
     ]
@@ -1777,6 +1779,86 @@ impl Default for VideoPrefs {
             width: 1280,
             height: 800,
         }
+    }
+}
+
+/// UI appearance choices. Missing fields fall back to the defaults.
+///
+/// Lives in `appearance.json` under the data directory. `font_scale` multiplies
+/// ImGui `FontScaleMain` (and therefore every `push_font_with_size` call).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppearancePrefs {
+    /// Multiplier on the baked atlas size. `1.0` is the shipped default.
+    pub font_scale: f32,
+}
+
+impl Default for AppearancePrefs {
+    fn default() -> Self {
+        Self { font_scale: 1.0 }
+    }
+}
+
+/// Inclusive clamp for the Appearance font size control.
+pub const FONT_SCALE_MIN: f32 = 0.85;
+pub const FONT_SCALE_MAX: f32 = 1.5;
+
+/// Preset chips shown under Settings → Appearance → Font size.
+pub fn font_scale_presets() -> &'static [(f32, &'static str)] {
+    &[
+        (0.85, "Small"),
+        (1.0, "Default"),
+        (1.15, "Large"),
+        (1.3, "Larger"),
+        (1.5, "Largest"),
+    ]
+}
+
+pub fn clamp_font_scale(scale: f32) -> f32 {
+    if !scale.is_finite() {
+        return 1.0;
+    }
+    scale.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX)
+}
+
+/// Nearest preset label for a stored scale (used when the value is custom).
+pub fn font_scale_label(scale: f32) -> &'static str {
+    let scale = clamp_font_scale(scale);
+    font_scale_presets()
+        .iter()
+        .min_by(|a, b| {
+            (a.0 - scale)
+                .abs()
+                .partial_cmp(&(b.0 - scale).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(_, label)| *label)
+        .unwrap_or("Default")
+}
+
+#[cfg(test)]
+mod appearance_prefs_tests {
+    use super::*;
+
+    #[test]
+    fn font_scale_clamps_and_rejects_non_finite() {
+        assert_eq!(clamp_font_scale(1.0), 1.0);
+        assert_eq!(clamp_font_scale(0.5), FONT_SCALE_MIN);
+        assert_eq!(clamp_font_scale(3.0), FONT_SCALE_MAX);
+        assert_eq!(clamp_font_scale(f32::NAN), 1.0);
+        assert_eq!(clamp_font_scale(f32::INFINITY), 1.0);
+    }
+
+    #[test]
+    fn font_scale_presets_cover_default() {
+        assert!(font_scale_presets().iter().any(|(scale, _)| (*scale - 1.0).abs() < f32::EPSILON));
+        assert_eq!(font_scale_label(1.0), "Default");
+        assert_eq!(font_scale_label(1.15), "Large");
+    }
+
+    #[test]
+    fn appearance_prefs_default_is_unity_scale() {
+        assert_eq!(AppearancePrefs::default().font_scale, 1.0);
     }
 }
 
