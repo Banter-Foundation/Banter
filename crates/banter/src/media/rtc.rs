@@ -705,6 +705,15 @@ fn peer_cap(control: &Control, kind: MediaKind) -> LayerId {
         .unwrap_or(LayerId::Full)
 }
 
+/// Whether this encode tick may consume `control.force_key`.
+///
+/// Mesh flips / WantedLayers arm an IDR before camera or Go Live is publishing.
+/// Taking the flag while `layers` is empty burned the only force-key and left the
+/// first real AU mid-GOP for remotes (BAN-33).
+fn can_take_join_key(layers: &[LayerId]) -> bool {
+    !layers.is_empty()
+}
+
 fn encode_video(
     control: &Control,
     tx: &tokio::sync::mpsc::Sender<Outgoing>,
@@ -716,6 +725,9 @@ fn encode_video(
     layers: &[LayerId],
     force_key: bool,
 ) -> bool {
+    if !can_take_join_key(layers) {
+        return false;
+    }
     let Some((generation, picture)) = slot.load_since(*seen) else {
         return false;
     };
@@ -1372,6 +1384,13 @@ fn push_playback(playback: &Mutex<VecDeque<f32>>, output_rate: &AtomicU32, pcm: 
 #[cfg(test)]
 mod receive_tests {
     use super::*;
+
+    #[test]
+    fn join_key_waits_until_a_layer_is_publishing() {
+        assert!(!can_take_join_key(&[]));
+        assert!(can_take_join_key(&[LayerId::Full]));
+        assert!(can_take_join_key(&[LayerId::Half, LayerId::Quarter]));
+    }
 
     #[test]
     fn fwd_screen_track_names_carry_publisher_and_layer() {

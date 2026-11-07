@@ -1,3 +1,7 @@
+## 2026-11-07 02:45:00 -05:00 [ubuntu] — Restore hardware force-key IDR after 13.1 (BAN-33)
+
+Version-1-test-13.1 kept VA-API on GPU (#76) by skipping ffmpeg reopen on `force_key`, which left late-join PLI, P2P peer-cap keys, and mesh-flip recovery without an IDR on hardware encode. Reopen on `force_key` again (async_depth=1 still avoids the OpenH264 fallback), and do not burn `control.force_key` while no camera/screen layer is publishing.
+
 ## 2026-11-06 04:00:00 -05:00 [ubuntu] — Version-1-test-13.1 pre-release
 
 Shipped pre-release Version-1-test-13.1 from main after hardware encode stays on VA-API (#76 / BAN-30) and RTC restarts on guild P2P↔SFU flips (#77 / BAN-31). Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
