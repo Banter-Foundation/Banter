@@ -1045,6 +1045,15 @@ Owl: Ship GitHub pre-release Version-1-test-11 from current main; Win+Linux(+mac
 
 Agent: Tagged `Version-1-test-11` at `dcbba80` (main `8e1efdc` + BANTER_VERSION bump). Built Linux locally; Windows and macOS arm64 via temporary Actions workflows. Published pre-release with six artifacts. Docker image built locally; GHCR push failed (banter-foundation: Create organization package denied; snowedinowl: 403). Docs retarget PR opened on `cursor/version-1-test-11-effc`. Scratch Win/macOS workflows removed from the PR tip (remain on the release tag commit only).
 
+## 2026-11-07 BA-106 Discord-like server settings window
+
+Owl: before BA-23 roles/badges/member-list feature walk, add a Discord-like server settings window and put roles, badges, and member-list settings in it while you’re at it. Behavior: open from server context (gear / right-click server) → left nav sections like Discord Server Settings → right content pane. Include sections for Overview, Roles, Badges (or Members & badges), Member list / display. Wire real Banter APIs where they exist; if role/badge APIs aren’t ready, ship the window chrome + section shells with working navigation and clear “coming soon” only for empty backends — prefer implementing what Postgres/API already supports. Prefs: never E:; clear commits; one PR; do not merge. Docs note: /cursor/stores/.../internal/server-settings-window.md. Coordinate: BA-23 stays queued until this lands enough to walk features in Settings. Client Settings (user) already exist — this is **server** settings, separate window. Return PR URL + which sections are live vs stub.
+
+Agent: Implemented Server Settings OS window (shared secondary host with User Settings). Overview/Roles/Members live; Badges Coming soon. Branch cursor/server-settings-window-3ad1. Do not merge until Owl says so.
+
+### Summary
+Discord-like Server Settings chrome hosts Overview, Roles, Badges, and Member List so BA-23 can resume inside Settings.
+
 ## 2026-11-07 07:22:30 +0000 — BA-105 Custom Mac-style title bar
 
 Owl: Owl wants a custom title bar: small, themed to the Banter app (dark UI), Mac-style traffic-light min / max / close buttons (left). Replace the native Windows-looking title bar in the screenshot. Before: /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/media/native-titlebar-before.png Related: BA-95 custom theme (parent). Use existing GLFW/ImGui window chrome patterns in crates/banter. Prefer undecorated + client-drawn caption, drag-to-move, double-click maximize if feasible. Keep Linux working too. One PR; do not merge. Note in /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/internal/custom-titlebar.md Return PR URL.

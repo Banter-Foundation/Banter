@@ -1,7 +1,8 @@
 //! GLFW window, OpenGL 3.3, and the Dear ImGui docking branch.
 //!
-//! User Settings opens in a second shared-context GLFW window so the main Banter
-//! shell stays usable. Closing that window clears settings state on the main app.
+//! User Settings and Server Settings open in a second shared-context GLFW window so
+//! the main Banter shell stays usable. Closing that window clears settings state on
+//! the main app. Only one of User / Server Settings is hosted at a time.
 //!
 //! Banter Settings uses its **own Dear ImGui context** (dear-imgui-rs
 //! [`SuspendedContext`], activated for that pass). Sharing one ImGui context across
@@ -28,7 +29,9 @@ use crate::logic::{
     clamp_window_size, either_key_held, load_json, pick_display_refresh_hz, ui_swap_needs_update,
     DisplayRefresh, VideoPrefs,
 };
-use crate::settings::{settings_window_default_size, SETTINGS_WINDOW_TITLE};
+use crate::server_settings::{
+    settings_os_window_default_size, settings_os_window_title, SettingsOsKind,
+};
 use crate::stream_watch::{stream_popout_default_size, STREAM_POPOUT_WINDOW_TITLE};
 use crate::titlebar::{dragged_window_pos, TitleBarAction, TitleBarChrome};
 use crate::ui::App;
@@ -345,6 +348,7 @@ fn draw_settings_surface(
         gl.viewport(0, 0, fbw, fbh);
     }
 
+    let kind = host.kind;
     let SettingsHost {
         window,
         imgui,
@@ -384,7 +388,10 @@ fn draw_settings_surface(
                 }
                 {
                     let ui = imgui.frame();
-                    app.draw_settings_window(&ui);
+                    match kind {
+                        SettingsOsKind::User => app.draw_settings_window(&ui),
+                        SettingsOsKind::Server => app.draw_server_settings_window(&ui),
+                    }
                 }
                 let pending = imgui.render(
                     renderer
@@ -421,6 +428,8 @@ struct SettingsHost {
     imgui: SuspendedContext,
     renderer: GlowRenderer,
     fonts: UiFonts,
+    /// User vs Server Settings — drives the OS title and which App draw path runs.
+    kind: SettingsOsKind,
 }
 
 struct StreamPopoutHost {
@@ -439,14 +448,20 @@ fn sync_settings_window(
     mut main_imgui: Context,
     gl: &Rc<glow::Context>,
 ) -> Result<Context, String> {
-    let want = app.settings_os_window_desired();
-    if want {
+    let want = app.settings_os_kind();
+    if let Some(kind) = want {
         if host.is_none() {
-            let (imgui, created) = create_settings_window(glfw, main, main_imgui, gl)?;
+            let (imgui, created) = create_settings_window(glfw, main, main_imgui, gl, kind)?;
             main_imgui = imgui;
             *host = Some(created);
         }
         if let Some(settings) = host.as_mut() {
+            if settings.kind != kind {
+                settings.kind = kind;
+                settings
+                    .window
+                    .set_title(settings_os_window_title(kind));
+            }
             if app.take_settings_window_focus() {
                 settings.window.focus();
             }
@@ -485,6 +500,7 @@ fn destroy_settings_host(
         imgui,
         renderer,
         fonts: _,
+        kind: _,
     } = host;
 
     // Release Settings-context textures / renderer while that context is active.
@@ -508,8 +524,10 @@ fn create_settings_window(
     main: &mut glfw::PWindow,
     main_imgui: Context,
     gl: &Rc<glow::Context>,
+    kind: SettingsOsKind,
 ) -> Result<(Context, SettingsHost), String> {
-    let (width, height) = settings_window_default_size();
+    let (width, height) = settings_os_window_default_size(kind);
+    let title = settings_os_window_title(kind);
     glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
     glfw.window_hint(glfw::WindowHint::OpenGlProfile(
         glfw::OpenGlProfileHint::Core,
@@ -522,7 +540,7 @@ fn create_settings_window(
         .create_shared(
             width as u32,
             height as u32,
-            SETTINGS_WINDOW_TITLE,
+            title,
             glfw::WindowMode::Windowed,
         )
         .ok_or_else(|| "GLFW could not open the Banter Settings window.".to_string())?;
@@ -553,6 +571,7 @@ fn create_settings_window(
             imgui: settings_imgui,
             renderer,
             fonts,
+            kind,
         },
     ))
 }
@@ -595,7 +614,7 @@ fn sync_stream_popout_window(
     } else if let Some(closed) = host.take() {
         main_imgui = destroy_stream_popout_host(closed, main, main_imgui, app)?;
         // Keep focus on main unless Settings still wants it.
-        if !app.settings_os_window_desired() {
+        if app.settings_os_kind().is_none() {
             main.focus();
         }
     }

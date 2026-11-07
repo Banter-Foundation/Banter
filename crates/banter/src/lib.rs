@@ -25,6 +25,7 @@ mod profile;
 mod profile_paint;
 mod profiler;
 mod realtime;
+mod server_settings;
 mod session;
 mod settings;
 mod sfx;
@@ -59,6 +60,7 @@ pub use plugins::{
     plugin_version_is_newer, LocalPlugin,
 };
 pub use profile::*;
+pub use server_settings::*;
 pub use session::{clear_token, load_token, persist_login, save_token};
 pub use settings::*;
 pub use sfx::{decode_all_assets, ringtone_duration, SoundEvent, RINGTONE_ASSET};

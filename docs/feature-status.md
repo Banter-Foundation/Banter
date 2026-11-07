@@ -30,6 +30,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Stream watch: pop-out window, cycle live streamers, fullscreen chrome fade | Working — Banter Stream OS window; featured-stage cycle/pop-out/fullscreen; profile icons + voice indicators on pop-out/fullscreen; chrome fades on idle and returns on mouse move |
 | 1:1 DMs + start a call | Working — phone icon opens a Discord-style call stage (ringing avatar / two tiles when active); camera / Go Live flags ride on `CallSnapshot` |
 | User Settings: My Account (display name, About Me, custom status), Voice & Video, Developer (Local/Remote API, persisted) in a dedicated Banter Settings OS window | Working |
+| Server Settings: Discord-like dedicated Banter Server Settings OS window (Overview / Roles / Badges / Member List) | Working — Overview, Roles, Member List live; Badges coming soon (no community-badge API); opens from gear / server menu / rail right-click (BA-106) |
 | Embedded + standalone server, PostgreSQL data | Working |
 | Containerized `banter-server` (`ghcr.io/snowedinowl/banter`) | Image/Dockerfile ready; **GHCR publish + release auto-deploy blocked** until classic PAT has `write:packages` (see [docker-setup.md](docker-setup.md) Status) |
 | Linux native client (XDG paths, PipeWire-ready capture) | Working; loopback/app audio still Windows-only |

@@ -71,6 +71,10 @@ use crate::profile_paint;
 use crate::profiler;
 use crate::realtime::Realtime;
 use crate::session::{clear_token, load_token, persist_login};
+use crate::server_settings::{
+    server_settings_layout, server_settings_nav_sections, server_settings_section_backend,
+    ServerSettingsBackend, ServerSettingsSection, ServerSettingsState, SettingsOsKind,
+};
 use crate::settings::{
     account_avatar_actions_place, db_to_rms, device_error_text, display_name_dirty,
     display_name_error, meter_fraction, percent_to_volume, rms_to_db, settings_layout,
@@ -160,7 +164,6 @@ enum Modal {
     CreateChannel,
     EditChannel,
     CreateCategory,
-    Roles,
     MemberRoles,
     /// Create or edit a server-rail folder (name + hex color).
     ServerFolder,
@@ -301,6 +304,12 @@ pub(crate) struct App {
     /// When true, the Home landing shows reorder / show-hide controls.
     home_editing: bool,
     settings: SettingsState,
+    /// Discord-like Server Settings (separate OS window from User Settings).
+    server_settings: ServerSettingsState,
+    /// Nickname draft while Server Settings → Overview is open.
+    server_settings_nickname: String,
+    /// Error string shown inside Server Settings pages.
+    server_settings_error: String,
     settings_error: String,
     /// Last successful health report's version label (empty if unknown / unreachable).
     server_version_label: String,
@@ -615,6 +624,9 @@ impl App {
             home_layout: HomeLayout::default(),
             home_editing: false,
             settings: SettingsState::new(),
+            server_settings: ServerSettingsState::new(),
+            server_settings_nickname: String::new(),
+            server_settings_error: String::new(),
             settings_error: String::new(),
             server_version_label: String::new(),
             server_protocol: None,
@@ -1002,15 +1014,32 @@ impl App {
         self.settings.os_window_desired()
     }
 
-    pub(crate) fn take_settings_window_focus(&mut self) -> bool {
-        self.settings.take_needs_focus()
+    /// Which Banter settings OS window should exist (User and Server are mutually exclusive).
+    pub(crate) fn settings_os_kind(&self) -> Option<SettingsOsKind> {
+        if self.server_settings.os_window_desired() {
+            Some(SettingsOsKind::Server)
+        } else if self.settings.os_window_desired() {
+            Some(SettingsOsKind::User)
+        } else {
+            None
+        }
     }
 
-    /// OS window chrome closed the settings window — clear modal/recording state on the main app.
+    pub(crate) fn take_settings_window_focus(&mut self) -> bool {
+        if self.server_settings.is_open() {
+            self.server_settings.take_needs_focus()
+        } else {
+            self.settings.take_needs_focus()
+        }
+    }
+
+    /// OS window chrome closed the settings window — clear User and Server Settings state.
     pub(crate) fn notify_settings_window_closed(&mut self) {
         self.settings.window_closed();
+        self.server_settings.window_closed();
         self.settings_popup_open = false;
         self.settings_error.clear();
+        self.server_settings_error.clear();
     }
 
     /// True while a stream should be shown in the dedicated Banter Stream OS window.
@@ -1114,6 +1143,17 @@ impl App {
             }
         }
         self.draw_window_caption(ui, "Banter Settings", TitleBarSurface::Settings);
+    }
+
+    /// Dedicated Banter Server Settings window surface (Overview / Roles / Badges / Member List).
+    pub(crate) fn draw_server_settings_window(&mut self, ui: &Ui) {
+        if !self.server_settings.is_open() {
+            return;
+        }
+        self.draw_server_settings(ui);
+        if ui.is_key_pressed(Key::Escape) {
+            self.server_settings.escape(self.settings_popup_open);
+        }
     }
 
     /// Shell token from an enabled theme mod, or the Banter default.
@@ -2138,15 +2178,18 @@ impl App {
                     .find(|server| server.id == server_id)
                     .map(|server| server.name.clone())
                     .unwrap_or_else(|| "Server".to_string());
+                let gear_w = 22.0;
+                let chevron_w = 18.0;
+                let trailing = 16.0 + gear_w + 8.0 + chevron_w + 16.0;
                 ui.set_cursor_screen_pos(origin);
-                if ui.invisible_button("server-header", [width, HEADER_H - 1.0]) {
+                if ui.invisible_button("server-header", [width - trailing, HEADER_H - 1.0]) {
                     self.server_menu = !self.server_menu;
                 }
                 if ui.is_item_hovered() || self.server_menu {
                     skin::rect(
                         ui,
                         origin,
-                        [origin[0] + width, origin[1] + HEADER_H - 1.0],
+                        [origin[0] + width - trailing, origin[1] + HEADER_H - 1.0],
                         ROW_HOVER,
                         0.0,
                     );
@@ -2156,7 +2199,7 @@ impl App {
                     self.semibold_font,
                     FONT_MD,
                     &name,
-                    width - 16.0 - 18.0 - 16.0 - 8.0,
+                    width - trailing - 16.0,
                 );
                 skin::text_in_row(
                     ui,
@@ -2168,6 +2211,21 @@ impl App {
                     TEXT,
                     &shown,
                 );
+                let gear_x = origin[0] + width - 16.0 - chevron_w - 8.0 - gear_w;
+                ui.set_cursor_screen_pos([gear_x, origin[1] + (HEADER_H - gear_w) * 0.5]);
+                let gear_clicked = ui.invisible_button("server-settings-gear", [gear_w, gear_w]);
+                let gear_hovered = ui.is_item_hovered();
+                skin::image(
+                    ui,
+                    self.icon("settings"),
+                    [gear_x, origin[1] + (HEADER_H - gear_w) * 0.5],
+                    gear_w,
+                    if gear_hovered { TEXT } else { TEXT_NORMAL },
+                );
+                if gear_clicked {
+                    self.server_menu = false;
+                    self.open_server_settings(server_id, ServerSettingsSection::Overview);
+                }
                 let chevron = if self.server_menu {
                     "x"
                 } else {
@@ -2176,8 +2234,8 @@ impl App {
                 skin::image(
                     ui,
                     self.icon(chevron),
-                    [origin[0] + width - 16.0 - 18.0, origin[1] + 15.0],
-                    18.0,
+                    [origin[0] + width - 16.0 - chevron_w, origin[1] + 15.0],
+                    chevron_w,
                     TEXT_NORMAL,
                 );
             }
@@ -2210,7 +2268,8 @@ impl App {
         let can_invite = self.can_permission(PERM_CREATE_INVITE);
         let can_channels = self.can_permission(PERM_MANAGE_CHANNELS);
         let can_roles = self.can_permission(PERM_MANAGE_ROLES);
-        let mut items = 1usize;
+        // Invite + channels + roles + Server Settings + nickname.
+        let mut items = 2usize;
         if can_invite {
             items += 1;
         }
@@ -2220,7 +2279,7 @@ impl App {
         if can_roles {
             items += 1;
         }
-        let separators = 1.0;
+        let separators = 2.0;
         let height = MENU_PAD * 2.0 + items as f32 * (MENU_ITEM_H + 2.0) + separators * 9.0;
         let pos = [RAIL_W + 10.0, HEADER_H + 4.0];
         let width = MENU_W;
@@ -2235,7 +2294,16 @@ impl App {
         let _round = ui.push_style_var(StyleVar::WindowRounding(MENU_RADIUS));
         let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
         let _bg = ui.push_style_color(StyleColor::WindowBg, FLOATING_BG);
-        let mut action: Option<Modal> = None;
+        #[derive(Clone, Copy)]
+        enum ServerMenuAction {
+            Invite,
+            CreateChannel,
+            CreateCategory,
+            Roles,
+            ServerSettings,
+            Nickname,
+        }
+        let mut action: Option<ServerMenuAction> = None;
         ui.window("##server-menu")
             .flags(flags)
             .position(pos, Condition::Always)
@@ -2256,7 +2324,7 @@ impl App {
                         item_w,
                         semi,
                     ) {
-                        action = Some(Modal::Invite);
+                        action = Some(ServerMenuAction::Invite);
                     }
                     y += MENU_ITEM_H + 2.0;
                 }
@@ -2271,7 +2339,7 @@ impl App {
                         item_w,
                         semi,
                     ) {
-                        action = Some(Modal::CreateChannel);
+                        action = Some(ServerMenuAction::CreateChannel);
                     }
                     y += MENU_ITEM_H + 2.0;
                     if skin::menu_item(
@@ -2284,7 +2352,7 @@ impl App {
                         item_w,
                         semi,
                     ) {
-                        action = Some(Modal::CreateCategory);
+                        action = Some(ServerMenuAction::CreateCategory);
                     }
                     y += MENU_ITEM_H + 2.0;
                 }
@@ -2299,10 +2367,23 @@ impl App {
                         item_w,
                         semi,
                     ) {
-                        action = Some(Modal::Roles);
+                        action = Some(ServerMenuAction::Roles);
                     }
                     y += MENU_ITEM_H + 2.0;
                 }
+                if skin::menu_item(
+                    ui,
+                    "menu-server-settings",
+                    "Server Settings",
+                    self.icon("settings"),
+                    MenuTone::Normal,
+                    [x, y],
+                    item_w,
+                    semi,
+                ) {
+                    action = Some(ServerMenuAction::ServerSettings);
+                }
+                y += MENU_ITEM_H + 2.0;
                 skin::menu_separator(ui, [x, y], item_w);
                 y += 9.0;
                 if skin::menu_item(
@@ -2315,14 +2396,14 @@ impl App {
                     item_w,
                     semi,
                 ) {
-                    action = Some(Modal::Nickname);
+                    action = Some(ServerMenuAction::Nickname);
                 }
             });
-        if let Some(modal) = action {
+        if let Some(action) = action {
             self.server_menu = false;
-            match modal {
-                Modal::Invite => self.open_invite(server_id),
-                Modal::CreateChannel => {
+            match action {
+                ServerMenuAction::Invite => self.open_invite(server_id),
+                ServerMenuAction::CreateChannel => {
                     self.channel_category = None;
                     self.channel_name.clear();
                     self.channel_icon = None;
@@ -2330,11 +2411,11 @@ impl App {
                     self.channel_is_voice = false;
                     self.open_modal(Modal::CreateChannel);
                 }
-                Modal::CreateCategory => {
+                ServerMenuAction::CreateCategory => {
                     self.category_name.clear();
                     self.open_modal(Modal::CreateCategory);
                 }
-                Modal::Nickname => {
+                ServerMenuAction::Nickname => {
                     let me = self.account.as_ref().map(|account| account.id);
                     if let Some(member) = self
                         .members
@@ -2345,8 +2426,10 @@ impl App {
                     }
                     self.open_modal(Modal::Nickname);
                 }
-                Modal::Roles => self.open_roles(),
-                _ => {}
+                ServerMenuAction::Roles => self.open_roles(),
+                ServerMenuAction::ServerSettings => {
+                    self.open_server_settings(server_id, ServerSettingsSection::Overview);
+                }
             }
             return;
         }
@@ -2399,6 +2482,7 @@ impl App {
             | "ctx-remove-folder" => "folder",
             "ctx-recolor-folder" => "circle-plus",
             "ctx-add-plugin" => "puzzle",
+            "ctx-server-settings" => "settings",
             _ => return None,
         };
         self.icon(name)
@@ -2581,6 +2665,9 @@ impl App {
                 {
                     self.refresh_shell();
                 }
+            }
+            ContextMenuAction::ServerSettings { server_id } => {
+                self.open_server_settings(server_id, ServerSettingsSection::Overview);
             }
             ContextMenuAction::AddPlugin { server_id } => {
                 self.open_add_plugin(server_id);
@@ -6382,7 +6469,6 @@ impl App {
                     Modal::CreateChannel => self.modal_create_channel(ui, display),
                     Modal::EditChannel => self.modal_edit_channel(ui, display),
                     Modal::CreateCategory => self.modal_create_category(ui, display),
-                    Modal::Roles => self.modal_roles(ui, display),
                     Modal::MemberRoles => self.modal_member_roles(ui, display),
                     Modal::ServerFolder => self.modal_server_folder(ui, display),
                     Modal::UploadsUnavailable => self.modal_uploads_unavailable(ui, display),
@@ -7105,122 +7191,6 @@ impl App {
         (min, max)
     }
 
-    fn modal_roles(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
-        let body_h = 112.0 + 20.0 + INPUT_H + 12.0 + 20.0 + INPUT_H + 12.0 + 22.0 * 6.0 + 72.0;
-        let (body, min, max) = self.modal_frame(
-            ui,
-            display,
-            "Server Roles",
-            Some("Color, hoist, and permissions"),
-            true,
-            body_h,
-            MODAL_FOOTER_H,
-        );
-        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
-        let roles = self.guild_roles.clone();
-        let list_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
-        ui.set_cursor_screen_pos(body);
-        ui.child_window("role-list")
-            .size([inner_w, 104.0])
-            .build(ui, || {
-                if ui
-                    .selectable_config("New role")
-                    .selected(self.editing_role.is_none())
-                    .build()
-                {
-                    self.clear_role_form();
-                }
-                for role in &roles {
-                    let label = format!("{}##role-{}", role.name, role.id);
-                    let selected = self.editing_role == Some(role.id);
-                    if ui.selectable_config(&label).selected(selected).build() {
-                        self.load_role_form(role);
-                    }
-                }
-            });
-        drop(list_bg);
-        let mut y = body[1] + 112.0;
-        skin::field_label(ui, self.bold_font, [body[0], y], "Role name", false, None);
-        y += 20.0;
-        let everyone = self
-            .editing_role
-            .and_then(|id| {
-                self.guild_roles
-                    .iter()
-                    .find(|role| role.id == id)
-                    .map(|role| role.everyone)
-            })
-            .unwrap_or(false);
-        ui.set_cursor_screen_pos([body[0], y]);
-        ui.set_next_item_width(inner_w);
-        let _disabled = ui.begin_disabled_with_cond(everyone);
-        ui.input_text("##role-name", &mut self.role_name).build();
-        drop(_disabled);
-        y += INPUT_H + 12.0;
-        skin::field_label(ui, self.bold_font, [body[0], y], "Color", false, None);
-        y += 20.0;
-        ui.set_cursor_screen_pos([body[0], y]);
-        ui.set_next_item_width(inner_w);
-        ui.input_text("##role-color", &mut self.role_color)
-            .hint("5865F2")
-            .build();
-        y += INPUT_H + 8.0;
-        ui.set_cursor_screen_pos([body[0], y]);
-        let _disabled = ui.begin_disabled_with_cond(everyone);
-        ui.checkbox("Show separately in the member list", &mut self.role_hoist);
-        drop(_disabled);
-        y += 22.0;
-        ui.set_cursor_screen_pos([body[0], y]);
-        ui.checkbox("Create invite", &mut self.role_invite);
-        y += 22.0;
-        ui.set_cursor_screen_pos([body[0], y]);
-        ui.checkbox("Manage channels", &mut self.role_channels);
-        y += 22.0;
-        ui.set_cursor_screen_pos([body[0], y]);
-        ui.checkbox("Manage roles", &mut self.role_manage);
-        y += 22.0;
-        ui.set_cursor_screen_pos([body[0], y]);
-        ui.checkbox("Manage plugins", &mut self.role_plugins);
-        y += 22.0;
-        ui.set_cursor_screen_pos([body[0], y]);
-        ui.checkbox("Manage bots", &mut self.role_bots);
-        y += 22.0;
-        ui.set_cursor_screen_pos([body[0], y]);
-        ui.checkbox("Administrator", &mut self.role_admin);
-        y += 24.0;
-        if self.editing_role.is_some() && !everyone {
-            ui.set_cursor_screen_pos([body[0], y]);
-            if ui.small_button("Delete role") {
-                self.delete_editing_role();
-            }
-            y += 22.0;
-        }
-        if !self.role_error.is_empty() {
-            ui.set_cursor_screen_pos([body[0], y]);
-            ui.text_colored(RED, &self.role_error);
-        }
-        let primary = if self.editing_role.is_some() {
-            "Save Role"
-        } else {
-            "Create Role"
-        };
-        let (cancel, save) = self.modal_footer(
-            ui,
-            max,
-            min[0],
-            "Cancel",
-            primary,
-            Tone::Brand,
-            !self.role_name.trim().is_empty() || everyone,
-        );
-        if cancel {
-            self.modal = None;
-        } else if save {
-            self.submit_role(everyone);
-        }
-        (min, max)
-    }
-
     fn modal_member_roles(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
         let user_id = self.assign_user;
         let name = user_id
@@ -7251,7 +7221,7 @@ impl App {
         let mut y = body[1];
         if roles.is_empty() {
             ui.set_cursor_screen_pos([body[0], y]);
-            ui.text_colored(MUTED, "No roles yet. Create one from Server Roles.");
+            ui.text_colored(MUTED, "No roles yet. Create one from Server Settings → Roles.");
         }
         for role in &roles {
             ui.set_cursor_screen_pos([body[0], y]);
@@ -8337,6 +8307,7 @@ impl App {
     }
 
     fn logout(&mut self) {
+        self.server_settings.close();
         let _ = self.client.logout();
         let _ = clear_token(&self.data_dir);
         self.clear_reconnect_state();
@@ -8703,10 +8674,37 @@ impl App {
     }
 
     fn open_roles(&mut self) {
+        let Place::Server(server_id) = self.place else {
+            return;
+        };
+        self.open_server_settings(server_id, ServerSettingsSection::Roles);
+    }
+
+    fn open_server_settings(&mut self, server_id: i64, section: ServerSettingsSection) {
+        self.settings.close();
+        self.server_menu = false;
+        self.context_menu = None;
+        self.modal = None;
+        if self.place != Place::Server(server_id) {
+            self.open_server(server_id);
+        }
         self.role_error.clear();
+        self.server_settings_error.clear();
         self.reload_role_list();
-        self.clear_role_form();
-        self.open_modal(Modal::Roles);
+        if section == ServerSettingsSection::Roles {
+            self.clear_role_form();
+        }
+        if section == ServerSettingsSection::Overview || section == ServerSettingsSection::Members {
+            self.reload_members();
+        }
+        let me = self.account.as_ref().map(|account| account.id);
+        self.server_settings_nickname = self
+            .members
+            .iter()
+            .find(|member| Some(member.user_id) == me)
+            .and_then(|member| member.nickname.clone())
+            .unwrap_or_default();
+        self.server_settings.open(server_id, section);
     }
 
     fn open_member_roles(&mut self, user_id: i64) {
@@ -9418,6 +9416,8 @@ impl App {
     }
 
     fn open_settings_section(&mut self, section: SettingsSection) {
+        // User Settings and Server Settings share one OS window host.
+        self.server_settings.close();
         self.settings.open_section(section);
         self.settings_error.clear();
         self.display_name = self
@@ -11661,6 +11661,392 @@ impl App {
         if close {
             self.settings.close();
         }
+    }
+
+    fn draw_server_settings(&mut self, ui: &Ui) {
+        let size = ui.io().display_size();
+        let layout = server_settings_layout(size[0], size[1]);
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR
+            | WindowFlags::NO_SCROLL_WITH_MOUSE;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _rounding = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, STAGE_BG);
+        let mut close = false;
+        ui.window("Server Settings")
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size(size, Condition::Always)
+            .build(|| {
+                self.settings_popup_open = ui
+                    .is_popup_open_with_flags("", PopupQueryFlags::ANY_POPUP)
+                    || ui.is_any_item_active();
+                ui.set_cursor_pos([layout.nav_x, 0.0]);
+                let nav_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
+                ui.child_window("server-settings-nav")
+                    .size([layout.nav_w, size[1]])
+                    .build(ui, || {
+                        self.draw_server_settings_nav(ui, layout.nav_w);
+                    });
+                drop(nav_bg);
+                ui.set_cursor_pos([layout.body_x, 0.0]);
+                let body_bg = ui.push_style_color(StyleColor::ChildBg, STAGE_BG);
+                ui.child_window("server-settings-body")
+                    .size([layout.body_w, size[1]])
+                    .build(ui, || {
+                        let window_pos = ui.window_pos();
+                        ui.set_cursor_pos([layout.content_x, SETTINGS_TOP_PAD]);
+                        ui.indent_by(layout.content_x);
+                        let _wrap = ui.push_text_wrap_pos(layout.content_x + layout.content_w);
+                        match self.server_settings.section() {
+                            ServerSettingsSection::Overview => {
+                                self.draw_server_overview_settings(ui, layout.content_w)
+                            }
+                            ServerSettingsSection::Roles => {
+                                self.draw_server_roles_settings(ui, layout.content_w)
+                            }
+                            ServerSettingsSection::Badges => {
+                                self.draw_server_badges_settings(ui, layout.content_w)
+                            }
+                            ServerSettingsSection::Members => {
+                                self.draw_server_members_settings(ui, layout.content_w)
+                            }
+                        }
+                        ui.dummy([layout.content_w, 80.0]);
+                        ui.unindent_by(layout.content_x);
+                        ui.set_cursor_screen_pos([
+                            window_pos[0] + layout.close_x - layout.body_x,
+                            window_pos[1] + layout.close_y,
+                        ]);
+                        if self.settings_close_button(ui, layout.close_size) {
+                            close = true;
+                        }
+                    });
+                drop(body_bg);
+            });
+        if close {
+            self.server_settings.close();
+        }
+    }
+
+    fn draw_server_settings_nav(&mut self, ui: &Ui, nav_w: f32) {
+        let list_x = settings_nav_list_x(nav_w);
+        let list_w = settings_nav_list_w(nav_w);
+        let server_name = self
+            .server_settings
+            .server_id()
+            .and_then(|id| {
+                self.servers
+                    .iter()
+                    .find(|server| server.id == id)
+                    .map(|server| server.name.clone())
+            })
+            .unwrap_or_else(|| "Server".into());
+        ui.set_cursor_pos([list_x, SETTINGS_TOP_PAD]);
+        ui.indent_by(list_x);
+        ui.child_window("server-settings-nav-list")
+            .size([list_w, 0.0])
+            .build(ui, || {
+                settings_form_label(ui, self.bold_font, "SERVER SETTINGS");
+                ui.dummy([0.0, 2.0]);
+                {
+                    let _font = ui.push_font_with_size(self.semibold_font, 13.0);
+                    ui.text_colored(TEXT, &server_name);
+                }
+                ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
+                for section in server_settings_nav_sections() {
+                    if nav_row(
+                        ui,
+                        section.nav_id(),
+                        self.icon(section.icon()),
+                        section.label(),
+                        self.server_settings.section() == section,
+                    ) {
+                        self.server_settings.select(section);
+                        if section == ServerSettingsSection::Roles {
+                            self.reload_role_list();
+                        }
+                        if section == ServerSettingsSection::Members
+                            || section == ServerSettingsSection::Overview
+                        {
+                            self.reload_members();
+                        }
+                    }
+                    ui.dummy([0.0, 4.0]);
+                }
+            });
+        ui.unindent_by(list_x);
+    }
+
+    fn draw_server_overview_settings(&mut self, ui: &Ui, width: f32) {
+        let server_id = self.server_settings.server_id();
+        let name = server_id
+            .and_then(|id| {
+                self.servers
+                    .iter()
+                    .find(|server| server.id == id)
+                    .map(|server| server.name.clone())
+            })
+            .unwrap_or_else(|| "Server".into());
+        settings_page_title(ui, self.bold_font, "Overview");
+        ui.text_colored(
+            MUTED,
+            "Server identity and your nickname on this server. Rename is not in the API yet.",
+        );
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "SERVER NAME");
+        ui.text(&name);
+        if let Some(id) = server_id {
+            ui.text_colored(MUTED, format!("ID {id}"));
+        }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "SERVER NICKNAME");
+        ui.set_next_item_width(width.min(420.0));
+        ui.input_text("##server-settings-nickname", &mut self.server_settings_nickname)
+            .hint("Optional nickname")
+            .build();
+        ui.dummy([0.0, 8.0]);
+        if ui.button("Save Nickname") {
+            if let Some(server_id) = server_id {
+                let nickname = self.server_settings_nickname.trim();
+                let nickname = if nickname.is_empty() {
+                    None
+                } else {
+                    Some(nickname)
+                };
+                match self.client.set_nickname(server_id, nickname) {
+                    Ok(()) => {
+                        self.server_settings_error.clear();
+                        self.reload_members();
+                    }
+                    Err(err) => self.server_settings_error = err.to_string(),
+                }
+            }
+        }
+        ui.same_line();
+        if ui.button("Reset") {
+            self.server_settings_nickname.clear();
+        }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "INVITE");
+        let can_invite = self.can_permission(PERM_CREATE_INVITE);
+        if can_invite {
+            if ui.button("Create Invite") {
+                if let Some(server_id) = server_id {
+                    self.open_invite(server_id);
+                }
+            }
+        } else {
+            ui.text_colored(MUTED, "You need Create Invite to make an invite link.");
+        }
+        if !self.server_settings_error.is_empty() {
+            settings_spacer(ui);
+            ui.text_colored(RED, &self.server_settings_error);
+        }
+    }
+
+    fn draw_server_roles_settings(&mut self, ui: &Ui, width: f32) {
+        settings_page_title(ui, self.bold_font, "Roles");
+        ui.text_colored(
+            MUTED,
+            "Color, hoist, and permissions. Owner always has every permission.",
+        );
+        settings_spacer(ui);
+        let can_roles = self.can_permission(PERM_MANAGE_ROLES);
+        if !can_roles {
+            ui.text_colored(MUTED, "You need Manage Roles to edit roles on this server.");
+            settings_spacer(ui);
+        }
+        let roles = self.guild_roles.clone();
+        settings_form_label(ui, self.bold_font, "ROLES");
+        let list_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
+        ui.child_window("server-settings-role-list")
+            .size([width, 160.0])
+            .build(ui, || {
+                let _disabled = ui.begin_disabled_with_cond(!can_roles);
+                if ui
+                    .selectable_config("New role")
+                    .selected(self.editing_role.is_none())
+                    .build()
+                {
+                    self.clear_role_form();
+                }
+                for role in &roles {
+                    let label = format!("{}##ss-role-{}", role.name, role.id);
+                    let selected = self.editing_role == Some(role.id);
+                    if ui.selectable_config(&label).selected(selected).build() {
+                        self.load_role_form(role);
+                    }
+                }
+                drop(_disabled);
+            });
+        drop(list_bg);
+        settings_spacer(ui);
+        let everyone = self
+            .editing_role
+            .and_then(|id| {
+                self.guild_roles
+                    .iter()
+                    .find(|role| role.id == id)
+                    .map(|role| role.everyone)
+            })
+            .unwrap_or(false);
+        settings_form_label(ui, self.bold_font, "ROLE NAME");
+        ui.set_next_item_width(width.min(420.0));
+        {
+            let _disabled = ui.begin_disabled_with_cond(!can_roles || everyone);
+            ui.input_text("##ss-role-name", &mut self.role_name).build();
+        }
+        settings_spacer(ui);
+        settings_form_label(ui, self.bold_font, "COLOR");
+        ui.set_next_item_width(width.min(420.0));
+        {
+            let _disabled = ui.begin_disabled_with_cond(!can_roles);
+            ui.input_text("##ss-role-color", &mut self.role_color)
+                .hint("5865F2")
+                .build();
+        }
+        settings_spacer(ui);
+        {
+            let _disabled = ui.begin_disabled_with_cond(!can_roles || everyone);
+            ui.checkbox(
+                "Show separately in the member list",
+                &mut self.role_hoist,
+            );
+        }
+        {
+            let _disabled = ui.begin_disabled_with_cond(!can_roles);
+            ui.checkbox("Create invite", &mut self.role_invite);
+            ui.checkbox("Manage channels", &mut self.role_channels);
+            ui.checkbox("Manage roles", &mut self.role_manage);
+            ui.checkbox("Manage plugins", &mut self.role_plugins);
+            ui.checkbox("Manage bots", &mut self.role_bots);
+            ui.checkbox("Administrator", &mut self.role_admin);
+        }
+        settings_spacer(ui);
+        if can_roles {
+            let primary = if self.editing_role.is_some() {
+                "Save Role"
+            } else {
+                "Create Role"
+            };
+            let can_save = !self.role_name.trim().is_empty() || everyone;
+            if ui.button(primary) && can_save {
+                self.submit_role(everyone);
+            }
+            if self.editing_role.is_some() && !everyone {
+                ui.same_line();
+                if ui.button("Delete Role") {
+                    self.delete_editing_role();
+                }
+            }
+        }
+        if !self.role_error.is_empty() {
+            settings_spacer(ui);
+            ui.text_colored(RED, &self.role_error);
+        }
+    }
+
+    fn draw_server_badges_settings(&mut self, ui: &Ui, _width: f32) {
+        settings_page_title(ui, self.bold_font, "Badges");
+        ui.text_colored(
+            MUTED,
+            "Community badges (admin-created, grantable, optionally linked to a role) are not in the Banter API yet.",
+        );
+        settings_spacer(ui);
+        match server_settings_section_backend(ServerSettingsSection::Badges) {
+            ServerSettingsBackend::ComingSoon => {
+                ui.text_colored(TEXT, "Coming soon");
+                ui.dummy([0.0, 8.0]);
+                ui.text_colored(
+                    MUTED,
+                    "Profile badges stay under User Settings / profile customization. This page will host server community badges once BA-23 lands the backend.",
+                );
+            }
+            ServerSettingsBackend::Live => {}
+        }
+    }
+
+    fn draw_server_members_settings(&mut self, ui: &Ui, width: f32) {
+        settings_page_title(ui, self.bold_font, "Member List");
+        ui.text_colored(
+            MUTED,
+            "Live members with hoist grouping from roles. Admin-ordered category headers are not in the API yet.",
+        );
+        settings_spacer(ui);
+        let can_roles = self.can_permission(PERM_MANAGE_ROLES);
+        let members = self.members.clone();
+        let rows: Vec<(bool, Option<(i64, String)>)> = members
+            .iter()
+            .map(|member| {
+                let presence = self
+                    .presence
+                    .get(&member.user_id)
+                    .map(|info| info.state)
+                    .unwrap_or(member.presence);
+                let online = presence != Presence::Offline;
+                let hoist = top_hoisted_role(&member.roles)
+                    .map(|role| (role.position, role.name.clone()));
+                (online, hoist)
+            })
+            .collect();
+        let groups = plan_member_groups(&rows);
+        settings_form_label(ui, self.bold_font, "PREVIEW");
+        let list_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
+        ui.child_window("server-settings-member-list")
+            .size([width, 360.0])
+            .build(ui, || {
+                if members.is_empty() {
+                    ui.text_colored(MUTED, "No members loaded.");
+                    return;
+                }
+                for (heading, indexes) in &groups {
+                    ui.dummy([0.0, 6.0]);
+                    {
+                        let _font = ui.push_font_with_size(self.bold_font, 12.0);
+                        ui.text_colored(MUTED, heading);
+                    }
+                    for &index in indexes {
+                        let Some(member) = members.get(index) else {
+                            continue;
+                        };
+                        let label = member
+                            .nickname
+                            .clone()
+                            .unwrap_or_else(|| member.display_name.clone());
+                        let role_bits: String = member
+                            .roles
+                            .iter()
+                            .filter(|role| !role.everyone)
+                            .map(|role| role.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let line = if role_bits.is_empty() {
+                            label
+                        } else {
+                            format!("{label}  ·  {role_bits}")
+                        };
+                        ui.text(&line);
+                        if can_roles {
+                            ui.same_line();
+                            if ui.small_button(format!("Roles##ss-assign-{}", member.user_id)) {
+                                self.open_member_roles(member.user_id);
+                            }
+                        }
+                    }
+                }
+            });
+        drop(list_bg);
+        settings_spacer(ui);
+        ui.text_colored(
+            MUTED,
+            "Coming later: drag-order category headers for the member list (BA-23).",
+        );
     }
 
     fn draw_settings_nav(&mut self, ui: &Ui, nav_w: f32) {

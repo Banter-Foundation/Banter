@@ -2114,6 +2114,10 @@ pub enum ContextMenuAction {
     AddPlugin {
         server_id: i64,
     },
+    /// Open Discord-like Server Settings for this server (BA-106).
+    ServerSettings {
+        server_id: i64,
+    },
 }
 
 fn menu_item(
@@ -2385,7 +2389,13 @@ pub fn server_rail_item_menu(
     current_folder: Option<i64>,
     folders: &[(String, i64)],
 ) -> Vec<ContextMenuEntry> {
-    let mut entries = Vec::new();
+    let mut entries = vec![menu_item(
+        "ctx-server-settings",
+        "Server Settings",
+        ContextMenuTone::Normal,
+        ContextMenuAction::ServerSettings { server_id },
+    )];
+    entries.push(ContextMenuEntry::Separator);
     if current_folder.is_some() {
         entries.push(menu_item(
             "ctx-remove-folder",
@@ -2415,7 +2425,8 @@ pub fn server_rail_item_menu(
         // Only offer the first alternate folder via the shared label; UI lists targets in a modal when many.
         break;
     }
-    if entries.is_empty() && !folders.is_empty() {
+    if entries.len() == 2 && !folders.is_empty() {
+        // Only Server Settings + separator so far — still offer Move to Folder when folders exist.
         let folder_id = folders[0].1;
         entries.push(menu_item(
             "ctx-move-folder",
@@ -2427,7 +2438,7 @@ pub fn server_rail_item_menu(
             },
         ));
     }
-    if !entries.is_empty() {
+    if entries.len() > 2 {
         entries.push(ContextMenuEntry::Separator);
     }
     entries.push(menu_item(
