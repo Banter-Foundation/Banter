@@ -1240,6 +1240,15 @@ mod stream_encoder_settings_tests {
         assert_eq!(stream_full_bps(false, 4000), 4_000_000);
         assert_eq!(stream_full_bps(false, 40_000), 40_000_000);
         assert_eq!(stream_full_bps(false, 50_000), 40_000_000);
+        use super::{stream_full_bps_for, StreamFps, StreamResolution};
+        assert_eq!(
+            stream_full_bps_for(true, 999, StreamResolution::P1080, StreamFps::Fps60),
+            8_000_000
+        );
+        assert_eq!(
+            stream_full_bps_for(true, 999, StreamResolution::P720, StreamFps::Fps30),
+            2_500_000
+        );
     }
 }
 
@@ -1410,13 +1419,44 @@ pub fn rate_control_label(mode: StreamRateControl) -> &'static str {
     }
 }
 
-/// Full-layer target bits/sec from stream settings (manual kbps or 2.5 Mbps auto).
+/// Full-layer target bits/sec from stream settings (manual kbps or res×FPS auto).
 pub fn stream_full_bps(bitrate_auto: bool, bitrate_kbps: u32) -> u32 {
-    if bitrate_auto {
-        2_500_000
-    } else {
-        bitrate_kbps.clamp(200, 40_000).saturating_mul(1000)
+    stream_full_bps_for(
+        bitrate_auto,
+        bitrate_kbps,
+        default_stream_resolution(),
+        default_stream_fps(),
+    )
+}
+
+/// Auto bitrate scales with resolution and FPS (still interactive, capped at 40 Mbps).
+/// Manual kbps is unchanged. 720p30 stays ~2.5 Mbps; 1080p60 lands near 8 Mbps.
+pub fn stream_full_bps_for(
+    bitrate_auto: bool,
+    bitrate_kbps: u32,
+    resolution: StreamResolution,
+    fps: StreamFps,
+) -> u32 {
+    if !bitrate_auto {
+        return bitrate_kbps.clamp(200, 40_000).saturating_mul(1000);
     }
+    let base = match resolution {
+        StreamResolution::P480 => 1_500_000u32,
+        StreamResolution::P720 => 2_500_000,
+        StreamResolution::P1080 => 4_000_000,
+        StreamResolution::P1440 => 8_000_000,
+        StreamResolution::P2160 => 16_000_000,
+        StreamResolution::Source => 6_000_000,
+    };
+    let fps_n = match fps {
+        StreamFps::Fps15 => 15.0f64,
+        StreamFps::Fps30 => 30.0,
+        StreamFps::Fps60 => 60.0,
+        StreamFps::Fps120 => 120.0,
+        StreamFps::Fps144 => 144.0,
+    };
+    let bps = ((base as f64) * (fps_n / 30.0)).round() as u32;
+    bps.clamp(800_000, 40_000_000)
 }
 
 pub fn resolution_key(resolution: StreamResolution) -> &'static str {

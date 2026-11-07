@@ -5,22 +5,24 @@
 //! access unit is still checked by the caller. A missing MFT, an async-only
 //! MFT, or any other profile falls through to OpenH264. Async hardware MFTs
 //! are not driven: they need a Media Foundation event loop this process does
-//! not run. `force_key` and size changes reopen the MFT for a fresh IDR
-//! (pipe/MFT has no mid-stream force-IDR); a buffered first AU is flushed with
-//! a duplicate frame before falling back.
+//! not run. Mid-stream `force_key` prefers `CODECAPI_AVEncVideoForceKeyFrame`
+//! when the MFT exposes `ICodecAPI`; size changes and CodecAPI failure reopen
+//! the MFT for a fresh IDR. A buffered first AU is flushed with a duplicate
+//! frame before falling back.
 
 use std::ptr;
 
+use windows::core::{Interface, VARIANT};
 use windows::Win32::Media::MediaFoundation::{
-    eAVEncH264VProfile_ConstrainedBase, IMFActivate, IMFMediaBuffer, IMFSample, IMFTransform,
-    MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFShutdown,
-    MFStartup, MFTEnumEx, MFVideoFormat_H264, MFVideoFormat_NV12, MFVideoInterlace_Progressive,
-    MFSTARTUP_NOSOCKET, MFT_CATEGORY_VIDEO_DECODER, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG,
-    MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_SYNCMFT, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
-    MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
-    MFT_REGISTER_TYPE_INFO, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE,
-    MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_SUBTYPE,
-    MF_VERSION,
+    eAVEncH264VProfile_ConstrainedBase, ICodecAPI, IMFActivate, IMFMediaBuffer, IMFSample,
+    IMFTransform, MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video,
+    MFShutdown, MFStartup, MFTEnumEx, MFVideoFormat_H264, MFVideoFormat_NV12,
+    MFVideoInterlace_Progressive, CODECAPI_AVEncVideoForceKeyFrame, MFSTARTUP_NOSOCKET,
+    MFT_CATEGORY_VIDEO_DECODER, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG, MFT_ENUM_FLAG_HARDWARE,
+    MFT_ENUM_FLAG_SYNCMFT, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM,
+    MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFT_REGISTER_TYPE_INFO,
+    MF_E_TRANSFORM_NEED_MORE_INPUT, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
+    MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_SUBTYPE, MF_VERSION,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 
@@ -59,14 +61,21 @@ impl VideoEncoder for MfEncoder {
         height: u32,
         force_key: bool,
     ) -> Result<EncodedAu, String> {
-        // Reopen on size change *or* force_key. Sync MFTs have no reliable mid-stream
-        // force-IDR; returning Err here used to make LayerEncoder permanently swap in
-        // OpenH264 mid-GOP (BAN-30 kept MF alive for SPS-less P-frames, then the next
-        // PLI / GOP / mesh-flip key burned hardware). Fresh MFT starts with an IDR —
-        // same pattern as Linux ffmpeg after BAN-33.
-        if force_key || width != self.width || height != self.height {
+        // Size change always reopens. force_key prefers CodecAPI mid-stream IDR;
+        // reopen remains the fallback when CodecAPI is missing or the AU is not a
+        // key (BAN-33 / BAN-35 late-join path). Returning Err used to permanently
+        // swap LayerEncoder to OpenH264 mid-GOP.
+        if width != self.width || height != self.height {
             let replacement = open(width, height, self.fps, self.bps)?;
             *self = replacement;
+        } else if force_key {
+            match unsafe { self.encode_forced_key(i420) } {
+                Ok(au) => return Ok(au),
+                Err(_) => {
+                    let replacement = open(width, height, self.fps, self.bps)?;
+                    *self = replacement;
+                }
+            }
         }
         unsafe { self.encode_inner(i420) }
     }
@@ -208,6 +217,28 @@ unsafe fn video_type(
 }
 
 impl MfEncoder {
+    /// Ask the MFT for an IDR via CodecAPI, then encode. Fails if CodecAPI is
+    /// unavailable or the resulting AU is not a keyframe so the caller can reopen.
+    unsafe fn encode_forced_key(&mut self, i420: &[u8]) -> Result<EncodedAu, String> {
+        let codec: ICodecAPI = self
+            .transform
+            .cast()
+            .map_err(|err| format!("ICodecAPI: {err}"))?;
+        codec
+            .IsSupported(&CODECAPI_AVEncVideoForceKeyFrame)
+            .map_err(|err| format!("ForceKeyFrame unsupported: {err}"))?;
+        let value = VARIANT::from(1u32);
+        codec
+            .SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &value)
+            .map_err(|err| format!("ForceKeyFrame set: {err}"))?;
+        let au = self.encode_inner(i420)?;
+        if au.keyframe || access_unit_is_key(&au.bytes) {
+            Ok(au)
+        } else {
+            Err("CodecAPI ForceKeyFrame did not produce an IDR".into())
+        }
+    }
+
     unsafe fn encode_inner(&mut self, i420: &[u8]) -> Result<EncodedAu, String> {
         let nv12 = i420_to_nv12(i420, self.width, self.height);
         if nv12.is_empty() {
