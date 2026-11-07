@@ -1045,6 +1045,15 @@ Owl: Ship GitHub pre-release Version-1-test-11 from current main; Win+Linux(+mac
 
 Agent: Tagged `Version-1-test-11` at `dcbba80` (main `8e1efdc` + BANTER_VERSION bump). Built Linux locally; Windows and macOS arm64 via temporary Actions workflows. Published pre-release with six artifacts. Docker image built locally; GHCR push failed (banter-foundation: Create organization package denied; snowedinowl: 403). Docs retarget PR opened on `cursor/version-1-test-11-effc`. Scratch Win/macOS workflows removed from the PR tip (remain on the release tag commit only).
 
+## 2026-11-07 03:15:54 +0000 — Cover-flow stream switcher preview (BA-96)
+
+Owl: Stream switching previews should look and work like the arched cover-flow reference (tall portrait panels, center tallest, height falloff to edges, horizontal focus cycle). Dark mood, translucent chrome. Against existing stream/source picker UI. PR from main; do not merge until Owl says so. Use gh. Prefs / project-context. Reference still/mp4 in store media when GIF too large.
+
+Agent: Added `coverflow.rs` layout (scale arch, focus nudge/lerp, cover UV) with tests; rewrote Screen Share picker body to draw the cover-flow instead of the landscape tile grid; translucent SHARE_* chrome tokens. Branch `cursor/coverflow-stream-switcher-b96a`. `cargo test -p banter --test coverflow` 7 passed; `cargo check -p banter` ok. Do not merge until Owl says so.
+
+### Summary
+Stream Select source previews are an arched portrait cover-flow; wheel/arrows/click keep the active source centered.
+
 ## 2026-11-07 BA-97 Cut Banter voice and video latency
 
 Owl: Owl (Banter) asked how to improve VC latency. Full-stack pass, not encoder-only.
@@ -1081,3 +1090,4 @@ Agent: Stacked cursor/encoder-quality-aa4c on #85; HW-first open + cached probe 
 Encoder quality/CPU: cached probe, HW-first without dual OpenH264 open, QP floors, richer Half/Quarter bitrate, Linux HW CBR/VBR + zerolatency — keeps #85 latency goals.
 
 Agent: PR #88 opened (https://github.com/Banter-Foundation/Banter/pull/88). Do not merge until Owl says so.
+

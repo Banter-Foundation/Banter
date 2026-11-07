@@ -81,6 +81,10 @@ use crate::shell_sync::{
     snapshot_applies, AvatarFile, AvatarWant, FetchKind, ShellHost, ShellQuery, ShellSnapshot,
 };
 use crate::skin::{self, MenuTone, Tone};
+use crate::coverflow::{
+    coverflow_cover_uv, coverflow_layout, coverflow_nearest, coverflow_nudge_focus,
+    coverflow_step_focus, COVERFLOW_FOCUS_BORDER,
+};
 use crate::stream_watch::{
     cycle_streamer, resolve_focused_streamer, stream_chrome_alpha, stream_watch_avatar_x,
     streaming_user_ids, STREAM_CHROME_HIDE_ALPHA, STREAM_POPOUT_WINDOW_TITLE,
@@ -301,6 +305,10 @@ pub(crate) struct App {
     share_open: bool,
     share: ScreenShare,
     share_tab: u8,
+    /// Continuous cover-flow focus (source index); eases toward `share_cover_target`.
+    share_cover_focus: f32,
+    /// Integer (or nudged) cover-flow target the carousel settles on.
+    share_cover_target: f32,
     share_sources: Vec<ShareSource>,
     share_thumb_next: usize,
     share_thumbs: HashMap<(u8, u32), Shot>,
@@ -594,6 +602,8 @@ impl App {
             share_open: false,
             share: ScreenShare::new(),
             share_tab: 0,
+            share_cover_focus: 0.0,
+            share_cover_target: 0.0,
             share_sources: Vec::new(),
             share_thumb_next: 0,
             share_thumbs: HashMap::new(),
@@ -11287,6 +11297,7 @@ impl App {
     fn open_share(&mut self) {
         self.share_open = true;
         self.reload_share_sources();
+        self.sync_share_cover_focus();
     }
 
     fn refresh_cameras(&mut self) {
@@ -12562,8 +12573,8 @@ impl App {
         );
     }
 
-    /// Discord-style Screen Share / Go Live picker: overlay card, underline tabs,
-    /// thumbnail source grid, quality + audio below, green Go Live in the footer.
+    /// Screen Share / Go Live picker: translucent chrome, Screens / Applications tabs,
+    /// arched cover-flow portrait previews, quality + audio below, green Go Live footer.
     fn draw_share(&mut self, ui: &Ui) {
         let display = ui.io().display_size();
         let flags = WindowFlags::NO_DECORATION
@@ -12586,23 +12597,23 @@ impl App {
             .build(|| {
                 skin::rect(ui, [0.0, 0.0], display, OVERLAY, 0.0);
 
-                let panel_w = (display[0] - 80.0).clamp(720.0, SHARE_MODAL_W);
-                let panel_h = (display[1] - 48.0).clamp(520.0, SHARE_MODAL_H);
+                let panel_w = (display[0] - 48.0).clamp(780.0, SHARE_MODAL_W);
+                let panel_h = (display[1] - 32.0).clamp(560.0, SHARE_MODAL_H);
                 let min = [
                     ((display[0] - panel_w) * 0.5).floor(),
-                    ((display[1] - panel_h) * 0.5).max(16.0).floor(),
+                    ((display[1] - panel_h) * 0.5).max(12.0).floor(),
                 ];
                 let max = [min[0] + panel_w, min[1] + panel_h];
                 let semi = self.semibold_font;
                 let inner_w = panel_w - SHARE_PAD * 2.0;
 
                 skin::shadow(ui, min, max, MODAL_RADIUS);
-                skin::rect(ui, min, max, STAGE_BG, MODAL_RADIUS);
+                skin::rect(ui, min, max, SHARE_CARD_BG, MODAL_RADIUS);
                 skin::rect_corners(
                     ui,
                     [min[0], max[1] - SHARE_FOOTER_H],
                     max,
-                    MODAL_FOOTER_BG,
+                    SHARE_CARD_FOOTER,
                     MODAL_RADIUS,
                     DrawFlags::ROUND_BOTTOM,
                 );
@@ -12651,6 +12662,7 @@ impl App {
                 {
                     self.share_tab = 0;
                     self.reload_share_sources();
+                    self.sync_share_cover_focus();
                 }
                 if self.share_tab_label(
                     ui,
@@ -12662,65 +12674,33 @@ impl App {
                 {
                     self.share_tab = 1;
                     self.reload_share_sources();
+                    self.sync_share_cover_focus();
                 }
                 skin::line_h(
                     ui,
                     min[0] + SHARE_PAD,
                     max[0] - SHARE_PAD,
                     tab_y + SHARE_TAB_H - 1.0,
-                    DIVIDER,
+                    with_alpha(DIVIDER, 0.55),
                 );
 
                 let body_top = tab_y + SHARE_TAB_H + 8.0;
                 let body_h = (max[1] - SHARE_FOOTER_H - 8.0 - body_top).max(120.0);
-                let body_origin = [min[0] + SHARE_PAD, body_top];
-                ui.set_cursor_screen_pos(body_origin);
-                let _body_pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
-                let _body_gap =
-                    ui.push_style_var(StyleVar::ItemSpacing([SHARE_TILE_GAP, SHARE_TILE_GAP]));
-                let _body_bg = ui.push_style_color(StyleColor::ChildBg, skin::CLEAR);
-                ui.child_window("share-body")
-                    .size([inner_w, body_h])
-                    .build(ui, || {
-                        let sources = self
-                            .share_sources
-                            .iter()
-                            .map(|source| (source.kind, source.id, source.name.clone()))
-                            .collect::<Vec<_>>();
-                        if sources.is_empty() {
-                            let empty = if self.share_tab == 0 {
-                                "No screens were found."
-                            } else {
-                                "No application windows were found."
-                            };
-                            ui.dummy([0.0, 24.0]);
-                            let w = ui.content_region_avail()[0];
-                            let tw = skin::text_size(ui, None, FONT_SM, empty)[0];
-                            let origin = ui.cursor_screen_pos();
-                            skin::text(
-                                ui,
-                                None,
-                                FONT_SM,
-                                [origin[0] + (w - tw) * 0.5, origin[1]],
-                                MUTED,
-                                empty,
-                            );
-                            ui.dummy([0.0, 40.0]);
-                        } else {
-                            let avail = ui.content_region_avail()[0];
-                            let cols = ((avail + SHARE_TILE_GAP) / (SHARE_TILE_W + SHARE_TILE_GAP))
-                                .floor()
-                                .max(1.0) as usize;
-                            for (index, (kind, id, name)) in sources.iter().enumerate() {
-                                if index % cols != 0 {
-                                    ui.same_line();
-                                }
-                                self.draw_share_tile(ui, *kind, *id, name);
-                            }
-                            ui.dummy([0.0, 8.0]);
-                        }
+                let cover_h = (body_h - SHARE_SETTINGS_H - 8.0)
+                    .clamp(220.0, SHARE_COVER_H.max(body_h * 0.62));
+                let cover_origin = [min[0] + SHARE_PAD, body_top];
+                let cover_area = [inner_w, cover_h];
+                self.draw_share_coverflow(ui, cover_origin, cover_area);
 
-                        settings_spacer(ui);
+                let settings_top = body_top + cover_h + 8.0;
+                let settings_h = (max[1] - SHARE_FOOTER_H - 8.0 - settings_top).max(80.0);
+                ui.set_cursor_screen_pos([min[0] + SHARE_PAD, settings_top]);
+                let _body_pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+                let _body_gap = ui.push_style_var(StyleVar::ItemSpacing([0.0, 6.0]));
+                let _body_bg = ui.push_style_color(StyleColor::ChildBg, skin::CLEAR);
+                ui.child_window("share-settings")
+                    .size([inner_w, settings_h])
+                    .build(ui, || {
                         let share_w = ui.content_region_avail()[0];
                         if settings_panel(ui, "Quality") {
                             self.draw_stream_quality(ui, share_w);
@@ -12848,94 +12828,175 @@ impl App {
         clicked
     }
 
-    /// One Screens / Applications thumbnail card with Discord selection chrome.
-    fn draw_share_tile(&mut self, ui: &Ui, kind: CaptureKind, id: u32, name: &str) {
-        let key = source_key(kind, id);
-        let selected = self.share.selected() == Some((kind, id));
-        let origin = ui.cursor_screen_pos();
-        let size = [SHARE_TILE_W, SHARE_TILE_H];
-        let clicked = ui.invisible_button(format!("pick-{}-{}", key.0, key.1), size);
+    /// Arched cover-flow of tall portrait source previews; wheel / arrows / click cycle focus.
+    fn draw_share_coverflow(&mut self, ui: &Ui, origin: [f32; 2], area: [f32; 2]) {
+        let count = self.share_sources.len();
+        ui.set_cursor_screen_pos(origin);
+        let hit = ui.invisible_button("share-coverflow", area);
         let hovered = ui.is_item_hovered();
-        let max = [origin[0] + size[0], origin[1] + size[1]];
-        let fill = if selected {
-            ROW_SELECTED
-        } else if hovered {
-            ROW_HOVER
-        } else {
-            PANEL_BG
-        };
-        skin::rect(ui, origin, max, fill, SHARE_TILE_RADIUS);
+        let max = [origin[0] + area[0], origin[1] + area[1]];
+        skin::rect(ui, origin, max, with_alpha(CALL_BG, 0.35), SHARE_TILE_RADIUS);
 
-        let thumb_pad = 8.0;
-        let thumb_min = [origin[0] + thumb_pad, origin[1] + thumb_pad];
-        let thumb_max = [max[0] - thumb_pad, origin[1] + thumb_pad + SHARE_THUMB_H];
-        skin::rect(ui, thumb_min, thumb_max, INPUT_BG, SHARE_TILE_RADIUS - 2.0);
-        let thumb_w = thumb_max[0] - thumb_min[0];
-        let thumb_h = thumb_max[1] - thumb_min[1];
-        if let Some(shot) = self.share_thumbs.get(&key) {
-            let fitted = fit_inside(shot.size, thumb_w, thumb_h);
-            let x = thumb_min[0] + (thumb_w - fitted[0]) * 0.5;
-            let y = thumb_min[1] + (thumb_h - fitted[1]) * 0.5;
-            ui.get_window_draw_list().add_image_rounded(
-                shot.texture,
-                [x, y],
-                [x + fitted[0], y + fitted[1]],
-                [0.0, 0.0],
-                [1.0, 1.0],
-                WHITE,
-                SHARE_TILE_RADIUS - 2.0,
-                DrawFlags::ROUND_ALL,
-            );
-        }
-
-        if selected {
-            ui.get_window_draw_list()
-                .add_rect(origin, max, BLURPLE)
-                .rounding(SHARE_TILE_RADIUS)
-                .thickness(2.0)
-                .build();
-            let check_c = [
-                thumb_max[0] - 4.0 - SHARE_CHECK * 0.5,
-                thumb_min[1] + 4.0 + SHARE_CHECK * 0.5,
-            ];
-            ui.get_window_draw_list()
-                .add_circle(check_c, SHARE_CHECK * 0.5, BLURPLE)
-                .filled(true)
-                .build();
-            skin::image(
-                ui,
-                self.icon("check"),
-                [check_c[0] - 6.0, check_c[1] - 6.0],
-                12.0,
-                WHITE,
-            );
-        }
-
-        let label_y = thumb_max[1] + 6.0;
-        let shown = skin::ellipsize(
-            ui,
-            self.semibold_font,
-            FONT_SM,
-            name,
-            size[0] - thumb_pad * 2.0,
-        );
-        skin::text(
-            ui,
-            self.semibold_font,
-            FONT_SM,
-            [origin[0] + thumb_pad, label_y],
-            TEXT_NORMAL,
-            &shown,
-        );
-
-        if clicked {
-            if self.share.is_live() {
-                self.share.apply_while_live(kind, id);
+        if count == 0 {
+            let empty = if self.share_tab == 0 {
+                "No screens were found."
             } else {
-                self.share.select(kind, id);
-            }
-            self.save_stream();
+                "No application windows were found."
+            };
+            let tw = skin::text_size(ui, None, FONT_SM, empty)[0];
+            skin::text(
+                ui,
+                None,
+                FONT_SM,
+                [
+                    origin[0] + (area[0] - tw) * 0.5,
+                    origin[1] + area[1] * 0.5 - 8.0,
+                ],
+                MUTED,
+                empty,
+            );
+            return;
         }
+
+        let dt = ui.io().delta_time();
+        if hovered {
+            let wheel = ui.io().mouse_wheel();
+            if wheel.abs() > 0.0 {
+                // ImGui: scroll up is positive; treat that as earlier sources (left).
+                self.share_cover_target =
+                    coverflow_nudge_focus(self.share_cover_target, -wheel, count);
+            }
+        }
+        if !ui.io().want_capture_keyboard() {
+            if ui.is_key_pressed(Key::LeftArrow) {
+                self.share_cover_target =
+                    coverflow_nudge_focus(self.share_cover_target, -1.0, count);
+            }
+            if ui.is_key_pressed(Key::RightArrow) {
+                self.share_cover_target =
+                    coverflow_nudge_focus(self.share_cover_target, 1.0, count);
+            }
+        }
+        self.share_cover_focus =
+            coverflow_step_focus(self.share_cover_focus, self.share_cover_target, dt);
+
+        if let Some(nearest) = coverflow_nearest(self.share_cover_focus, count) {
+            if (self.share_cover_focus - nearest as f32).abs() < 0.08 {
+                self.apply_share_cover_index(nearest);
+            }
+        }
+
+        let mut panels = coverflow_layout(count, self.share_cover_focus, origin, area);
+        panels.sort_by_key(|panel| panel.depth);
+        let mouse = ui.io().mouse_pos();
+        let mut clicked_index = None;
+        for panel in &panels {
+            let source = &self.share_sources[panel.index];
+            let key = source_key(source.kind, source.id);
+            let selected = self.share.selected() == Some((source.kind, source.id));
+            skin::rect(ui, panel.min, panel.max, SHARE_COVER_EMPTY, SHARE_TILE_RADIUS);
+            let w = panel.max[0] - panel.min[0];
+            let h = panel.max[1] - panel.min[1];
+            if let Some(shot) = self.share_thumbs.get(&key) {
+                let (uv0, uv1) = coverflow_cover_uv(shot.size, w, h);
+                ui.get_window_draw_list().add_image_rounded(
+                    shot.texture,
+                    panel.min,
+                    panel.max,
+                    uv0,
+                    uv1,
+                    WHITE,
+                    SHARE_TILE_RADIUS,
+                    DrawFlags::ROUND_ALL,
+                );
+            }
+            if panel.focused || selected {
+                ui.get_window_draw_list()
+                    .add_rect(panel.min, panel.max, SHARE_FOCUS_BORDER)
+                    .rounding(SHARE_TILE_RADIUS)
+                    .thickness(COVERFLOW_FOCUS_BORDER)
+                    .build();
+            }
+            if panel.focused {
+                let label =
+                    skin::ellipsize(ui, self.semibold_font, FONT_SM, &source.name, w - 12.0);
+                let label_w = skin::text_size(ui, self.semibold_font, FONT_SM, &label)[0];
+                let label_h = FONT_SM + 6.0;
+                let label_min = [
+                    panel.min[0] + 4.0,
+                    panel.max[1] - label_h - 4.0,
+                ];
+                let label_max = [panel.max[0] - 4.0, panel.max[1] - 4.0];
+                skin::rect(
+                    ui,
+                    label_min,
+                    label_max,
+                    with_alpha(CALL_BG, 0.55),
+                    SHARE_TILE_RADIUS - 2.0,
+                );
+                skin::text(
+                    ui,
+                    self.semibold_font,
+                    FONT_SM,
+                    [
+                        panel.min[0] + (w - label_w) * 0.5,
+                        label_min[1] + 3.0,
+                    ],
+                    TEXT,
+                    &label,
+                );
+            }
+            if mouse[0] >= panel.min[0]
+                && mouse[0] <= panel.max[0]
+                && mouse[1] >= panel.min[1]
+                && mouse[1] <= panel.max[1]
+                && hit
+            {
+                clicked_index = Some(panel.index);
+            }
+        }
+        if let Some(index) = clicked_index {
+            self.share_cover_target = index as f32;
+            self.apply_share_cover_index(index);
+        }
+    }
+
+    fn apply_share_cover_index(&mut self, index: usize) {
+        let Some(source) = self.share_sources.get(index) else {
+            return;
+        };
+        let kind = source.kind;
+        let id = source.id;
+        if self.share.selected() == Some((kind, id)) {
+            return;
+        }
+        if self.share.is_live() {
+            self.share.apply_while_live(kind, id);
+        } else {
+            self.share.select(kind, id);
+        }
+        self.save_stream();
+    }
+
+    fn sync_share_cover_focus(&mut self) {
+        let count = self.share_sources.len();
+        if count == 0 {
+            self.share_cover_focus = 0.0;
+            self.share_cover_target = 0.0;
+            return;
+        }
+        let index = self
+            .share
+            .selected()
+            .and_then(|(kind, id)| {
+                self.share_sources
+                    .iter()
+                    .position(|source| source.kind == kind && source.id == id)
+            })
+            .unwrap_or(0)
+            .min(count - 1);
+        self.share_cover_focus = index as f32;
+        self.share_cover_target = index as f32;
     }
 
     fn reload_share_sources(&mut self) {
@@ -12949,6 +13010,11 @@ impl App {
         } else {
             list_windows()
         };
+        if self.share_cover_target >= self.share_sources.len() as f32 {
+            let max = self.share_sources.len().saturating_sub(1) as f32;
+            self.share_cover_target = max;
+            self.share_cover_focus = max;
+        }
     }
 
     fn queue_next_thumb(&mut self) {

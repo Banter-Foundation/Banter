@@ -13,6 +13,7 @@
 mod api;
 pub mod bfmd;
 mod bfmd_paint;
+mod coverflow;
 mod icons;
 pub mod layout;
 mod logic;
@@ -40,6 +41,7 @@ pub use banter_server::{
     ERR_VC_JOIN, ERR_VC_LEAVE, ERR_VC_LOOPBACK, ERR_VC_PUBLISH, ERR_WS_CONNECT, ERR_WS_DROPPED,
 };
 pub use bfmd::{parse as parse_bfmd, plain_text as bfmd_plain_text, Flag as BfmdFlag};
+pub use coverflow::*;
 pub use icons::rasterize_lucide;
 pub use layout::{discord_shell_columns, shell_columns, Region, ShellColumns};
 pub use logic::*;

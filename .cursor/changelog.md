@@ -22,6 +22,10 @@ BAN-30 kept hardware alive for SPS-less P-frames, but Windows MF still returned 
 
 Version-1-test-13.1 kept VA-API on GPU (#76) by skipping ffmpeg reopen on `force_key`, which left late-join PLI, P2P peer-cap keys, and mesh-flip recovery without an IDR on hardware encode. Reopen on `force_key` again (async_depth=1 still avoids the OpenH264 fallback), and do not burn `control.force_key` while no camera/screen layer is publishing.
 
+## 2026-11-07 03:15:54 +00:00 [ubuntu] — Cover-flow stream switcher previews (BA-96)
+
+Screen Share / stream source picker previews are now an arched horizontal cover-flow of tall portrait panels instead of a Discord-style landscape thumbnail grid. The focused source is centered and tallest; height falls off toward the left and right edges. Mouse wheel, left/right arrows, and click cycle focus; settling on a panel selects (or live-switches) that source. Dark translucent picker chrome; landscape captures cover-fit into portrait panels. Layout math lives in `coverflow.rs` with integration tests; picker metrics updated in `theme.rs` / `ui.rs`.
+
 ## 2026-11-06 04:00:00 -05:00 [ubuntu] — Version-1-test-13.1 pre-release
 
 Shipped pre-release Version-1-test-13.1 from main after hardware encode stays on VA-API (#76 / BAN-30) and RTC restarts on guild P2P↔SFU flips (#77 / BAN-31). Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.

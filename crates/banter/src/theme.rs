@@ -217,19 +217,25 @@ pub const MODAL_PAD: f32 = 16.0;
 pub const MODAL_RADIUS: f32 = 8.0;
 pub const MODAL_FOOTER_H: f32 = 70.0;
 
-// Screen Share / Go Live picker (Discord Stream Select).
-pub const SHARE_MODAL_W: f32 = 880.0;
-pub const SHARE_MODAL_H: f32 = 660.0;
+// Screen Share / Go Live picker — cover-flow stream switcher.
+pub const SHARE_MODAL_W: f32 = 1080.0;
+pub const SHARE_MODAL_H: f32 = 720.0;
 pub const SHARE_PAD: f32 = 16.0;
 pub const SHARE_HEADER_H: f32 = 52.0;
 pub const SHARE_TAB_H: f32 = 36.0;
 pub const SHARE_FOOTER_H: f32 = 70.0;
-pub const SHARE_TILE_W: f32 = 248.0;
-pub const SHARE_TILE_H: f32 = 178.0;
-pub const SHARE_TILE_GAP: f32 = 12.0;
-pub const SHARE_THUMB_H: f32 = 132.0;
-pub const SHARE_TILE_RADIUS: f32 = 8.0;
-pub const SHARE_CHECK: f32 = 22.0;
+/// Height reserved under the cover-flow for Quality / Stream audio.
+pub const SHARE_SETTINGS_H: f32 = 168.0;
+/// Cover-flow carousel band inside the picker body.
+pub const SHARE_COVER_H: f32 = 360.0;
+pub const SHARE_TILE_RADIUS: f32 = 6.0;
+/// Thin light border on the focused cover-flow panel (translucent chrome).
+pub const SHARE_FOCUS_BORDER: [f32; 4] = [1.0, 1.0, 1.0, 0.82];
+/// Dim fill behind a panel that has no thumbnail yet.
+pub const SHARE_COVER_EMPTY: [f32; 4] = with_alpha(hex(0x1A1B1E), 0.92);
+/// Translucent picker card fill over the dark overlay.
+pub const SHARE_CARD_BG: [f32; 4] = with_alpha(hex(0x111214), 0.78);
+pub const SHARE_CARD_FOOTER: [f32; 4] = with_alpha(hex(0x0B0C0E), 0.72);
 
 pub const PROFILER_W: f32 = 360.0;
 pub const PROFILER_H: f32 = 420.0;
