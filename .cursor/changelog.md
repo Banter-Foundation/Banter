@@ -1,3 +1,7 @@
+## 2026-11-07 07:05:53 +00:00 [ubuntu] — Cover-flow fade, rise, glass settings chip (BA-96)
+
+Stream Select picker now soft-fades in/out and rises the cover-flow from the bottom. Stream settings move into a bottom-middle frosted glass chip (layered translucent fill + highlight + noise acrylic approximation). Full-bleed overlay keeps the arched cover-flow; chip expands for quality + stream audio. Rebased onto main.
+
 ## 2026-11-07 06:58:43 +00:00 [ubuntu] — Improve video encoder quality/CPU (BA-101)
 
 Stacked on BA-97 (#85). Safe encoder wins without raising interactive delay: process-cached `hardware_probe`, Auto/Hardware opens GPU first and defers OpenH264 until needed, PictureDecoder defers soft decode while HW is up, OpenH264 screen/camera QP floors, simulcast Half=`full/3` / Quarter=`full/10` (was area share), Linux NVENC/VA-API honor CBR/VBR (+ NVENC `-zerolatency 1`). Keeps #85 bitrate RC / Low / 1-thread / 1 s GOP / screen AQ/BG off. Contracts in `crates/banter/tests/encoder_quality.rs`. Do not merge until Owl says so.

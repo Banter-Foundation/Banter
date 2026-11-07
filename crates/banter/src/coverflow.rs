@@ -22,6 +22,10 @@ pub const COVERFLOW_FOCUS_BORDER: f32 = 1.25;
 pub const COVERFLOW_FOCUS_LERP: f32 = 14.0;
 /// Darkest edge-panel brightness (1 = full, 0 = black).
 pub const COVERFLOW_MIN_BRIGHTNESS: f32 = 0.38;
+/// How fast the picker presentation eases open/closed.
+pub const COVERFLOW_PRESENT_LERP: f32 = 9.0;
+/// Vertical rise of the cover-flow when fading in (pixels at present = 0).
+pub const COVERFLOW_RISE_PX: f32 = 140.0;
 
 /// One laid-out preview panel in the stream switcher cover-flow.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,6 +117,32 @@ pub fn coverflow_step_focus(current: f32, target: f32, dt: f32) -> f32 {
     }
     let t = (COVERFLOW_FOCUS_LERP * dt.max(0.0)).clamp(0.0, 1.0);
     current + (target - current) * t
+}
+
+/// Smoothstep ease for picker fade / rise (`0` hidden → `1` fully shown).
+pub fn coverflow_present_ease(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Soft presentation alpha for the picker overlay and panels.
+pub fn coverflow_present_alpha(present: f32) -> f32 {
+    coverflow_present_ease(present)
+}
+
+/// Ease `present` toward open (`1`) or closed (`0`) by `dt` seconds.
+pub fn coverflow_step_present(present: f32, open: bool, dt: f32) -> f32 {
+    let target = if open { 1.0 } else { 0.0 };
+    if (present - target).abs() < 0.001 {
+        return target;
+    }
+    let t = (COVERFLOW_PRESENT_LERP * dt.max(0.0)).clamp(0.0, 1.0);
+    present + (target - present) * t
+}
+
+/// Y offset that lifts the cover-flow from below as `present` goes 0 → 1.
+pub fn coverflow_rise_offset(present: f32, rise_px: f32) -> f32 {
+    (1.0 - coverflow_present_ease(present)) * rise_px.max(0.0)
 }
 
 /// UV min/max that cover-fits `image` into a portrait `box` (crops overflow, no letterbox).

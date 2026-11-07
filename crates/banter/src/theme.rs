@@ -218,24 +218,31 @@ pub const MODAL_RADIUS: f32 = 8.0;
 pub const MODAL_FOOTER_H: f32 = 70.0;
 
 // Screen Share / Go Live picker — cover-flow stream switcher.
-pub const SHARE_MODAL_W: f32 = 1080.0;
-pub const SHARE_MODAL_H: f32 = 720.0;
 pub const SHARE_PAD: f32 = 16.0;
-pub const SHARE_HEADER_H: f32 = 52.0;
+pub const SHARE_HEADER_H: f32 = 48.0;
 pub const SHARE_TAB_H: f32 = 36.0;
-pub const SHARE_FOOTER_H: f32 = 70.0;
-/// Height reserved under the cover-flow for Quality / Stream audio.
-pub const SHARE_SETTINGS_H: f32 = 168.0;
-/// Cover-flow carousel band inside the picker body.
-pub const SHARE_COVER_H: f32 = 360.0;
+/// Cover-flow carousel band height on the full-bleed picker.
+pub const SHARE_COVER_H: f32 = 420.0;
 pub const SHARE_TILE_RADIUS: f32 = 6.0;
 /// Thin light border on the focused cover-flow panel (translucent chrome).
 pub const SHARE_FOCUS_BORDER: [f32; 4] = [1.0, 1.0, 1.0, 0.82];
 /// Dim fill behind a panel that has no thumbnail yet.
 pub const SHARE_COVER_EMPTY: [f32; 4] = with_alpha(hex(0x1A1B1E), 0.92);
-/// Translucent picker card fill over the dark overlay.
-pub const SHARE_CARD_BG: [f32; 4] = with_alpha(hex(0x111214), 0.78);
-pub const SHARE_CARD_FOOTER: [f32; 4] = with_alpha(hex(0x0B0C0E), 0.72);
+/// Soft dim behind the full-bleed cover-flow (fades with presentation).
+pub const SHARE_BACKDROP: [f32; 4] = [0.02, 0.03, 0.05, 0.55];
+/// Bottom-middle frosted glass settings chip.
+pub const SHARE_CHIP_W: f32 = 560.0;
+pub const SHARE_CHIP_H_COLLAPSED: f32 = 64.0;
+pub const SHARE_CHIP_H_EXPANDED: f32 = 320.0;
+pub const SHARE_CHIP_PAD: f32 = 14.0;
+pub const SHARE_CHIP_RADIUS: f32 = 22.0;
+pub const SHARE_CHIP_MARGIN_BOTTOM: f32 = 28.0;
+/// Apple-glass / acrylic approximation: cool translucent fill + rim + highlight.
+pub const SHARE_GLASS_FILL: [f32; 4] = [0.78, 0.84, 0.92, 0.16];
+pub const SHARE_GLASS_FILL_INNER: [f32; 4] = [0.12, 0.14, 0.18, 0.42];
+pub const SHARE_GLASS_HIGHLIGHT: [f32; 4] = [1.0, 1.0, 1.0, 0.20];
+pub const SHARE_GLASS_BORDER: [f32; 4] = [1.0, 1.0, 1.0, 0.32];
+pub const SHARE_GLASS_NOISE: [f32; 4] = [1.0, 1.0, 1.0, 0.035];
 
 pub const PROFILER_W: f32 = 360.0;
 pub const PROFILER_H: f32 = 420.0;

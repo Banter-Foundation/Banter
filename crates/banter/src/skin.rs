@@ -191,6 +191,72 @@ pub(crate) fn line_h(ui: &Ui, x0: f32, x1: f32, y: f32, color: [f32; 4]) {
     rect(ui, [x0, y], [x1, y + 1.0], color, 0.0);
 }
 
+/// Frosted glass / acrylic approximation for the stream-settings chip.
+///
+/// Real backdrop blur is not available in this ImGui path, so the look is layered
+/// translucent fills, a top highlight, a light rim, and sparse noise speckles.
+pub(crate) fn glass_chip(ui: &Ui, min: [f32; 2], max: [f32; 2], radius: f32, alpha: f32) {
+    let alpha = alpha.clamp(0.0, 1.0);
+    if alpha <= 0.01 {
+        return;
+    }
+    let draw = ui.get_window_draw_list();
+    let mul = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * alpha];
+    // Soft outer bloom.
+    for layer in 0..4 {
+        let spread = (4 - layer) as f32 * 3.0;
+        draw.add_rect(
+            [min[0] - spread, min[1] - spread],
+            [max[0] + spread, max[1] + spread],
+            [0.0, 0.0, 0.0, 0.06 * alpha / (layer + 1) as f32],
+        )
+        .rounding(radius + spread)
+        .filled(true)
+        .build();
+    }
+    draw.add_rect(min, max, mul(theme::SHARE_GLASS_FILL_INNER))
+        .rounding(radius)
+        .filled(true)
+        .build();
+    draw.add_rect(min, max, mul(theme::SHARE_GLASS_FILL))
+        .rounding(radius)
+        .filled(true)
+        .build();
+    // Specular top edge.
+    let hi = (max[1] - min[1]).min(18.0);
+    draw.add_rect(min, [max[0], min[1] + hi], mul(theme::SHARE_GLASS_HIGHLIGHT))
+        .rounding(radius)
+        .filled(true)
+        .build();
+    draw.add_rect(min, max, mul(theme::SHARE_GLASS_BORDER))
+        .rounding(radius)
+        .thickness(1.25)
+        .build();
+    // Sparse noise for acrylic grain (deterministic hash, no texture upload).
+    let w = (max[0] - min[0]).max(1.0);
+    let h = (max[1] - min[1]).max(1.0);
+    let cols = (w / 7.0).floor().max(4.0) as i32;
+    let rows = (h / 7.0).floor().max(3.0) as i32;
+    for row in 0..rows {
+        for col in 0..cols {
+            let n = ((col.wrapping_mul(374761393) ^ row.wrapping_mul(668265263)) as u32)
+                .wrapping_mul(0x9E37_79B9);
+            if n & 0x7 != 0 {
+                continue;
+            }
+            let x = min[0] + (col as f32 + 0.35) * (w / cols as f32);
+            let y = min[1] + (row as f32 + 0.4) * (h / rows as f32);
+            draw.add_rect(
+                [x, y],
+                [x + 1.2, y + 1.2],
+                mul(theme::SHARE_GLASS_NOISE),
+            )
+            .filled(true)
+            .build();
+        }
+    }
+}
+
 /// Discord's floating black tooltip with an arrow pointing at the anchor.
 pub(crate) fn tooltip(
     ui: &Ui,

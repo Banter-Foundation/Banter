@@ -2,9 +2,10 @@
 
 use banter::{
     coverflow_brightness, coverflow_cover_uv, coverflow_layout, coverflow_nearest,
-    coverflow_nudge_focus, coverflow_scale, coverflow_step_focus, COVERFLOW_ASPECT,
-    COVERFLOW_CENTER_H_FRAC, COVERFLOW_FOCUS_BORDER, COVERFLOW_GAP_FRAC, COVERFLOW_MIN_BRIGHTNESS,
-    COVERFLOW_MIN_SCALE, COVERFLOW_PITCH_FRAC,
+    coverflow_nudge_focus, coverflow_present_alpha, coverflow_rise_offset, coverflow_scale,
+    coverflow_step_focus, coverflow_step_present, COVERFLOW_ASPECT, COVERFLOW_CENTER_H_FRAC,
+    COVERFLOW_FOCUS_BORDER, COVERFLOW_GAP_FRAC, COVERFLOW_MIN_BRIGHTNESS, COVERFLOW_MIN_SCALE,
+    COVERFLOW_PITCH_FRAC, COVERFLOW_RISE_PX,
 };
 
 fn close(a: f32, b: f32) -> bool {
@@ -113,4 +114,21 @@ fn cover_uv_crops_landscape_into_portrait() {
     let (full0, full1) = coverflow_cover_uv([100.0, 275.0], 100.0, 275.0);
     assert!(close(full0[0], 0.0) && close(full0[1], 0.0));
     assert!(close(full1[0], 1.0) && close(full1[1], 1.0));
+}
+
+#[test]
+fn present_eases_fade_and_rise_from_the_bottom() {
+    assert!(COVERFLOW_RISE_PX >= 80.0);
+    assert!(close(coverflow_present_alpha(0.0), 0.0));
+    assert!(close(coverflow_present_alpha(1.0), 1.0));
+    let mid = coverflow_present_alpha(0.5);
+    assert!(mid > 0.4 && mid < 0.6);
+    assert!(close(coverflow_rise_offset(0.0, 100.0), 100.0));
+    assert!(close(coverflow_rise_offset(1.0, 100.0), 0.0));
+    assert!(coverflow_rise_offset(0.5, 100.0) > 0.0);
+    assert!(coverflow_rise_offset(0.5, 100.0) < 100.0);
+    let opening = coverflow_step_present(0.0, true, 1.0 / 60.0);
+    assert!(opening > 0.0 && opening < 1.0);
+    let closed = coverflow_step_present(0.02, false, 1.0);
+    assert!(close(closed, 0.0));
 }
