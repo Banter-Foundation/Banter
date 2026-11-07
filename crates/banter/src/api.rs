@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use crate::profiler;
 use banter_server::{
     format_banter_notice, Account, BanterVersionReport, CallSnapshot, Category, CategoryLayout,
-    Channel, ChannelKind, ChatTarget, CommandAlias, CosmeticItem, DirectChat, Friend,
+    Channel, ChannelKind, ChatTarget, CommandAlias, CosmeticItem, DirectChat, EmoteAsset,
+    EmoteAssetKind, EmotePack, EmotePackOwner, EmotePackVisibility, EmotePickerSource, Friend,
     FriendRequest, GuildRole, Mention, Message, PluginInfo, Presence, ProfilePatch, ServerDebug,
     ServerCommandSettings, ServerFolder, ServerFolderPatch, ServerHome, ServerRail,
     ServerRailServer, ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember, VoiceRoster,
@@ -648,6 +649,7 @@ impl Client {
         body: &str,
         reply_to: Option<i64>,
         files: &[(&str, &[u8])],
+        media_asset_ids: &[i64],
     ) -> Result<Message, ApiError> {
         let files = files
             .iter()
@@ -665,8 +667,118 @@ impl Client {
                 "body": body,
                 "reply_to": reply_to,
                 "files": files,
+                "media_asset_ids": media_asset_ids,
             }),
         )
+    }
+
+    pub fn create_emote_pack(
+        &self,
+        name: &str,
+        slug: &str,
+        description: &str,
+        visibility: EmotePackVisibility,
+        owner: EmotePackOwner,
+    ) -> Result<EmotePack, ApiError> {
+        let (owner_kind, server_id) = match owner {
+            EmotePackOwner::User => ("user", None),
+            EmotePackOwner::Server(id) => ("server", Some(id)),
+        };
+        self.send_json(
+            self.auth(http().post(&self.url("/v1/emote-packs"))),
+            serde_json::json!({
+                "name": name,
+                "slug": slug,
+                "description": description,
+                "visibility": match visibility {
+                    EmotePackVisibility::Private => "private",
+                    EmotePackVisibility::Unlisted => "unlisted",
+                    EmotePackVisibility::Public => "public",
+                },
+                "owner_kind": owner_kind,
+                "server_id": server_id,
+            }),
+        )
+    }
+
+    pub fn upload_emote_asset(
+        &self,
+        pack_id: i64,
+        name: &str,
+        kind: EmoteAssetKind,
+        content_type: &str,
+        bytes: &[u8],
+    ) -> Result<EmoteAsset, ApiError> {
+        let path = format!("/v1/emote-packs/{pack_id}/assets");
+        let start = Instant::now();
+        let response = self
+            .auth(http().post(&self.url(&path)))
+            .query("name", name)
+            .query("kind", kind.as_str())
+            .query("content_type", content_type)
+            .set("Content-Type", content_type)
+            .send_bytes(bytes)
+            .map_err(|err| self.http_error("POST", &path, err))?;
+        let value = response
+            .into_json()
+            .map_err(|err| ApiError::new(err.to_string()))?;
+        profiler::record_http("POST", &path, start.elapsed(), bytes.len(), 0);
+        Ok(value)
+    }
+
+    pub fn subscribe_emote_pack(&self, pack_id: i64) -> Result<(), ApiError> {
+        let path = format!("/v1/emote-packs/{pack_id}/subscribe");
+        self.call_empty("POST", &path, self.auth(http().post(&self.url(&path))))
+    }
+
+    pub fn unsubscribe_emote_pack(&self, pack_id: i64) -> Result<(), ApiError> {
+        let path = format!("/v1/emote-packs/{pack_id}/subscribe");
+        self.call_empty("DELETE", &path, self.auth(http().delete(&self.url(&path))))
+    }
+
+    pub fn emote_picker(
+        &self,
+        kind: EmoteAssetKind,
+        source: EmotePickerSource,
+        server_id: Option<i64>,
+    ) -> Result<Vec<EmoteAsset>, ApiError> {
+        let path = "/v1/emote-picker";
+        let start = Instant::now();
+        let source = match source {
+            EmotePickerSource::Server => "server",
+            EmotePickerSource::Subscribed => "subscribed",
+        };
+        let mut request = self
+            .auth(http().get(&self.url(path)))
+            .query("kind", kind.as_str())
+            .query("source", source);
+        if let Some(server_id) = server_id {
+            request = request.query("server_id", &server_id.to_string());
+        }
+        let response = request
+            .call()
+            .map_err(|err| self.http_error("GET", path, err))?;
+        let value = response
+            .into_json()
+            .map_err(|err| ApiError::new(err.to_string()))?;
+        profiler::record_http("GET", path, start.elapsed(), 0, 0);
+        Ok(value)
+    }
+
+    pub fn emote_asset_bytes(&self, asset_id: i64) -> Result<Vec<u8>, ApiError> {
+        let path = format!("/v1/emote-assets/{asset_id}");
+        let start = Instant::now();
+        let response = self
+            .auth(http().get(&self.url(&path)))
+            .call()
+            .map_err(|err| self.http_error("GET", &path, err))?;
+        let bytes = response
+            .into_reader()
+            .bytes()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| ApiError::new(err.to_string()))?;
+        profiler::record_http("GET", &path, start.elapsed(), 0, bytes.len());
+        Ok(bytes)
     }
 
     pub fn edit_message(&self, id: i64, body: &str) -> Result<Message, ApiError> {

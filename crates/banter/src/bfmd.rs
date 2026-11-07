@@ -7,6 +7,13 @@
 /// Default body size in points when `{s}` is unset (theme body).
 pub const DEFAULT_SIZE_PT: f32 = 16.0;
 
+/// Default inline emote height in CSS px when `{e}` is unset (Carbon parity).
+pub const DEFAULT_EMOTE_PX: f32 = 22.0;
+
+/// Inclusive clamp for `{e}` emote height (plan: 16–128).
+pub const EMOTE_PX_MIN: f32 = 16.0;
+pub const EMOTE_PX_MAX: f32 = 128.0;
+
 /// One styled text span produced by the parser.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Run {
@@ -18,6 +25,8 @@ pub struct Run {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Style {
     pub size: Option<f32>,
+    /// Inline emote height in px (`{e}`); independent from text `{s}`.
+    pub emote_size: Option<f32>,
     pub color: Option<Rgba>,
     pub background: Option<Rgba>,
     pub bold: bool,
@@ -37,6 +46,10 @@ impl Style {
 
     pub fn size_or_default(&self) -> f32 {
         self.size.unwrap_or(DEFAULT_SIZE_PT)
+    }
+
+    pub fn emote_size_or_default(&self) -> f32 {
+        self.emote_size.unwrap_or(DEFAULT_EMOTE_PX)
     }
 }
 
@@ -177,6 +190,45 @@ pub fn parse(source: &str) -> ParseResult {
 /// Plain visible text (commands stripped). Useful for search previews / mentions.
 pub fn plain_text(source: &str) -> String {
     parse(source).runs.into_iter().map(|r| r.text).collect()
+}
+
+/// Find stable emote tokens `:{e:ASSET_ID}:` in plain/BFMD text.
+///
+/// Returns `(byte_start, byte_len, asset_id)` in source order. Malformed or
+/// name-only shortcodes are ignored (they stay literal text).
+pub fn scan_emote_tokens(text: &str) -> Vec<(usize, usize, i64)> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    let mut out = Vec::new();
+    while i + 5 < bytes.len() {
+        if bytes[i] == b':' && bytes.get(i + 1) == Some(&b'{') && bytes.get(i + 2) == Some(&b'e')
+            && bytes.get(i + 3) == Some(&b':')
+        {
+            let mut j = i + 4;
+            let mut id: i64 = 0;
+            let mut digits = 0usize;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                id = id
+                    .saturating_mul(10)
+                    .saturating_add((bytes[j] - b'0') as i64);
+                digits += 1;
+                j += 1;
+            }
+            if digits > 0 && bytes.get(j) == Some(&b'}') && bytes.get(j + 1) == Some(&b':') {
+                let len = (j + 2) - i;
+                out.push((i, len, id));
+                i = j + 2;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Format a stored emote token for message body / composer insert.
+pub fn emote_token(asset_id: i64) -> String {
+    format!(":{{e:{asset_id}}}:")
 }
 
 /// Serialize runs to canonical BFMD (§9). Empty / default-only → plain text.
@@ -793,11 +845,12 @@ fn apply_commands(
     }
 }
 
-const KNOWN_NAMES: &[&str] = &["v", "s", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr"];
+const KNOWN_NAMES: &[&str] = &["v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr"];
 
 fn close_slot(style: &mut Style, name: &str) {
     match name {
         "s" => style.size = None,
+        "e" => style.emote_size = None,
         "c" => style.color = None,
         "bg" => style.background = None,
         "b" => style.bold = false,
@@ -819,6 +872,13 @@ fn apply_set(style: &mut Style, name: &str, value: Option<&Value>) -> bool {
         "s" => match value {
             Some(Value::Number(n)) if *n > 0.0 => {
                 style.size = Some(*n);
+                true
+            }
+            _ => false,
+        },
+        "e" => match value {
+            Some(Value::Number(n)) if *n > 0.0 => {
+                style.emote_size = Some(n.clamp(EMOTE_PX_MIN, EMOTE_PX_MAX));
                 true
             }
             _ => false,
@@ -912,6 +972,9 @@ fn diff_group(from: &Style, to: &Style) -> String {
     if from.size.is_some() && to.size.is_none() {
         parts.push("{!s}".into());
     }
+    if from.emote_size.is_some() && to.emote_size.is_none() {
+        parts.push("{!e}".into());
+    }
     if from.color.is_some() && to.color.is_none() {
         parts.push("{!c}".into());
     }
@@ -946,6 +1009,11 @@ fn diff_group(from: &Style, to: &Style) -> String {
     if to.size != from.size {
         if let Some(s) = to.size {
             parts.push(format!("{{s:{s}}}"));
+        }
+    }
+    if to.emote_size != from.emote_size {
+        if let Some(e) = to.emote_size {
+            parts.push(format!("{{e:{e}}}"));
         }
     }
     if to.color != from.color {

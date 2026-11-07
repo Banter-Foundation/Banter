@@ -34,6 +34,7 @@ use crate::commands::{
     format_tableflip_body, parse_command_line, CommandAction, CommandRegistry,
     DefaultCommandRegistry, DEFAULT_COMMAND_PREFIX,
 };
+use crate::emote_ui::{EmotePickerSourceState, EmotePickerState, EmotePickerTab};
 use crate::icons::rasterize_lucide;
 use crate::layout::discord_shell_columns;
 use crate::logic::{
@@ -327,6 +328,8 @@ pub(crate) struct App {
     cmd_target_draft: String,
     cmd_aliases_draft: Vec<CommandAlias>,
     cmd_error: String,
+    /// Emote / sticker / GIF picker above the composer (BA-83).
+    emote_picker: EmotePickerState,
     search: String,
     friend_tab: u8,
     /// Home stage pane: customizable landing vs Friends people list (BA-81).
@@ -663,6 +666,7 @@ impl App {
             cmd_target_draft: String::new(),
             cmd_aliases_draft: Vec::new(),
             cmd_error: String::new(),
+            emote_picker: EmotePickerState::default(),
             search: String::new(),
             friend_tab: 0,
             home_pane: HomePane::Landing,
@@ -5834,14 +5838,22 @@ impl App {
 
     fn composer_footer_h(&self, suggest_open: bool) -> f32 {
         // Replies use an inline composer under the parent comment (Reddit). Bottom strip is edit/file/reply-hint.
-        let strip =
-            if self.editing.is_some() || self.pending_file.is_some() || self.reply_to.is_some() {
-                34.0
-            } else {
-                0.0
-            };
+        let strip = if self.editing.is_some()
+            || self.pending_file.is_some()
+            || self.reply_to.is_some()
+            || !self.emote_picker.pending.is_empty()
+        {
+            34.0
+        } else {
+            0.0
+        };
         let suggest = if suggest_open { SUGGEST_STRIP_H } else { 0.0 };
-        8.0 + strip + suggest + COMPOSER_H + COMPOSER_BOTTOM
+        let picker = if self.emote_picker.open.is_some() {
+            226.0
+        } else {
+            0.0
+        };
+        8.0 + picker + strip + suggest + COMPOSER_H + COMPOSER_BOTTOM
     }
 
     /// Remember the signed-in user's messages so other channels visited this session still train.
@@ -5965,9 +5977,17 @@ impl App {
 
     /// Emote shortcode names when a library hook exists (BA-83). Empty for v1.
     fn suggest_emote_names(&self) -> Vec<String> {
-        // Intentionally empty until Emote Library lands — do not invent fake names.
-        let _ = self;
-        Vec::new()
+        // Prefer names already loaded into the picker this session (BA-83).
+        let mut names: Vec<String> = self
+            .emote_picker
+            .items
+            .iter()
+            .filter(|asset| matches!(asset.kind, banter_server::EmoteAssetKind::Emote))
+            .map(|asset| asset.name.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
     }
 
     fn prepare_composer_suggestions(&mut self) -> Vec<Suggestion> {
@@ -6027,9 +6047,21 @@ impl App {
         let suggest_open =
             !suggestions.is_empty() && !self.suggest_dismiss.is_dismissed(&self.composer);
         ui.dummy([width, self.composer_footer_h(suggest_open)]);
+        if self.emote_picker.open.is_some() {
+            self.draw_emote_picker(ui, target, bar_x, &mut y, bar_w);
+        }
 
         let strip = if self.editing.is_some() {
             Some(("Editing message".to_string(), false))
+        } else if !self.emote_picker.pending.is_empty() {
+            let names = self
+                .emote_picker
+                .pending
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some((format!("Media ready: {names}"), false))
         } else if let Some((name, bytes)) = &self.pending_file {
             Some((format!("{name} ({} KB)", bytes.len().div_ceil(1024)), false))
         } else if self.reply_to.is_some() {
@@ -6070,6 +6102,8 @@ impl App {
                 ) {
                     if self.editing.take().is_some() {
                         self.composer.clear();
+                    } else if !self.emote_picker.pending.is_empty() {
+                        self.emote_picker.clear_pending();
                     } else {
                         self.pending_file = None;
                     }
@@ -6159,11 +6193,12 @@ impl App {
             } else {
                 TEXT_SECONDARY
             };
+            let mut x = bar_x + 12.0;
             if skin::icon_button(
                 ui,
                 "attach",
                 self.icon("circle-plus"),
-                [bar_x + 12.0, y + 8.0],
+                [x, y + 8.0],
                 28.0,
                 24.0,
                 tint,
@@ -6173,7 +6208,31 @@ impl App {
                 self.pick_attachment();
             }
             skin::item_tooltip(ui, self.semibold_font, "Upload a File");
-            bar_x + 12.0 + 28.0 + 12.0
+            x += 28.0 + 4.0;
+            for (id, tab, icon, tip) in [
+                ("emote-tab", EmotePickerTab::Emote, "image", "Emotes"),
+                ("sticker-tab", EmotePickerTab::Sticker, "sticky-note", "Stickers"),
+                ("gif-tab", EmotePickerTab::Gif, "video", "GIFs"),
+            ] {
+                let on = self.emote_picker.open == Some(tab);
+                let color = if on { TEXT_NORMAL } else { TEXT_SECONDARY };
+                if skin::icon_button(
+                    ui,
+                    id,
+                    self.icon(icon),
+                    [x, y + 8.0],
+                    28.0,
+                    20.0,
+                    color,
+                    TEXT_NORMAL,
+                    None,
+                ) {
+                    self.toggle_emote_picker(tab, target);
+                }
+                skin::item_tooltip(ui, self.semibold_font, tip);
+                x += 28.0 + 2.0;
+            }
+            x + 8.0
         } else {
             bar_x + 8.0
         };
@@ -8329,13 +8388,21 @@ impl App {
             self.open_modal(Modal::UploadsUnavailable);
             return;
         }
-        if let Some(message) = self.note(self.client.send_message(target, &body, None, &[])) {
+        let media_ids = self.emote_picker.pending_ids();
+        if body.trim().is_empty() && media_ids.is_empty() {
+            return;
+        }
+        if let Some(message) =
+            self.note(self.client.send_message(target, &body, None, &[], &media_ids))
+        {
             if self.search.trim().is_empty() {
                 upsert_message(&mut self.messages, message);
             }
             self.chat_jump = true;
             self.composer.clear();
             self.pending_file = None;
+            self.emote_picker.clear_pending();
+            self.emote_picker.open = None;
         }
     }
 
@@ -8353,7 +8420,7 @@ impl App {
             self.open_modal(Modal::UploadsUnavailable);
             return;
         }
-        if let Some(message) = self.note(self.client.send_message(target, &body, Some(parent), &[]))
+        if let Some(message) = self.note(self.client.send_message(target, &body, Some(parent), &[], &[]))
         {
             if self.search.trim().is_empty() {
                 upsert_message(&mut self.messages, message);
@@ -8365,6 +8432,156 @@ impl App {
             // Expand the parent so the new reply is visible.
             self.collapsed_comments.remove(&parent);
         }
+    }
+
+    fn toggle_emote_picker(&mut self, tab: EmotePickerTab, target: ChatTarget) {
+        if self.emote_picker.open == Some(tab) {
+            self.emote_picker.open = None;
+            return;
+        }
+        self.emote_picker.open = Some(tab);
+        self.emote_picker.error.clear();
+        self.refresh_emote_picker(target);
+    }
+
+    fn refresh_emote_picker(&mut self, target: ChatTarget) {
+        let Some(tab) = self.emote_picker.open else {
+            return;
+        };
+        let server_id = match target {
+            ChatTarget::Channel(_) => self.selected_server_id(),
+            ChatTarget::Direct(_) => None,
+        };
+        match self.client.emote_picker(
+            tab.kind(),
+            self.emote_picker.source.api(),
+            server_id,
+        ) {
+            Ok(items) => {
+                self.emote_picker.items = items;
+                self.emote_picker.error.clear();
+            }
+            Err(err) => {
+                self.emote_picker.items.clear();
+                self.emote_picker.error = err.to_string();
+            }
+        }
+    }
+
+    fn selected_server_id(&self) -> Option<i64> {
+        self.servers
+            .iter()
+            .find(|s| {
+                self.selected
+                    .as_ref()
+                    .is_some_and(|ch| ch.server_id == s.id)
+            })
+            .map(|s| s.id)
+            .or_else(|| self.selected.as_ref().map(|ch| ch.server_id))
+    }
+
+    fn draw_emote_picker(
+        &mut self,
+        ui: &Ui,
+        target: ChatTarget,
+        bar_x: f32,
+        y: &mut f32,
+        bar_w: f32,
+    ) {
+        let Some(tab) = self.emote_picker.open else {
+            return;
+        };
+        let panel_h = 220.0;
+        skin::rect_corners(
+            ui,
+            [bar_x, *y],
+            [bar_x + bar_w, *y + panel_h],
+            self.shell("composer_bg", COMPOSER_BG),
+            COMPOSER_RADIUS,
+            DrawFlags::ROUND_ALL,
+        );
+        for (src, label) in [
+            (EmotePickerSourceState::Server, "Server"),
+            (EmotePickerSourceState::Subscribed, "Subscribed"),
+        ] {
+            let on = self.emote_picker.source == src;
+            if ui.button(format!(
+                "{}##emote-src-{}",
+                if on {
+                    format!("[{label}]")
+                } else {
+                    label.to_string()
+                },
+                label
+            )) {
+                self.emote_picker.source = src;
+                self.refresh_emote_picker(target);
+            }
+            ui.same_line();
+        }
+        ui.text_disabled(tab.label());
+        ui.set_next_item_width(bar_w - 24.0);
+        ui.input_text("##emote-search", &mut self.emote_picker.query)
+            .hint(format!("Search {}...", tab.label().to_ascii_lowercase()))
+            .build();
+        if !self.emote_picker.error.is_empty() {
+            ui.text_colored(RED, &self.emote_picker.error);
+        }
+        let filtered = self
+            .emote_picker
+            .items
+            .iter()
+            .filter(|a| {
+                let q = self.emote_picker.query.trim().to_ascii_lowercase();
+                q.is_empty() || a.name.to_ascii_lowercase().contains(&q)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut picked: Option<banter_server::EmoteAsset> = None;
+        if filtered.is_empty() {
+            ui.text_disabled(format!(
+                "No {} yet — upload from your Emote Library.",
+                tab.label().to_ascii_lowercase()
+            ));
+        } else {
+            let cols = match tab {
+                EmotePickerTab::Emote => 8,
+                EmotePickerTab::Sticker => 3,
+                EmotePickerTab::Gif => 2,
+            };
+            ui.child_window("emote-grid")
+                .size([bar_w - 16.0, 140.0])
+                .build(ui, || {
+                    let mut col = 0;
+                    for asset in &filtered {
+                        if ui.button(format!(":{}:##emote-{}", asset.name, asset.id)) {
+                            picked = Some(asset.clone());
+                        }
+                        col += 1;
+                        if col < cols {
+                            ui.same_line();
+                        } else {
+                            col = 0;
+                        }
+                    }
+                });
+        }
+        if let Some(asset) = picked {
+            match asset.kind {
+                banter_server::EmoteAssetKind::Emote => {
+                    if !self.composer.is_empty() && !self.composer.ends_with(' ') {
+                        self.composer.push(' ');
+                    }
+                    self.composer.push_str(&bfmd::emote_token(asset.id));
+                    self.emote_picker.open = None;
+                }
+                banter_server::EmoteAssetKind::Sticker | banter_server::EmoteAssetKind::Gif => {
+                    self.emote_picker.queue_media(asset);
+                    self.emote_picker.open = None;
+                }
+            }
+        }
+        *y += panel_h + 6.0;
     }
 
     /// Run a composer command when the line starts with the guild prefix.
@@ -8465,7 +8682,7 @@ impl App {
             self.open_modal(Modal::UploadsUnavailable);
             return;
         }
-        if let Some(message) = self.note(self.client.send_message(target, body, None, &[])) {
+        if let Some(message) = self.note(self.client.send_message(target, body, None, &[], &[])) {
             if self.search.trim().is_empty() {
                 upsert_message(&mut self.messages, message);
             }

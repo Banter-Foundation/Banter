@@ -14,6 +14,8 @@ Local desktop chat. The window is GLFW and OpenGL 3.3. The interface is Dear ImG
 | [docs/chat-commands.md](docs/chat-commands.md) | Composer slash/prefix commands, per-guild prefix + aliases, registry |
 | [docs/version.md](docs/version.md) | Release label + protocol floors; client version checker |
 | [docs/feature-status.md](docs/feature-status.md) | What works vs deferred (honest) |
+| [docs/bfmd.md](docs/bfmd.md) | Chat text formatting language (incl. `{e}` emote size) |
+| [docs/emote-library.md](docs/emote-library.md) | Emote / sticker / GIF packs, upload, picker (BA-83) |
 | [docs/foundation.md](docs/foundation.md) | Chosen foundation slice + deferred list |
 | [docs/contributing.md](docs/contributing.md) | Branches, worktrees, commits, changelog |
 | [docs/current-build.md](docs/current-build.md) | Live observation notes from a recent docs pass |

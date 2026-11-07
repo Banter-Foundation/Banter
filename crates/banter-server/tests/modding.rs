@@ -132,7 +132,7 @@ async fn an_accepted_send_intent_lets_the_bot_post() {
     store.install_bot(owner.id, home.server.id, session.account.id).await.unwrap();
     assert!(!store.bot_call_is_null(&session.account, "send_messages", Some(home.server.id)).await.unwrap());
     let sent = store
-        .send_message(session.account.id, ChatTarget::Channel(channel), "from the bot", None, &[])
+        .send_message(session.account.id, ChatTarget::Channel(channel), "from the bot", None, &[], &[])
         .await
         .unwrap();
     assert_eq!(sent.author_kind, "user");
@@ -160,7 +160,7 @@ async fn a_plugin_rewrites_a_new_channel_message_to_test() {
     ]);
     store.install_plugin(owner.id, home.server.id, &zip).await.unwrap();
     let sent = store
-        .send_message(owner.id, ChatTarget::Channel(channel), "hello", None, &[])
+        .send_message(owner.id, ChatTarget::Channel(channel), "hello", None, &[], &[])
         .await
         .unwrap();
     assert_eq!(sent.body, "hello");
@@ -171,7 +171,7 @@ async fn a_plugin_rewrites_a_new_channel_message_to_test() {
     store.remove_plugin(owner.id, home.server.id, "welcome").await.unwrap();
     assert!(store.plugins(owner.id, home.server.id).await.unwrap().is_empty());
     let next = store
-        .send_message(owner.id, ChatTarget::Channel(channel), "still here", None, &[])
+        .send_message(owner.id, ChatTarget::Channel(channel), "still here", None, &[], &[])
         .await
         .unwrap();
     store.notify_plugin_message(home.server.id, channel, next.id, &next.body);

@@ -18,6 +18,7 @@ mod channel_icons;
 mod codec;
 mod cosmetics;
 mod debuglog;
+mod emotes;
 mod errcode;
 mod error;
 mod folders;
@@ -29,6 +30,7 @@ mod roles;
 mod room;
 mod sfu;
 mod store;
+mod store_emotes;
 mod version;
 
 pub use badges::{badge_exists, badge_item, badges_catalog, BadgeItem, BadgeShape, MAX_EQUIPPED_BADGES};
@@ -41,6 +43,10 @@ pub use codec::{sdp_fixture, sdp_matches_contract, stun_url, turn_server, H264_F
 pub use cosmetics::{
     cosmetics_catalog, display_name_style_color, CosmeticItem, CosmeticKind, DEFAULT_THEME_PRIMARY,
     DEFAULT_THEME_SECONDARY,
+};
+pub use emotes::{
+    classic_gif_duration_ms, max_bytes_for_kind, video_container_duration_ms, GIF_MAX_DURATION_MS,
+    MAX_EMOTE_BYTES, MAX_GIF_BYTES, MAX_STICKER_BYTES, MAX_VIDEO_GIF_BYTES,
 };
 pub use errcode::{
     format_banter_notice, BanterIssue, ERR_CLIENT_TOO_OLD, ERR_HTTP_PARSE, ERR_HTTP_STATUS,

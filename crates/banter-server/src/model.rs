@@ -404,6 +404,20 @@ pub struct Attachment {
     pub byte_size: i64,
 }
 
+/// Emote / sticker / GIF reference attached to a chat message (BA-83).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageMedia {
+    pub id: i64,
+    pub asset_id: i64,
+    pub kind: EmoteAssetKind,
+    pub name: String,
+    pub content_type: String,
+    pub encoding: Option<EmoteGifEncoding>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub duration_ms: Option<i64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub id: i64,
@@ -416,11 +430,126 @@ pub struct Message {
     pub created_at: i64,
     pub edited_at: Option<i64>,
     pub attachments: Vec<Attachment>,
+    /// Stickers (Model A) and GIFs attached to this message.
+    #[serde(default)]
+    pub media: Vec<MessageMedia>,
     /// `user` for people and bots. `plugin` when `author_id` is empty and `plugin_id` is set.
     #[serde(default = "user_author_kind")]
     pub author_kind: String,
     #[serde(default)]
     pub plugin_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmoteAssetKind {
+    Emote,
+    Sticker,
+    Gif,
+}
+
+impl EmoteAssetKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Emote => "emote",
+            Self::Sticker => "sticker",
+            Self::Gif => "gif",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, BanterError> {
+        match value {
+            "emote" => Ok(Self::Emote),
+            "sticker" => Ok(Self::Sticker),
+            "gif" => Ok(Self::Gif),
+            _ => Err(BanterError::Invalid),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmoteGifEncoding {
+    ClassicGif,
+    Video,
+}
+
+impl EmoteGifEncoding {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ClassicGif => "classic_gif",
+            Self::Video => "video",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, BanterError> {
+        match value {
+            "classic_gif" => Ok(Self::ClassicGif),
+            "video" => Ok(Self::Video),
+            _ => Err(BanterError::Invalid),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmotePackVisibility {
+    Private,
+    Unlisted,
+    Public,
+}
+
+impl EmotePackVisibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Unlisted => "unlisted",
+            Self::Public => "public",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmotePackOwner {
+    User,
+    Server(i64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmotePickerSource {
+    Server,
+    Subscribed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmotePack {
+    pub id: i64,
+    pub name: String,
+    pub slug: String,
+    pub description: String,
+    pub cover_asset_id: Option<i64>,
+    pub owner_kind: String,
+    pub owner_id: i64,
+    pub visibility: String,
+    pub created_by: i64,
+    pub created_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmoteAsset {
+    pub id: i64,
+    pub pack_id: i64,
+    pub kind: EmoteAssetKind,
+    pub name: String,
+    pub encoding: Option<EmoteGifEncoding>,
+    pub content_type: String,
+    pub byte_size: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub sort_order: i64,
+    pub created_at: i64,
 }
 
 fn user_author_kind() -> String {

@@ -40,6 +40,7 @@ impl Store {
         fs::create_dir_all(root.join("files").join("board")).map_err(|err| BanterError::Storage(err.to_string()))?;
         fs::create_dir_all(root.join("avatars")).map_err(|err| BanterError::Storage(err.to_string()))?;
         fs::create_dir_all(root.join("banners")).map_err(|err| BanterError::Storage(err.to_string()))?;
+        fs::create_dir_all(root.join("emotes")).map_err(|err| BanterError::Storage(err.to_string()))?;
         let pool = PgPoolOptions::new()
             .max_connections(10)
             .connect(database_url)
@@ -1271,12 +1272,13 @@ impl Store {
         body: &str,
         reply_to: Option<i64>,
         files: &[(&str, &[u8])],
+        media_asset_ids: &[i64],
     ) -> Result<Message, BanterError> {
         let body = body.trim().to_string();
         if body.chars().count() > MAX_MESSAGE_CHARS {
             return Err(BanterError::MessageTooLong);
         }
-        if body.is_empty() && files.is_empty() {
+        if body.is_empty() && files.is_empty() && media_asset_ids.is_empty() {
             return Err(BanterError::EmptyMessage);
         }
         for (_, bytes) in files {
@@ -1284,6 +1286,9 @@ impl Store {
                 return Err(BanterError::FileTooLarge);
             }
         }
+        let media_rows = self
+            .resolve_send_media(user_id, target, media_asset_ids)
+            .await?;
         let files_dir = self.root.join("files");
         let mut written = Vec::new();
         let result = async {
@@ -1328,6 +1333,19 @@ impl Store {
                     return Err(BanterError::Storage(err.to_string()));
                 }
                 written.push(path);
+            }
+            for (sort_order, (asset_id, kind)) in media_rows.iter().enumerate() {
+                sqlx::query(
+                    "INSERT INTO message_media (message_id, asset_id, kind, sort_order)
+                     VALUES ($1, $2, $3, $4)",
+                )
+                .bind(message_id)
+                .bind(asset_id)
+                .bind(kind.as_str())
+                .bind(sort_order as i64)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
             }
             replace_mentions_tx(&mut tx, message_id, user_id, &body, target).await?;
             let message = load_message_tx(&mut tx, message_id).await?;
@@ -1634,7 +1652,7 @@ impl Store {
         })
     }
 
-    async fn require_member(&self, user_id: i64, server_id: i64) -> Result<(), BanterError> {
+    pub(crate) async fn require_member(&self, user_id: i64, server_id: i64) -> Result<(), BanterError> {
         if is_member(&self.pool, user_id, server_id).await? {
             Ok(())
         } else {
@@ -2928,7 +2946,7 @@ fn channel_from_row(row: &sqlx::postgres::PgRow) -> Channel {
     }
 }
 
-async fn channel_by_id(pool: &PgPool, id: i64) -> Result<Channel, BanterError> {
+pub(crate) async fn channel_by_id(pool: &PgPool, id: i64) -> Result<Channel, BanterError> {
     let row = sqlx::query(
         "SELECT id, server_id, category_id, name, kind, position, icon, created_by_plugin FROM channels WHERE id = $1",
     )
@@ -3118,6 +3136,7 @@ async fn load_message(pool: &PgPool, message_id: i64) -> Result<Message, BanterE
             byte_size: row.get("byte_size"),
         })
         .collect();
+    let media = load_message_media(pool, message_id).await?;
     Ok(Message {
         id: row.get("id"),
         author_id: row.get("author_id"),
@@ -3129,6 +3148,7 @@ async fn load_message(pool: &PgPool, message_id: i64) -> Result<Message, BanterE
         created_at: row.get("created_at"),
         edited_at: row.get("edited_at"),
         attachments,
+        media,
         author_kind: row.get("author_kind"),
         plugin_id: row.get("plugin_id"),
     })
@@ -3167,6 +3187,7 @@ async fn load_message_tx(tx: &mut Transaction<'_, Postgres>, message_id: i64) ->
             byte_size: row.get("byte_size"),
         })
         .collect();
+    let media = load_message_media_tx(tx, message_id).await?;
     Ok(Message {
         id: row.get("id"),
         author_id: row.get("author_id"),
@@ -3178,9 +3199,68 @@ async fn load_message_tx(tx: &mut Transaction<'_, Postgres>, message_id: i64) ->
         created_at: row.get("created_at"),
         edited_at: row.get("edited_at"),
         attachments,
+        media,
         author_kind: row.get("author_kind"),
         plugin_id: row.get("plugin_id"),
     })
+}
+
+async fn load_message_media(pool: &PgPool, message_id: i64) -> Result<Vec<MessageMedia>, BanterError> {
+    let rows = sqlx::query(
+        "SELECT mm.id, mm.asset_id, mm.kind, a.name, a.content_type, a.encoding,
+                a.width, a.height, a.duration_ms
+         FROM message_media mm
+         JOIN emote_pack_assets a ON a.id = mm.asset_id
+         WHERE mm.message_id = $1
+         ORDER BY mm.sort_order, mm.id",
+    )
+    .bind(message_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    rows_to_message_media(rows)
+}
+
+async fn load_message_media_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    message_id: i64,
+) -> Result<Vec<MessageMedia>, BanterError> {
+    let rows = sqlx::query(
+        "SELECT mm.id, mm.asset_id, mm.kind, a.name, a.content_type, a.encoding,
+                a.width, a.height, a.duration_ms
+         FROM message_media mm
+         JOIN emote_pack_assets a ON a.id = mm.asset_id
+         WHERE mm.message_id = $1
+         ORDER BY mm.sort_order, mm.id",
+    )
+    .bind(message_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    rows_to_message_media(rows)
+}
+
+fn rows_to_message_media(rows: Vec<sqlx::postgres::PgRow>) -> Result<Vec<MessageMedia>, BanterError> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let kind = EmoteAssetKind::parse(row.get::<String, _>("kind").as_str())?;
+        let encoding = row
+            .get::<Option<String>, _>("encoding")
+            .map(|v| EmoteGifEncoding::parse(&v))
+            .transpose()?;
+        out.push(MessageMedia {
+            id: row.get("id"),
+            asset_id: row.get("asset_id"),
+            kind,
+            name: row.get("name"),
+            content_type: row.get("content_type"),
+            encoding,
+            width: row.get("width"),
+            height: row.get("height"),
+            duration_ms: row.get("duration_ms"),
+        });
+    }
+    Ok(out)
 }
 
 async fn replace_mentions(

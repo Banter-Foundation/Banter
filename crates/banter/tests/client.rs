@@ -32,6 +32,7 @@ fn message(id: i64, body: &str, reply_to: Option<i64>) -> Message {
         created_at: 0,
         edited_at: None,
         attachments: Vec::new(),
+        media: Vec::new(),
         author_kind: "user".into(),
         plugin_id: None,
     }
@@ -543,7 +544,7 @@ fn client_can_register_and_send_a_message() {
         .find(|channel| channel.kind == ChannelKind::Text)
         .expect("default text channel");
     let sent = client
-        .send_message(ChatTarget::Channel(channel.id), "hello", None, &[])
+        .send_message(ChatTarget::Channel(channel.id), "hello", None, &[], &[])
         .unwrap();
     assert_eq!(sent.body, "hello");
     let listed = client
