@@ -1056,6 +1056,8 @@ Call-length RSS growth on Linux HW encode drained; remote video textures no long
 
 Agent: PR #87 opened (ManagePullRequest). Do not merge until Owl says so.
 
+Agent: Folded SFU ForwardTable leave/publisher cleanup + accept_offer generation guard into the same PR after SFU audit.
+
 ## 2026-11-07 06:57:32 +00:00 — BA-100 Windows Go Live 0x80070057
 
 Owl: Voice Connected + 0x80070057 while Go Live/streaming; works on Linux, fails on Windows. Focus Windows-only capture/encode/loopback vs Linux; PR against main.

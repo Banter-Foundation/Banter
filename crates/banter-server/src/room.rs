@@ -43,6 +43,18 @@ enum Cmd {
 
 struct Slot {
     tx: tokio::sync::mpsc::UnboundedSender<Cmd>,
+    /// Bumped on every `accept_offer` so a replaced session's teardown does not
+    /// remove the newer slot / wipe fresh forward tracks.
+    generation: u64,
+}
+
+fn next_slot_generation() -> u64 {
+    static NEXT: OnceLock<Mutex<u64>> = OnceLock::new();
+    let cell = NEXT.get_or_init(|| Mutex::new(1));
+    let mut guard = cell.lock().expect("slot generation");
+    let value = *guard;
+    *guard = guard.wrapping_add(1).max(1);
+    value
 }
 
 /// Active SFU sessions and outbound forward tracks. Used by the debug window.
@@ -445,8 +457,19 @@ impl PeerConnectionEventHandler for Handler {
 
 pub fn accept_offer(live: Arc<Live>, user_id: i64, channel_id: i64, sdp: String) {
     close_user(user_id);
+    // Drop forward tracks tied to the previous PC before the new session binds.
+    // Otherwise a mid-call re-offer would leave dead TrackLocal rows until the
+    // old task finishes — and that task must not wipe the replacement's rows.
+    forwards()
+        .lock()
+        .expect("forwards")
+        .retain(|row| row.subscriber != user_id && row.publisher != user_id);
+    let generation = next_slot_generation();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    slots().lock().expect("sfu slots").insert(user_id, Slot { tx: tx.clone() });
+    slots()
+        .lock()
+        .expect("sfu slots")
+        .insert(user_id, Slot { tx: tx.clone(), generation });
     if let Some(early) = pending_ice().lock().expect("pending ice").remove(&user_id) {
         for candidate in early {
             let _ = tx.send(Cmd::Ice(candidate));
@@ -472,9 +495,25 @@ pub fn accept_offer(live: Arc<Live>, user_id: i64, channel_id: i64, sdp: String)
         if let Err(err) = run_session(live, user_id, channel_id, sdp, rx).await {
             crate::debuglog::record("error", format!("voice sfu: {err}"));
         }
-        slots().lock().expect("sfu slots").remove(&user_id);
-        pending_ice().lock().expect("pending ice").remove(&user_id);
-        forwards().lock().expect("forwards").retain(|row| row.subscriber != user_id && row.publisher != user_id);
+        // Only the owning generation clears global maps. A replaced offer's
+        // teardown must not remove the newer slot or its BindPeer forwards.
+        let still_mine = {
+            let mut guard = slots().lock().expect("sfu slots");
+            match guard.get(&user_id) {
+                Some(slot) if slot.generation == generation => {
+                    guard.remove(&user_id);
+                    true
+                }
+                _ => false,
+            }
+        };
+        if still_mine {
+            pending_ice().lock().expect("pending ice").remove(&user_id);
+            forwards()
+                .lock()
+                .expect("forwards")
+                .retain(|row| row.subscriber != user_id && row.publisher != user_id);
+        }
     });
 }
 

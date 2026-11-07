@@ -1,3 +1,7 @@
+## 2026-11-07 07:15:00 +00:00 [ubuntu] — SFU ForwardTable cleanup on leave (BA-99)
+
+Pair-subscribe left stayer→departed publisher rows in `ForwardTable`, and `leave_voice` never called `unsubscribe_user`. Expand unsubscribe to drop publisher-side subs, publishing layers, and egress; wire leave and channel hops; generation-guard `accept_offer` teardown so mid-call re-offers cannot remove the replacement slot.
+
 ## 2026-11-07 07:02:16 +00:00 [ubuntu] — Fix call memory growth (BA-99)
 
 Linux ffmpeg hardware encode kept every Annex-B access unit in the stdout capture `Vec` for the life of the encoder (copy from `before..` without drain), so RSS grew for the whole camera / Go Live session. Drain after each AU, clear on timeout/start, and hard-cap at 8 MiB (decoder path too). Cap H.264 receive AU reassembly at 4 MiB when markers are missing. Clear/prune remote ImGui video textures and delivered-layer notes when leaving voice or when peers leave the roster.
