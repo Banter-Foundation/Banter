@@ -11,6 +11,7 @@ The Discord-like skin stays temporary and workable. This branch does not redesig
 | Module | Owns | Does not own |
 | --- | --- | --- |
 | `crates/banter/src/theme.rs` | Colors, sizes, radii, font sizes, small geometry helpers (rail pill, chat pad, tooltip rect, …) | Screen flow, HTTP, media |
+| `crates/banter/assets/fonts/` | Vendored OFL faces: **Dongle** (UI chrome), **Shantell Sans** (chat / BFMD) | Theme tokens |
 | `crates/banter/src/layout.rs` | Named `Region`s, `ShellColumns`, `shell_columns` / `discord_shell_columns` | Drawing, theme token values |
 | `crates/banter/src/skin.rs` | Shared Dear ImGui draw helpers (text, buttons, inputs, menus, tooltips) | Layout math, business rules |
 | `crates/banter/src/ui.rs` | Screens that compose regions (sign-in, shell, settings chrome, chat, voice) | New hard-coded column widths or one-off colors |

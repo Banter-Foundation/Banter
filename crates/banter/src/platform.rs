@@ -111,10 +111,13 @@ pub(crate) fn run() -> Result<(), String> {
             "Local server is not available. Enter a remote host, or start the local server and choose Local.",
         );
     }
-    app.set_bold_font(fonts.bold);
-    app.set_semibold_font(fonts.semibold);
-    app.set_italic_font(fonts.italic);
-    app.set_bold_italic_font(fonts.bold_italic);
+    app.set_ui_fonts(fonts.bold, fonts.semibold);
+    app.set_chat_fonts(
+        fonts.body,
+        fonts.chat_bold,
+        fonts.italic,
+        fonts.bold_italic,
+    );
     let mut last_time = glfw.get_time();
     // (vsync, refresh_hz) last pushed to GLFW. Reapplied when the window moves
     // to another monitor or the active mode's Hz changes.
@@ -366,6 +369,8 @@ fn draw_settings_surface(
     let fonts = UiFonts {
         bold: fonts.bold,
         semibold: fonts.semibold,
+        body: fonts.body,
+        chat_bold: fonts.chat_bold,
         italic: fonts.italic,
         bold_italic: fonts.bold_italic,
     };
@@ -386,7 +391,14 @@ fn draw_settings_surface(
                 delta,
                 /* receive_pointer */ true,
             );
-            app.begin_settings_surface(fonts.bold, fonts.semibold, fonts.italic, fonts.bold_italic);
+            app.begin_settings_surface(
+                fonts.bold,
+                fonts.semibold,
+                fonts.body,
+                fonts.chat_bold,
+                fonts.italic,
+                fonts.bold_italic,
+            );
             let prepare_draw = (|| -> Result<(), String> {
                 app.prepare_settings(imgui);
                 unsafe {
@@ -423,9 +435,17 @@ fn draw_settings_surface(
 }
 
 struct UiFonts {
+    /// Dongle Bold — UI chrome labels / emphasis.
     bold: Option<dear_imgui_rs::fonts::FontId>,
+    /// Dongle Bold (same face; Dongle has no medium) — UI chrome names / chips.
     semibold: Option<dear_imgui_rs::fonts::FontId>,
+    /// Shantell Sans Regular — chat / message body (BFMD).
+    body: Option<dear_imgui_rs::fonts::FontId>,
+    /// Shantell Sans Bold — BFMD bold runs.
+    chat_bold: Option<dear_imgui_rs::fonts::FontId>,
+    /// Shantell Sans Italic — BFMD italic runs.
     italic: Option<dear_imgui_rs::fonts::FontId>,
+    /// Shantell Sans Bold Italic — BFMD bold+italic runs.
     bold_italic: Option<dear_imgui_rs::fonts::FontId>,
 }
 
@@ -740,6 +760,8 @@ fn draw_stream_popout_surface(
     let fonts = UiFonts {
         bold: fonts.bold,
         semibold: fonts.semibold,
+        body: fonts.body,
+        chat_bold: fonts.chat_bold,
         italic: fonts.italic,
         bold_italic: fonts.bold_italic,
     };
@@ -761,6 +783,8 @@ fn draw_stream_popout_surface(
             app.begin_stream_popout_surface(
                 fonts.bold,
                 fonts.semibold,
+                fonts.body,
+                fonts.chat_bold,
                 fonts.italic,
                 fonts.bold_italic,
             );
@@ -880,13 +904,33 @@ fn feed_frame_io(
 }
 
 fn install_ui_fonts(imgui: &mut Context) -> UiFonts {
-    let bold = install_font(imgui);
-    let semibold = load_first_face(imgui.font_atlas(), &semibold_font_paths(), 16.0).or(bold);
-    let italic = load_first_face(imgui.font_atlas(), &italic_font_paths(), 16.0);
-    let bold_italic = load_first_face(imgui.font_atlas(), &bold_italic_font_paths(), 16.0).or(bold);
+    // First face in the atlas is ImGui's default — used wherever UI passes `None`
+    // (Dongle Regular). Chat / BFMD uses the Shantell Sans faces below.
+    let atlas = imgui.font_atlas();
+    atlas.clear_fonts();
+
+    let _ui_regular = load_embedded_face(atlas, dongle_regular_bytes(), 16.0)
+        .or_else(|| load_first_face(atlas, &body_font_paths(), 16.0));
+    let bold = load_embedded_face(atlas, dongle_bold_bytes(), 16.0)
+        .or_else(|| load_first_face(atlas, &bold_font_paths(), 16.0));
+    let semibold = bold;
+
+    let body = load_embedded_face(atlas, shantell_regular_bytes(), 16.0)
+        .or_else(|| load_first_face(atlas, &body_font_paths(), 16.0));
+    let chat_bold = load_embedded_face(atlas, shantell_bold_bytes(), 16.0)
+        .or_else(|| load_first_face(atlas, &bold_font_paths(), 16.0))
+        .or(body);
+    let italic = load_embedded_face(atlas, shantell_italic_bytes(), 16.0)
+        .or_else(|| load_first_face(atlas, &italic_font_paths(), 16.0));
+    let bold_italic = load_embedded_face(atlas, shantell_bold_italic_bytes(), 16.0)
+        .or_else(|| load_first_face(atlas, &bold_italic_font_paths(), 16.0))
+        .or(chat_bold);
+
     UiFonts {
         bold,
         semibold,
+        body,
+        chat_bold,
         italic,
         bold_italic,
     }
@@ -1119,17 +1163,44 @@ impl ClipboardBackend for GlfwClipboard {
     }
 }
 
-fn install_font(imgui: &mut Context) -> Option<dear_imgui_rs::fonts::FontId> {
-    // The default bitmap font is about 13 px and was still the active font, so the
-    // shell looked like 8 px text. Body text is 16 px; bold is for category labels.
-    // Windows uses Segoe UI. Linux prefers Liberation Sans, then Noto Sans, then DejaVu.
-    let atlas = imgui.font_atlas();
-    atlas.clear_fonts();
-    let body = load_first_face(atlas, &body_font_paths(), 16.0);
-    let bold = load_first_face(atlas, &bold_font_paths(), 16.0);
-    bold.or(body)
+fn dongle_regular_bytes() -> &'static [u8] {
+    include_bytes!("../assets/fonts/dongle/Dongle-Regular.ttf")
 }
 
+fn dongle_bold_bytes() -> &'static [u8] {
+    include_bytes!("../assets/fonts/dongle/Dongle-Bold.ttf")
+}
+
+fn shantell_regular_bytes() -> &'static [u8] {
+    include_bytes!("../assets/fonts/shantell-sans/ShantellSans-Regular.ttf")
+}
+
+fn shantell_bold_bytes() -> &'static [u8] {
+    include_bytes!("../assets/fonts/shantell-sans/ShantellSans-Bold.ttf")
+}
+
+fn shantell_italic_bytes() -> &'static [u8] {
+    include_bytes!("../assets/fonts/shantell-sans/ShantellSans-Italic.ttf")
+}
+
+fn shantell_bold_italic_bytes() -> &'static [u8] {
+    include_bytes!("../assets/fonts/shantell-sans/ShantellSans-BoldItalic.ttf")
+}
+
+fn load_embedded_face(
+    atlas: &dear_imgui_rs::fonts::FontAtlas,
+    bytes: &'static [u8],
+    size: f32,
+) -> Option<dear_imgui_rs::fonts::FontId> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    Some(atlas.add_font(&[unsafe {
+        dear_imgui_rs::FontSource::ttf_data_with_size(bytes, size)
+    }]))
+}
+
+/// System fallbacks when a vendored face cannot load (should not happen in release).
 fn body_font_paths() -> Vec<&'static str> {
     #[cfg(windows)]
     {
@@ -1177,26 +1248,6 @@ fn bold_font_paths() -> Vec<&'static str> {
             "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         ]
-    }
-}
-
-fn semibold_font_paths() -> Vec<&'static str> {
-    #[cfg(windows)]
-    {
-        return vec![r"C:\Windows\Fonts\seguisb.ttf"];
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return bold_font_paths();
-    }
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        let mut paths = vec![
-            "/usr/share/fonts/noto/NotoSans-Medium.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Medium.ttf",
-        ];
-        paths.extend(bold_font_paths());
-        paths
     }
 }
 

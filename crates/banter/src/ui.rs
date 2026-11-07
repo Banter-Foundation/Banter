@@ -222,6 +222,17 @@ struct OpenContextMenu {
     frames: u32,
 }
 
+/// Fonts swapped onto Settings / Stream ImGui surfaces (each context has its own atlas).
+#[derive(Clone, Copy)]
+struct SurfaceFonts {
+    bold: Option<FontId>,
+    semibold: Option<FontId>,
+    body: Option<FontId>,
+    chat_bold: Option<FontId>,
+    italic: Option<FontId>,
+    bold_italic: Option<FontId>,
+}
+
 pub(crate) struct App {
     base: String,
     data_dir: PathBuf,
@@ -420,16 +431,19 @@ pub(crate) struct App {
     stream_popout_avatar_miss: HashMap<i64, i64>,
     stream_popout_shot: Option<Shot>,
     stream_popout_styled: bool,
-    stream_popout_font_backup: Option<(
-        Option<FontId>,
-        Option<FontId>,
-        Option<FontId>,
-        Option<FontId>,
-    )>,
+    stream_popout_font_backup: Option<SurfaceFonts>,
     members_open: bool,
+    /// Dongle Bold — UI chrome emphasis.
     bold_font: Option<FontId>,
+    /// Dongle Bold — UI chrome names / chips.
     semibold_font: Option<FontId>,
+    /// Shantell Sans Regular — chat / BFMD body.
+    body_font: Option<FontId>,
+    /// Shantell Sans Bold — BFMD bold.
+    chat_bold_font: Option<FontId>,
+    /// Shantell Sans Italic — BFMD italic.
     italic_font: Option<FontId>,
+    /// Shantell Sans Bold Italic — BFMD bold+italic.
     bold_italic_font: Option<FontId>,
     modal: Option<Modal>,
     modal_frames: u32,
@@ -449,12 +463,7 @@ pub(crate) struct App {
     settings_crop_preview: Option<Shot>,
     settings_crop_preview_key: [i32; 3],
     settings_local_camera: Option<Shot>,
-    settings_font_backup: Option<(
-        Option<FontId>,
-        Option<FontId>,
-        Option<FontId>,
-        Option<FontId>,
-    )>,
+    settings_font_backup: Option<SurfaceFonts>,
     /// Last local camera RGBA mirrored for the Settings ImGui context upload.
     settings_camera_rgba: Option<(u32, u32, Vec<u8>)>,
     settings_styled: bool,
@@ -738,6 +747,8 @@ impl App {
             members_open: true,
             bold_font: None,
             semibold_font: None,
+            body_font: None,
+            chat_bold_font: None,
             italic_font: None,
             bold_italic_font: None,
             modal: None,
@@ -845,29 +856,51 @@ impl App {
         app
     }
 
-    pub(crate) fn set_bold_font(&mut self, font: Option<FontId>) {
-        self.bold_font = font;
+    pub(crate) fn set_ui_fonts(&mut self, bold: Option<FontId>, semibold: Option<FontId>) {
+        self.bold_font = bold;
+        self.semibold_font = semibold;
     }
 
-    pub(crate) fn set_semibold_font(&mut self, font: Option<FontId>) {
-        self.semibold_font = font;
-    }
-
-    pub(crate) fn set_italic_font(&mut self, font: Option<FontId>) {
-        self.italic_font = font;
-    }
-
-    pub(crate) fn set_bold_italic_font(&mut self, font: Option<FontId>) {
-        self.bold_italic_font = font;
+    pub(crate) fn set_chat_fonts(
+        &mut self,
+        body: Option<FontId>,
+        chat_bold: Option<FontId>,
+        italic: Option<FontId>,
+        bold_italic: Option<FontId>,
+    ) {
+        self.body_font = body;
+        self.chat_bold_font = chat_bold;
+        self.italic_font = italic;
+        self.bold_italic_font = bold_italic;
     }
 
     fn bfmd_fonts(&self) -> bfmd_paint::Fonts {
         bfmd_paint::Fonts {
-            body: None,
-            bold: self.bold_font,
+            body: self.body_font,
+            bold: self.chat_bold_font,
             italic: self.italic_font,
-            bold_italic: self.bold_italic_font.or(self.bold_font),
+            bold_italic: self.bold_italic_font.or(self.chat_bold_font),
         }
+    }
+
+    fn take_surface_fonts(&self) -> SurfaceFonts {
+        SurfaceFonts {
+            bold: self.bold_font,
+            semibold: self.semibold_font,
+            body: self.body_font,
+            chat_bold: self.chat_bold_font,
+            italic: self.italic_font,
+            bold_italic: self.bold_italic_font,
+        }
+    }
+
+    fn apply_surface_fonts(&mut self, fonts: SurfaceFonts) {
+        self.bold_font = fonts.bold;
+        self.semibold_font = fonts.semibold;
+        self.body_font = fonts.body;
+        self.chat_bold_font = fonts.chat_bold;
+        self.italic_font = fonts.italic;
+        self.bold_italic_font = fonts.bold_italic;
     }
 
     /// Open the sign-in Server options overlay and show why Banter is asking for a remote.
@@ -964,6 +997,8 @@ impl App {
         &mut self,
         bold: Option<FontId>,
         semibold: Option<FontId>,
+        body: Option<FontId>,
+        chat_bold: Option<FontId>,
         italic: Option<FontId>,
         bold_italic: Option<FontId>,
     ) {
@@ -971,16 +1006,15 @@ impl App {
             self.settings_font_backup.is_none(),
             "begin_settings_surface must not nest"
         );
-        self.settings_font_backup = Some((
-            self.bold_font,
-            self.semibold_font,
-            self.italic_font,
-            self.bold_italic_font,
-        ));
-        self.bold_font = bold;
-        self.semibold_font = semibold;
-        self.italic_font = italic;
-        self.bold_italic_font = bold_italic;
+        self.settings_font_backup = Some(self.take_surface_fonts());
+        self.apply_surface_fonts(SurfaceFonts {
+            bold,
+            semibold,
+            body,
+            chat_bold,
+            italic,
+            bold_italic,
+        });
         std::mem::swap(&mut self.icons, &mut self.settings_icons);
         std::mem::swap(&mut self.icons_ready, &mut self.settings_icons_ready);
         std::mem::swap(&mut self.avatars, &mut self.settings_avatars);
@@ -995,13 +1029,10 @@ impl App {
     }
 
     pub(crate) fn end_settings_surface(&mut self) {
-        let Some((bold, semibold, italic, bold_italic)) = self.settings_font_backup.take() else {
+        let Some(fonts) = self.settings_font_backup.take() else {
             panic!("end_settings_surface without begin_settings_surface");
         };
-        self.bold_font = bold;
-        self.semibold_font = semibold;
-        self.italic_font = italic;
-        self.bold_italic_font = bold_italic;
+        self.apply_surface_fonts(fonts);
         std::mem::swap(&mut self.icons, &mut self.settings_icons);
         std::mem::swap(&mut self.icons_ready, &mut self.settings_icons_ready);
         std::mem::swap(&mut self.avatars, &mut self.settings_avatars);
@@ -15168,6 +15199,8 @@ impl App {
         &mut self,
         bold: Option<FontId>,
         semibold: Option<FontId>,
+        body: Option<FontId>,
+        chat_bold: Option<FontId>,
         italic: Option<FontId>,
         bold_italic: Option<FontId>,
     ) {
@@ -15175,16 +15208,15 @@ impl App {
             self.stream_popout_font_backup.is_none(),
             "begin_stream_popout_surface must not nest"
         );
-        self.stream_popout_font_backup = Some((
-            self.bold_font,
-            self.semibold_font,
-            self.italic_font,
-            self.bold_italic_font,
-        ));
-        self.bold_font = bold;
-        self.semibold_font = semibold;
-        self.italic_font = italic;
-        self.bold_italic_font = bold_italic;
+        self.stream_popout_font_backup = Some(self.take_surface_fonts());
+        self.apply_surface_fonts(SurfaceFonts {
+            bold,
+            semibold,
+            body,
+            chat_bold,
+            italic,
+            bold_italic,
+        });
         std::mem::swap(&mut self.icons, &mut self.stream_popout_icons);
         std::mem::swap(&mut self.icons_ready, &mut self.stream_popout_icons_ready);
         std::mem::swap(&mut self.avatars, &mut self.stream_popout_avatars);
@@ -15193,14 +15225,10 @@ impl App {
     }
 
     pub(crate) fn end_stream_popout_surface(&mut self) {
-        let Some((bold, semibold, italic, bold_italic)) = self.stream_popout_font_backup.take()
-        else {
+        let Some(fonts) = self.stream_popout_font_backup.take() else {
             panic!("end_stream_popout_surface without begin_stream_popout_surface");
         };
-        self.bold_font = bold;
-        self.semibold_font = semibold;
-        self.italic_font = italic;
-        self.bold_italic_font = bold_italic;
+        self.apply_surface_fonts(fonts);
         std::mem::swap(&mut self.icons, &mut self.stream_popout_icons);
         std::mem::swap(&mut self.icons_ready, &mut self.stream_popout_icons_ready);
         std::mem::swap(&mut self.avatars, &mut self.stream_popout_avatars);

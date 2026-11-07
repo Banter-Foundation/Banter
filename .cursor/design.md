@@ -1,6 +1,6 @@
 # Window
 
-Dear ImGui docking branch, dark style. Fonts: Segoe UI on Windows when `C:\Windows\Fonts\segoeui.ttf` is present; on Linux Liberation Sans, then Noto Sans, then DejaVu Sans.
+Dear ImGui docking branch, dark style. Fonts: **Dongle** (vendored) is the default UI chrome face (ImGui default + bold/semibold labels). **Shantell Sans** (vendored) is the chat / BFMD message body face (regular / bold / italic / bold-italic). System Segoe / Liberation / Noto / DejaVu remain fallbacks only if a vendored face fails to load.
 
 On Windows (and other non-Linux hosts), the OS title bar is off (`GLFW_DECORATED` false). Banter draws a short dark caption (`TITLE_BAR_H` 28 px, `TITLE_BAR_BG`) with Mac traffic lights on the left (close / minimize / maximize), a centered window label, drag-to-move on the rest of the strip, and double-click to maximize or restore. The signed-in shell, Settings, and Stream windows share that chrome. Tokens live in `theme.rs`; hit-testing and drag math in `titlebar.rs`; paint in `skin::paint_title_bar`. **Linux keeps the system / DE title bar** (`client_caption_enabled()` false, `caption_height()` 0, `GLFW_DECORATED` true) so user themes and compositor chrome stay in charge — Banter does not reserve or paint a client caption there.
 
