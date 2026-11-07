@@ -1238,6 +1238,8 @@ mod stream_encoder_settings_tests {
         );
         assert_eq!(stream_full_bps(true, 999), 2_500_000);
         assert_eq!(stream_full_bps(false, 4000), 4_000_000);
+        assert_eq!(stream_full_bps(false, 40_000), 40_000_000);
+        assert_eq!(stream_full_bps(false, 50_000), 40_000_000);
     }
 }
 
@@ -1413,7 +1415,7 @@ pub fn stream_full_bps(bitrate_auto: bool, bitrate_kbps: u32) -> u32 {
     if bitrate_auto {
         2_500_000
     } else {
-        bitrate_kbps.clamp(200, 20_000).saturating_mul(1000)
+        bitrate_kbps.clamp(200, 40_000).saturating_mul(1000)
     }
 }
 

@@ -12531,7 +12531,7 @@ impl App {
         }
         if !self.stream.bitrate_auto {
             let mut kbps = self.stream.bitrate_kbps as f32;
-            if ui.slider_f32("Bitrate (kbps)", &mut kbps, 200.0, 8000.0) {
+            if ui.slider_f32("Bitrate (kbps)", &mut kbps, 200.0, 40_000.0) {
                 self.stream.bitrate_kbps = kbps.round() as u32;
             }
             if ui.is_item_deactivated_after_edit() {
@@ -14033,7 +14033,7 @@ impl App {
         self.stream.rate_control =
             rate_control_key(rate_control_from_key(&self.stream.rate_control)).into();
         self.stream.keyframe_secs = self.stream.keyframe_secs.clamp(1, 10);
-        self.stream.bitrate_kbps = self.stream.bitrate_kbps.clamp(200, 20_000);
+        self.stream.bitrate_kbps = self.stream.bitrate_kbps.clamp(200, 40_000);
         let _ = save_json(&self.data_dir.join("stream.json"), &self.stream);
     }
 
