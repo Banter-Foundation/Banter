@@ -1,4 +1,6 @@
 # Session memory
+- 2026-11-07 BA-103: Chat compose autosuggest. `suggest.rs` local bigram/trigram + static phrases; chips/ghost in `draw_composer`; Tab/click accept, Escape dismiss; emote hook empty until BA-83. Docs: `docs/chat-autosuggest.md`. Branch `cursor/chat-autosuggest-0099`. Do not merge until Owl says so.
+
 - 2026-11-07 BA-101: Video encoder quality/CPU. Branch `cursor/encoder-quality-aa4c` stacked on #85 → PR https://github.com/Banter-Foundation/Banter/pull/88. Cached HW probe, HW-first without dual OpenH264 open, deferred soft decode, screen/camera QP floors, Half/Quarter bitrate above area share, Linux NVENC/VA-API CBR/VBR + zerolatency. Keeps #85 latency presets. Report: store `internal/banter-encoder-improvements.md`. Do not merge until Owl says so.
 
 - 2026-11-07 BA-97: Interactive VC latency. Branch `cursor/vc-latency-0648` → PR https://github.com/Banter-Foundation/Banter/pull/85. Playout ~60 ms, PCM backlog ~200 ms, FPS-matched video RTP duration, 1 s keyframes, OpenH264/Opus low-latency presets, SFU queues 24/16. Report: store `internal/banter-vc-latency.md`. Do not merge until Owl says so. Did not touch Emote Library / BA-95 theme / cover-flow #80.

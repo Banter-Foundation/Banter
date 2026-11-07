@@ -95,6 +95,10 @@ use crate::stream_watch::{
     cycle_streamer, resolve_focused_streamer, stream_chrome_alpha, stream_watch_avatar_x,
     streaming_user_ids, STREAM_CHROME_HIDE_ALPHA, STREAM_POPOUT_WINDOW_TITLE,
 };
+use crate::suggest::{
+    apply_suggestion, suggest, DismissState, MemberHint, SuggestQuery, Suggestion,
+    SuggestionEngine,
+};
 use crate::theme::*;
 use crate::titlebar::{
     point_in_rect, title_bar_drag_rect, traffic_light_hit, TitleBarAction, TitleBarChrome,
@@ -295,6 +299,14 @@ pub(crate) struct App {
     assign_role_ids: Vec<i64>,
     display_name: String,
     composer: String,
+    /// Local n-gram autosuggest for the bottom composer (BA-103).
+    suggest_engine: SuggestionEngine,
+    /// Message bodies last ingested into `suggest_engine` (channel / DM id + count fingerprint).
+    suggest_history_key: String,
+    suggest_dismiss: DismissState,
+    suggest_index: usize,
+    /// When true, Escape this frame dismissed suggestions — skip other Escape handlers.
+    suggest_escape_consumed: bool,
     search: String,
     friend_tab: u8,
     /// Home stage pane: customizable landing vs Friends people list (BA-81).
@@ -618,6 +630,11 @@ impl App {
             assign_role_ids: Vec::new(),
             display_name: String::new(),
             composer: String::new(),
+            suggest_engine: SuggestionEngine::new(),
+            suggest_history_key: String::new(),
+            suggest_dismiss: DismissState::default(),
+            suggest_index: 0,
+            suggest_escape_consumed: false,
             search: String::new(),
             friend_tab: 0,
             home_pane: HomePane::Landing,
@@ -1094,7 +1111,7 @@ impl App {
         if self.stream_fullscreen {
             self.draw_stream_theater(ui);
         }
-        if ui.is_key_pressed(Key::Escape) {
+        if ui.is_key_pressed(Key::Escape) && !self.suggest_escape_consumed {
             if self.stream_fullscreen {
                 self.stream_fullscreen = false;
             } else if self.debug_open {
@@ -1118,6 +1135,7 @@ impl App {
             }
             // Escape on the main window does not close User Settings — that belongs to the settings window.
         }
+        self.suggest_escape_consumed = false;
         // Avatar crop opened from My Account draws on the settings window, not here.
         if self.crop_open && !self.settings.is_open() {
             self.draw_avatar_crop(ui);
@@ -5656,7 +5674,8 @@ impl App {
         let mut collapse = None;
         let mut inline_submit = false;
         let mut inline_cancel = false;
-        let footer = self.composer_footer_h();
+        let suggestions = self.prepare_composer_suggestions();
+        let footer = self.composer_footer_h(!suggestions.is_empty());
         ui.child_window("history")
             .size([0.0, -footer])
             .build(ui, || {
@@ -5742,7 +5761,7 @@ impl App {
         if let Some((id, filename)) = save {
             self.save_attachment(id, &filename);
         }
-        self.draw_composer(ui, target);
+        self.draw_composer(ui, target, suggestions);
     }
 
     fn draw_no_text_channels(&self, ui: &Ui) {
@@ -5769,7 +5788,7 @@ impl App {
         }
     }
 
-    fn composer_footer_h(&self) -> f32 {
+    fn composer_footer_h(&self, suggest_open: bool) -> f32 {
         // Replies use an inline composer under the parent comment (Reddit). Bottom strip is edit/file/reply-hint.
         let strip =
             if self.editing.is_some() || self.pending_file.is_some() || self.reply_to.is_some() {
@@ -5777,19 +5796,117 @@ impl App {
             } else {
                 0.0
             };
-        8.0 + strip + COMPOSER_H + COMPOSER_BOTTOM
+        let suggest = if suggest_open { SUGGEST_STRIP_H } else { 0.0 };
+        8.0 + strip + suggest + COMPOSER_H + COMPOSER_BOTTOM
+    }
+
+    /// Refresh the local n-gram model when channel/DM history identity changes.
+    fn refresh_suggest_engine(&mut self) {
+        let last_id = self.messages.last().map(|m| m.id).unwrap_or(0);
+        let key = match (&self.place, &self.selected) {
+            (Place::Server(_), Some(channel)) => {
+                format!("c:{}:{}:{}", channel.id, self.messages.len(), last_id)
+            }
+            (Place::Direct(dm_id), _) => {
+                format!("d:{dm_id}:{}:{}", self.messages.len(), last_id)
+            }
+            _ => format!("x:{}:{}", self.messages.len(), last_id),
+        };
+        if key == self.suggest_history_key {
+            return;
+        }
+        self.suggest_engine = SuggestionEngine::new();
+        self.suggest_engine
+            .ingest(self.messages.iter().map(|message| message.body.as_str()));
+        self.suggest_history_key = key;
+    }
+
+    /// Channel members, or the DM peer (+ self) when in a direct chat.
+    fn suggest_member_hints(&self) -> Vec<MemberHint> {
+        if !self.members.is_empty() {
+            return self
+                .members
+                .iter()
+                .map(|member| MemberHint {
+                    username: member.username.clone(),
+                    display_name: member.display_name.clone(),
+                })
+                .collect();
+        }
+        let mut hints = Vec::new();
+        if let Place::Direct(dm_id) = self.place {
+            if let Some(chat) = self.dms.iter().find(|chat| chat.id == dm_id) {
+                hints.push(MemberHint {
+                    username: chat.peer_username.clone(),
+                    display_name: chat.peer_display_name.clone(),
+                });
+            }
+        }
+        if let Some(account) = &self.account {
+            hints.push(MemberHint {
+                username: account.username.clone(),
+                display_name: account.display_name.clone(),
+            });
+        }
+        hints
+    }
+
+    /// Emote shortcode names when a library hook exists (BA-83). Empty for v1.
+    fn suggest_emote_names(&self) -> Vec<String> {
+        // Intentionally empty until Emote Library lands — do not invent fake names.
+        let _ = self;
+        Vec::new()
+    }
+
+    fn prepare_composer_suggestions(&mut self) -> Vec<Suggestion> {
+        self.refresh_suggest_engine();
+        self.suggest_dismiss.clear_if_changed(&self.composer);
+        if self.composer.is_empty() || self.suggest_dismiss.is_dismissed(&self.composer) {
+            self.suggest_index = 0;
+            return Vec::new();
+        }
+        let members = self.suggest_member_hints();
+        let emotes = self.suggest_emote_names();
+        let hits = suggest(
+            &self.suggest_engine,
+            &SuggestQuery {
+                composer: &self.composer,
+                members: &members,
+                emotes: &emotes,
+                limit: 6,
+            },
+        );
+        if self.suggest_index >= hits.len() {
+            self.suggest_index = 0;
+        }
+        hits
+    }
+
+    fn accept_composer_suggestion(&mut self, suggestion: &Suggestion) {
+        apply_suggestion(&mut self.composer, suggestion);
+        self.suggest_dismiss.clear();
+        self.suggest_index = 0;
     }
 
     /// Rounded message bar for top-level posts: upload button, `Message #channel` placeholder,
     /// and a strip above it while editing, holding a file, or while an inline reply is open.
     /// Nested replies use the accented inline box under the parent comment.
-    fn draw_composer(&mut self, ui: &Ui, target: ChatTarget) {
+    /// `suggestions` are ranked chips / ghost completions for the current draft (BA-103).
+    fn draw_composer(&mut self, ui: &Ui, target: ChatTarget, suggestions: Vec<Suggestion>) {
         let origin = ui.cursor_screen_pos();
         let width = ui.content_region_avail()[0];
         let bar_x = origin[0] + COMPOSER_MARGIN;
         let bar_w = (width - COMPOSER_MARGIN * 2.0).max(120.0);
         let mut y = origin[1] + 8.0;
-        ui.dummy([width, self.composer_footer_h()]);
+        if !suggestions.is_empty() && ui.is_key_pressed(Key::Escape) {
+            self.suggest_dismiss.dismiss(&self.composer);
+            self.suggest_escape_consumed = true;
+            self.suggest_index = 0;
+        }
+        let suggest_open =
+            !suggestions.is_empty() && !self.suggest_dismiss.is_dismissed(&self.composer);
+        ui.dummy([width, self.composer_footer_h(suggest_open)]);
+
         let strip = if self.editing.is_some() {
             Some(("Editing message".to_string(), false))
         } else if let Some((name, bytes)) = &self.pending_file {
@@ -5839,7 +5956,70 @@ impl App {
             }
             y += 34.0;
         }
-        let corners = if strip.is_some() {
+
+        // Suggestion chips sit above the rounded bar (Banter strip, not a floating Discord popover).
+        let mut accepted: Option<Suggestion> = None;
+        if suggest_open && !self.suggest_dismiss.is_dismissed(&self.composer) {
+            skin::rect(
+                ui,
+                [bar_x, y],
+                [bar_x + bar_w, y + SUGGEST_STRIP_H],
+                SUGGEST_STRIP_BG,
+                SUGGEST_CHIP_RADIUS,
+            );
+            let mut chip_x = bar_x + 8.0;
+            let chip_y = y + (SUGGEST_STRIP_H - SUGGEST_CHIP_H) * 0.5;
+            for (index, suggestion) in suggestions.iter().enumerate() {
+                let selected = index == self.suggest_index;
+                let label = &suggestion.label;
+                let text_w = ui.calc_text_size(label)[0];
+                let chip_w = text_w + SUGGEST_CHIP_PAD_X * 2.0;
+                if chip_x + chip_w > bar_x + bar_w - 8.0 {
+                    break;
+                }
+                ui.set_cursor_screen_pos([chip_x, chip_y]);
+                let id = format!("##suggest-chip-{index}");
+                let clicked = ui.invisible_button(&id, [chip_w, SUGGEST_CHIP_H]);
+                let hovered = ui.is_item_hovered();
+                let fill = if selected {
+                    BLURPLE
+                } else if hovered {
+                    ROW_HOVER
+                } else {
+                    SUGGEST_CHIP_BG
+                };
+                ui.get_window_draw_list()
+                    .add_rect(
+                        [chip_x, chip_y],
+                        [chip_x + chip_w, chip_y + SUGGEST_CHIP_H],
+                        fill,
+                    )
+                    .rounding(SUGGEST_CHIP_RADIUS)
+                    .filled(true)
+                    .build();
+                let color = if selected { WHITE } else { TEXT_SECONDARY };
+                ui.get_window_draw_list().add_text(
+                    [
+                        chip_x + SUGGEST_CHIP_PAD_X,
+                        chip_y + (SUGGEST_CHIP_H - FONT_SM) * 0.5,
+                    ],
+                    color,
+                    label,
+                );
+                if clicked {
+                    accepted = Some(suggestion.clone());
+                } else if hovered {
+                    self.suggest_index = index;
+                }
+                chip_x += chip_w + SUGGEST_CHIP_GAP;
+            }
+            y += SUGGEST_STRIP_H;
+        }
+
+        // Square the top when a strip or suggest row sits above so the stack reads as one block.
+        let bar_corners = if (suggest_open && !self.suggest_dismiss.is_dismissed(&self.composer))
+            || strip.is_some()
+        {
             DrawFlags::ROUND_BOTTOM
         } else {
             DrawFlags::ROUND_ALL
@@ -5850,7 +6030,7 @@ impl App {
             [bar_x + bar_w, y + COMPOSER_H],
             self.shell("composer_bg", COMPOSER_BG),
             COMPOSER_RADIUS,
-            corners,
+            bar_corners,
         );
         let input_x = if self.editing.is_none() {
             let tint = if self.pending_file.is_some() {
@@ -5886,6 +6066,11 @@ impl App {
         } else {
             format!("Message {channel_mark}{}", self.stage_title())
         };
+        let ghost = suggestions
+            .get(self.suggest_index)
+            .filter(|_| !self.suggest_dismiss.is_dismissed(&self.composer))
+            .map(|s| s.ghost.clone())
+            .filter(|g| !g.is_empty());
         ui.set_cursor_screen_pos([input_x, y]);
         let submit = {
             let _font = ui.push_font_with_size(None, FONT_MD);
@@ -5903,7 +6088,29 @@ impl App {
                 .enter_returns_true(true)
                 .build()
         };
-        if submit {
+        let composer_active = ui.is_item_active() || ui.is_item_hovered();
+        if let Some(ghost_text) = ghost.as_ref() {
+            if !self.composer.is_empty() {
+                let _font = ui.push_font_with_size(None, FONT_MD);
+                let typed_w = ui.calc_text_size(&self.composer)[0];
+                let ghost_x = input_x + 4.0 + typed_w;
+                let ghost_y = y + (COMPOSER_H - FONT_MD) * 0.5;
+                ui.get_window_draw_list().add_text(
+                    [ghost_x, ghost_y],
+                    SUGGEST_GHOST,
+                    ghost_text,
+                );
+            }
+        }
+        let still_open = !suggestions.is_empty() && !self.suggest_dismiss.is_dismissed(&self.composer);
+        if still_open && composer_active && ui.is_key_pressed(Key::Tab) {
+            if let Some(suggestion) = suggestions.get(self.suggest_index) {
+                accepted = Some(suggestion.clone());
+            }
+        }
+        if let Some(suggestion) = accepted {
+            self.accept_composer_suggestion(&suggestion);
+        } else if submit {
             self.submit_composer(target);
         }
     }
