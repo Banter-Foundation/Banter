@@ -1,3 +1,7 @@
+## 2026-11-07 07:05:53 +00:00 [ubuntu] — Cover-flow fade, rise, glass settings chip (BA-96)
+
+Stream Select picker now soft-fades in/out and rises the cover-flow from the bottom. Stream settings move into a bottom-middle frosted glass chip (layered translucent fill + highlight + noise acrylic approximation). Full-bleed overlay keeps the arched cover-flow; chip expands for quality + stream audio. Rebased onto main.
+
 ## 2026-11-07 06:58:43 +00:00 [ubuntu] — Improve video encoder quality/CPU (BA-101)
 
 Stacked on BA-97 (#85). Safe encoder wins without raising interactive delay: process-cached `hardware_probe`, Auto/Hardware opens GPU first and defers OpenH264 until needed, PictureDecoder defers soft decode while HW is up, OpenH264 screen/camera QP floors, simulcast Half=`full/3` / Quarter=`full/10` (was area share), Linux NVENC/VA-API honor CBR/VBR (+ NVENC `-zerolatency 1`). Keeps #85 bitrate RC / Low / 1-thread / 1 s GOP / screen AQ/BG off. Contracts in `crates/banter/tests/encoder_quality.rs`. Do not merge until Owl says so.
@@ -21,6 +25,14 @@ BAN-30 kept hardware alive for SPS-less P-frames, but Windows MF still returned 
 ## 2026-11-07 02:45:00 -05:00 [ubuntu] — Restore hardware force-key IDR after 13.1 (BAN-33)
 
 Version-1-test-13.1 kept VA-API on GPU (#76) by skipping ffmpeg reopen on `force_key`, which left late-join PLI, P2P peer-cap keys, and mesh-flip recovery without an IDR on hardware encode. Reopen on `force_key` again (async_depth=1 still avoids the OpenH264 fallback), and do not burn `control.force_key` while no camera/screen layer is publishing.
+
+## 2026-11-07 03:17:46 +00:00 [ubuntu] — Cover-flow brightness falloff (BA-96)
+
+Matched the reference GIF more closely after video review: edge panels dim (scale + brightness), tighter horizontal pitch for overlap, no on-panel titles (hover tooltip for the source name instead).
+
+## 2026-11-07 03:15:54 +00:00 [ubuntu] — Cover-flow stream switcher previews (BA-96)
+
+Screen Share / stream source picker previews are now an arched horizontal cover-flow of tall portrait panels instead of a Discord-style landscape thumbnail grid. The focused source is centered and tallest; height falls off toward the left and right edges. Mouse wheel, left/right arrows, and click cycle focus; settling on a panel selects (or live-switches) that source. Dark translucent picker chrome; landscape captures cover-fit into portrait panels. Layout math lives in `coverflow.rs` with integration tests; picker metrics updated in `theme.rs` / `ui.rs`.
 
 ## 2026-11-06 04:00:00 -05:00 [ubuntu] — Version-1-test-13.1 pre-release
 

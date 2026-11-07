@@ -3,6 +3,7 @@
 
 - 2026-11-07 BA-97: Interactive VC latency. Branch `cursor/vc-latency-0648` → PR https://github.com/Banter-Foundation/Banter/pull/85. Playout ~60 ms, PCM backlog ~200 ms, FPS-matched video RTP duration, 1 s keyframes, OpenH264/Opus low-latency presets, SFU queues 24/16. Report: store `internal/banter-vc-latency.md`. Do not merge until Owl says so. Did not touch Emote Library / BA-95 theme / cover-flow #80.
 
+- 2026-11-07 BA-96: Cover-flow stream switcher. Screen Share source previews are an arched portrait cover-flow (`coverflow.rs` + `draw_share_coverflow` in `ui.rs`). Branch `cursor/coverflow-stream-switcher-b96a`. Do not merge until Owl says so.
 - 2026-11-05 BA-91: Version system + checker. `banter-server` `version.rs` (`BANTER_VERSION`, `PROTOCOL`, min floors); health/version JSON; client blocks stale hosts with `BANTER_SERVER_TOO_OLD` / `BANTER_CLIENT_TOO_OLD` / `BANTER_VERSION_UNREACHABLE`. Docs: `docs/version.md`. Branch `cursor/version-system-checker-dae0`. Do not merge until Owl says so.
 
 - 2026-11-05 BA-87 / BA-88: Opaque stage toast `request failed` was empty-body HTTP fallback on `POST /v1/voice/flags` after a successful join. Shared catalog in `banter-server` `errcode.rs` (`BanterIssue`, `BANTER_*` codes); client voice join/leave/flags + WS connect/drop use it; flags sync backs off 2s. Docs: `docs/errors.md`. Branch `cursor/voice-request-failed-32e1`. Do not merge until Owl says so.
