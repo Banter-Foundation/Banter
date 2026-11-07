@@ -266,11 +266,13 @@ impl LayerEncoder {
         force_key: bool,
     ) -> Result<EncodedAu, String> {
         match self.inner.encode(i420, width, height, force_key) {
-            // Delta AUs omit SPS. Only reject hardware when an SPS is present and is
-            // not Constrained Baseline — otherwise every P-frame silently fell back
-            // to OpenH264 and the GPU sat idle after the first keyframe.
+            // Delta AUs omit SPS. Only reject hardware when the AU is not Annex-B
+            // (some Windows MFTs emit length-prefixed AVCC) or carries an SPS that
+            // is not Constrained Baseline. Treating “no SPS” alone as failure made
+            // every P-frame fall back to OpenH264 (BAN-30); keeping non-Annex-B
+            // bytes after that change broke Windows remotes (BAN-35).
             Ok(au)
-                if self.fallback.is_none() || !sps_rejects_constrained_baseline(&au.bytes) =>
+                if self.fallback.is_none() || !hardware_au_unusable(&au.bytes) =>
             {
                 Ok(au)
             }
@@ -475,6 +477,19 @@ pub fn sps_rejects_constrained_baseline(annexb: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// True when a hardware AU must not stay on the GPU path.
+///
+/// WebRTC packetization expects Annex-B start codes. BAN-30 stopped rejecting
+/// SPS-less P-frames (correct for VA-API), but that also kept length-prefixed
+/// Media Foundation samples that `nals` cannot parse — remotes then saw garbage
+/// until the publisher fell back or restarted (BAN-35).
+pub fn hardware_au_unusable(bytes: &[u8]) -> bool {
+    if bytes.is_empty() || nals(bytes).next().is_none() {
+        return true;
+    }
+    sps_rejects_constrained_baseline(bytes)
 }
 
 pub fn access_unit_is_key(annexb: &[u8]) -> bool {
@@ -1216,6 +1231,10 @@ mod tests {
             !sps_rejects_constrained_baseline(&p_au),
             "missing SPS must not trigger OpenH264 fallback"
         );
+        assert!(
+            !hardware_au_unusable(&p_au),
+            "Annex-B delta without SPS must stay on hardware"
+        );
     }
 
     #[test]
@@ -1301,5 +1320,33 @@ mod tests {
             forced.keyframe || access_unit_is_key(&forced.bytes),
             "OpenH264 force_key must still produce an IDR"
         );
+    }
+
+    #[test]
+    fn annexb_delta_stays_usable_without_sps() {
+        // Annex-B P-slice only — Linux VA-API / Windows MF deltas after BAN-30.
+        let p_au = [0u8, 0, 0, 1, 0x01, 0x9a, 0x10, 0x00];
+        assert!(
+            !hardware_au_unusable(&p_au),
+            "SPS-less Annex-B delta must stay on hardware"
+        );
+    }
+
+    #[test]
+    fn length_prefixed_avcc_is_unusable() {
+        // Length-prefixed CB SPS without start codes — shape some Windows MFTs emit.
+        // BAN-30's "no SPS → keep" must not accept this; remotes expect Annex-B.
+        let nal = [0x67u8, 66, 0x40, 0x15];
+        let mut avcc = (nal.len() as u32).to_be_bytes().to_vec();
+        avcc.extend_from_slice(&nal);
+        assert!(
+            !sps_rejects_constrained_baseline(&avcc),
+            "fixture: no Annex-B SPS so sps_rejects alone would keep it"
+        );
+        assert!(
+            hardware_au_unusable(&avcc),
+            "non-Annex-B hardware AU must fall back to OpenH264"
+        );
+        assert!(hardware_au_unusable(&[]), "empty AU is unusable");
     }
 }
