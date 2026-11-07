@@ -901,12 +901,13 @@ impl App {
         &mut self.stream_title_bar
     }
 
-    /// Height reserved for the client-drawn caption (0 in OS fullscreen).
+    /// Height reserved for the client-drawn caption (0 in OS fullscreen, and always 0
+    /// on Linux where the system title bar is used).
     fn caption_h(&self) -> f32 {
         if self.video.fullscreen {
             0.0
         } else {
-            TITLE_BAR_H
+            crate::titlebar::caption_height()
         }
     }
 
@@ -1287,11 +1288,11 @@ impl App {
 
     /// Which Banter GLFW surface owns the caption being drawn.
     fn draw_window_caption(&mut self, ui: &Ui, label: &str, surface: TitleBarSurface) {
-        if self.caption_h() <= 0.0 {
+        if self.caption_h() <= 0.0 || !crate::titlebar::client_caption_enabled() {
             return;
         }
         let size = ui.io().display_size();
-        let bar_h = TITLE_BAR_H;
+        let bar_h = crate::titlebar::caption_height();
         let mut chrome = match surface {
             TitleBarSurface::Main => std::mem::take(&mut self.title_bar),
             TitleBarSurface::Settings => std::mem::take(&mut self.settings_title_bar),

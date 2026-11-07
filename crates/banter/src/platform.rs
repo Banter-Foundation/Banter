@@ -58,8 +58,10 @@ pub(crate) fn run() -> Result<(), String> {
         glfw::OpenGlProfileHint::Core,
     ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
-    // Client-drawn Mac-style caption (BA-105). Native OS chrome is replaced in-app.
-    glfw.window_hint(glfw::WindowHint::Decorated(false));
+    // BA-105: client Mac-style caption on Windows; Linux keeps system / DE chrome.
+    glfw.window_hint(glfw::WindowHint::Decorated(
+        !crate::titlebar::client_caption_enabled(),
+    ));
     let (mut window, events) = glfw
         .create_window(
             start_w as u32,
@@ -243,6 +245,11 @@ fn apply_title_bar_chrome(
     window: &mut glfw::Window,
     chrome: &mut TitleBarChrome,
 ) {
+    if !crate::titlebar::client_caption_enabled() {
+        chrome.take_actions();
+        chrome.drag_grab = None;
+        return;
+    }
     for action in chrome.take_actions() {
         match action {
             TitleBarAction::Close => window.set_should_close(true),
@@ -533,7 +540,9 @@ fn create_settings_window(
         glfw::OpenGlProfileHint::Core,
     ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
-    glfw.window_hint(glfw::WindowHint::Decorated(false));
+    glfw.window_hint(glfw::WindowHint::Decorated(
+        !crate::titlebar::client_caption_enabled(),
+    ));
     glfw.window_hint(glfw::WindowHint::Visible(true));
     glfw.window_hint(glfw::WindowHint::Focused(true));
     let (mut window, events) = main
@@ -661,7 +670,9 @@ fn create_stream_popout_window(
         glfw::OpenGlProfileHint::Core,
     ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
-    glfw.window_hint(glfw::WindowHint::Decorated(false));
+    glfw.window_hint(glfw::WindowHint::Decorated(
+        !crate::titlebar::client_caption_enabled(),
+    ));
     glfw.window_hint(glfw::WindowHint::Visible(true));
     glfw.window_hint(glfw::WindowHint::Focused(true));
     let (mut window, events) = main

@@ -25,11 +25,11 @@ Rules for later agents:
 
 ## Layout regions
 
-Top: **title-bar** (28, client-drawn Mac-style caption). Below that, left to right: **rail** (72) → **sidebar** (240) → **stage** (flex) → **members** (240, optional).
+Top: **title-bar** (`caption_height()` — 28 px client-drawn Mac-style caption on Windows; **0 on Linux**, where the system / DE title bar is used). Below that, left to right: **rail** (72) → **sidebar** (240) → **stage** (flex) → **members** (240, optional).
 
 Also named: **header** (48, over stage + members), **voice-panel** and **user-panel** (bottom of sidebar), **composer** (bottom of stage in text channels).
 
-`layout::shell_columns(width, show_members)` reads widths from `theme::{RAIL_W,SIDEBAR_W,MEMBERS_W}`. Prefer `shell_columns` in new code; `discord_shell_columns` remains as an alias. Column rects start at `TITLE_BAR_H` so the shell sits under the caption.
+`layout::shell_columns(width, show_members)` reads widths from `theme::{RAIL_W,SIDEBAR_W,MEMBERS_W}`. Prefer `shell_columns` in new code; `discord_shell_columns` remains as an alias. Column rects start at `caption_height()` so the shell sits under the client caption when one is drawn.
 
 Visual metrics detail: `.cursor/design.md`.
 
