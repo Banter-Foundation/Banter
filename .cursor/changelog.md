@@ -22,6 +22,10 @@ Stacked on BA-97 (#85). Safe encoder wins without raising interactive delay: pro
 
 Voice & Video / Stream options now probe which H.264 encoders this PC can see (OpenH264 always; NVENC, VA-API, Media Foundation when present) and only offer those chips, plus Auto and Any hardware. A saved backend that disappears stays visible but disabled with a fallback note, and open falls back to OpenH264 instead of assuming missing hardware exists.
 
+## 2026-11-07 07:22:30 +00:00 [ubuntu] — Custom Mac-style title bar (BA-105)
+
+Replaced native OS window chrome with an undecorated GLFW window and a short dark client-drawn caption: Mac traffic lights on the left (close / minimize / maximize), centered label, drag-to-move, and double-click maximize. Applies to Banter, Banter Settings, and Banter Stream; hidden in OS fullscreen. Tokens in `theme.rs`, geometry in `titlebar.rs` / `layout::Region::TitleBar`, paint in `skin`, GLFW actions in `platform`. Linux/Wayland keeps traffic lights and maximize; drag-to-move is a no-op when `glfwGetWindowPos` is unavailable.
+
 ## 2026-11-07 00:51:26 -06:00 [ubuntu] — Cut interactive VC latency (BA-97)
 
 Full-stack latency pass (not encoder-only): playout deque ~60 ms (was ~80 ms after prior cut from 200 ms), capture/Opus PCM backlog ~200 ms (was 1–2 s), video RTP sample duration follows encode FPS, default keyframe 1 s, OpenH264 bitrate RC + Low complexity + 1 thread (screen disables AdaptiveQuant/BackgroundDetection), Opus complexity 5, encode tick floor 2 ms, SFU forward caps 24/16. Contract tests in `crates/banter/tests/vc_latency.rs`. Favor interactive delay over archive quality. Do not merge until Owl says so.

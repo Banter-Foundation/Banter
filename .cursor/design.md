@@ -2,6 +2,8 @@
 
 Dear ImGui docking branch, dark style. Fonts: Segoe UI on Windows when `C:\Windows\Fonts\segoeui.ttf` is present; on Linux Liberation Sans, then Noto Sans, then DejaVu Sans.
 
+The OS title bar is off (`GLFW_DECORATED` false). Banter draws a short dark caption (`TITLE_BAR_H` 28 px, `TITLE_BAR_BG`) with Mac traffic lights on the left (close / minimize / maximize), a centered window label, drag-to-move on the rest of the strip, and double-click to maximize or restore. The signed-in shell, Settings, and Stream windows share that chrome. Tokens live in `theme.rs`; hit-testing and drag math in `titlebar.rs`; paint in `skin::paint_title_bar`. Wayland cannot reposition windows from the client, so drag-to-move is a no-op there (traffic lights and maximize still work; compositors often allow Alt-drag).
+
 After login the window is a temporary copy of Discord's screen so the controls are familiar. It is not the final Banter look, and it does not use Discord's logo.
 
 The signed-in window is a fixed column shell. Panels are not dragged.

@@ -93,6 +93,26 @@ pub const HEADER_H: f32 = 48.0;
 pub const USER_PANEL_H: f32 = 52.0;
 pub const VOICE_PANEL_H: f32 = 96.0;
 
+// Client-drawn Mac-style title bar (BA-105). Replaces native OS chrome.
+/// Short caption strip above the Discord-like shell.
+pub const TITLE_BAR_H: f32 = 28.0;
+pub const TITLE_BAR_BG: [f32; 4] = hex(0x1A1B1E);
+pub const TITLE_BAR_TEXT: [f32; 4] = TEXT_SECONDARY;
+/// Traffic-light fill colors (close / minimize / maximize).
+pub const TITLE_BTN_CLOSE: [f32; 4] = hex(0xFF5F57);
+pub const TITLE_BTN_MINIMIZE: [f32; 4] = hex(0xFEBC2E);
+pub const TITLE_BTN_MAXIMIZE: [f32; 4] = hex(0x28C840);
+pub const TITLE_BTN_CLOSE_HOVER: [f32; 4] = hex(0xFF8A84);
+pub const TITLE_BTN_MINIMIZE_HOVER: [f32; 4] = hex(0xFFD35A);
+pub const TITLE_BTN_MAXIMIZE_HOVER: [f32; 4] = hex(0x5ADE72);
+pub const TITLE_BTN_GLYPH: [f32; 4] = hex(0x4D0000);
+pub const TITLE_BTN_R: f32 = 6.0;
+pub const TITLE_BTN_GAP: f32 = 8.0;
+pub const TITLE_BTN_PAD_LEFT: f32 = 12.0;
+/// Extra hit padding beyond the drawn circle radius.
+pub const TITLE_BTN_HIT_PAD: f32 = 4.0;
+pub const TITLE_BAR_LABEL_SIZE: f32 = 12.0;
+
 // Server rail.
 pub const RAIL_ICON: f32 = 48.0;
 pub const RAIL_ICON_GAP: f32 = 8.0;

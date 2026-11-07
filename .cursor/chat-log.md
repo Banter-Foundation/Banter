@@ -1045,6 +1045,16 @@ Owl: Ship GitHub pre-release Version-1-test-11 from current main; Win+Linux(+mac
 
 Agent: Tagged `Version-1-test-11` at `dcbba80` (main `8e1efdc` + BANTER_VERSION bump). Built Linux locally; Windows and macOS arm64 via temporary Actions workflows. Published pre-release with six artifacts. Docker image built locally; GHCR push failed (banter-foundation: Create organization package denied; snowedinowl: 403). Docs retarget PR opened on `cursor/version-1-test-11-effc`. Scratch Win/macOS workflows removed from the PR tip (remain on the release tag commit only).
 
+## 2026-11-07 07:22:30 +0000 — BA-105 Custom Mac-style title bar
+
+Owl: Owl wants a custom title bar: small, themed to the Banter app (dark UI), Mac-style traffic-light min / max / close buttons (left). Replace the native Windows-looking title bar in the screenshot. Before: /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/media/native-titlebar-before.png Related: BA-95 custom theme (parent). Use existing GLFW/ImGui window chrome patterns in crates/banter. Prefer undecorated + client-drawn caption, drag-to-move, double-click maximize if feasible. Keep Linux working too. One PR; do not merge. Note in /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/internal/custom-titlebar.md Return PR URL.
+
+Agent: Implemented undecorated GLFW + client-drawn Mac-style caption (theme tokens, titlebar.rs, layout TitleBar region, skin paint, ui caption on main/settings/stream, platform Decorated(false) + chrome actions). Tests: titlebar / layout / theme. Branch cursor/custom-titlebar-1e90. Do not merge until Owl says so.
+
+### Summary
+
+Native white Windows-looking title bar is replaced by a short dark Banter caption with left traffic lights, drag, and double-click maximize.
+
 ## 2026-11-07 07:02:16 +0000 — BA-99 call memory growth
 
 Owl: Banter RAM keeps growing while in a voice/video call. Investigate and fix retain/leak paths. Own branch from main; do not conflict with BA-97 latency. Document in docs/call-memory-growth.md. At most one PR. Do not touch theme BA-95, cover-flow #80, Emote Library.
