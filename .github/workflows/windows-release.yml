@@ -1,0 +1,35 @@
+# Temporary scratch workflow for cutting Version-1-test-13.2 Windows artifacts.
+# Not part of the permanent CI surface; remove after the release.
+# workflow_dispatch is 403 for the installation token — push triggers the build.
+name: windows-release
+
+on:
+  push:
+    branches:
+      - "cursor/version-1-test-13-2-bb9b"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Release binaries
+        shell: pwsh
+        run: |
+          cargo build -p banter --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p banter-server --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item target/release/banter.exe banter.exe
+          Copy-Item target/release/banter-server.exe banter-server.exe
+          Compress-Archive -Path banter.exe -DestinationPath Banter-windows-version-1-test-13-2.zip -Force
+          Get-Item banter.exe, banter-server.exe, Banter-windows-version-1-test-13-2.zip | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            banter.exe
+            banter-server.exe
+            Banter-windows-version-1-test-13-2.zip

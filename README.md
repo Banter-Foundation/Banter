@@ -71,7 +71,7 @@ podman compose up -d --build
 
 Inside the container the server binds `0.0.0.0` on port `3970` (`BANTER_BIND` / `BANTER_PORT`). Account data stays on the named volume `banter-data`. Point the desktop client at a published port with **User Settings → Developer → Remote**.
 
-Image: Compose builds `banter-server:local` from this checkout. `ghcr.io/snowedinowl/banter:version-1-test-8` is the last tag that landed, until a classic PAT with `write:packages` pushes a newer one. Desktop and server binaries for the current pre-release are [Version-1-test-13.1](https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-13.1).
+Image: Compose builds `banter-server:local` from this checkout. `ghcr.io/snowedinowl/banter:version-1-test-8` is the last tag that landed, until a classic PAT with `write:packages` pushes a newer one. Desktop and server binaries for the current pre-release are [Version-1-test-13.2](https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-13.2).
 
 Open the client twice to try voice between two accounts. They share one server. With **Stay signed in** checked, `client-session.json` stores one login for the next cold start; unchecked keeps the token in memory only for that run. Both clients can stay signed in during the same run because each keeps its token in memory.
 
