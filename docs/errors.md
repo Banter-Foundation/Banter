@@ -21,7 +21,7 @@ Shared types live in `banter_server::errcode` (`BanterIssue`, `ERR_*` constants)
 | `BANTER_VC_JOIN_FAILED` | couldn't join voice | `POST /v1/voice/join` |
 | `BANTER_VC_LEAVE_FAILED` | couldn't leave voice | `POST /v1/voice/leave` |
 | `BANTER_VC_FLAGS_FAILED` | couldn't update voice state | `POST /v1/voice/flags` (mute/deafen/camera/screen) |
-| `BANTER_VC_PUBLISH_FAILED` | (reserved) media publish path | SFU/P2P publish failures |
+| `BANTER_VC_PUBLISH_FAILED` | couldn't capture the screen | Go Live / screen capture open failures (BA-100; Windows DXGI `video_recorder` was raw `0x80070057`) |
 | `BANTER_VC_DEVICE_FAILED` | Banter could not open this microphone/speakers/camera… | cpal / camera open failure |
 | `BANTER_VC_LOOPBACK_FAILED` | couldn't capture audio from {label} | WASAPI speaker or per-app process loopback (BA-92; was raw `0x80070057`) |
 | `BANTER_WS_CONNECT_FAILED` | couldn't connect realtime | `/v1/ws` connect |

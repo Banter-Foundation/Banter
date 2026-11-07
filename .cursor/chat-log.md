@@ -1045,6 +1045,15 @@ Owl: Ship GitHub pre-release Version-1-test-11 from current main; Win+Linux(+mac
 
 Agent: Tagged `Version-1-test-11` at `dcbba80` (main `8e1efdc` + BANTER_VERSION bump). Built Linux locally; Windows and macOS arm64 via temporary Actions workflows. Published pre-release with six artifacts. Docker image built locally; GHCR push failed (banter-foundation: Create organization package denied; snowedinowl: 403). Docs retarget PR opened on `cursor/version-1-test-11-effc`. Scratch Win/macOS workflows removed from the PR tip (remain on the release tag commit only).
 
+## 2026-11-07 06:57:32 +00:00 — BA-100 Windows Go Live 0x80070057
+
+Owl: Voice Connected + 0x80070057 while Go Live/streaming; works on Linux, fails on Windows. Focus Windows-only capture/encode/loopback vs Linux; PR against main.
+
+Agent: BA-92 WASAPI process-loopback fix (#53) is on main. Remaining raw HRESULT came from Windows xcap DXGI video_recorder (E_INVALIDARG) via unsanitized screen: errors — Linux uses PipeWire Cast. Added Still/GDI fallback on recorder failure, AUTOCONVERTPCM on speaker loopback, BANTER_VC_PUBLISH_FAILED screen notices. Branch cursor/fix-windows-stream-80070057-1ccb.
+
+### Summary
+Windows Go Live falls back to paced capture when DXGI recorder returns 0x80070057; voice bar no longer shows the bare HRESULT.
+
 ## 2026-11-07 03:15:54 +0000 — Cover-flow stream switcher preview (BA-96)
 
 Owl: Stream switching previews should look and work like the arched cover-flow reference (tall portrait panels, center tallest, height falloff to edges, horizontal focus cycle). Dark mood, translucent chrome. Against existing stream/source picker UI. PR from main; do not merge until Owl says so. Use gh. Prefs / project-context. Reference still/mp4 in store media when GIF too large.
