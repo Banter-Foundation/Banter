@@ -187,6 +187,12 @@ fn router(state: HttpState) -> Router {
         .route("/v1/messages", post(send_message))
         .route("/v1/messages/{id}", axum::routing::patch(edit_message).delete(delete_message))
         .route("/v1/attachments/{id}", get(attachment))
+        .route("/v1/emote-packs", post(create_emote_pack))
+        .route("/v1/emote-packs/{id}/assets", post(upload_emote_asset))
+        .route("/v1/emote-packs/{id}/subscribe", post(subscribe_emote_pack))
+        .route("/v1/emote-packs/{id}/subscribe", axum::routing::delete(unsubscribe_emote_pack))
+        .route("/v1/emote-assets/{id}", get(emote_asset_file))
+        .route("/v1/emote-picker", get(emote_picker))
         .route("/v1/mentions", get(mentions))
         .route("/v1/mentions/{id}/read", post(read_mention))
         .route("/v1/voice/join", post(join_voice))
@@ -1105,6 +1111,142 @@ async fn list_dms(State(state): State<HttpState>, Auth(account): Auth) -> Result
 }
 
 #[derive(Deserialize)]
+struct CreateEmotePackBody {
+    name: String,
+    slug: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "default_pack_visibility")]
+    visibility: String,
+    /// `user` (default) or `server`.
+    #[serde(default = "default_pack_owner_kind")]
+    owner_kind: String,
+    /// Required when `owner_kind` is `server`.
+    server_id: Option<i64>,
+}
+
+fn default_pack_visibility() -> String {
+    "private".into()
+}
+
+fn default_pack_owner_kind() -> String {
+    "user".into()
+}
+
+async fn create_emote_pack(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Json(body): Json<CreateEmotePackBody>,
+) -> Result<Json<EmotePack>, BanterError> {
+    let visibility = match body.visibility.as_str() {
+        "private" => EmotePackVisibility::Private,
+        "unlisted" => EmotePackVisibility::Unlisted,
+        "public" => EmotePackVisibility::Public,
+        _ => return Err(BanterError::Invalid),
+    };
+    let owner = match body.owner_kind.as_str() {
+        "user" => EmotePackOwner::User,
+        "server" => EmotePackOwner::Server(body.server_id.ok_or(BanterError::Invalid)?),
+        _ => return Err(BanterError::Invalid),
+    };
+    Ok(Json(
+        state
+            .store
+            .create_emote_pack(
+                account.id,
+                &body.name,
+                &body.slug,
+                &body.description,
+                visibility,
+                owner,
+            )
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct UploadEmoteAssetQuery {
+    name: String,
+    kind: String,
+    #[serde(default)]
+    content_type: String,
+}
+
+async fn upload_emote_asset(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(pack_id): Path<i64>,
+    Query(query): Query<UploadEmoteAssetQuery>,
+    body: Bytes,
+) -> Result<Json<EmoteAsset>, BanterError> {
+    let kind = EmoteAssetKind::parse(&query.kind)?;
+    let content_type = if query.content_type.trim().is_empty() {
+        "application/octet-stream"
+    } else {
+        query.content_type.trim()
+    };
+    Ok(Json(
+        state
+            .store
+            .upload_emote_asset(account.id, pack_id, &query.name, kind, content_type, &body)
+            .await?,
+    ))
+}
+
+async fn subscribe_emote_pack(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, BanterError> {
+    state.store.subscribe_emote_pack(account.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unsubscribe_emote_pack(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, BanterError> {
+    state.store.unsubscribe_emote_pack(account.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn emote_asset_file(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+) -> Result<Response, BanterError> {
+    let (asset, bytes) = state.store.read_emote_asset(account.id, id).await?;
+    Ok(([(header::CONTENT_TYPE, asset.content_type)], bytes).into_response())
+}
+
+#[derive(Deserialize)]
+struct EmotePickerQuery {
+    kind: String,
+    source: String,
+    server_id: Option<i64>,
+}
+
+async fn emote_picker(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Query(query): Query<EmotePickerQuery>,
+) -> Result<Json<Vec<EmoteAsset>>, BanterError> {
+    let kind = EmoteAssetKind::parse(&query.kind)?;
+    let source = match query.source.as_str() {
+        "server" => EmotePickerSource::Server,
+        "subscribed" => EmotePickerSource::Subscribed,
+        _ => return Err(BanterError::Invalid),
+    };
+    Ok(Json(
+        state
+            .store
+            .list_emote_assets_for_picker(account.id, query.server_id, kind, source)
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
 struct IncomingFile {
     filename: String,
     data_base64: String,
@@ -1117,6 +1259,9 @@ struct SendBody {
     reply_to: Option<i64>,
     #[serde(default)]
     files: Vec<IncomingFile>,
+    /// Emote-library sticker/GIF asset ids (BA-83). Emotes go in `body` as `:{e:id}:`.
+    #[serde(default)]
+    media_asset_ids: Vec<i64>,
 }
 
 async fn send_message(
@@ -1144,7 +1289,15 @@ async fn send_message(
     let borrowed: Vec<(&str, &[u8])> = files.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice())).collect();
     let mut message = state
         .store
-        .send_message(account.id, body.target, &body.body, body.reply_to, &borrowed).await?;
+        .send_message(
+            account.id,
+            body.target,
+            &body.body,
+            body.reply_to,
+            &borrowed,
+            &body.media_asset_ids,
+        )
+        .await?;
     if let (Some(server_id), ChatTarget::Channel(channel_id)) = (server_id, body.target) {
         let before = message.body.clone();
         state.store.notify_plugin_message(server_id, channel_id, message.id, &before);

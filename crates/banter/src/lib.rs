@@ -15,6 +15,7 @@ pub mod bfmd;
 mod bfmd_paint;
 mod commands;
 mod coverflow;
+mod emote_ui;
 mod icons;
 pub mod layout;
 mod logic;

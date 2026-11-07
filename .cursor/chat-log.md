@@ -1045,6 +1045,33 @@ Owl: Ship GitHub pre-release Version-1-test-11 from current main; Win+Linux(+mac
 
 Agent: Tagged `Version-1-test-11` at `dcbba80` (main `8e1efdc` + BANTER_VERSION bump). Built Linux locally; Windows and macOS arm64 via temporary Actions workflows. Published pre-release with six artifacts. Docker image built locally; GHCR push failed (banter-foundation: Create organization package denied; snowedinowl: 403). Docs retarget PR opened on `cursor/version-1-test-11-effc`. Scratch Win/macOS workflows removed from the PR tip (remain on the release tag commit only).
 
+## 2026-11-07 BA-83 Emote Library implement
+
+Owl: Owl approved the Emote Library plan and said go ahead; he’ll change anything later if needed.
+
+Plan (authoritative): /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/docs/emote-library.md
+Carbon behavior dump: /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/internal/carbon-media-emote-behavior.md
+
+Locked / default decisions for this PR (Owl can revise later):
+- GIF: 15s max classic_gif + video; muted in-view + hover; no sound v1
+- Stickers: Model A (sticker-primary send; Discord-like) — planner suggestion
+- Mixed packs OK; Discord-like `:name:` insert with stable asset id stored; personal subscribe-to-keep yes
+- BFMD `{e:N}` for emote size (default 22px)
+- No mock/seed packs — real empty library until user uploads
+- No Unicode emoji keyboard; reactions deferred
+
+Prefs: D:\Projects\Project Banter never E:; clear commits; good docs; one coherent PR (or stacked PRs if huge — prefer one shippable vertical slice: schema + upload + picker + send/render for emotes/stickers/GIFs + pack subscribe basics).
+
+Do not merge. Avoid colliding with open unrelated PRs where possible.
+
+Update the plan doc status line to “approved for implement (Owl 2026-11-07); sticker Model A default”.
+Return PR URL(s) + what shipped vs deferred.
+
+Agent: Implemented BA-83 vertical slice on branch `cursor/emote-library-3011` (schema 007, upload/duration gates, subscribe, picker, Model A stickers, GIF media, BFMD `{e}`, docs). Plan status updated. Do not merge until Owl says so.
+
+### Summary
+Emote Library schema + API + composer picker ship as one PR; inline texture decode, Library settings page, and video autoplay chrome remain follow-ups.
+
 ## User
 
 Owl also wants a command system for Banter chat. Coordinate with BA-103 autosuggest worker if overlapping compose UI, but own branch from main and one PR. Prefer `/` slash commands Discord-like: type `/` → popup list, Tab/Enter run, args parsed. v1 commands (wire real ones that exist in client; stubs OK labeled): /me, /shrug or similar fun; /mute /deafen toggles if hooks exist; /join or channel switch if easy; Extensible registry so mods/plugins can register later if plugin API allows; otherwise a clear CommandRegistry trait. Docs: docs/chat-commands.md. Prefs: never E:; clear commits; do not merge; avoid media PRs. Owl: allow the server to change the command prefix (not hardcode `/` only), and support alias commands (multiple names → same command). Persist prefix + aliases server-side (guild/server settings). Client should use the configured prefix for the popup and parsing. Include aliases in registry + docs. Keep one PR. Owl: servers must be able to change the command prefix and define alias commands. Persist per-server (guild) settings; expose in server settings UI if hooks exist. Update docs/chat-commands.md. Keep one PR.

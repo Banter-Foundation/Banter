@@ -1,3 +1,7 @@
+## 2026-11-07 01:27:06 -06:00 [ubuntu] — Emote Library vertical slice (BA-83)
+
+Ships packs/assets/subscriptions schema (`007_emote_library`), upload with Carbon size caps and locked 15s GIF duration (classic + video), personal subscribe + server packs, BFMD `{e}` emote sizing (default 22px), stable `:{e:id}:` tokens, Model A sticker send, GIF message media, and composer Emotes/Stickers/GIFs picker. No mock packs; Unicode emoji keyboard and reactions stay deferred. Docs: `docs/emote-library.md`.
+
 ## 2026-11-07 07:13:31 +00:00 [ubuntu] — Chat slash command system (BA-104)
 
 Discord-like composer commands with a configurable per-guild prefix (not hard-coded `/`), alias map, popup (Tab/Enter), and `CommandRegistry` for later plugins. Built-ins: `me`, `shrug`/`shruggie`, `tableflip`, `mute`, `deafen`, `join`, stub `nick`, hidden `debugnow`. Server persists prefix + aliases (`007_chat_commands`); Chat Commands in the server menu. Docs: `docs/chat-commands.md`.

@@ -128,3 +128,35 @@ fn render_plain_helper_strips_commands() {
         "bold plain"
     );
 }
+
+#[test]
+fn emote_size_slot_defaults_and_clamps() {
+    assert_eq!(bfmd::DEFAULT_EMOTE_PX, 22.0);
+    let runs = bfmd::parse("<{e:48}>x").runs;
+    assert_eq!(runs[0].style.emote_size, Some(48.0));
+    let runs = bfmd::parse("<{e:48}>x<{!e}>y").runs;
+    assert_eq!(runs[0].style.emote_size, Some(48.0));
+    assert_eq!(runs[1].style.emote_size, None);
+    // Below 16 and above 128 clamp into range.
+    let low = bfmd::parse("<{e:8}>x").runs;
+    assert_eq!(low[0].style.emote_size, Some(16.0));
+    let high = bfmd::parse("<{e:200}>x").runs;
+    assert_eq!(high[0].style.emote_size, Some(128.0));
+    // Independent from text size `{s}`.
+    let both = bfmd::parse("<{s:36},{e:48}>x").runs;
+    assert_eq!(both[0].style.size, Some(36.0));
+    assert_eq!(both[0].style.emote_size, Some(48.0));
+    assert_eq!(both[0].style.emote_size_or_default(), 48.0);
+    assert_eq!(bfmd::Style::default().emote_size_or_default(), 22.0);
+}
+
+#[test]
+fn emote_token_scan_finds_stable_asset_ids() {
+    let text = "hi :{e:42}: and :{e:7}: done";
+    let hits = bfmd::scan_emote_tokens(text);
+    // (byte_start, byte_len, asset_id)
+    assert_eq!(hits, vec![(3, 8, 42), (16, 7, 7)]);
+    // Unresolved / malformed stay text — scanner only matches `:{e:digits}:`.
+    assert!(bfmd::scan_emote_tokens(":party_parrot:").is_empty());
+    assert!(bfmd::scan_emote_tokens(":{e:}:").is_empty());
+}

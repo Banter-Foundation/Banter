@@ -450,19 +450,19 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
 
     assert_eq!(
         store
-            .send_message(stranger.id, ChatTarget::Channel(text_id), "nope", None, &[]).await
+            .send_message(stranger.id, ChatTarget::Channel(text_id), "nope", None, &[], &[]).await
             .unwrap_err(),
         BanterError::NotMember
     );
     assert_eq!(
         store
-            .send_message(ada.id, ChatTarget::Channel(voice_id), "talk", None, &[]).await
+            .send_message(ada.id, ChatTarget::Channel(voice_id), "talk", None, &[], &[]).await
             .unwrap_err(),
         BanterError::NotTextChannel
     );
     assert_eq!(
         store
-            .send_message(ada.id, ChatTarget::Channel(text_id), "   ", None, &[]).await
+            .send_message(ada.id, ChatTarget::Channel(text_id), "   ", None, &[], &[]).await
             .unwrap_err(),
         BanterError::EmptyMessage
     );
@@ -474,13 +474,14 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
                 &"a".repeat(MAX_MESSAGE_CHARS + 1),
                 None,
                 &[],
+                &[],
             ).await
             .unwrap_err(),
         BanterError::MessageTooLong
     );
 
     let first = store
-        .send_message(ada.id, ChatTarget::Channel(text_id), "one", None, &[]).await
+        .send_message(ada.id, ChatTarget::Channel(text_id), "one", None, &[], &[]).await
         .unwrap();
     let second = store
         .send_message(
@@ -489,13 +490,14 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
             "two",
             Some(first.id),
             &[],
+            &[],
         ).await
         .unwrap();
     assert_eq!(second.reply_to, Some(first.id));
     assert_eq!(second.author_username, "bob");
     assert_eq!(second.author_nickname.as_deref(), Some("Bobby"));
     let third = store
-        .send_message(ada.id, ChatTarget::Channel(text_id), "three", None, &[]).await
+        .send_message(ada.id, ChatTarget::Channel(text_id), "three", None, &[], &[]).await
         .unwrap();
     let page = store
         .messages(bob.id, ChatTarget::Channel(text_id), 2).await
@@ -516,6 +518,7 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
             "elsewhere",
             None,
             &[],
+            &[],
         ).await
         .unwrap();
     assert_eq!(
@@ -525,6 +528,7 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
                 ChatTarget::Channel(text_id),
                 "bad reply",
                 Some(elsewhere.id),
+                &[],
                 &[],
             ).await
             .unwrap_err(),
@@ -546,6 +550,7 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
             "",
             None,
             &[("../secret.txt", b"abc")],
+            &[],
         ).await
         .unwrap();
     assert_eq!(with_file.body, "");
@@ -571,6 +576,7 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
                 "big",
                 None,
                 &[("a.bin", big.as_slice())],
+                &[],
             ).await
             .unwrap_err(),
         BanterError::FileTooLarge
@@ -583,10 +589,11 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
             "Hello there",
             None,
             &[],
+            &[],
         ).await
         .unwrap();
     store
-        .send_message(ada.id, ChatTarget::Channel(text_id), "other", None, &[]).await
+        .send_message(ada.id, ChatTarget::Channel(text_id), "other", None, &[], &[]).await
         .unwrap();
     let found = store
         .search_messages(bob.id, ChatTarget::Channel(text_id), "hello").await
@@ -614,6 +621,7 @@ async fn messages_reply_edit_delete_attachment_search_mentions() {
             ChatTarget::Channel(text_id),
             "hi @bob and @bob @stranger @ada",
             None,
+            &[],
             &[],
         ).await
         .unwrap();
@@ -682,7 +690,7 @@ async fn messages_persist_nested_reply_threads() {
     store.join_invite(bob.id, &code).await.unwrap();
 
     let root = store
-        .send_message(ada.id, ChatTarget::Channel(text_id), "root", None, &[])
+        .send_message(ada.id, ChatTarget::Channel(text_id), "root", None, &[], &[])
         .await
         .unwrap();
     let child = store
@@ -691,6 +699,7 @@ async fn messages_persist_nested_reply_threads() {
             ChatTarget::Channel(text_id),
             "child",
             Some(root.id),
+            &[],
             &[],
         )
         .await
@@ -702,6 +711,7 @@ async fn messages_persist_nested_reply_threads() {
             "grand",
             Some(child.id),
             &[],
+            &[],
         )
         .await
         .unwrap();
@@ -712,7 +722,7 @@ async fn messages_persist_nested_reply_threads() {
     store.accept_friend_request(bob.id, request.id).await.unwrap();
     let dm = store.open_dm(ada.id, bob.id).await.unwrap();
     let dm_root = store
-        .send_message(ada.id, ChatTarget::Direct(dm.id), "dm root", None, &[])
+        .send_message(ada.id, ChatTarget::Direct(dm.id), "dm root", None, &[], &[])
         .await
         .unwrap();
     let dm_reply = store
@@ -721,6 +731,7 @@ async fn messages_persist_nested_reply_threads() {
             ChatTarget::Direct(dm.id),
             "dm nested",
             Some(dm_root.id),
+            &[],
             &[],
         )
         .await
@@ -1107,7 +1118,7 @@ async fn direct_message_call() {
     let voice_id = home.categories[1].channels[0].id;
     let text_id = home.categories[0].channels[0].id;
     let sent = store
-        .send_message(ada.id, ChatTarget::Direct(chat.id), "ping @bob", None, &[]).await
+        .send_message(ada.id, ChatTarget::Direct(chat.id), "ping @bob", None, &[], &[]).await
         .unwrap();
     assert_eq!(sent.author_nickname, None);
     assert_eq!(

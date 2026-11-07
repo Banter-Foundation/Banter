@@ -47,6 +47,9 @@ pub enum BanterError {
     MessageTooLong,
     #[error("file is empty or larger than the attachment limit")]
     FileTooLarge,
+    /// Classic or video GIF longer than the hard 15s cap (BA-83).
+    #[error("Max 15 seconds")]
+    EmoteDurationTooLong,
     #[error("that channel does not accept text messages")]
     NotTextChannel,
     #[error("that channel is not a voice channel")]
@@ -103,6 +106,7 @@ impl BanterError {
             Self::EmptyMessage => "BANTER_EMPTY_MESSAGE",
             Self::MessageTooLong => "BANTER_MESSAGE_TOO_LONG",
             Self::FileTooLarge => "BANTER_FILE_TOO_LARGE",
+            Self::EmoteDurationTooLong => "BANTER_EMOTE_DURATION",
             Self::NotTextChannel => "BANTER_NOT_TEXT_CHANNEL",
             Self::NotVoiceChannel => "BANTER_NOT_VOICE_CHANNEL",
             Self::NotBoardChannel => "BANTER_NOT_BOARD_CHANNEL",

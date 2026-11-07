@@ -111,6 +111,7 @@ Document defaults (slots empty): theme foreground, theme body size (**16pt**), t
 | --- | --- | --- | --- |
 | `v` | file | integer | Format version. Only meaningful as the first group in the file. Unknown future versions: parse what is recognized, warn. |
 | `s` | size | number | Font size in **points**. Must be `> 0`. `{s:36}` → 36pt. |
+| `e` | emote size | number | Inline **emote** height in **CSS px** (BA-83). Independent from `{s}`. Default **22** when unset. Values clamp to **16–128**. `{e:48}` → 48px emotes until `{!e}`. |
 | `c` | color | hex | Foreground. `{c=0xFFFFFF}` or `{c:#FFFFFF}`. 8-digit form is RGBA. |
 | `bg` | background | hex | Highlight / text background. |
 | `b` | bold | bool | Bold. `{b:t}` |
@@ -122,7 +123,9 @@ Document defaults (slots empty): theme foreground, theme body size (**16pt**), t
 | `h` | heading | `1`..`6` | Heading level until `{!h}` or another `h`. Used for title and for export. **Semantic only** — not a font-size preset. Applying `{h}` must not set, replace, or close `{s}`. The renderer does **not** substitute a heading size table; body size is theme `size_note` unless `{s}` is set. |
 | `hr` | rule | bool | Horizontal rule. `{hr}` == `{hr:t}` (flag; omitted value means `t`). `{hr:f}` is the same as `{!hr}`. While the slot is on, the renderer draws a full-width rule for that paragraph (theme `border`, or the active `{c}` if set). Keep the style-map model; this is not HTML `<hr>`. |
 
-**Close**: `{!s}` removes slot `s` (revert that property to default). `{!}` or `{!*}` clears **all** slots.
+**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!}` or `{!*}` clears **all** slots.
+
+**Emote tokens (not BFMD commands):** message bodies may include stable `:{e:ASSET_ID}:` tokens for custom library emotes. Display size follows the active `{e}` slot (default 22px). Stickers and GIFs are message media, not BFMD tokens.
 
 **Replace**: a new `set` for a name that is already active **closes the previous value and applies the new one**. No history of the old value is kept.
 

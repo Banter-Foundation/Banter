@@ -40,6 +40,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "007_chat_commands",
         include_str!("migrations/007_chat_commands.sql"),
     ),
+    (
+        "008_emote_library",
+        include_str!("migrations/008_emote_library.sql"),
+    ),
 ];
 
 /// Transaction-scoped advisory lock so concurrent boots serialize migrate.
