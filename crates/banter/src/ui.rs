@@ -4,7 +4,7 @@
 //! controls sit where they are familiar. It is not Banter's final look, and the
 //! home mark is not Discord's logo.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -97,7 +97,7 @@ use crate::stream_watch::{
 };
 use crate::suggest::{
     apply_suggestion, suggest, DismissState, MemberHint, SuggestQuery, Suggestion,
-    SuggestionEngine,
+    SuggestionEngine, MAX_OWN_MEMORY, WEIGHT_DRAFT, WEIGHT_OWN, WEIGHT_PEER,
 };
 use crate::theme::*;
 use crate::titlebar::{
@@ -303,6 +303,8 @@ pub(crate) struct App {
     suggest_engine: SuggestionEngine,
     /// Message bodies last ingested into `suggest_engine` (channel / DM id + count fingerprint).
     suggest_history_key: String,
+    /// Signed-in user's own message bodies from channels/DMs visited this session (id, body).
+    suggest_own_memory: VecDeque<(i64, String)>,
     suggest_dismiss: DismissState,
     suggest_index: usize,
     /// When true, Escape this frame dismissed suggestions — skip other Escape handlers.
@@ -632,6 +634,7 @@ impl App {
             composer: String::new(),
             suggest_engine: SuggestionEngine::new(),
             suggest_history_key: String::new(),
+            suggest_own_memory: VecDeque::new(),
             suggest_dismiss: DismissState::default(),
             suggest_index: 0,
             suggest_escape_consumed: false,
@@ -5800,25 +5803,93 @@ impl App {
         8.0 + strip + suggest + COMPOSER_H + COMPOSER_BOTTOM
     }
 
+    /// Remember the signed-in user's messages so other channels visited this session still train.
+    fn remember_own_suggest_messages(&mut self) {
+        let Some(me) = self.account.as_ref().map(|account| account.id) else {
+            return;
+        };
+        for message in &self.messages {
+            if message.author_id != me || message.body.trim().is_empty() {
+                continue;
+            }
+            if self
+                .suggest_own_memory
+                .iter()
+                .any(|(id, _)| *id == message.id)
+            {
+                continue;
+            }
+            self.suggest_own_memory
+                .push_front((message.id, message.body.clone()));
+        }
+        while self.suggest_own_memory.len() > MAX_OWN_MEMORY {
+            self.suggest_own_memory.pop_back();
+        }
+    }
+
     /// Refresh the local n-gram model when channel/DM history identity changes.
+    /// Own messages (current channel + session memory) use [`WEIGHT_OWN`]; peers use [`WEIGHT_PEER`].
     fn refresh_suggest_engine(&mut self) {
+        self.remember_own_suggest_messages();
         let last_id = self.messages.last().map(|m| m.id).unwrap_or(0);
+        let me = self.account.as_ref().map(|account| account.id).unwrap_or(0);
         let key = match (&self.place, &self.selected) {
-            (Place::Server(_), Some(channel)) => {
-                format!("c:{}:{}:{}", channel.id, self.messages.len(), last_id)
-            }
-            (Place::Direct(dm_id), _) => {
-                format!("d:{dm_id}:{}:{}", self.messages.len(), last_id)
-            }
-            _ => format!("x:{}:{}", self.messages.len(), last_id),
+            (Place::Server(_), Some(channel)) => format!(
+                "c:{}:{}:{}:{}:{}",
+                channel.id,
+                self.messages.len(),
+                last_id,
+                me,
+                self.suggest_own_memory.len()
+            ),
+            (Place::Direct(dm_id), _) => format!(
+                "d:{dm_id}:{}:{}:{}:{}",
+                self.messages.len(),
+                last_id,
+                me,
+                self.suggest_own_memory.len()
+            ),
+            _ => format!(
+                "x:{}:{}:{}:{}",
+                self.messages.len(),
+                last_id,
+                me,
+                self.suggest_own_memory.len()
+            ),
         };
         if key == self.suggest_history_key {
             return;
         }
-        self.suggest_engine = SuggestionEngine::new();
-        self.suggest_engine
-            .ingest(self.messages.iter().map(|message| message.body.as_str()));
+        let mut engine = SuggestionEngine::new();
+        let channel_ids: HashSet<i64> = self.messages.iter().map(|message| message.id).collect();
+        for message in &self.messages {
+            let weight = if message.author_id == me {
+                WEIGHT_OWN
+            } else {
+                WEIGHT_PEER
+            };
+            engine.ingest_weighted(&message.body, weight);
+        }
+        // Cross-channel own history already loaded this session (skip ids in the open channel).
+        for (id, body) in &self.suggest_own_memory {
+            if channel_ids.contains(id) {
+                continue;
+            }
+            engine.ingest_weighted(body, WEIGHT_OWN);
+        }
+        self.suggest_engine = engine;
         self.suggest_history_key = key;
+    }
+
+    /// History engine plus the current composer draft (higher than peers, below own sends).
+    fn suggest_engine_with_draft(&mut self) -> SuggestionEngine {
+        self.refresh_suggest_engine();
+        let mut engine = self.suggest_engine.clone();
+        let draft = self.composer.trim();
+        if !draft.is_empty() {
+            engine.ingest_weighted(draft, WEIGHT_DRAFT);
+        }
+        engine
     }
 
     /// Channel members, or the DM peer (+ self) when in a direct chat.
@@ -5859,16 +5930,18 @@ impl App {
     }
 
     fn prepare_composer_suggestions(&mut self) -> Vec<Suggestion> {
-        self.refresh_suggest_engine();
         self.suggest_dismiss.clear_if_changed(&self.composer);
         if self.composer.is_empty() || self.suggest_dismiss.is_dismissed(&self.composer) {
             self.suggest_index = 0;
+            // Still refresh so own memory stays warm while browsing.
+            self.refresh_suggest_engine();
             return Vec::new();
         }
+        let engine = self.suggest_engine_with_draft();
         let members = self.suggest_member_hints();
         let emotes = self.suggest_emote_names();
         let hits = suggest(
-            &self.suggest_engine,
+            &engine,
             &SuggestQuery {
                 composer: &self.composer,
                 members: &members,

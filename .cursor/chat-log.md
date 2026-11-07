@@ -1066,6 +1066,15 @@ Agent: Added `crates/banter/src/suggest.rs` (local bigram/trigram + static phras
 ### Summary
 Composer autosuggest for try-in-client testing: local n-gram prediction plus @mentions; no cloud LLM; own PR from main.
 
+## 2026-11-07 BA-103 follow-up — own-history weighting
+
+Owl: next-word prediction must also learn from the user’s own messages (their history / drafts), not only others in the channel. Prefer weighting the signed-in user’s past channel messages (and optionally cross-channel own messages if already loaded) higher than peers. Update PR #90 + docs/chat-autosuggest.md.
+
+Agent: Added WEIGHT_OWN/WEIGHT_DRAFT/WEIGHT_PEER; UI remembers own bodies across visited channels this session and ingests the current draft each suggest pass. Tests own_messages_outweigh_peers_for_next_word + draft_text_trains_next_word. Docs updated in store and repo. Pushed to PR #90.
+
+### Summary
+Own messages and drafts now outrank peer history in local next-word prediction.
+
 ## 2026-11-07 BA-106 Discord-like server settings window
 
 Owl: before BA-23 roles/badges/member-list feature walk, add a Discord-like server settings window and put roles, badges, and member-list settings in it while you’re at it. Behavior: open from server context (gear / right-click server) → left nav sections like Discord Server Settings → right content pane. Include sections for Overview, Roles, Badges (or Members & badges), Member list / display. Wire real Banter APIs where they exist; if role/badge APIs aren’t ready, ship the window chrome + section shells with working navigation and clear “coming soon” only for empty backends — prefer implementing what Postgres/API already supports. Prefs: never E:; clear commits; one PR; do not merge. Docs note: /cursor/stores/.../internal/server-settings-window.md. Coordinate: BA-23 stays queued until this lands enough to walk features in Settings. Client Settings (user) already exist — this is **server** settings, separate window. Return PR URL + which sections are live vs stub.

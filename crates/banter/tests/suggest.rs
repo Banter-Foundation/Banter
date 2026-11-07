@@ -4,7 +4,7 @@
 
 use banter::suggest::{
     apply_suggestion, active_token, suggest, ActiveToken, MemberHint, SuggestKind, SuggestQuery,
-    SuggestionEngine,
+    SuggestionEngine, WEIGHT_DRAFT, WEIGHT_OWN, WEIGHT_PEER,
 };
 
 fn engine_with(bodies: &[&str]) -> SuggestionEngine {
@@ -219,4 +219,53 @@ fn dismiss_stays_until_composer_changes() {
     assert!(!dismiss.is_dismissed("thanks"));
     dismiss.clear_if_changed("thanks");
     assert!(!dismiss.is_dismissed("thanks"));
+}
+
+#[test]
+fn own_messages_outweigh_peers_for_next_word() {
+    let mut engine = SuggestionEngine::new();
+    // Peers repeat "sounds fine" more times than the user said "sounds good",
+    // but OWN weight must still prefer the user's phrasing.
+    for _ in 0..3 {
+        engine.ingest_weighted("sounds fine thanks", WEIGHT_PEER);
+    }
+    engine.ingest_weighted("sounds good thanks", WEIGHT_OWN);
+    let hits = suggest(
+        &engine,
+        &SuggestQuery {
+            composer: "sounds ",
+            members: &[],
+            emotes: &[],
+            limit: 8,
+        },
+    );
+    let good = hits.iter().position(|s| s.insert == "good");
+    let fine = hits.iter().position(|s| s.insert == "fine");
+    assert!(
+        good.is_some(),
+        "expected own next-word 'good' in {hits:?}"
+    );
+    assert!(
+        fine.map(|i| good.unwrap() < i).unwrap_or(true),
+        "own 'good' should rank above peer 'fine', got {hits:?}"
+    );
+}
+
+#[test]
+fn draft_text_trains_next_word() {
+    let mut engine = SuggestionEngine::new();
+    engine.ingest_weighted("ship it tonight", WEIGHT_DRAFT);
+    let hits = suggest(
+        &engine,
+        &SuggestQuery {
+            composer: "ship ",
+            members: &[],
+            emotes: &[],
+            limit: 8,
+        },
+    );
+    assert!(
+        hits.iter().any(|s| s.kind == SuggestKind::Phrase && s.insert == "it"),
+        "draft should teach next-word 'it', got {hits:?}"
+    );
 }

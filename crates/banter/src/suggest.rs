@@ -2,6 +2,8 @@
 //!
 //! No cloud LLM. History bodies + a small static phrase list train a lightweight
 //! bigram/trigram model for next-word / prefix completions (BA-103).
+//! The signed-in user's own messages and composer draft are ingested at higher
+//! weights than peers (`WEIGHT_OWN` / `WEIGHT_DRAFT` / `WEIGHT_PEER`).
 
 use std::collections::HashMap;
 
@@ -34,6 +36,15 @@ const STATIC_PHRASES: &[&str] = &[
 
 const MAX_HISTORY_MESSAGES: usize = 200;
 const MAX_NGRAM_KEYS: usize = 4_000;
+
+/// Weight for other people's messages in the open channel/DM.
+pub const WEIGHT_PEER: u32 = 1;
+/// Weight for the signed-in user's own messages (channel history and session memory).
+pub const WEIGHT_OWN: u32 = 4;
+/// Weight for the current composer draft (in-progress text).
+pub const WEIGHT_DRAFT: u32 = 3;
+/// Cap on remembered own bodies from other channels visited this session.
+pub const MAX_OWN_MEMORY: usize = 100;
 
 /// Member row the UI already has for the open server / DM peer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,19 +130,38 @@ impl SuggestionEngine {
         let mut engine = Self::default();
         for phrase in STATIC_PHRASES {
             engine.add_phrase(phrase);
-            engine.ingest_text(phrase);
+            engine.ingest_text(phrase, WEIGHT_PEER);
         }
         engine
     }
 
-    /// Rebuild counts from channel/DM message bodies (newest or oldest order both fine).
+    /// Rebuild counts from channel/DM message bodies at peer weight (newest or oldest order both fine).
     pub fn ingest(&mut self, bodies: impl IntoIterator<Item = impl AsRef<str>>) {
+        self.ingest_weighted_many(bodies.into_iter().map(|b| (b, WEIGHT_PEER)));
+    }
+
+    /// Ingest one body with an explicit weight (own history should use [`WEIGHT_OWN`]).
+    pub fn ingest_weighted(&mut self, text: impl AsRef<str>, weight: u32) {
+        if weight == 0 {
+            return;
+        }
+        self.ingest_text(text.as_ref(), weight);
+    }
+
+    /// Ingest many `(body, weight)` pairs, capped at [`MAX_HISTORY_MESSAGES`] samples.
+    pub fn ingest_weighted_many(
+        &mut self,
+        samples: impl IntoIterator<Item = (impl AsRef<str>, u32)>,
+    ) {
         let mut n = 0;
-        for body in bodies {
+        for (body, weight) in samples {
             if n >= MAX_HISTORY_MESSAGES {
                 break;
             }
-            self.ingest_text(body.as_ref());
+            if weight == 0 {
+                continue;
+            }
+            self.ingest_text(body.as_ref(), weight);
             n += 1;
         }
     }
@@ -147,7 +177,8 @@ impl SuggestionEngine {
         }
     }
 
-    fn ingest_text(&mut self, text: &str) {
+    fn ingest_text(&mut self, text: &str, weight: u32) {
+        let weight = weight.max(1);
         let tokens = tokenize(text);
         if tokens.is_empty() {
             return;
@@ -156,7 +187,7 @@ impl SuggestionEngine {
             self.add_phrase(&tokens.join(" "));
         }
         for w in &tokens {
-            *self.unigram.entry(w.clone()).or_insert(0) += 1;
+            *self.unigram.entry(w.clone()).or_insert(0) += weight;
         }
         for i in 0..tokens.len().saturating_sub(1) {
             let key = tokens[i].clone();
@@ -166,7 +197,7 @@ impl SuggestionEngine {
                 .entry(key)
                 .or_default()
                 .entry(next)
-                .or_insert(0) += 1;
+                .or_insert(0) += weight;
         }
         for i in 0..tokens.len().saturating_sub(2) {
             let key = format!("{} {}", tokens[i], tokens[i + 1]);
@@ -176,7 +207,7 @@ impl SuggestionEngine {
                 .entry(key)
                 .or_default()
                 .entry(next)
-                .or_insert(0) += 1;
+                .or_insert(0) += weight;
         }
         self.trim_maps();
     }
