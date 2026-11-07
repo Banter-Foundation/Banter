@@ -18,7 +18,8 @@ use std::borrow::Cow;
 use banter_server::LayerId;
 use openh264::decoder::Decoder;
 use openh264::encoder::{
-    BitRate, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Profile, UsageType,
+    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Profile,
+    RateControlMode, UsageType,
 };
 use openh264::formats::{YUVSlices, YUVSource};
 use openh264::OpenH264API;
@@ -70,6 +71,8 @@ impl OpusTrack {
         encoder
             .set_bitrate(opus::Bitrate::Bits(USER_AUDIO_BPS))
             .map_err(|err| err.to_string())?;
+        // Complexity 5 is a common interactive trade-off (default 10 burns CPU for little delay win).
+        encoder.set_complexity(5).map_err(|err| err.to_string())?;
         encoder
             .set_inband_fec(true)
             .map_err(|err| err.to_string())?;
@@ -87,6 +90,7 @@ impl OpusTrack {
         encoder
             .set_bitrate(opus::Bitrate::Bits(STREAM_AUDIO_BPS))
             .map_err(|err| err.to_string())?;
+        encoder.set_complexity(5).map_err(|err| err.to_string())?;
         encoder.set_dtx(true).map_err(|err| err.to_string())?;
         Ok(Self {
             encoder,
@@ -737,12 +741,26 @@ fn build_openh264(screen: bool, fps: f32, bps: u32, keyframe_ms: u64) -> Result<
         UsageType::CameraVideoRealTime
     };
     let gop = gop_frames(fps, keyframe_ms);
-    let config = EncoderConfig::new()
+    // Bitrate RC + single thread + Low complexity favor interactive delay over archive quality.
+    // ScreenContentRealTime rejects AdaptiveQuant / BackgroundDetection (harmless ParamValidation
+    // warnings) — turn those off for screen so the encoder stays on the validated path.
+    let mut config = EncoderConfig::new()
         .bitrate(BitRate::from_bps(bps.max(30_000)))
         .max_frame_rate(FrameRate::from_hz(fps.max(1.0)))
         .profile(Profile::Baseline)
         .usage_type(usage)
+        .rate_control_mode(RateControlMode::Bitrate)
+        .complexity(Complexity::Low)
+        .num_threads(1)
+        .long_term_reference(false)
         .intra_frame_period(IntraFramePeriod::from_num_frames(gop));
+    if screen {
+        // Keep scene-change detect on (OpenH264 asks for it). AQ / background
+        // detection are ParamValidation rejects for ScreenContentRealTime.
+        config = config
+            .adaptive_quantization(false)
+            .background_detection(false);
+    }
     Encoder::with_api_config(OpenH264API::from_source(), config).map_err(|err| err.to_string())
 }
 

@@ -443,7 +443,7 @@ unsafe fn pump_capture(
             let mut map = pcm.lock().expect("source audio");
             let queue = map.entry(id.to_string()).or_default();
             queue.extend(samples);
-            while queue.len() > 48_000 {
+            while queue.len() > super::pcm_backlog_samples() {
                 queue.pop_front();
             }
         }

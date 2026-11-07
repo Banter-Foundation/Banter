@@ -7,8 +7,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::model::{LayerId, MediaKind, deliverable_layer};
 
-pub const VIDEO_QUEUE_CAP: usize = 64;
-pub const AUDIO_QUEUE_CAP: usize = 32;
+/// Worst-case per-subscriber video backlog under fan-out pressure.
+/// Live `push` drains immediately; this only bounds stalled subscribers.
+pub const VIDEO_QUEUE_CAP: usize = 24;
+/// Worst-case per-subscriber audio backlog. Kept smaller than video so a stuck
+/// viewer cannot pin peers behind a second of Opus.
+pub const AUDIO_QUEUE_CAP: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TrackKey {
@@ -397,6 +401,19 @@ mod tests {
         assert!(wanted.contains(&LayerId::Full));
         let keys = table.take_keyframes();
         assert!(keys.iter().any(|key| key.layer == LayerId::Full && key.publisher == 4));
+    }
+
+    #[test]
+    fn forward_queue_caps_stay_interactive() {
+        assert!(
+            VIDEO_QUEUE_CAP <= 24,
+            "video forward backlog must stay short for live VC"
+        );
+        assert!(
+            AUDIO_QUEUE_CAP <= 16,
+            "audio forward backlog must stay shorter than video"
+        );
+        assert!(AUDIO_QUEUE_CAP < VIDEO_QUEUE_CAP);
     }
 
     #[test]

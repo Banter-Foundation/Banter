@@ -20,7 +20,15 @@ mod screencast;
 pub use encode::{
     list_available_encoders, list_available_encoders_preferring, AvailableEncoder, EncoderPick,
 };
-pub use rtc::EncodeSettings;
+pub use rtc::{playback_cap_samples, EncodeSettings};
+
+/// Max PCM samples retained before Opus encode / capture drop (~200 ms @ 48 kHz).
+///
+/// Was a full second (or two) of backlog, which turned a stall into delayed audio
+/// instead of a short drop.
+pub fn pcm_backlog_samples() -> usize {
+    9_600
+}
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::{HashMap, VecDeque};
@@ -486,7 +494,7 @@ fn push_mono(data: &[i16], channels: u16, store: &Mutex<VecDeque<i16>>) {
         let sum: i32 = frame.iter().map(|sample| *sample as i32).sum();
         queue.push_back((sum / channels as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16);
     }
-    let cap = 48_000 * 2;
+    let cap = pcm_backlog_samples();
     while queue.len() > cap {
         queue.pop_front();
     }
@@ -798,7 +806,7 @@ fn open_input_queue(
                 let mut map = store.lock().expect("source audio");
                 let bucket = map.entry(id.clone()).or_default();
                 bucket.extend(samples);
-                while bucket.len() > 48_000 {
+                while bucket.len() > pcm_backlog_samples() {
                     bucket.pop_front();
                 }
             } else {
@@ -1008,7 +1016,7 @@ fn audio_loop(
 fn push_pcm(slot: &Mutex<VecDeque<i16>>, samples: &[i16]) {
     let mut queue = slot.lock().expect("opus pcm");
     queue.extend(samples);
-    while queue.len() > 48_000 {
+    while queue.len() > pcm_backlog_samples() {
         queue.pop_front();
     }
 }

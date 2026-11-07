@@ -1044,3 +1044,27 @@ Agent: PR #56 opened. Do not merge until Owl says so.
 Owl: Ship GitHub pre-release Version-1-test-11 from current main; Win+Linux(+mac if prior) artifacts; GHCR if possible; docs retarget via PR.
 
 Agent: Tagged `Version-1-test-11` at `dcbba80` (main `8e1efdc` + BANTER_VERSION bump). Built Linux locally; Windows and macOS arm64 via temporary Actions workflows. Published pre-release with six artifacts. Docker image built locally; GHCR push failed (banter-foundation: Create organization package denied; snowedinowl: 403). Docs retarget PR opened on `cursor/version-1-test-11-effc`. Scratch Win/macOS workflows removed from the PR tip (remain on the release tag commit only).
+
+## 2026-11-07 BA-97 Cut Banter voice and video latency
+
+Owl: Owl (Banter) asked how to improve VC latency. Full-stack pass, not encoder-only.
+
+Context:
+- Banter = Rust GLFW/ImGui client + Postgres + SFU WebRTC (OpenH264). Live media host was upgraded for PR #19 RTP rewrite; advertise IP / UDP ranges matter for ICE.
+- OpenH264 AdaptiveQuant/BackgroundDetection warnings are harmless ParamValidation for screen content — do not chase those as the latency bug.
+- Project store (mounted): /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5 — useful notes under internal/ (e.g. server-vc-media-receive-ba55.md). Write your report to /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/internal/banter-vc-latency.md
+- Preferences: one feature at a time; Banter paths D:\Projects\Project Banter only (never E:); clear commit messages; clean temp branches when done.
+- Repo only under Banter-Foundation/Banter. Base from main. Open one PR for real code improvements.
+
+Your job:
+1. Map the capture → encode (OpenH264) → RTP → SFU → decode → render / playout path for voice and video/screen.
+2. Find the biggest latency levers in-tree: encoder latency/zerolatency presets, keyframe interval, bitrate/QP, audio frame size / Opus settings, jitter/playout buffers, SFU packet queueing, NACK/retransmission aggressiveness, ICE/TURN path if coded, any fixed sleep/batching.
+3. Implement safe low-latency wins that do not break quality for typical VC (favor interactive latency over archive quality). Prefer config/preset changes and small buffer cuts over risky protocol rewrites.
+4. Open a PR against main with clear what/why. Document measured or reasoned before/after in the store report (even if you cannot measure live against direct.galaticserver.com from the cloud VM).
+5. Do not merge. Do not touch Emote Library, theme (BA-95), or cover-flow PR #80.
+6. Return: PR URL, top 3 causes found, what you changed, and path to the report.
+
+Agent: Mapped full path; implemented safe buffer/preset cuts on cursor/vc-latency-0648; wrote internal/banter-vc-latency.md; opened PR (do not merge).
+
+### Summary
+Interactive VC latency: ~60 ms playout, ~200 ms PCM caps, FPS-matched video RTP duration, 1 s keyframes, OpenH264/Opus low-latency presets, smaller SFU queues.

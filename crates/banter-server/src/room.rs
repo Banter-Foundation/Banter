@@ -856,10 +856,26 @@ pub fn sample_bytes(payload: Vec<u8>, duration_ms: u64) -> rtc::media::Sample {
     }
 }
 
+/// RTP sample duration for a video access unit at the encode FPS.
+///
+/// Hardcoding 33 ms stamped every frame as 30 FPS even when capture runs at 60–144,
+/// which stretched the sender timeline and added ~1 frame of artificial delay.
+pub fn video_rtp_duration_ms(fps: u32) -> u64 {
+    let fps = fps.max(1) as u64;
+    (1000 / fps).max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn video_rtp_duration_follows_fps() {
+        assert_eq!(video_rtp_duration_ms(30), 33);
+        assert_eq!(video_rtp_duration_ms(60), 16);
+        assert_eq!(video_rtp_duration_ms(144), 6);
+    }
 
     use async_trait::async_trait;
     use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
