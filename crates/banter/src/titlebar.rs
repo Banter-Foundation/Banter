@@ -1,9 +1,16 @@
 //! Client-drawn Mac-style window caption (BA-105).
 //!
-//! The OS title bar is disabled (`GLFW_DECORATED` false). Banter paints a short dark strip
-//! with traffic-light controls on the left, drag-to-move on the remaining caption, and
-//! double-click to maximize / restore. Geometry helpers stay drawable-free for unit tests.
-//! Platform applies [`TitleBarAction`] and live drag through GLFW.
+//! On Windows (and other non-Linux hosts), the OS title bar is disabled
+//! (`GLFW_DECORATED` false) and Banter paints a short dark strip with traffic-light
+//! controls on the left, drag-to-move on the remaining caption, and double-click to
+//! maximize / restore.
+//!
+//! **Linux keeps the system title bar** so compositors / DEs can use their own chrome
+//! (including user themes). Wayland also cannot reliably drag undecorated windows from
+//! Banter, so a client caption there was empty space without working window controls.
+//!
+//! Geometry helpers stay drawable-free for unit tests. Platform applies
+//! [`TitleBarAction`] and live drag through GLFW when the client caption is enabled.
 
 use crate::theme::{
     TITLE_BAR_H, TITLE_BTN_GAP, TITLE_BTN_HIT_PAD, TITLE_BTN_PAD_LEFT, TITLE_BTN_R,
@@ -13,6 +20,22 @@ use crate::theme::{
 pub const TITLE_BAR_DOUBLE_CLICK_MS: u64 = 400;
 /// Max distance (px) between those clicks.
 pub const TITLE_BAR_DOUBLE_CLICK_SLOP: f32 = 6.0;
+
+/// Whether Banter draws its own caption instead of the OS title bar.
+///
+/// False on Linux so the window manager / compositor chrome stays in charge.
+pub fn client_caption_enabled() -> bool {
+    !cfg!(target_os = "linux")
+}
+
+/// Height reserved for the client caption (0 when the OS draws the title bar).
+pub fn caption_height() -> f32 {
+    if client_caption_enabled() {
+        TITLE_BAR_H
+    } else {
+        0.0
+    }
+}
 
 /// Chrome request from the ImGui caption to the GLFW host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,9 +69,9 @@ impl TrafficLight {
     }
 }
 
-/// Full-window caption strip `[x, y, w, h]`.
+/// Full-window caption strip `[x, y, w, h]` (height 0 when the OS draws the title bar).
 pub fn title_bar_rect(window_w: f32) -> [f32; 4] {
-    [0.0, 0.0, window_w.max(0.0), TITLE_BAR_H]
+    [0.0, 0.0, window_w.max(0.0), caption_height()]
 }
 
 /// Centers of the three traffic lights for a caption of height `bar_h`.

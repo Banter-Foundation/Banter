@@ -1,3 +1,7 @@
+## 2026-11-07 01:51:16 -06:00 [ubuntu] — Linux uses system title bar (BA-105)
+
+Disable the client-drawn Mac-style caption on Linux: `client_caption_enabled()` is false, `caption_height()` is 0, and GLFW windows stay `Decorated(true)` so the DE / compositor chrome (and user themes) remain in charge. Windows keeps the custom caption. Layout/shell rects and caption paint follow `caption_height()`.
+
 ## 2026-11-07 01:27:06 -06:00 [ubuntu] — Emote Library vertical slice (BA-83)
 
 Ships packs/assets/subscriptions schema (`007_emote_library`), upload with Carbon size caps and locked 15s GIF duration (classic + video), personal subscribe + server packs, BFMD `{e}` emote sizing (default 22px), stable `:{e:id}:` tokens, Model A sticker send, GIF message media, and composer Emotes/Stickers/GIFs picker. No mock packs; Unicode emoji keyboard and reactions stay deferred. Docs: `docs/emote-library.md`.
@@ -48,7 +52,7 @@ Voice & Video / Stream options now probe which H.264 encoders this PC can see (O
 
 ## 2026-11-07 07:22:30 +00:00 [ubuntu] — Custom Mac-style title bar (BA-105)
 
-Replaced native OS window chrome with an undecorated GLFW window and a short dark client-drawn caption: Mac traffic lights on the left (close / minimize / maximize), centered label, drag-to-move, and double-click maximize. Applies to Banter, Banter Settings, and Banter Stream; hidden in OS fullscreen. Tokens in `theme.rs`, geometry in `titlebar.rs` / `layout::Region::TitleBar`, paint in `skin`, GLFW actions in `platform`. Linux/Wayland keeps traffic lights and maximize; drag-to-move is a no-op when `glfwGetWindowPos` is unavailable.
+On Windows, replaced native OS window chrome with an undecorated GLFW window and a short dark client-drawn caption: Mac traffic lights on the left (close / minimize / maximize), centered label, drag-to-move, and double-click maximize. Applies to Banter, Banter Settings, and Banter Stream; hidden in OS fullscreen. Tokens in `theme.rs`, geometry in `titlebar.rs` / `layout::Region::TitleBar`, paint in `skin`, GLFW actions in `platform`. Linux keeps the system / DE title bar instead (see later changelog entry).
 
 ## 2026-11-07 00:51:26 -06:00 [ubuntu] — Cut interactive VC latency (BA-97)
 

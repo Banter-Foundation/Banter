@@ -2,13 +2,29 @@
 
 use banter::theme;
 use banter::titlebar::{
-    traffic_light_centers, traffic_light_hit, title_bar_drag_rect, title_bar_rect,
-    DoubleClickTracker, TitleBarAction, TrafficLight, TITLE_BAR_DOUBLE_CLICK_MS,
-    TITLE_BAR_DOUBLE_CLICK_SLOP,
+    caption_height, client_caption_enabled, traffic_light_centers, traffic_light_hit,
+    title_bar_drag_rect, title_bar_rect, DoubleClickTracker, TitleBarAction, TrafficLight,
+    TITLE_BAR_DOUBLE_CLICK_MS, TITLE_BAR_DOUBLE_CLICK_SLOP,
 };
 
 fn close(a: f32, b: f32) -> bool {
     (a - b).abs() < 0.01
+}
+
+#[test]
+fn linux_keeps_the_system_title_bar() {
+    // Linux uses DE / compositor chrome; Windows (and friends) keep the client caption.
+    #[cfg(target_os = "linux")]
+    {
+        assert!(!client_caption_enabled());
+        assert!(close(caption_height(), 0.0));
+        assert!(close(title_bar_rect(1280.0)[3], 0.0));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert!(client_caption_enabled());
+        assert!(close(caption_height(), theme::TITLE_BAR_H));
+    }
 }
 
 #[test]
@@ -17,7 +33,7 @@ fn title_bar_is_a_short_full_width_strip() {
     assert!(close(rect[0], 0.0));
     assert!(close(rect[1], 0.0));
     assert!(close(rect[2], 1280.0));
-    assert!(close(rect[3], theme::TITLE_BAR_H));
+    assert!(close(rect[3], caption_height()));
     assert!(theme::TITLE_BAR_H > 0.0);
     assert!(theme::TITLE_BAR_H < theme::HEADER_H);
 }
@@ -117,11 +133,12 @@ fn double_click_tracker_fires_within_slop_and_delay() {
 #[test]
 fn shell_content_sits_below_the_title_bar() {
     let columns = banter::shell_columns(1280.0, true);
+    let top = caption_height();
     let rail = columns.rect(banter::Region::Rail, 720.0);
-    assert!(close(rail[1], theme::TITLE_BAR_H));
-    assert!(close(rail[3], 720.0 - theme::TITLE_BAR_H));
+    assert!(close(rail[1], top));
+    assert!(close(rail[3], 720.0 - top));
     let header = columns.rect(banter::Region::Header, 720.0);
-    assert!(close(header[1], theme::TITLE_BAR_H));
+    assert!(close(header[1], top));
     let title = columns.rect(banter::Region::TitleBar, 720.0);
     assert_eq!(title, title_bar_rect(columns.window_w()));
 }

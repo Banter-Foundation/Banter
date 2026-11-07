@@ -14,12 +14,14 @@
 //! See `docs/ui-theme-layout.md`.
 
 use crate::theme::{
-    COMPOSER_H, HEADER_H, MEMBERS_W, RAIL_W, SIDEBAR_W, TITLE_BAR_H, USER_PANEL_H, VOICE_PANEL_H,
+    COMPOSER_H, HEADER_H, MEMBERS_W, RAIL_W, SIDEBAR_W, USER_PANEL_H, VOICE_PANEL_H,
 };
+use crate::titlebar::caption_height;
 
 /// Named areas of the temporary Discord-style shell.
 ///
-/// Top: TitleBar (client-drawn caption). Below that, left-to-right columns are
+/// Top: TitleBar (client-drawn caption when enabled; zero-height on Linux so the
+/// system title bar is used). Below that, left-to-right columns are
 /// Rail → Sidebar → Stage → Members. Header spans the stage (and members when shown).
 /// User and voice panels sit at the bottom of the sidebar. The composer sits at the
 /// bottom of the stage in a text channel.
@@ -92,14 +94,14 @@ impl ShellColumns {
 
     /// Axis-aligned rect as `[x, y, w, h]` for a named region inside a window of `height`.
     ///
-    /// The client-drawn title bar occupies `[0, TITLE_BAR_H)`. Column regions fill the
-    /// remaining height. Header sits on the stage (+ members when shown). User and voice
-    /// panels stack at the bottom of the sidebar. Composer sits at the bottom of the stage.
-    /// These rects match the temporary Discord skin; Banter's final layout may redefine
-    /// them without changing the `Region` names.
+    /// The client-drawn title bar occupies `[0, caption_height())` when enabled (0 on
+    /// Linux). Column regions fill the remaining height. Header sits on the stage
+    /// (+ members when shown). User and voice panels stack at the bottom of the sidebar.
+    /// Composer sits at the bottom of the stage. These rects match the temporary Discord
+    /// skin; Banter's final layout may redefine them without changing the `Region` names.
     pub fn rect(self, region: Region, height: f32) -> [f32; 4] {
         let height = height.max(0.0);
-        let top = TITLE_BAR_H.min(height);
+        let top = caption_height().min(height);
         let body_h = (height - top).max(0.0);
         match region {
             Region::TitleBar => [0.0, 0.0, self.window_w(), top],

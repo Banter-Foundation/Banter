@@ -78,9 +78,9 @@ pub use shell_sync::{
 };
 pub use stream_watch::*;
 pub use titlebar::{
-    dragged_window_pos, point_in_rect, title_bar_drag_rect, title_bar_rect, traffic_light_centers,
-    traffic_light_hit, DoubleClickTracker, TitleBarAction, TitleBarChrome, TrafficLight,
-    TITLE_BAR_DOUBLE_CLICK_MS, TITLE_BAR_DOUBLE_CLICK_SLOP,
+    caption_height, client_caption_enabled, dragged_window_pos, point_in_rect, title_bar_drag_rect,
+    title_bar_rect, traffic_light_centers, traffic_light_hit, DoubleClickTracker, TitleBarAction,
+    TitleBarChrome, TrafficLight, TITLE_BAR_DOUBLE_CLICK_MS, TITLE_BAR_DOUBLE_CLICK_SLOP,
 };
 
 /// This client's Banter release label (same constant as the embedded server).
