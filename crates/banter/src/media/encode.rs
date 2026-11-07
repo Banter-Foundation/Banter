@@ -37,10 +37,14 @@ const STREAM_AUDIO_BPS: i32 = 64_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
     Software,
-    #[cfg(target_os = "linux")]
     Nvenc,
-    #[cfg(target_os = "linux")]
     Vaapi,
+    Amf,
+    Qsv,
+    Vulkan,
+    V4l2m2m,
+    Libx264,
+    LibOpenh264,
     #[cfg_attr(not(windows), allow(dead_code))]
     MediaFoundation,
 }
@@ -49,10 +53,14 @@ impl Backend {
     pub fn label(self) -> &'static str {
         match self {
             Self::Software => "openh264",
-            #[cfg(target_os = "linux")]
             Self::Nvenc => "nvenc",
-            #[cfg(target_os = "linux")]
             Self::Vaapi => "vaapi",
+            Self::Amf => "amf",
+            Self::Qsv => "qsv",
+            Self::Vulkan => "vulkan",
+            Self::V4l2m2m => "v4l2m2m",
+            Self::Libx264 => "libx264",
+            Self::LibOpenh264 => "libopenh264",
             Self::MediaFoundation => "media foundation",
         }
     }
@@ -228,19 +236,24 @@ pub struct LayerEncoder {
 
 /// How [`LayerEncoder::open_with`] picks hardware vs OpenH264.
 ///
-/// Specific backends (`Nvenc` / `Vaapi` / `MediaFoundation`) only open that
-/// encoder. Prefer listing choices from [`list_available_encoders`] so the UI
-/// never offers a backend this process cannot see.
+/// Specific backends only open that encoder. Prefer listing choices from
+/// [`list_available_encoders`] so the UI never offers a backend this process
+/// cannot see (probe comes from `ffmpeg -encoders` on Linux + MF on Windows).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncoderPick {
     Auto,
-    /// First available hardware encoder (NVENC → VA-API on Linux, MF on Windows).
+    /// First available GPU encoder (NVENC → AMF → QSV → VA-API → Vulkan → V4L2 → MF).
     Hardware,
+    /// Built-in OpenH264 (crate), not ffmpeg's `libopenh264`.
     Software,
-    /// Linux NVIDIA NVENC. On other OSes open falls back to software.
     Nvenc,
-    /// Linux VA-API. On other OSes open falls back to software.
     Vaapi,
+    Amf,
+    Qsv,
+    Vulkan,
+    V4l2m2m,
+    Libx264,
+    LibOpenh264,
     MediaFoundation,
 }
 
@@ -262,6 +275,12 @@ impl EncoderPick {
             Self::Software => "software",
             Self::Nvenc => "nvenc",
             Self::Vaapi => "vaapi",
+            Self::Amf => "amf",
+            Self::Qsv => "qsv",
+            Self::Vulkan => "vulkan",
+            Self::V4l2m2m => "v4l2m2m",
+            Self::Libx264 => "libx264",
+            Self::LibOpenh264 => "libopenh264",
             Self::MediaFoundation => "mediafoundation",
         }
     }
@@ -273,6 +292,12 @@ impl EncoderPick {
             Self::Software => "Software (OpenH264)",
             Self::Nvenc => "NVIDIA NVENC",
             Self::Vaapi => "VA-API",
+            Self::Amf => "AMD AMF",
+            Self::Qsv => "Intel Quick Sync",
+            Self::Vulkan => "Vulkan H.264",
+            Self::V4l2m2m => "V4L2 mem2mem",
+            Self::Libx264 => "libx264",
+            Self::LibOpenh264 => "ffmpeg OpenH264",
             Self::MediaFoundation => "Media Foundation",
         }
     }
@@ -281,11 +306,21 @@ impl EncoderPick {
         match key {
             "hardware" => Self::Hardware,
             "software" => Self::Software,
-            "nvenc" => Self::Nvenc,
-            "vaapi" => Self::Vaapi,
+            "nvenc" | "h264_nvenc" => Self::Nvenc,
+            "vaapi" | "h264_vaapi" => Self::Vaapi,
+            "amf" | "h264_amf" => Self::Amf,
+            "qsv" | "h264_qsv" => Self::Qsv,
+            "vulkan" | "h264_vulkan" => Self::Vulkan,
+            "v4l2m2m" | "h264_v4l2m2m" => Self::V4l2m2m,
+            "libx264" => Self::Libx264,
+            "libopenh264" => Self::LibOpenh264,
             "mediafoundation" | "media foundation" => Self::MediaFoundation,
             _ => Self::Auto,
         }
+    }
+
+    fn is_meta(self) -> bool {
+        matches!(self, Self::Auto | Self::Hardware | Self::Software)
     }
 
     pub(crate) fn as_u8(self) -> u8 {
@@ -296,6 +331,12 @@ impl EncoderPick {
             Self::Nvenc => 3,
             Self::Vaapi => 4,
             Self::MediaFoundation => 5,
+            Self::Amf => 6,
+            Self::Qsv => 7,
+            Self::Vulkan => 8,
+            Self::V4l2m2m => 9,
+            Self::Libx264 => 10,
+            Self::LibOpenh264 => 11,
         }
     }
 
@@ -306,6 +347,12 @@ impl EncoderPick {
             3 => Self::Nvenc,
             4 => Self::Vaapi,
             5 => Self::MediaFoundation,
+            6 => Self::Amf,
+            7 => Self::Qsv,
+            8 => Self::Vulkan,
+            9 => Self::V4l2m2m,
+            10 => Self::Libx264,
+            11 => Self::LibOpenh264,
             _ => Self::Auto,
         }
     }
@@ -343,28 +390,22 @@ impl LayerEncoder {
         pick: EncoderPick,
         cbr: bool,
     ) -> Result<Self, String> {
-        match pick {
-            EncoderPick::Software => Self::software(screen, fps, bps, keyframe_ms),
-            EncoderPick::Auto | EncoderPick::Hardware => Self::with_optional_hardware(
-                screen, width, height, fps, bps, keyframe_ms, None, cbr,
-            ),
-            EncoderPick::Nvenc => Self::with_optional_hardware(
-                screen, width, height, fps, bps, keyframe_ms, Some(HardwareKind::Nvenc), cbr,
-            ),
-            EncoderPick::Vaapi => Self::with_optional_hardware(
-                screen, width, height, fps, bps, keyframe_ms, Some(HardwareKind::Vaapi), cbr,
-            ),
-            EncoderPick::MediaFoundation => Self::with_optional_hardware(
-                screen,
-                width,
-                height,
-                fps,
-                bps,
-                keyframe_ms,
-                Some(HardwareKind::MediaFoundation),
-                cbr,
-            ),
-        }
+        let only = match pick {
+            EncoderPick::Software => {
+                return Self::software(screen, fps, bps, keyframe_ms);
+            }
+            EncoderPick::Auto | EncoderPick::Hardware => None,
+            EncoderPick::Nvenc => Some(HardwareKind::Nvenc),
+            EncoderPick::Vaapi => Some(HardwareKind::Vaapi),
+            EncoderPick::Amf => Some(HardwareKind::Amf),
+            EncoderPick::Qsv => Some(HardwareKind::Qsv),
+            EncoderPick::Vulkan => Some(HardwareKind::Vulkan),
+            EncoderPick::V4l2m2m => Some(HardwareKind::V4l2m2m),
+            EncoderPick::Libx264 => Some(HardwareKind::Libx264),
+            EncoderPick::LibOpenh264 => Some(HardwareKind::LibOpenh264),
+            EncoderPick::MediaFoundation => Some(HardwareKind::MediaFoundation),
+        };
+        Self::with_optional_hardware(screen, width, height, fps, bps, keyframe_ms, only, cbr)
     }
 
     fn with_optional_hardware(
@@ -459,11 +500,17 @@ impl VideoListen {
     }
 }
 
-/// Which hardware path [`try_hardware`] should open. `None` means first available.
+/// Which encoder path [`try_hardware`] should open. `None` means first available GPU.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HardwareKind {
     Nvenc,
     Vaapi,
+    Amf,
+    Qsv,
+    Vulkan,
+    V4l2m2m,
+    Libx264,
+    LibOpenh264,
     MediaFoundation,
 }
 
@@ -477,9 +524,15 @@ pub fn hardware_probe() -> Vec<&'static str> {
                 .into_iter()
                 .filter(|entry| {
                     entry.available
-                        && !matches!(
+                        && matches!(
                             entry.pick,
-                            EncoderPick::Auto | EncoderPick::Hardware | EncoderPick::Software
+                            EncoderPick::Nvenc
+                                | EncoderPick::Vaapi
+                                | EncoderPick::Amf
+                                | EncoderPick::Qsv
+                                | EncoderPick::Vulkan
+                                | EncoderPick::V4l2m2m
+                                | EncoderPick::MediaFoundation
                         )
                 })
                 .map(|entry| entry.key)
@@ -538,6 +591,72 @@ fn vaapi_present() -> bool {
     }
 }
 
+fn amf_present() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        ffmpeg_has_encoder("h264_amf")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn qsv_present() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        ffmpeg_has_encoder("h264_qsv")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn vulkan_present() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        ffmpeg_has_encoder("h264_vulkan")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn v4l2m2m_present() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        ffmpeg_has_encoder("h264_v4l2m2m")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn libx264_present() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        ffmpeg_has_encoder("libx264")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn libopenh264_present() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        ffmpeg_has_encoder("libopenh264")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 fn media_foundation_present() -> bool {
     #[cfg(windows)]
     {
@@ -549,82 +668,36 @@ fn media_foundation_present() -> bool {
     }
 }
 
+fn any_gpu_encoder_present() -> bool {
+    nvenc_present()
+        || amf_present()
+        || qsv_present()
+        || vaapi_present()
+        || vulkan_present()
+        || v4l2m2m_present()
+        || media_foundation_present()
+}
+
 static AVAILABLE_ENCODERS: OnceLock<Vec<AvailableEncoder>> = OnceLock::new();
 
-/// Scan this process for selectable H.264 encoders (Auto / Software always; HW when present).
+/// Scan this process for selectable H.264 encoders (Auto / Software always; others when present).
 ///
+/// Linux probe is `ffmpeg -encoders` (cached once). Windows adds Media Foundation.
 /// Specific backends that are not installed are omitted so the UI cannot offer a missing encoder.
-/// Pass `prefer` when reloading a saved key that is no longer present — it is appended disabled.
 pub fn list_available_encoders() -> Vec<AvailableEncoder> {
     AVAILABLE_ENCODERS
-        .get_or_init(|| list_available_encoders_uncached(None))
+        .get_or_init(list_available_encoders_uncached)
         .clone()
 }
 
+/// Cached scan plus an optional disabled chip for a saved key that is no longer present.
+///
+/// Must not re-run ffmpeg — Voice & Video draws this every frame.
 pub fn list_available_encoders_preferring(prefer: Option<&str>) -> Vec<AvailableEncoder> {
-    match prefer {
-        None => list_available_encoders(),
-        Some(_) => list_available_encoders_uncached(prefer),
-    }
-}
-
-fn list_available_encoders_uncached(prefer: Option<&str>) -> Vec<AvailableEncoder> {
-    let mut out = vec![
-        AvailableEncoder {
-            pick: EncoderPick::Auto,
-            key: EncoderPick::Auto.key(),
-            label: EncoderPick::Auto.label(),
-            available: true,
-        },
-        AvailableEncoder {
-            pick: EncoderPick::Software,
-            key: EncoderPick::Software.key(),
-            label: EncoderPick::Software.label(),
-            available: true,
-        },
-    ];
-    let nvenc = nvenc_present();
-    let vaapi = vaapi_present();
-    let mf = media_foundation_present();
-    if nvenc || vaapi || mf {
-        out.push(AvailableEncoder {
-            pick: EncoderPick::Hardware,
-            key: EncoderPick::Hardware.key(),
-            label: EncoderPick::Hardware.label(),
-            available: true,
-        });
-    }
-    if nvenc {
-        out.push(AvailableEncoder {
-            pick: EncoderPick::Nvenc,
-            key: EncoderPick::Nvenc.key(),
-            label: EncoderPick::Nvenc.label(),
-            available: true,
-        });
-    }
-    if vaapi {
-        out.push(AvailableEncoder {
-            pick: EncoderPick::Vaapi,
-            key: EncoderPick::Vaapi.key(),
-            label: EncoderPick::Vaapi.label(),
-            available: true,
-        });
-    }
-    if mf {
-        out.push(AvailableEncoder {
-            pick: EncoderPick::MediaFoundation,
-            key: EncoderPick::MediaFoundation.key(),
-            label: EncoderPick::MediaFoundation.label(),
-            available: true,
-        });
-    }
+    let mut out = list_available_encoders();
     if let Some(key) = prefer {
         let pick = EncoderPick::from_key(key);
-        if !matches!(
-            pick,
-            EncoderPick::Auto | EncoderPick::Software | EncoderPick::Hardware
-        ) && !out.iter().any(|entry| entry.pick == pick)
-        {
+        if !pick.is_meta() && !out.iter().any(|entry| entry.pick == pick) {
             out.push(AvailableEncoder {
                 pick,
                 key: pick.key(),
@@ -632,6 +705,53 @@ fn list_available_encoders_uncached(prefer: Option<&str>) -> Vec<AvailableEncode
                 available: false,
             });
         }
+    }
+    out
+}
+
+fn push_encoder(out: &mut Vec<AvailableEncoder>, pick: EncoderPick) {
+    out.push(AvailableEncoder {
+        pick,
+        key: pick.key(),
+        label: pick.label(),
+        available: true,
+    });
+}
+
+fn list_available_encoders_uncached() -> Vec<AvailableEncoder> {
+    let mut out = Vec::new();
+    push_encoder(&mut out, EncoderPick::Auto);
+    push_encoder(&mut out, EncoderPick::Software);
+    if any_gpu_encoder_present() {
+        push_encoder(&mut out, EncoderPick::Hardware);
+    }
+    // Match ffmpeg -encoders | grep h264 order Adam sees, gated by presence.
+    if nvenc_present() {
+        push_encoder(&mut out, EncoderPick::Nvenc);
+    }
+    if amf_present() {
+        push_encoder(&mut out, EncoderPick::Amf);
+    }
+    if qsv_present() {
+        push_encoder(&mut out, EncoderPick::Qsv);
+    }
+    if vaapi_present() {
+        push_encoder(&mut out, EncoderPick::Vaapi);
+    }
+    if vulkan_present() {
+        push_encoder(&mut out, EncoderPick::Vulkan);
+    }
+    if v4l2m2m_present() {
+        push_encoder(&mut out, EncoderPick::V4l2m2m);
+    }
+    if libx264_present() {
+        push_encoder(&mut out, EncoderPick::Libx264);
+    }
+    if libopenh264_present() {
+        push_encoder(&mut out, EncoderPick::LibOpenh264);
+    }
+    if media_foundation_present() {
+        push_encoder(&mut out, EncoderPick::MediaFoundation);
     }
     out
 }
@@ -964,91 +1084,139 @@ fn try_hardware(
     only: Option<HardwareKind>,
     cbr: bool,
 ) -> Option<Box<dyn VideoEncoder>> {
-    let want_nvenc = matches!(only, None | Some(HardwareKind::Nvenc));
-    let want_vaapi = matches!(only, None | Some(HardwareKind::Vaapi));
-    let want_mf = matches!(only, None | Some(HardwareKind::MediaFoundation));
     #[cfg(target_os = "linux")]
     {
-        if want_nvenc && nvenc_present() {
-            if let Ok(encoder) = FfmpegEncoder::open(
-                "h264_nvenc",
-                Backend::Nvenc,
-                screen,
-                width,
-                height,
-                fps,
-                bps,
-                keyframe_ms,
-                cbr,
-            ) {
-                return Some(Box::new(encoder));
+        // Auto / Any hardware: GPU order. Soft ffmpeg (libx264 / libopenh264) only
+        // when explicitly picked — they are never an Auto fallback ahead of OpenH264 crate.
+        let auto_order = [
+            HardwareKind::Nvenc,
+            HardwareKind::Amf,
+            HardwareKind::Qsv,
+            HardwareKind::Vaapi,
+            HardwareKind::Vulkan,
+            HardwareKind::V4l2m2m,
+        ];
+        let single;
+        let kinds: &[HardwareKind] = match only {
+            None => &auto_order,
+            Some(kind) => {
+                single = [kind];
+                &single
             }
-            if matches!(only, Some(HardwareKind::Nvenc)) {
+        };
+        for kind in kinds {
+            if let Some(encoder) =
+                try_ffmpeg_kind(*kind, screen, width, height, fps, bps, keyframe_ms, cbr)
+            {
+                return Some(encoder);
+            }
+            if only.is_some() {
                 return None;
             }
         }
-        // AMD VA-API H.264 encode rejects sizes below 128×128 (see vainfo /
-        // ffmpeg). Opening smaller layers (e.g. Quarter on a short edge) fails
-        // and must not block Full/Half from using the GPU.
-        if want_vaapi && vaapi_present() && width >= 128 && height >= 128 {
-            if let Ok(encoder) = FfmpegEncoder::open(
-                "h264_vaapi",
-                Backend::Vaapi,
-                screen,
-                width,
-                height,
-                fps,
-                bps,
-                keyframe_ms,
-                cbr,
-            ) {
-                return Some(Box::new(encoder));
-            }
-            if matches!(only, Some(HardwareKind::Vaapi)) {
-                return None;
-            }
-        }
-        let _ = want_mf;
     }
     #[cfg(windows)]
     {
-        let _ = (screen, keyframe_ms, cbr, want_nvenc, want_vaapi);
+        let _ = (screen, keyframe_ms, cbr);
+        let want_mf = matches!(only, None | Some(HardwareKind::MediaFoundation));
         if want_mf {
             if let Ok(encoder) = super::mf::open(width, height, fps, bps) {
                 return Some(Box::new(encoder));
             }
         }
+        if only.is_some() {
+            return None;
+        }
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let _ = (screen, width, height, fps, bps, keyframe_ms, cbr, want_nvenc, want_vaapi, want_mf);
+        let _ = (screen, width, height, fps, bps, keyframe_ms, cbr, only);
     }
     None
 }
 
-/// Linux NVENC/VAAPI path via ffmpeg. Windows uses Media Foundation instead.
+#[cfg(target_os = "linux")]
+fn try_ffmpeg_kind(
+    kind: HardwareKind,
+    screen: bool,
+    width: u32,
+    height: u32,
+    fps: f32,
+    bps: u32,
+    keyframe_ms: u64,
+    cbr: bool,
+) -> Option<Box<dyn VideoEncoder>> {
+    let (name, backend, present) = match kind {
+        HardwareKind::Nvenc => ("h264_nvenc", Backend::Nvenc, nvenc_present()),
+        HardwareKind::Vaapi => ("h264_vaapi", Backend::Vaapi, vaapi_present()),
+        HardwareKind::Amf => ("h264_amf", Backend::Amf, amf_present()),
+        HardwareKind::Qsv => ("h264_qsv", Backend::Qsv, qsv_present()),
+        HardwareKind::Vulkan => ("h264_vulkan", Backend::Vulkan, vulkan_present()),
+        HardwareKind::V4l2m2m => ("h264_v4l2m2m", Backend::V4l2m2m, v4l2m2m_present()),
+        HardwareKind::Libx264 => ("libx264", Backend::Libx264, libx264_present()),
+        HardwareKind::LibOpenh264 => ("libopenh264", Backend::LibOpenh264, libopenh264_present()),
+        HardwareKind::MediaFoundation => return None,
+    };
+    if !present {
+        return None;
+    }
+    // AMD VA-API H.264 encode rejects sizes below 128×128 (see vainfo / ffmpeg).
+    if matches!(kind, HardwareKind::Vaapi) && (width < 128 || height < 128) {
+        return None;
+    }
+    FfmpegEncoder::open(name, backend, screen, width, height, fps, bps, keyframe_ms, cbr)
+        .ok()
+        .map(|encoder| Box::new(encoder) as Box<dyn VideoEncoder>)
+}
+
+/// Cached `ffmpeg -encoders` names. Spawning ffmpeg every UI frame dropped Banter to ~1 FPS.
+#[cfg(target_os = "linux")]
+static FFMPEG_ENCODERS: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
+
+#[cfg(target_os = "linux")]
+static NVIDIA_ENCODE_PRESENT: OnceLock<bool> = OnceLock::new();
+
+#[cfg(target_os = "linux")]
+fn ffmpeg_encoder_set() -> &'static std::collections::HashSet<String> {
+    FFMPEG_ENCODERS.get_or_init(|| {
+        let Ok(output) = Command::new("ffmpeg")
+            .args(["-hide_banner", "-encoders"])
+            .output()
+        else {
+            return std::collections::HashSet::new();
+        };
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| {
+                // " V....D h264_nvenc           NVIDIA NVENC..."
+                let trimmed = line.trim();
+                let mut parts = trimmed.split_whitespace();
+                let _flags = parts.next()?;
+                let name = parts.next()?;
+                Some(name.to_string())
+            })
+            .collect()
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn ffmpeg_has_encoder(name: &str) -> bool {
-    let Ok(output) = Command::new("ffmpeg")
-        .args(["-hide_banner", "-encoders"])
-        .output()
-    else {
-        return false;
-    };
-    String::from_utf8_lossy(&output.stdout).contains(name)
+    ffmpeg_encoder_set().contains(name)
 }
 
 #[cfg(target_os = "linux")]
 fn nvidia_encode_present() -> bool {
-    std::path::Path::new("/usr/lib/libnvidia-encode.so").exists()
-        || std::path::Path::new("/usr/lib64/libnvidia-encode.so").exists()
-        || Command::new("ldconfig")
-            .arg("-p")
-            .output()
-            .ok()
-            .is_some_and(|output| {
-                String::from_utf8_lossy(&output.stdout).contains("libnvidia-encode")
-            })
+    *NVIDIA_ENCODE_PRESENT.get_or_init(|| {
+        std::path::Path::new("/usr/lib/libnvidia-encode.so").exists()
+            || std::path::Path::new("/usr/lib64/libnvidia-encode.so").exists()
+            || Command::new("ldconfig")
+                .arg("-p")
+                .output()
+                .ok()
+                .is_some_and(|output| {
+                    String::from_utf8_lossy(&output.stdout).contains("libnvidia-encode")
+                })
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -1098,18 +1266,24 @@ impl FfmpegEncoder {
             "-i",
             "pipe:0",
         ]);
-        if name == "h264_vaapi" {
-            // async_depth defaults to 2, which holds the first AU until a second
-            // frame is submitted. Realtime WebRTC can't wait that long — Banter
-            // timed out and fell back to OpenH264 after every keyframe open.
-            command.args([
-                "-vaapi_device",
-                "/dev/dri/renderD128",
-                "-vf",
-                "format=nv12,hwupload",
-                "-async_depth",
-                "1",
-            ]);
+        match name {
+            "h264_vaapi" => {
+                // async_depth defaults to 2, which holds the first AU until a second
+                // frame is submitted. Realtime WebRTC can't wait that long — Banter
+                // timed out and fell back to OpenH264 after every keyframe open.
+                command.args([
+                    "-vaapi_device",
+                    "/dev/dri/renderD128",
+                    "-vf",
+                    "format=nv12,hwupload",
+                    "-async_depth",
+                    "1",
+                ]);
+            }
+            "h264_vulkan" => {
+                command.args(["-vf", "format=nv12,hwupload"]);
+            }
+            _ => {}
         }
         command.args([
             "-c:v",
@@ -1121,31 +1295,70 @@ impl FfmpegEncoder {
             "-b:v",
             &bps.to_string(),
         ]);
-        if name == "h264_nvenc" {
-            // forced-idr: when a key is requested (reopen path), emit a true IDR.
-            // p1 + ll + zerolatency keep interactive delay; CBR/VBR follows stream prefs.
-            command.args([
-                "-profile:v",
-                "baseline",
-                "-preset",
-                "p1",
-                "-tune",
-                "ll",
-                "-rc",
-                if cbr { "cbr" } else { "vbr" },
-                "-zerolatency",
-                "1",
-                "-forced-idr",
-                "1",
-            ]);
-        } else {
-            // VA-API constrained baseline + explicit RC (was bitrate-label only).
-            command.args([
-                "-profile:v",
-                "constrained_baseline",
-                "-rc_mode",
-                if cbr { "CBR" } else { "VBR" },
-            ]);
+        match name {
+            "h264_nvenc" => {
+                // forced-idr: when a key is requested (reopen path), emit a true IDR.
+                // p1 + ll + zerolatency keep interactive delay; CBR/VBR follows stream prefs.
+                command.args([
+                    "-profile:v",
+                    "baseline",
+                    "-preset",
+                    "p1",
+                    "-tune",
+                    "ll",
+                    "-rc",
+                    if cbr { "cbr" } else { "vbr" },
+                    "-zerolatency",
+                    "1",
+                    "-forced-idr",
+                    "1",
+                ]);
+            }
+            "h264_vaapi" => {
+                command.args([
+                    "-profile:v",
+                    "constrained_baseline",
+                    "-rc_mode",
+                    if cbr { "CBR" } else { "VBR" },
+                ]);
+            }
+            "h264_amf" => {
+                command.args([
+                    "-profile:v",
+                    "constrained_baseline",
+                    "-quality",
+                    "speed",
+                    "-rc",
+                    if cbr { "cbr" } else { "vbr_latency" },
+                ]);
+            }
+            "h264_qsv" => {
+                command.args([
+                    "-profile:v",
+                    "baseline",
+                    "-look_ahead",
+                    "0",
+                    "-bf",
+                    "0",
+                ]);
+            }
+            "libx264" => {
+                command.args([
+                    "-profile:v",
+                    "baseline",
+                    "-preset",
+                    "ultrafast",
+                    "-tune",
+                    "zerolatency",
+                ]);
+            }
+            "libopenh264" => {
+                command.args(["-profile:v", "baseline"]);
+            }
+            _ => {
+                // vulkan / v4l2m2m / unknown — keep bitrate + no B-frames from above.
+                command.args(["-profile:v", "baseline"]);
+            }
         }
         command.args(["-f", "h264", "pipe:1"]);
         command
@@ -1595,12 +1808,7 @@ mod tests {
             .any(|e| e.pick == EncoderPick::Software && e.available));
         assert!(
             list.iter()
-                .filter(|e| {
-                    matches!(
-                        e.pick,
-                        EncoderPick::Nvenc | EncoderPick::Vaapi | EncoderPick::MediaFoundation
-                    )
-                })
+                .filter(|e| !e.pick.is_meta())
                 .all(|e| e.available),
             "specific backends in the list must be present"
         );
@@ -1615,6 +1823,19 @@ mod tests {
         } else {
             assert!(nvenc.is_some_and(|e| !e.available));
         }
+    }
+
+    #[test]
+    fn preferring_does_not_respawn_ffmpeg_each_call() {
+        // Voice & Video used to re-run `ffmpeg -encoders` every frame (~1 FPS).
+        let start = std::time::Instant::now();
+        for _ in 0..200 {
+            let _ = list_available_encoders_preferring(Some("auto"));
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(200),
+            "encoder preferring must stay cached for UI frames"
+        );
     }
 
     #[test]

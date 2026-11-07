@@ -978,10 +978,12 @@ pub fn hardware_encoder_block(found: bool) -> Option<&'static str> {
 
 /// When a saved specific encoder is missing, explain why Auto/OpenH264 will be used instead.
 pub fn missing_encoder_block(mode: StreamEncoderMode, available: bool) -> Option<String> {
-    if available || matches!(
-        mode,
-        StreamEncoderMode::Auto | StreamEncoderMode::Software | StreamEncoderMode::Hardware
-    ) {
+    if available
+        || matches!(
+            mode,
+            StreamEncoderMode::Auto | StreamEncoderMode::Software | StreamEncoderMode::Hardware
+        )
+    {
         None
     } else {
         Some(format!(
@@ -1264,6 +1266,18 @@ mod stream_encoder_settings_tests {
             StreamEncoderMode::MediaFoundation
         );
         assert_eq!(
+            encoder_mode_from_key(encoder_mode_key(StreamEncoderMode::Amf)),
+            StreamEncoderMode::Amf
+        );
+        assert_eq!(
+            encoder_mode_from_key("h264_qsv"),
+            StreamEncoderMode::Qsv
+        );
+        assert_eq!(
+            encoder_mode_from_key(encoder_mode_key(StreamEncoderMode::Libx264)),
+            StreamEncoderMode::Libx264
+        );
+        assert_eq!(
             rate_control_from_key(rate_control_key(StreamRateControl::Vbr)),
             StreamRateControl::Vbr
         );
@@ -1351,20 +1365,24 @@ pub fn fade_gain(current: f32, target: f32, step: f32) -> f32 {
 /// OBS-style encoder pick for Go Live. Wire stays H.264 Constrained Baseline either way.
 ///
 /// Prefer building the chip list from the media encoder scan so unavailable
-/// backends are not offered. Specific keys (`nvenc` / `vaapi` /
-/// `mediafoundation`) survive in `stream.json` even when the device disappears.
+/// backends are not offered. Specific keys survive in `stream.json` even when
+/// the device disappears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamEncoderMode {
     /// Prefer hardware when Constrained Baseline is available, else OpenH264.
     Auto,
-    /// First available hardware encoder; fall back to OpenH264 only if open fails.
+    /// First available GPU encoder; fall back to OpenH264 only if open fails.
     Hardware,
-    /// Always OpenH264 software.
+    /// Always built-in OpenH264 (crate).
     Software,
-    /// Linux NVIDIA NVENC (`h264_nvenc`).
     Nvenc,
-    /// Linux VA-API (`h264_vaapi`).
     Vaapi,
+    Amf,
+    Qsv,
+    Vulkan,
+    V4l2m2m,
+    Libx264,
+    LibOpenh264,
     /// Windows Media Foundation hardware H.264 MFT.
     MediaFoundation,
 }
@@ -1384,7 +1402,7 @@ pub struct StreamDefaults {
     pub fps: String,
     /// Capability cache for the UI (“hardware available”), not the user preference.
     pub hardware: bool,
-    /// `auto` | `hardware` | `software` | `nvenc` | `vaapi` | `mediafoundation` — see [`StreamEncoderMode`].
+    /// Encoder key — see [`StreamEncoderMode`] / `encoder_mode_key`.
     pub encoder: String,
     /// `cbr` | `vbr` — see [`StreamRateControl`].
     pub rate_control: String,
@@ -1428,6 +1446,12 @@ pub fn encoder_mode_key(mode: StreamEncoderMode) -> &'static str {
         StreamEncoderMode::Software => "software",
         StreamEncoderMode::Nvenc => "nvenc",
         StreamEncoderMode::Vaapi => "vaapi",
+        StreamEncoderMode::Amf => "amf",
+        StreamEncoderMode::Qsv => "qsv",
+        StreamEncoderMode::Vulkan => "vulkan",
+        StreamEncoderMode::V4l2m2m => "v4l2m2m",
+        StreamEncoderMode::Libx264 => "libx264",
+        StreamEncoderMode::LibOpenh264 => "libopenh264",
         StreamEncoderMode::MediaFoundation => "mediafoundation",
     }
 }
@@ -1436,8 +1460,14 @@ pub fn encoder_mode_from_key(key: &str) -> StreamEncoderMode {
     match key {
         "hardware" => StreamEncoderMode::Hardware,
         "software" => StreamEncoderMode::Software,
-        "nvenc" => StreamEncoderMode::Nvenc,
-        "vaapi" => StreamEncoderMode::Vaapi,
+        "nvenc" | "h264_nvenc" => StreamEncoderMode::Nvenc,
+        "vaapi" | "h264_vaapi" => StreamEncoderMode::Vaapi,
+        "amf" | "h264_amf" => StreamEncoderMode::Amf,
+        "qsv" | "h264_qsv" => StreamEncoderMode::Qsv,
+        "vulkan" | "h264_vulkan" => StreamEncoderMode::Vulkan,
+        "v4l2m2m" | "h264_v4l2m2m" => StreamEncoderMode::V4l2m2m,
+        "libx264" => StreamEncoderMode::Libx264,
+        "libopenh264" => StreamEncoderMode::LibOpenh264,
         "mediafoundation" | "media foundation" => StreamEncoderMode::MediaFoundation,
         _ => StreamEncoderMode::Auto,
     }
@@ -1450,6 +1480,12 @@ pub fn encoder_mode_label(mode: StreamEncoderMode) -> &'static str {
         StreamEncoderMode::Software => "Software (OpenH264)",
         StreamEncoderMode::Nvenc => "NVIDIA NVENC",
         StreamEncoderMode::Vaapi => "VA-API",
+        StreamEncoderMode::Amf => "AMD AMF",
+        StreamEncoderMode::Qsv => "Intel Quick Sync",
+        StreamEncoderMode::Vulkan => "Vulkan H.264",
+        StreamEncoderMode::V4l2m2m => "V4L2 mem2mem",
+        StreamEncoderMode::Libx264 => "libx264",
+        StreamEncoderMode::LibOpenh264 => "ffmpeg OpenH264",
         StreamEncoderMode::MediaFoundation => "Media Foundation",
     }
 }

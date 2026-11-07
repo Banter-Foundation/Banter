@@ -16415,6 +16415,12 @@ fn encoder_mode_to_pick(mode: StreamEncoderMode) -> media::EncoderPick {
         StreamEncoderMode::Software => media::EncoderPick::Software,
         StreamEncoderMode::Nvenc => media::EncoderPick::Nvenc,
         StreamEncoderMode::Vaapi => media::EncoderPick::Vaapi,
+        StreamEncoderMode::Amf => media::EncoderPick::Amf,
+        StreamEncoderMode::Qsv => media::EncoderPick::Qsv,
+        StreamEncoderMode::Vulkan => media::EncoderPick::Vulkan,
+        StreamEncoderMode::V4l2m2m => media::EncoderPick::V4l2m2m,
+        StreamEncoderMode::Libx264 => media::EncoderPick::Libx264,
+        StreamEncoderMode::LibOpenh264 => media::EncoderPick::LibOpenh264,
         StreamEncoderMode::MediaFoundation => media::EncoderPick::MediaFoundation,
     }
 }
