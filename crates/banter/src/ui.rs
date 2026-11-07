@@ -58,11 +58,12 @@ use crate::logic::{
     visible_home_sections, voice_flags_retry_ready, voice_occupancy_line, voice_rtc_mesh,
     voice_rtc_session_ready,
     window_size_label,
-    window_size_presets, CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry,
-    ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind, HomeSectionId,
-    MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection, StreamDefaults,
-    StreamEncoderMode, StreamFps, StreamRateControl, StreamResolution, VideoPrefs, VoicePrefs,
-    VoiceRejoinIntent, OPEN_MIC_RMS, RECONNECTING_STATUS,
+    window_size_presets, AppearancePrefs, CameraChoice, CaptureKind, ContextMenuAction,
+    ContextMenuEntry, ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind,
+    HomeSectionId, MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection,
+    StreamDefaults, StreamEncoderMode, StreamFps, StreamRateControl, StreamResolution, VideoPrefs,
+    VoicePrefs, VoiceRejoinIntent, clamp_font_scale, font_scale_presets, OPEN_MIC_RMS,
+    RECONNECTING_STATUS,
 };
 use crate::media::{self, EngineUpdate, Media, StreamPick, VideoFrame};
 use crate::sfx::{ringtone_duration, Sfx, SoundEvent};
@@ -399,6 +400,7 @@ pub(crate) struct App {
     voice: VoicePrefs,
     video: VideoPrefs,
     pending_video: Option<VideoPrefs>,
+    appearance: AppearancePrefs,
     stream: StreamDefaults,
     stream_menu: bool,
     stream_anchor: [f32; 2],
@@ -717,6 +719,7 @@ impl App {
             voice: VoicePrefs::default(),
             video: VideoPrefs::default(),
             pending_video: None,
+            appearance: AppearancePrefs::default(),
             stream: StreamDefaults::default(),
             stream_menu: false,
             stream_anchor: [0.0, 0.0],
@@ -958,6 +961,7 @@ impl App {
             apply_discord_style(imgui.style_mut());
             self.styled = true;
         }
+        self.apply_font_scale(imgui);
         self.ensure_icons(imgui);
         self.flush_shots(imgui);
         if self.account.is_none() {
@@ -1052,6 +1056,7 @@ impl App {
             apply_discord_style(imgui.style_mut());
             self.settings_styled = true;
         }
+        self.apply_font_scale(imgui);
         self.ensure_icons(imgui);
         self.flush_shots(imgui);
         self.install_avatars(imgui);
@@ -12659,6 +12664,9 @@ impl App {
                             SettingsSection::Voice => {
                                 self.draw_voice_settings(ui, layout.content_w)
                             }
+                            SettingsSection::Appearance => {
+                                self.draw_appearance_settings(ui, layout.content_w)
+                            }
                             SettingsSection::Mods => self.draw_mods_settings(ui, layout.content_w),
                             SettingsSection::Developer => {
                                 self.draw_developer_settings(ui, layout.content_w)
@@ -13078,10 +13086,15 @@ impl App {
             .build(ui, || {
                 settings_form_label(ui, self.bold_font, "USER SETTINGS");
                 ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
-                for section in [SettingsSection::Account, SettingsSection::Voice] {
+                for section in [
+                    SettingsSection::Account,
+                    SettingsSection::Voice,
+                    SettingsSection::Appearance,
+                ] {
                     let (id, icon, label) = match section {
                         SettingsSection::Account => ("settings-account", "user", "My Account"),
                         SettingsSection::Voice => ("settings-voice", "headphones", "Voice & Video"),
+                        SettingsSection::Appearance => ("settings-appearance", "type", "Appearance"),
                         SettingsSection::Mods => unreachable!("mods is under its own heading"),
                         SettingsSection::Developer => {
                             unreachable!("developer is under its own heading")
@@ -15162,6 +15175,7 @@ impl App {
             apply_discord_style(imgui.style_mut());
             self.stream_popout_styled = true;
         }
+        self.apply_font_scale(imgui);
         if !self.stream_popout_icons_ready {
             for name in [
                 "chevron-right",
@@ -15624,6 +15638,12 @@ impl App {
             video.height = height;
             self.video = video;
         }
+        if let Some(mut appearance) =
+            load_json::<AppearancePrefs>(&self.data_dir.join("appearance.json"))
+        {
+            appearance.font_scale = clamp_font_scale(appearance.font_scale);
+            self.appearance = appearance;
+        }
         if let Some(stream) = load_json::<StreamDefaults>(&self.data_dir.join("stream.json")) {
             self.stream_resolution = resolution_from_key(&stream.resolution);
             self.stream_fps = fps_from_key(&stream.fps);
@@ -15704,6 +15724,17 @@ impl App {
         }
     }
 
+    fn apply_font_scale(&self, imgui: &mut Context) {
+        imgui
+            .style_mut()
+            .set_font_scale_main(clamp_font_scale(self.appearance.font_scale));
+    }
+
+    fn save_appearance(&mut self) {
+        self.appearance.font_scale = clamp_font_scale(self.appearance.font_scale);
+        let _ = save_json(&self.data_dir.join("appearance.json"), &self.appearance);
+    }
+
     fn save_video(&mut self) {
         let (width, height) = clamp_window_size(self.video.width, self.video.height);
         self.video.width = width;
@@ -15742,6 +15773,34 @@ impl App {
             }
             Err(err) => {
                 self.settings_error = err;
+            }
+        }
+    }
+
+    fn draw_appearance_settings(&mut self, ui: &Ui, width: f32) {
+        settings_form_label(ui, self.bold_font, "FONT SIZE");
+        ui.text_colored(
+            MUTED,
+            "Scales Banter’s UI text. Chat, settings, and menus all follow this size.",
+        );
+        settings_spacer(ui);
+        let current = clamp_font_scale(self.appearance.font_scale);
+        let choices: Vec<(String, String, bool, bool)> = font_scale_presets()
+            .iter()
+            .map(|(scale, label)| {
+                let selected = (current - scale).abs() < 0.001;
+                (
+                    format!("font-scale-{scale}"),
+                    (*label).to_string(),
+                    selected,
+                    true,
+                )
+            })
+            .collect();
+        if let Some(index) = settings_chip_row(ui, &choices, width) {
+            if let Some(&(scale, _)) = font_scale_presets().get(index) {
+                self.appearance.font_scale = scale;
+                self.save_appearance();
             }
         }
     }

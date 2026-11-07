@@ -187,6 +187,7 @@ fn settings_menu_lists_account_then_voice() {
         [
             SettingsSection::Account,
             SettingsSection::Voice,
+            SettingsSection::Appearance,
             SettingsSection::Mods,
             SettingsSection::Developer,
         ]
