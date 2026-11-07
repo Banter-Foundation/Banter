@@ -1,3 +1,7 @@
+## 2026-11-07 02:02:25 -06:00 [ubuntu] — Dongle UI + Shantell Sans chat fonts
+
+Vendored OFL faces: Dongle (UI chrome — ImGui default + bold/semibold) and Shantell Sans (chat / BFMD body / bold / italic / bold-italic). Embedded via `include_bytes` in `platform::install_ui_fonts`; system Segoe/Liberation/Noto/DejaVu stay as fallbacks. Assets under `crates/banter/assets/fonts/{dongle,shantell-sans}/`.
+
 ## 2026-11-07 01:51:16 -06:00 [ubuntu] — Linux uses system title bar (BA-105)
 
 Disable the client-drawn Mac-style caption on Linux: `client_caption_enabled()` is false, `caption_height()` is 0, and GLFW windows stay `Decorated(true)` so the DE / compositor chrome (and user themes) remain in charge. Windows keeps the custom caption. Layout/shell rects and caption paint follow `caption_height()`.

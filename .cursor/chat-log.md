@@ -1197,3 +1197,18 @@ Encoder quality/CPU: cached probe, HW-first without dual OpenH264 open, QP floor
 
 Agent: PR #88 opened (https://github.com/Banter-Foundation/Banter/pull/88). Do not merge until Owl says so.
 
+## 2026-11-07 Dongle UI + Shantell Sans chat fonts; merge #96
+
+Owl: use Dongle for default ui text font https://fonts.google.com/specimen/Dongle
+Owl: use Shantell Sans for default text font https://fonts.google.com/specimen/Shantell+Sans
+Owl: we are clear for which is for what correct?
+Agent: Dongle → UI chrome; Shantell Sans → chat / message body. Confirm?
+Owl: yep
+Owl: Owl said merge. Merge https://github.com/Banter-Foundation/Banter/pull/96 into main now. Confirm merged SHA. Continue fonts (Dongle UI + Shantell Sans chat) on a separate PR if not done — do not block that on this merge.
+
+Agent: Merged #96 squash to main as 7cb1f0b82c8bad7321c86b6ed735ca0590126f0d. Fonts continue on cursor/shantell-sans-font-be9b (Dongle UI + Shantell chat), separate PR.
+
+### Summary
+- #96 Linux system title bar landed on main (`7cb1f0b`).
+- Dongle = UI chrome; Shantell Sans = chat/BFMD; vendored OFL assets + wiring.
+
