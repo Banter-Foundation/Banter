@@ -37,7 +37,7 @@ A viewer’s quality slider on a remote screen or camera snaps to full, half, qu
 
 If nobody wants a layer, the publisher is told to pause it (dynacast). The first subscriber to a paused layer asks the publisher for a keyframe.
 
-P2P (DM DirectCall, and guild voice when both peers opted into P2P video) never receives SFU `WantedLayers`. A new or changed peer `SubscribeLayer` cap therefore forces a local IDR so Go Live / camera after the call is up (or a late watcher) can decode. Encode loops also skip camera/screen layers while the matching `publishing_*` flag is off, so a restart after toggle starts on a fresh keyframe instead of orphaned P-frames.
+P2P (DM DirectCall, and guild voice when both peers opted into P2P video) never receives SFU `WantedLayers`. A new or changed peer `SubscribeLayer` cap therefore forces a local IDR so Go Live / camera after the call is up (or a late watcher) can decode. Encode loops also skip camera/screen layers while the matching `publishing_*` flag is off, so a restart after toggle starts on a fresh keyframe instead of orphaned P-frames. Linux VA-API/NVENC has no mid-stream force-IDR on the pipe path, so a `force_key` reopens ffmpeg (safe with `-async_depth 1`); the encode loop does not consume that flag while no layer is publishing, so a mesh flip or WantedLayers arm before Go Live still yields an IDR on the first real frame.
 
 ## Capture
 

@@ -831,12 +831,12 @@ impl VideoEncoder for FfmpegEncoder {
         height: u32,
         force_key: bool,
     ) -> Result<EncodedAu, String> {
-        // Reopen only on size change. Fresh ffmpeg already starts with an IDR;
-        // killing the process on every force_key reintroduced VA-API's first-AU
-        // delay and caused LayerEncoder to fall back to OpenH264. Mid-stream
-        // keys rely on the GOP (`-g`) unless a clean force-IDR path appears.
-        let _ = force_key;
-        if width != self.width || height != self.height {
+        // Reopen on size change *or* force_key. Fresh ffmpeg starts with an IDR —
+        // pipe VA-API/NVENC has no reliable mid-stream force-IDR, and ignoring
+        // force_key broke late-join PLI, P2P peer-cap keys, and mesh-flip recovery
+        // (BAN-33). async_depth=1 + the flush retry below keep the first AU from
+        // timing out the way BAN-30 saw before those fixes.
+        if force_key || width != self.width || height != self.height {
             let replacement = FfmpegEncoder::open(
                 self.name,
                 self.backend,
@@ -1269,6 +1269,37 @@ mod tests {
             matches!(encoder.backend(), Backend::Vaapi | Backend::Nvenc),
             "delta without SPS must not fall back to OpenH264; got {}",
             encoder.backend().label()
+        );
+        // Mid-stream force_key must reopen for a real IDR (late-join PLI / mesh flip).
+        // async_depth=1 keeps this from timing out back to OpenH264 (BAN-33).
+        let forced = encoder
+            .encode(&i420, width, height, true)
+            .expect("force_key after delta");
+        assert!(
+            forced.keyframe || access_unit_is_key(&forced.bytes),
+            "force_key must emit an IDR so remotes can decode after PLI / topology flip"
+        );
+        assert!(
+            matches!(encoder.backend(), Backend::Vaapi | Backend::Nvenc),
+            "force_key reopen must stay on hardware; got {}",
+            encoder.backend().label()
+        );
+    }
+
+    #[test]
+    fn software_force_key_emits_idr() {
+        let width = 320u32;
+        let height = 180u32;
+        let mut encoder =
+            LayerEncoder::software(true, 30.0, 500_000).expect("openh264");
+        let rgba = vec![10u8, 20, 30, 255].repeat((width * height) as usize);
+        let i420 = rgba_to_i420(&rgba, width, height);
+        let _key = encoder.encode(&i420, width, height, true).expect("key");
+        let _delta = encoder.encode(&i420, width, height, false).expect("delta");
+        let forced = encoder.encode(&i420, width, height, true).expect("force");
+        assert!(
+            forced.keyframe || access_unit_is_key(&forced.bytes),
+            "OpenH264 force_key must still produce an IDR"
         );
     }
 }
