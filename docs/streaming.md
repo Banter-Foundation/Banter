@@ -51,9 +51,9 @@ Camera and screen frames are I420, then H.264. Local previews are RGBA (mirrored
 
 Viewers can **pop out** the focused share into a Banter Stream OS window, **cycle** among users who are currently sharing, and enter **fullscreen** theater where watch chrome fades after pointer idle and returns on mouse movement. Pop-out and fullscreen chrome include profile icons and voice indicators (talking ring, mute/deafen) for live sharers; those fade with the rest of the UI. Those controls do not change encoder resolution or capture FPS.
 
-Hardware encode is probed and used when the bitstream is Constrained Baseline:
+Hardware encode is scanned at startup / when stream settings load. Voice & Video, Stream Select, and Stream options list only backends this process can see (plus **Auto** and **Software (OpenH264)**). Choosing a specific backend (NVENC, VA-API, Media Foundation) opens that encoder; if it is missing or fails to open, Banter falls back to OpenH264 instead of pretending a missing encoder exists.
 
-- Linux: `h264_nvenc` when `libnvidia-encode` is present, otherwise `h264_vaapi` when `/dev/dri/renderD128` and ffmpeg’s VA-API encoder exist.
+- Linux: `h264_nvenc` when `libnvidia-encode` is present; `h264_vaapi` when `/dev/dri/renderD128` and ffmpeg’s VA-API encoder exist. **Any hardware** tries NVENC then VA-API.
 - Windows: a synchronous Media Foundation hardware H.264 MFT, asked for Constrained Baseline. Async-only MFTs are not driven. Mid-stream `force_key` uses CodecAPI when available; size change or CodecAPI failure reopens the MFT for a fresh IDR instead of erroring into a mid-stream OpenH264 swap.
 - Otherwise OpenH264. A hardware encoder that emits a different profile is dropped for that layer.
 

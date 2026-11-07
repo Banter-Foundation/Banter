@@ -45,7 +45,9 @@ pub use layout::{discord_shell_columns, shell_columns, Region, ShellColumns};
 pub use logic::*;
 pub use media::{
     camera_preview_rgba, current_camera_frame, decode_camera_frame, hardware_encoder_available,
-    pick_preferred_camera_mode, preferred_camera_height, preferred_camera_width, CameraModeChoice,
+    hardware_encoder_names, list_available_encoders, list_available_encoders_preferring,
+    pick_preferred_camera_mode, preferred_camera_height, preferred_camera_width, AvailableEncoder,
+    CameraModeChoice, EncoderPick,
 };
 pub use mods::{default_mod_order, disable_mod, enable_mod, memory_warning, move_mod, ModHost};
 pub use plugins::{

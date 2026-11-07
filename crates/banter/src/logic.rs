@@ -976,6 +976,21 @@ pub fn hardware_encoder_block(found: bool) -> Option<&'static str> {
     }
 }
 
+/// When a saved specific encoder is missing, explain why Auto/OpenH264 will be used instead.
+pub fn missing_encoder_block(mode: StreamEncoderMode, available: bool) -> Option<String> {
+    if available || matches!(
+        mode,
+        StreamEncoderMode::Auto | StreamEncoderMode::Software | StreamEncoderMode::Hardware
+    ) {
+        None
+    } else {
+        Some(format!(
+            "{} is not available on this PC — Banter will fall back to OpenH264 until it appears.",
+            encoder_mode_label(mode)
+        ))
+    }
+}
+
 pub fn encode_jpeg_rgba_quality(
     width: u32,
     height: u32,
@@ -1233,6 +1248,22 @@ mod stream_encoder_settings_tests {
             StreamEncoderMode::Software
         );
         assert_eq!(
+            encoder_mode_from_key(encoder_mode_key(StreamEncoderMode::Nvenc)),
+            StreamEncoderMode::Nvenc
+        );
+        assert_eq!(
+            encoder_mode_from_key(encoder_mode_key(StreamEncoderMode::Vaapi)),
+            StreamEncoderMode::Vaapi
+        );
+        assert_eq!(
+            encoder_mode_from_key(encoder_mode_key(StreamEncoderMode::MediaFoundation)),
+            StreamEncoderMode::MediaFoundation
+        );
+        assert_eq!(
+            encoder_mode_from_key("media foundation"),
+            StreamEncoderMode::MediaFoundation
+        );
+        assert_eq!(
             rate_control_from_key(rate_control_key(StreamRateControl::Vbr)),
             StreamRateControl::Vbr
         );
@@ -1318,14 +1349,24 @@ pub fn fade_gain(current: f32, target: f32, step: f32) -> f32 {
 }
 
 /// OBS-style encoder pick for Go Live. Wire stays H.264 Constrained Baseline either way.
+///
+/// Prefer building the chip list from the media encoder scan so unavailable
+/// backends are not offered. Specific keys (`nvenc` / `vaapi` /
+/// `mediafoundation`) survive in `stream.json` even when the device disappears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamEncoderMode {
     /// Prefer hardware when Constrained Baseline is available, else OpenH264.
     Auto,
-    /// Require a hardware encoder; fall back to OpenH264 only if open fails.
+    /// First available hardware encoder; fall back to OpenH264 only if open fails.
     Hardware,
     /// Always OpenH264 software.
     Software,
+    /// Linux NVIDIA NVENC (`h264_nvenc`).
+    Nvenc,
+    /// Linux VA-API (`h264_vaapi`).
+    Vaapi,
+    /// Windows Media Foundation hardware H.264 MFT.
+    MediaFoundation,
 }
 
 /// Rate-control intent. CBR holds a steady target; VBR may undershoot on quiet frames.
@@ -1343,7 +1384,7 @@ pub struct StreamDefaults {
     pub fps: String,
     /// Capability cache for the UI (“hardware available”), not the user preference.
     pub hardware: bool,
-    /// `auto` | `hardware` | `software` — see [`StreamEncoderMode`].
+    /// `auto` | `hardware` | `software` | `nvenc` | `vaapi` | `mediafoundation` — see [`StreamEncoderMode`].
     pub encoder: String,
     /// `cbr` | `vbr` — see [`StreamRateControl`].
     pub rate_control: String,
@@ -1379,6 +1420,9 @@ pub fn encoder_mode_key(mode: StreamEncoderMode) -> &'static str {
         StreamEncoderMode::Auto => "auto",
         StreamEncoderMode::Hardware => "hardware",
         StreamEncoderMode::Software => "software",
+        StreamEncoderMode::Nvenc => "nvenc",
+        StreamEncoderMode::Vaapi => "vaapi",
+        StreamEncoderMode::MediaFoundation => "mediafoundation",
     }
 }
 
@@ -1386,6 +1430,9 @@ pub fn encoder_mode_from_key(key: &str) -> StreamEncoderMode {
     match key {
         "hardware" => StreamEncoderMode::Hardware,
         "software" => StreamEncoderMode::Software,
+        "nvenc" => StreamEncoderMode::Nvenc,
+        "vaapi" => StreamEncoderMode::Vaapi,
+        "mediafoundation" | "media foundation" => StreamEncoderMode::MediaFoundation,
         _ => StreamEncoderMode::Auto,
     }
 }
@@ -1393,8 +1440,24 @@ pub fn encoder_mode_from_key(key: &str) -> StreamEncoderMode {
 pub fn encoder_mode_label(mode: StreamEncoderMode) -> &'static str {
     match mode {
         StreamEncoderMode::Auto => "Auto (prefer hardware)",
-        StreamEncoderMode::Hardware => "Hardware (H.264)",
+        StreamEncoderMode::Hardware => "Any hardware",
         StreamEncoderMode::Software => "Software (OpenH264)",
+        StreamEncoderMode::Nvenc => "NVIDIA NVENC",
+        StreamEncoderMode::Vaapi => "VA-API",
+        StreamEncoderMode::MediaFoundation => "Media Foundation",
+    }
+}
+
+/// Human line for the encoder row: either “none found” or the backends this PC scanned.
+pub fn encoder_availability_note(found: &[&str]) -> String {
+    if found.is_empty() {
+        "No hardware H.264 encoder is available on this PC — OpenH264 will be used."
+            .into()
+    } else {
+        format!(
+            "Detected on this PC: {}. Wire is always H.264 Constrained Baseline.",
+            found.join(", ")
+        )
     }
 }
 

@@ -207,11 +207,88 @@ pub struct LayerEncoder {
 }
 
 /// How [`LayerEncoder::open_with`] picks hardware vs OpenH264.
+///
+/// Specific backends (`Nvenc` / `Vaapi` / `MediaFoundation`) only open that
+/// encoder. Prefer listing choices from [`list_available_encoders`] so the UI
+/// never offers a backend this process cannot see.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncoderPick {
     Auto,
+    /// First available hardware encoder (NVENC → VA-API on Linux, MF on Windows).
     Hardware,
     Software,
+    /// Linux NVIDIA NVENC. On other OSes open falls back to software.
+    Nvenc,
+    /// Linux VA-API. On other OSes open falls back to software.
+    Vaapi,
+    MediaFoundation,
+}
+
+/// One selectable encoder for Voice & Video / Stream options.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AvailableEncoder {
+    pub pick: EncoderPick,
+    pub key: &'static str,
+    pub label: &'static str,
+    /// False when the preference is kept for display but the probe no longer finds it.
+    pub available: bool,
+}
+
+impl EncoderPick {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Hardware => "hardware",
+            Self::Software => "software",
+            Self::Nvenc => "nvenc",
+            Self::Vaapi => "vaapi",
+            Self::MediaFoundation => "mediafoundation",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto (prefer hardware)",
+            Self::Hardware => "Any hardware",
+            Self::Software => "Software (OpenH264)",
+            Self::Nvenc => "NVIDIA NVENC",
+            Self::Vaapi => "VA-API",
+            Self::MediaFoundation => "Media Foundation",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Self {
+        match key {
+            "hardware" => Self::Hardware,
+            "software" => Self::Software,
+            "nvenc" => Self::Nvenc,
+            "vaapi" => Self::Vaapi,
+            "mediafoundation" | "media foundation" => Self::MediaFoundation,
+            _ => Self::Auto,
+        }
+    }
+
+    pub(crate) fn as_u8(self) -> u8 {
+        match self {
+            Self::Auto => 0,
+            Self::Hardware => 1,
+            Self::Software => 2,
+            Self::Nvenc => 3,
+            Self::Vaapi => 4,
+            Self::MediaFoundation => 5,
+        }
+    }
+
+    pub(crate) fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Hardware,
+            2 => Self::Software,
+            3 => Self::Nvenc,
+            4 => Self::Vaapi,
+            5 => Self::MediaFoundation,
+            _ => Self::Auto,
+        }
+    }
 }
 
 impl LayerEncoder {
@@ -238,35 +315,59 @@ impl LayerEncoder {
     ) -> Result<Self, String> {
         match pick {
             EncoderPick::Software => Self::software(screen, fps, bps, keyframe_ms),
-            EncoderPick::Hardware => {
-                let soft = SoftwareEncoder::open(screen, fps, bps, keyframe_ms)?;
-                if let Some(inner) = try_hardware(screen, width, height, fps, bps, keyframe_ms) {
-                    Ok(Self {
-                        inner,
-                        fallback: Some(soft),
-                    })
-                } else {
-                    Ok(Self {
-                        inner: Box::new(soft),
-                        fallback: None,
-                    })
-                }
+            EncoderPick::Auto | EncoderPick::Hardware => {
+                Self::with_optional_hardware(screen, width, height, fps, bps, keyframe_ms, None)
             }
-            EncoderPick::Auto => {
-                let soft = SoftwareEncoder::open(screen, fps, bps, keyframe_ms)?;
-                let hw = try_hardware(screen, width, height, fps, bps, keyframe_ms);
-                if let Some(inner) = hw {
-                    Ok(Self {
-                        inner,
-                        fallback: Some(soft),
-                    })
-                } else {
-                    Ok(Self {
-                        inner: Box::new(soft),
-                        fallback: None,
-                    })
-                }
-            }
+            EncoderPick::Nvenc => Self::with_optional_hardware(
+                screen,
+                width,
+                height,
+                fps,
+                bps,
+                keyframe_ms,
+                Some(HardwareKind::Nvenc),
+            ),
+            EncoderPick::Vaapi => Self::with_optional_hardware(
+                screen,
+                width,
+                height,
+                fps,
+                bps,
+                keyframe_ms,
+                Some(HardwareKind::Vaapi),
+            ),
+            EncoderPick::MediaFoundation => Self::with_optional_hardware(
+                screen,
+                width,
+                height,
+                fps,
+                bps,
+                keyframe_ms,
+                Some(HardwareKind::MediaFoundation),
+            ),
+        }
+    }
+
+    fn with_optional_hardware(
+        screen: bool,
+        width: u32,
+        height: u32,
+        fps: f32,
+        bps: u32,
+        keyframe_ms: u64,
+        only: Option<HardwareKind>,
+    ) -> Result<Self, String> {
+        let soft = SoftwareEncoder::open(screen, fps, bps, keyframe_ms)?;
+        if let Some(inner) = try_hardware(screen, width, height, fps, bps, keyframe_ms, only) {
+            Ok(Self {
+                inner,
+                fallback: Some(soft),
+            })
+        } else {
+            Ok(Self {
+                inner: Box::new(soft),
+                fallback: None,
+            })
         }
     }
 
@@ -333,26 +434,136 @@ impl VideoListen {
     }
 }
 
+/// Which hardware path [`try_hardware`] should open. `None` means first available.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HardwareKind {
+    Nvenc,
+    Vaapi,
+    MediaFoundation,
+}
+
 /// Names the hardware encoders this process can see. Empty means OpenH264 only.
 pub fn hardware_probe() -> Vec<&'static str> {
-    let mut found = Vec::new();
+    list_available_encoders()
+        .into_iter()
+        .filter(|entry| {
+            entry.available
+                && !matches!(
+                    entry.pick,
+                    EncoderPick::Auto | EncoderPick::Hardware | EncoderPick::Software
+                )
+        })
+        .map(|entry| entry.key)
+        .collect()
+}
+
+fn nvenc_present() -> bool {
     #[cfg(target_os = "linux")]
     {
-        if ffmpeg_has_encoder("h264_nvenc") && nvidia_encode_present() {
-            found.push("nvenc");
-        }
-        if ffmpeg_has_encoder("h264_vaapi") && std::path::Path::new("/dev/dri/renderD128").exists()
-        {
-            found.push("vaapi");
-        }
+        ffmpeg_has_encoder("h264_nvenc") && nvidia_encode_present()
     }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn vaapi_present() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        ffmpeg_has_encoder("h264_vaapi") && std::path::Path::new("/dev/dri/renderD128").exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn media_foundation_present() -> bool {
     #[cfg(windows)]
     {
-        if super::mf::hardware_present() {
-            found.push("media foundation");
+        super::mf::hardware_present()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Scan this process for selectable H.264 encoders (Auto / Software always; HW when present).
+///
+/// Specific backends that are not installed are omitted so the UI cannot offer a missing encoder.
+/// Pass `prefer` when reloading a saved key that is no longer present — it is appended disabled.
+pub fn list_available_encoders() -> Vec<AvailableEncoder> {
+    list_available_encoders_preferring(None)
+}
+
+pub fn list_available_encoders_preferring(prefer: Option<&str>) -> Vec<AvailableEncoder> {
+    let mut out = vec![
+        AvailableEncoder {
+            pick: EncoderPick::Auto,
+            key: EncoderPick::Auto.key(),
+            label: EncoderPick::Auto.label(),
+            available: true,
+        },
+        AvailableEncoder {
+            pick: EncoderPick::Software,
+            key: EncoderPick::Software.key(),
+            label: EncoderPick::Software.label(),
+            available: true,
+        },
+    ];
+    let nvenc = nvenc_present();
+    let vaapi = vaapi_present();
+    let mf = media_foundation_present();
+    if nvenc || vaapi || mf {
+        out.push(AvailableEncoder {
+            pick: EncoderPick::Hardware,
+            key: EncoderPick::Hardware.key(),
+            label: EncoderPick::Hardware.label(),
+            available: true,
+        });
+    }
+    if nvenc {
+        out.push(AvailableEncoder {
+            pick: EncoderPick::Nvenc,
+            key: EncoderPick::Nvenc.key(),
+            label: EncoderPick::Nvenc.label(),
+            available: true,
+        });
+    }
+    if vaapi {
+        out.push(AvailableEncoder {
+            pick: EncoderPick::Vaapi,
+            key: EncoderPick::Vaapi.key(),
+            label: EncoderPick::Vaapi.label(),
+            available: true,
+        });
+    }
+    if mf {
+        out.push(AvailableEncoder {
+            pick: EncoderPick::MediaFoundation,
+            key: EncoderPick::MediaFoundation.key(),
+            label: EncoderPick::MediaFoundation.label(),
+            available: true,
+        });
+    }
+    if let Some(key) = prefer {
+        let pick = EncoderPick::from_key(key);
+        if !matches!(
+            pick,
+            EncoderPick::Auto | EncoderPick::Software | EncoderPick::Hardware
+        ) && !out.iter().any(|entry| entry.pick == pick)
+        {
+            out.push(AvailableEncoder {
+                pick,
+                key: pick.key(),
+                label: pick.label(),
+                available: false,
+            });
         }
     }
-    found
+    out
 }
 
 pub fn rgba_to_i420(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
@@ -663,10 +874,14 @@ fn try_hardware(
     fps: f32,
     bps: u32,
     keyframe_ms: u64,
+    only: Option<HardwareKind>,
 ) -> Option<Box<dyn VideoEncoder>> {
+    let want_nvenc = matches!(only, None | Some(HardwareKind::Nvenc));
+    let want_vaapi = matches!(only, None | Some(HardwareKind::Vaapi));
+    let want_mf = matches!(only, None | Some(HardwareKind::MediaFoundation));
     #[cfg(target_os = "linux")]
     {
-        if ffmpeg_has_encoder("h264_nvenc") && nvidia_encode_present() {
+        if want_nvenc && nvenc_present() {
             if let Ok(encoder) = FfmpegEncoder::open(
                 "h264_nvenc",
                 Backend::Nvenc,
@@ -679,15 +894,14 @@ fn try_hardware(
             ) {
                 return Some(Box::new(encoder));
             }
+            if matches!(only, Some(HardwareKind::Nvenc)) {
+                return None;
+            }
         }
         // AMD VA-API H.264 encode rejects sizes below 128×128 (see vainfo /
         // ffmpeg). Opening smaller layers (e.g. Quarter on a short edge) fails
         // and must not block Full/Half from using the GPU.
-        if ffmpeg_has_encoder("h264_vaapi")
-            && std::path::Path::new("/dev/dri/renderD128").exists()
-            && width >= 128
-            && height >= 128
-        {
+        if want_vaapi && vaapi_present() && width >= 128 && height >= 128 {
             if let Ok(encoder) = FfmpegEncoder::open(
                 "h264_vaapi",
                 Backend::Vaapi,
@@ -700,18 +914,24 @@ fn try_hardware(
             ) {
                 return Some(Box::new(encoder));
             }
+            if matches!(only, Some(HardwareKind::Vaapi)) {
+                return None;
+            }
         }
+        let _ = want_mf;
     }
     #[cfg(windows)]
     {
-        let _ = (screen, keyframe_ms);
-        if let Ok(encoder) = super::mf::open(width, height, fps, bps) {
-            return Some(Box::new(encoder));
+        let _ = (screen, keyframe_ms, want_nvenc, want_vaapi);
+        if want_mf {
+            if let Ok(encoder) = super::mf::open(width, height, fps, bps) {
+                return Some(Box::new(encoder));
+            }
         }
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let _ = (screen, width, height, fps, bps, keyframe_ms);
+        let _ = (screen, width, height, fps, bps, keyframe_ms, want_nvenc, want_vaapi, want_mf);
     }
     None
 }
@@ -1211,6 +1431,37 @@ fn ffmpeg_has(list: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn available_encoders_always_include_auto_and_software() {
+        let list = list_available_encoders();
+        assert!(list.iter().any(|e| e.pick == EncoderPick::Auto && e.available));
+        assert!(list
+            .iter()
+            .any(|e| e.pick == EncoderPick::Software && e.available));
+        assert!(
+            list.iter()
+                .filter(|e| {
+                    matches!(
+                        e.pick,
+                        EncoderPick::Nvenc | EncoderPick::Vaapi | EncoderPick::MediaFoundation
+                    )
+                })
+                .all(|e| e.available),
+            "specific backends in the list must be present"
+        );
+    }
+
+    #[test]
+    fn preferring_missing_backend_keeps_disabled_chip() {
+        let list = list_available_encoders_preferring(Some("nvenc"));
+        let nvenc = list.iter().find(|e| e.pick == EncoderPick::Nvenc);
+        if nvenc_present() {
+            assert!(nvenc.is_some_and(|e| e.available));
+        } else {
+            assert!(nvenc.is_some_and(|e| !e.available));
+        }
+    }
 
     #[test]
     fn opus_voice_round_trip_keeps_energy() {

@@ -36,8 +36,9 @@ use crate::logic::{
     chat_time_hover, chat_time_label, clamp_context_menu_pos, clamp_window_size, comment_tree_rows,
     context_menu_height, crop_avatar_rgba, crop_window, default_stream_fps,
     default_stream_resolution, dismiss_stream_overlays, encode_jpeg_rgba, folder_context_menu,
-    encoder_mode_from_key, encoder_mode_key, encoder_mode_label, fps_block, fps_from_key, fps_key,
-    grouped_mix_sources, hardware_encoder_block, home_section_is_visible, home_section_label,
+    encoder_availability_note, encoder_mode_from_key, encoder_mode_key, fps_block, fps_from_key,
+    fps_key, grouped_mix_sources, hardware_encoder_block,
+    home_section_is_visible, home_section_label, missing_encoder_block,
     insert_mention, is_debug_command, lerp_size, load_json, local_api_base, member_context_menu,
     message_context_menu, message_starts_new_day, mirror_rgba, move_home_section, next_reconnect_at,
     parse_folder_color, password_blocks_copy, password_is_masked, plan_member_groups,
@@ -8085,11 +8086,7 @@ impl App {
                 self.stream_resolution,
                 self.stream_fps,
             ),
-            pick: match mode {
-                StreamEncoderMode::Auto => media::EncoderPick::Auto,
-                StreamEncoderMode::Hardware => media::EncoderPick::Hardware,
-                StreamEncoderMode::Software => media::EncoderPick::Software,
-            },
+            pick: encoder_mode_to_pick(mode),
             keyframe_ms: u64::from(self.stream.keyframe_secs.clamp(1, 10)) * 1000,
             fps,
             cbr: rate == StreamRateControl::Cbr,
@@ -12472,38 +12469,39 @@ impl App {
         }
         settings_spacer(ui);
         settings_form_label(ui, self.bold_font, "ENCODER");
-        let modes = [
-            StreamEncoderMode::Auto,
-            StreamEncoderMode::Hardware,
-            StreamEncoderMode::Software,
-        ];
+        let scanned = media::list_available_encoders_preferring(Some(self.stream.encoder.as_str()));
         let current = encoder_mode_from_key(&self.stream.encoder);
-        let choices: Vec<(String, String, bool, bool)> = modes
+        let choices: Vec<(String, String, bool, bool)> = scanned
             .iter()
-            .map(|mode| {
-                let enabled = *mode != StreamEncoderMode::Hardware || self.stream.hardware;
+            .map(|entry| {
+                let mode = encoder_mode_from_key(entry.key);
                 (
-                    format!("enc-{}", encoder_mode_key(*mode)),
-                    encoder_mode_label(*mode).to_string(),
-                    current == *mode,
-                    enabled,
+                    format!("enc-{}", entry.key),
+                    entry.label.to_string(),
+                    current == mode,
+                    entry.available,
                 )
             })
             .collect();
         if let Some(index) = settings_chip_row(ui, &choices, width) {
-            let next = encoder_mode_key(modes[index]).to_string();
-            if self.stream.encoder != next {
+            let next = scanned[index].key.to_string();
+            if scanned[index].available && self.stream.encoder != next {
                 self.stream.encoder = next;
                 self.save_stream();
             }
         }
-        if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
+        let found = media::hardware_encoder_names();
+        let current_available = scanned
+            .iter()
+            .find(|entry| encoder_mode_from_key(entry.key) == current)
+            .map(|entry| entry.available)
+            .unwrap_or(true);
+        if let Some(reason) = missing_encoder_block(current, current_available) {
+            ui.text_colored(MUTED, reason);
+        } else if let Some(reason) = hardware_encoder_block(self.stream.hardware) {
             ui.text_colored(MUTED, reason);
         } else {
-            ui.text_colored(
-                MUTED,
-                "Wire is always H.264 Constrained Baseline. Hardware when available, else OpenH264.",
-            );
+            ui.text_colored(MUTED, encoder_availability_note(&found));
         }
         settings_spacer(ui);
         settings_form_label(ui, self.bold_font, "RATE CONTROL");
@@ -14751,6 +14749,17 @@ impl App {
                 None
             }
         }
+    }
+}
+
+fn encoder_mode_to_pick(mode: StreamEncoderMode) -> media::EncoderPick {
+    match mode {
+        StreamEncoderMode::Auto => media::EncoderPick::Auto,
+        StreamEncoderMode::Hardware => media::EncoderPick::Hardware,
+        StreamEncoderMode::Software => media::EncoderPick::Software,
+        StreamEncoderMode::Nvenc => media::EncoderPick::Nvenc,
+        StreamEncoderMode::Vaapi => media::EncoderPick::Vaapi,
+        StreamEncoderMode::MediaFoundation => media::EncoderPick::MediaFoundation,
     }
 }
 
