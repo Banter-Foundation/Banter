@@ -1068,3 +1068,5 @@ Agent: Mapped full path; implemented safe buffer/preset cuts on cursor/vc-latenc
 
 ### Summary
 Interactive VC latency: ~60 ms playout, ~200 ms PCM caps, FPS-matched video RTP duration, 1 s keyframes, OpenH264/Opus low-latency presets, smaller SFU queues.
+
+Agent: PR #85 opened (https://github.com/Banter-Foundation/Banter/pull/85). Do not merge until Owl says so.
