@@ -27,6 +27,7 @@
 - [*] F3 profiler: FPS, RSS, HTTP/WebSocket bytes, frame sections, expensive ops
 - [*] Hidden composer command `/debugnow` (text channels and DMs) opens a server debug window with logs, live stats (including server version + protocol), and HTTP/WS/media in+out traffic. It is not listed in the UI and is not sent as a message.
 - [*] Display settings: VSync, fullscreen, window resolution (saved in video.json). With VSync on, the client UI matches the current monitor’s refresh rate and reapplies when the window moves or the display mode changes (not stream capture FPS).
+- [*] Chat compose autosuggest (BA-103): while typing in the bottom composer, Banter shows suggestion chips and ghost text for `@` member mentions, optional `:emote:` shortcodes when an emote-name hook is supplied, and next-word / phrase completions from a local bigram/trigram model over recent channel history plus static common chat phrases. Tab or click accepts; Escape dismisses until the draft changes. No cloud LLM. See `docs/chat-autosuggest.md`.
 
 ## Deferred
 

@@ -1,3 +1,11 @@
+## 2026-11-07 01:20:00 -06:00 [ubuntu] — Autosuggest prefers own history (BA-103)
+
+Next-word prediction weights the signed-in user’s own channel messages and session own-memory (other channels already loaded) above peers (`WEIGHT_OWN` 4 vs `WEIGHT_PEER` 1); the current composer draft trains at `WEIGHT_DRAFT` 3. Tests cover own-vs-peer ranking and draft ingest. Docs updated. PR #90.
+
+## 2026-11-07 01:16:49 -06:00 [ubuntu] — Chat compose autosuggest (BA-103)
+
+Bottom composer shows suggestion chips and ghost text while typing: `@` member mentions, optional `:emote:` shortcodes when names are supplied, and next-word / phrase completions from a local bigram/trigram model over recent channel history plus static common chat phrases. Tab or click accepts; Escape dismisses. Module `crates/banter/src/suggest.rs` with contract tests; UI wired in `draw_composer`; `SUGGEST_*` theme tokens. Docs: `docs/chat-autosuggest.md`. Branch `cursor/chat-autosuggest-0099`. Do not merge until Owl says so.
+
 ## 2026-11-07 01:25:20 -06:00 [ubuntu] — Discord-like Server Settings window (BA-106)
 
 Dedicated Banter Server Settings OS window (Overview / Roles / Badges / Member List) opens from the server header gear, server dropdown, or rail right-click. Overview wires nickname + invite; Roles hosts live CRUD; Member List shows hoist preview and assign; Badges is Coming soon until community-badge APIs exist. Shares the secondary GLFW/ImGui host with User Settings (mutually exclusive). Unblocks BA-23 walk inside Settings. Do not merge until Owl says so.

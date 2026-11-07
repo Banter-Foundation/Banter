@@ -1045,6 +1045,36 @@ Owl: Ship GitHub pre-release Version-1-test-11 from current main; Win+Linux(+mac
 
 Agent: Tagged `Version-1-test-11` at `dcbba80` (main `8e1efdc` + BANTER_VERSION bump). Built Linux locally; Windows and macOS arm64 via temporary Actions workflows. Published pre-release with six artifacts. Docker image built locally; GHCR push failed (banter-foundation: Create organization package denied; snowedinowl: 403). Docs retarget PR opened on `cursor/version-1-test-11-effc`. Scratch Win/macOS workflows removed from the PR tip (remain on the release tag commit only).
 
+## 2026-11-07 BA-103 Chat compose autosuggest
+
+Owl: “can you add a auto suggestion system for test with a some kind of perdicion system” — interpret as chat compose autosuggest with a lightweight prediction system for Banter (typo: prediction). “for test” = ship something they can try in the client.
+
+Prefs: D:\Projects\Project Banter only never E:; clear commits; one feature; docs for others.
+
+Scope for v1 PR:
+1. In the message compose box: as you type, show suggestion chips / ghost text for completions (channel members @, recent emotes if hooks exist, and short next-phrase / next-word predictions from a simple local model — n-gram or Markov over recent channel history + static common chat phrases is fine for v1; no cloud LLM required unless already in repo).
+2. Accept with Tab or click; Escape dismisses.
+3. Keep UI on-brand with Banter ImGui (not Discord clone dump).
+4. Unit tests for the predictor; manual-test notes in PR.
+5. Open one PR against main. Write plan/notes to /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/docs/chat-autosuggest.md
+6. Do not merge. Avoid colliding with open media PRs (#85–87, #80 coverflow) — own branch from main, touch compose/UI suggest paths only.
+
+Return PR URL + how prediction works in 2–3 sentences.
+
+Agent: Added `crates/banter/src/suggest.rs` (local bigram/trigram + static phrases, mention/emote ranking, Tab/Escape helpers) with `crates/banter/tests/suggest.rs` written first. Wired chips + ghost text into `draw_composer` with `SUGGEST_*` theme tokens. Emote names hook stays empty until BA-83. Docs in repo `docs/chat-autosuggest.md` and store plan path. Branch `cursor/chat-autosuggest-0099`. Do not merge until Owl says so.
+
+### Summary
+Composer autosuggest for try-in-client testing: local n-gram prediction plus @mentions; no cloud LLM; own PR from main.
+
+## 2026-11-07 BA-103 follow-up — own-history weighting
+
+Owl: next-word prediction must also learn from the user’s own messages (their history / drafts), not only others in the channel. Prefer weighting the signed-in user’s past channel messages (and optionally cross-channel own messages if already loaded) higher than peers. Update PR #90 + docs/chat-autosuggest.md.
+
+Agent: Added WEIGHT_OWN/WEIGHT_DRAFT/WEIGHT_PEER; UI remembers own bodies across visited channels this session and ingests the current draft each suggest pass. Tests own_messages_outweigh_peers_for_next_word + draft_text_trains_next_word. Docs updated in store and repo. Pushed to PR #90.
+
+### Summary
+Own messages and drafts now outrank peer history in local next-word prediction.
+
 ## 2026-11-07 BA-106 Discord-like server settings window
 
 Owl: before BA-23 roles/badges/member-list feature walk, add a Discord-like server settings window and put roles, badges, and member-list settings in it while you’re at it. Behavior: open from server context (gear / right-click server) → left nav sections like Discord Server Settings → right content pane. Include sections for Overview, Roles, Badges (or Members & badges), Member list / display. Wire real Banter APIs where they exist; if role/badge APIs aren’t ready, ship the window chrome + section shells with working navigation and clear “coming soon” only for empty backends — prefer implementing what Postgres/API already supports. Prefs: never E:; clear commits; one PR; do not merge. Docs note: /cursor/stores/.../internal/server-settings-window.md. Coordinate: BA-23 stays queued until this lands enough to walk features in Settings. Client Settings (user) already exist — this is **server** settings, separate window. Return PR URL + which sections are live vs stub.

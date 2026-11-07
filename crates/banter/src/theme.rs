@@ -195,6 +195,15 @@ pub const COMPOSER_H: f32 = 44.0;
 pub const COMPOSER_MARGIN: f32 = 16.0;
 pub const COMPOSER_BOTTOM: f32 = 24.0;
 pub const COMPOSER_RADIUS: f32 = 8.0;
+/// Autosuggest chip strip above the composer (BA-103).
+pub const SUGGEST_STRIP_H: f32 = 36.0;
+pub const SUGGEST_CHIP_H: f32 = 28.0;
+pub const SUGGEST_CHIP_PAD_X: f32 = 12.0;
+pub const SUGGEST_CHIP_GAP: f32 = 6.0;
+pub const SUGGEST_CHIP_RADIUS: f32 = 6.0;
+pub const SUGGEST_STRIP_BG: [f32; 4] = hex(0x2B2D31);
+pub const SUGGEST_CHIP_BG: [f32; 4] = hex(0x1E1F22);
+pub const SUGGEST_GHOST: [f32; 4] = hex(0x6D6F78);
 pub const SEARCH_W: f32 = 144.0;
 pub const SEARCH_H: f32 = 24.0;
 pub const HEADER_ICON: f32 = 24.0;

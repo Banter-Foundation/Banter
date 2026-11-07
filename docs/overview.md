@@ -66,6 +66,7 @@ The **embedded** server started by the desktop app always uses `127.0.0.1:3970`.
 - [Build and run](build-and-run.md)
 - [Architecture](architecture.md)
 - [Feature status](feature-status.md)
+- [Chat compose autosuggest](chat-autosuggest.md)
 - [Foundation / deferred list](foundation.md)
 - [Contributing](contributing.md)
 - [Current build notes](current-build.md) (what was observed on a live machine)

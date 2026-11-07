@@ -36,6 +36,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Linux native client (XDG paths, PipeWire-ready capture) | Working; loopback/app audio still Windows-only |
 | macOS arm64 client (Apple Silicon) | Working when run as `Banter.app` (release zip must contain the `.app`, not a bare Mach-O which opens Terminal); Mic / Camera / Screen Recording grants required; loopback/app audio not available; http links not implemented |
 | Hidden `/debugnow` composer command | Working — opens a server debug window (logs, live stats, HTTP/WS/media in+out traffic, and server version/protocol). Not listed in the UI and not stored as a message. Text channels and DMs. |
+| Chat compose autosuggest (mentions, optional emotes, local n-gram phrases) | Working — bottom composer chips + ghost text; Tab/click accept, Escape dismiss; see [chat-autosuggest.md](chat-autosuggest.md) (BA-103). Emote chips wait on Emote Library names. |
 
 ## Partial / caveats
 
