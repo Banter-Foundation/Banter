@@ -1,9 +1,10 @@
 //! Cover-flow stream switcher layout: arched portrait previews, focus scroll, cover UV.
 
 use banter::{
-    coverflow_cover_uv, coverflow_layout, coverflow_nearest, coverflow_nudge_focus,
-    coverflow_scale, coverflow_step_focus, COVERFLOW_ASPECT, COVERFLOW_CENTER_H_FRAC,
-    COVERFLOW_FOCUS_BORDER, COVERFLOW_GAP_FRAC, COVERFLOW_MIN_SCALE, COVERFLOW_PITCH_FRAC,
+    coverflow_brightness, coverflow_cover_uv, coverflow_layout, coverflow_nearest,
+    coverflow_nudge_focus, coverflow_scale, coverflow_step_focus, COVERFLOW_ASPECT,
+    COVERFLOW_CENTER_H_FRAC, COVERFLOW_FOCUS_BORDER, COVERFLOW_GAP_FRAC, COVERFLOW_MIN_BRIGHTNESS,
+    COVERFLOW_MIN_SCALE, COVERFLOW_PITCH_FRAC,
 };
 
 fn close(a: f32, b: f32) -> bool {
@@ -30,6 +31,17 @@ fn scale_peaks_at_focus_and_falls_toward_the_edges() {
     assert!(mid > far);
     assert!(far >= COVERFLOW_MIN_SCALE - 0.02);
     assert!(close(coverflow_scale(-2.5), coverflow_scale(2.5)));
+}
+
+#[test]
+fn brightness_peaks_at_focus_and_dims_toward_the_edges() {
+    assert!(COVERFLOW_MIN_BRIGHTNESS > 0.2 && COVERFLOW_MIN_BRIGHTNESS < 0.6);
+    assert!(close(coverflow_brightness(0.0), 1.0));
+    let near = coverflow_brightness(1.0);
+    let far = coverflow_brightness(8.0);
+    assert!(near < 1.0 && near > far);
+    assert!(far >= COVERFLOW_MIN_BRIGHTNESS - 0.02);
+    assert!(close(coverflow_brightness(-3.0), coverflow_brightness(3.0)));
 }
 
 #[test]

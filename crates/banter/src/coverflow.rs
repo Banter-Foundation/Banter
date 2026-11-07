@@ -15,11 +15,13 @@ pub const COVERFLOW_FALLOFF: f32 = 0.045;
 /// Gap between panels at full scale, as a fraction of the center panel width.
 pub const COVERFLOW_GAP_FRAC: f32 = 0.05;
 /// Horizontal pitch as a fraction of the center panel width (tight pack / slight overlap).
-pub const COVERFLOW_PITCH_FRAC: f32 = 0.72;
-/// Focused panel border thickness in pixels.
-pub const COVERFLOW_FOCUS_BORDER: f32 = 1.5;
+pub const COVERFLOW_PITCH_FRAC: f32 = 0.62;
+/// Focused panel border thickness in pixels (kept thin; selection is mostly scale + brightness).
+pub const COVERFLOW_FOCUS_BORDER: f32 = 1.25;
 /// How fast focus eases toward its target (higher = snappier).
 pub const COVERFLOW_FOCUS_LERP: f32 = 14.0;
+/// Darkest edge-panel brightness (1 = full, 0 = black).
+pub const COVERFLOW_MIN_BRIGHTNESS: f32 = 0.38;
 
 /// One laid-out preview panel in the stream switcher cover-flow.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -37,6 +39,12 @@ pub struct CoverflowPanel {
 pub fn coverflow_scale(offset: f32) -> f32 {
     let t = (-COVERFLOW_FALLOFF * offset * offset).exp();
     COVERFLOW_MIN_SCALE + (1.0 - COVERFLOW_MIN_SCALE) * t
+}
+
+/// Brightness for a panel `offset` slots from focus. Center is fully lit; edges darken.
+pub fn coverflow_brightness(offset: f32) -> f32 {
+    let t = (-COVERFLOW_FALLOFF * offset * offset).exp();
+    COVERFLOW_MIN_BRIGHTNESS + (1.0 - COVERFLOW_MIN_BRIGHTNESS) * t
 }
 
 /// Lay out `count` portrait panels across `area` with continuous `focus` (slot index).

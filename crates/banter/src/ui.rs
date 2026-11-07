@@ -82,8 +82,8 @@ use crate::shell_sync::{
 };
 use crate::skin::{self, MenuTone, Tone};
 use crate::coverflow::{
-    coverflow_cover_uv, coverflow_layout, coverflow_nearest, coverflow_nudge_focus,
-    coverflow_step_focus, COVERFLOW_FOCUS_BORDER,
+    coverflow_brightness, coverflow_cover_uv, coverflow_layout, coverflow_nearest,
+    coverflow_nudge_focus, coverflow_step_focus, COVERFLOW_FOCUS_BORDER,
 };
 use crate::stream_watch::{
     cycle_streamer, resolve_focused_streamer, stream_chrome_alpha, stream_watch_avatar_x,
@@ -12890,13 +12890,16 @@ impl App {
         panels.sort_by_key(|panel| panel.depth);
         let mouse = ui.io().mouse_pos();
         let mut clicked_index = None;
+        let mut hover_name: Option<(String, [f32; 2], [f32; 2])> = None;
         for panel in &panels {
             let source = &self.share_sources[panel.index];
             let key = source_key(source.kind, source.id);
-            let selected = self.share.selected() == Some((source.kind, source.id));
+            let offset = panel.index as f32 - self.share_cover_focus;
+            let bright = coverflow_brightness(offset);
             skin::rect(ui, panel.min, panel.max, SHARE_COVER_EMPTY, SHARE_TILE_RADIUS);
             let w = panel.max[0] - panel.min[0];
             let h = panel.max[1] - panel.min[1];
+            let tint = [bright, bright, bright, 1.0];
             if let Some(shot) = self.share_thumbs.get(&key) {
                 let (uv0, uv1) = coverflow_cover_uv(shot.size, w, h);
                 ui.get_window_draw_list().add_image_rounded(
@@ -12905,59 +12908,56 @@ impl App {
                     panel.max,
                     uv0,
                     uv1,
-                    WHITE,
+                    tint,
                     SHARE_TILE_RADIUS,
                     DrawFlags::ROUND_ALL,
                 );
             }
-            if panel.focused || selected {
+            // Edge panels dim further so the arch reads against dark chrome (ref GIF).
+            if bright < 0.98 {
+                skin::rect(
+                    ui,
+                    panel.min,
+                    panel.max,
+                    with_alpha(CALL_BG, (1.0 - bright) * 0.55),
+                    SHARE_TILE_RADIUS,
+                );
+            }
+            if panel.focused {
                 ui.get_window_draw_list()
                     .add_rect(panel.min, panel.max, SHARE_FOCUS_BORDER)
                     .rounding(SHARE_TILE_RADIUS)
                     .thickness(COVERFLOW_FOCUS_BORDER)
                     .build();
             }
-            if panel.focused {
-                let label =
-                    skin::ellipsize(ui, self.semibold_font, FONT_SM, &source.name, w - 12.0);
-                let label_w = skin::text_size(ui, self.semibold_font, FONT_SM, &label)[0];
-                let label_h = FONT_SM + 6.0;
-                let label_min = [
-                    panel.min[0] + 4.0,
-                    panel.max[1] - label_h - 4.0,
-                ];
-                let label_max = [panel.max[0] - 4.0, panel.max[1] - 4.0];
-                skin::rect(
-                    ui,
-                    label_min,
-                    label_max,
-                    with_alpha(CALL_BG, 0.55),
-                    SHARE_TILE_RADIUS - 2.0,
-                );
-                skin::text(
-                    ui,
-                    self.semibold_font,
-                    FONT_SM,
-                    [
-                        panel.min[0] + (w - label_w) * 0.5,
-                        label_min[1] + 3.0,
-                    ],
-                    TEXT,
-                    &label,
-                );
-            }
-            if mouse[0] >= panel.min[0]
+            let under = mouse[0] >= panel.min[0]
                 && mouse[0] <= panel.max[0]
                 && mouse[1] >= panel.min[1]
-                && mouse[1] <= panel.max[1]
-                && hit
-            {
-                clicked_index = Some(panel.index);
+                && mouse[1] <= panel.max[1];
+            if under {
+                hover_name = Some((source.name.clone(), panel.min, panel.max));
+                if hit {
+                    clicked_index = Some(panel.index);
+                }
             }
         }
         if let Some(index) = clicked_index {
             self.share_cover_target = index as f32;
             self.apply_share_cover_index(index);
+        }
+        // Reference has no on-panel titles; Banter still needs the source name on hover.
+        if let Some((name, amin, amax)) = hover_name {
+            if hovered {
+                skin::tooltip(
+                    ui,
+                    self.semibold_font,
+                    FONT_SM,
+                    &name,
+                    amin,
+                    amax,
+                    crate::theme::TooltipSide::Top,
+                );
+            }
         }
     }
 
