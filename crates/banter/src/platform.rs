@@ -30,6 +30,7 @@ use crate::logic::{
 };
 use crate::settings::{settings_window_default_size, SETTINGS_WINDOW_TITLE};
 use crate::stream_watch::{stream_popout_default_size, STREAM_POPOUT_WINDOW_TITLE};
+use crate::titlebar::{dragged_window_pos, TitleBarAction, TitleBarChrome};
 use crate::ui::App;
 
 pub(crate) fn run() -> Result<(), String> {
@@ -54,6 +55,8 @@ pub(crate) fn run() -> Result<(), String> {
         glfw::OpenGlProfileHint::Core,
     ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
+    // Client-drawn Mac-style caption (BA-105). Native OS chrome is replaced in-app.
+    glfw.window_hint(glfw::WindowHint::Decorated(false));
     let (mut window, events) = glfw
         .create_window(
             start_w as u32,
@@ -220,8 +223,55 @@ pub(crate) fn run() -> Result<(), String> {
             delta,
             main_receive,
         )?;
+        apply_title_bar_chrome(&glfw, &mut window, app.title_bar_mut());
+        if let Some(host) = settings_host.as_mut() {
+            apply_title_bar_chrome(&glfw, &mut host.window, app.settings_title_bar_mut());
+        }
+        if let Some(host) = stream_popout_host.as_mut() {
+            apply_title_bar_chrome(&glfw, &mut host.window, app.stream_title_bar_mut());
+        }
     }
     Ok(())
+}
+
+/// Apply traffic-light actions and caption drag from the ImGui pass.
+fn apply_title_bar_chrome(
+    glfw: &glfw::Glfw,
+    window: &mut glfw::Window,
+    chrome: &mut TitleBarChrome,
+) {
+    for action in chrome.take_actions() {
+        match action {
+            TitleBarAction::Close => window.set_should_close(true),
+            TitleBarAction::Minimize => window.iconify(),
+            TitleBarAction::ToggleMaximize => {
+                if window.is_maximized() {
+                    window.restore();
+                } else {
+                    window.maximize();
+                }
+            }
+        }
+    }
+    if let Some((grab_x, grab_y)) = chrome.drag_grab {
+        if let Some((wx, wy)) = window_origin(glfw, window) {
+            let (cx, cy) = window.get_cursor_pos();
+            let (nx, ny) = dragged_window_pos(
+                wx as f32,
+                wy as f32,
+                cx as f32,
+                cy as f32,
+                grab_x,
+                grab_y,
+            );
+            window.set_pos(nx.round() as i32, ny.round() as i32);
+        }
+    }
+    if chrome.drag_grab.is_some()
+        && window.get_mouse_button(glfw::MouseButton::Button1) != glfw::Action::Press
+    {
+        chrome.end_drag();
+    }
 }
 
 fn draw_main_surface(
@@ -465,6 +515,7 @@ fn create_settings_window(
         glfw::OpenGlProfileHint::Core,
     ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
+    glfw.window_hint(glfw::WindowHint::Decorated(false));
     glfw.window_hint(glfw::WindowHint::Visible(true));
     glfw.window_hint(glfw::WindowHint::Focused(true));
     let (mut window, events) = main
@@ -591,6 +642,7 @@ fn create_stream_popout_window(
         glfw::OpenGlProfileHint::Core,
     ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
+    glfw.window_hint(glfw::WindowHint::Decorated(false));
     glfw.window_hint(glfw::WindowHint::Visible(true));
     glfw.window_hint(glfw::WindowHint::Focused(true));
     let (mut window, events) = main

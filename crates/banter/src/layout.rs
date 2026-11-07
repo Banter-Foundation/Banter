@@ -14,16 +14,18 @@
 //! See `docs/ui-theme-layout.md`.
 
 use crate::theme::{
-    COMPOSER_H, HEADER_H, MEMBERS_W, RAIL_W, SIDEBAR_W, USER_PANEL_H, VOICE_PANEL_H,
+    COMPOSER_H, HEADER_H, MEMBERS_W, RAIL_W, SIDEBAR_W, TITLE_BAR_H, USER_PANEL_H, VOICE_PANEL_H,
 };
 
 /// Named areas of the temporary Discord-style shell.
 ///
-/// Left-to-right columns are Rail → Sidebar → Stage → Members. Header spans the stage
-/// (and members when shown). User and voice panels sit at the bottom of the sidebar.
-/// The composer sits at the bottom of the stage in a text channel.
+/// Top: TitleBar (client-drawn caption). Below that, left-to-right columns are
+/// Rail → Sidebar → Stage → Members. Header spans the stage (and members when shown).
+/// User and voice panels sit at the bottom of the sidebar. The composer sits at the
+/// bottom of the stage in a text channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Region {
+    TitleBar,
     Rail,
     Sidebar,
     Stage,
@@ -38,6 +40,7 @@ impl Region {
     /// Stable slug for docs, tests, and future telemetry.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::TitleBar => "title-bar",
             Self::Rail => "rail",
             Self::Sidebar => "sidebar",
             Self::Stage => "stage",
@@ -50,7 +53,8 @@ impl Region {
     }
 
     /// Every region, in the order agents should learn the shell.
-    pub const ALL: [Region; 8] = [
+    pub const ALL: [Region; 9] = [
+        Self::TitleBar,
         Self::Rail,
         Self::Sidebar,
         Self::Stage,
@@ -81,37 +85,47 @@ impl ShellColumns {
         shell_columns(width, show_members)
     }
 
+    /// Full window width covered by these columns.
+    pub fn window_w(self) -> f32 {
+        self.rail_w + self.sidebar_w + self.stage_w + self.members_w
+    }
+
     /// Axis-aligned rect as `[x, y, w, h]` for a named region inside a window of `height`.
     ///
-    /// Column regions fill the full height. Header sits on the stage (+ members when shown).
-    /// User and voice panels stack at the bottom of the sidebar. Composer sits at the bottom
-    /// of the stage. These rects match the temporary Discord skin; Banter's final layout may
-    /// redefine them without changing the `Region` names.
+    /// The client-drawn title bar occupies `[0, TITLE_BAR_H)`. Column regions fill the
+    /// remaining height. Header sits on the stage (+ members when shown). User and voice
+    /// panels stack at the bottom of the sidebar. Composer sits at the bottom of the stage.
+    /// These rects match the temporary Discord skin; Banter's final layout may redefine
+    /// them without changing the `Region` names.
     pub fn rect(self, region: Region, height: f32) -> [f32; 4] {
         let height = height.max(0.0);
+        let top = TITLE_BAR_H.min(height);
+        let body_h = (height - top).max(0.0);
         match region {
-            Region::Rail => [self.rail_x, 0.0, self.rail_w, height],
-            Region::Sidebar => [self.sidebar_x, 0.0, self.sidebar_w, height],
-            Region::Stage => [self.stage_x, 0.0, self.stage_w, height],
+            Region::TitleBar => [0.0, 0.0, self.window_w(), top],
+            Region::Rail => [self.rail_x, top, self.rail_w, body_h],
+            Region::Sidebar => [self.sidebar_x, top, self.sidebar_w, body_h],
+            // Stage / members fill the body; the chat header paints over their top edge.
+            Region::Stage => [self.stage_x, top, self.stage_w, body_h],
             Region::Members => [
                 self.members_x,
-                HEADER_H,
+                top + HEADER_H.min(body_h),
                 self.members_w,
-                (height - HEADER_H).max(0.0),
+                (body_h - HEADER_H).max(0.0),
             ],
             Region::Header => [
                 self.stage_x,
-                0.0,
+                top,
                 self.stage_w + self.members_w,
-                HEADER_H.min(height),
+                HEADER_H.min(body_h),
             ],
             Region::UserPanel => {
-                let h = USER_PANEL_H.min(height);
+                let h = USER_PANEL_H.min(body_h);
                 [self.sidebar_x, height - h, self.sidebar_w, h]
             }
             Region::VoicePanel => {
-                let user_h = USER_PANEL_H.min(height);
-                let voice_h = VOICE_PANEL_H.min((height - user_h).max(0.0));
+                let user_h = USER_PANEL_H.min(body_h);
+                let voice_h = VOICE_PANEL_H.min((body_h - user_h).max(0.0));
                 [
                     self.sidebar_x,
                     height - user_h - voice_h,
@@ -120,7 +134,7 @@ impl ShellColumns {
                 ]
             }
             Region::Composer => {
-                let h = COMPOSER_H.min(height);
+                let h = COMPOSER_H.min(body_h);
                 [self.stage_x, height - h, self.stage_w, h]
             }
         }

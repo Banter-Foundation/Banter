@@ -11,8 +11,12 @@ use crate::theme::{
     BLURPLE, BLURPLE_HOVER, BLURPLE_TEXT, DANGER, DANGER_HOVER, ERROR_TEXT, FLOATING_BG,
     GREEN_BUTTON, GREEN_BUTTON_HOVER, INPUT_BG, INPUT_RADIUS, MENU_ITEM_H, MENU_SEPARATOR,
     PLACEHOLDER, RED, SECONDARY_BUTTON, SECONDARY_BUTTON_HOVER, TEXT_NORMAL, TEXT_SECONDARY,
-    TOOLTIP_ARROW, TOOLTIP_PAD_X, TOOLTIP_PAD_Y, TOOLTIP_RADIUS, WHITE,
+    TITLE_BAR_BG, TITLE_BAR_H, TITLE_BAR_LABEL_SIZE, TITLE_BAR_TEXT, TITLE_BTN_CLOSE,
+    TITLE_BTN_CLOSE_HOVER, TITLE_BTN_GLYPH, TITLE_BTN_MAXIMIZE, TITLE_BTN_MAXIMIZE_HOVER,
+    TITLE_BTN_MINIMIZE, TITLE_BTN_MINIMIZE_HOVER, TITLE_BTN_R, TOOLTIP_ARROW, TOOLTIP_PAD_X,
+    TOOLTIP_PAD_Y, TOOLTIP_RADIUS, WHITE,
 };
+use crate::titlebar::{traffic_light_centers, TrafficLight};
 
 pub(crate) const CLEAR: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 
@@ -151,6 +155,106 @@ pub(crate) fn rect(ui: &Ui, min: [f32; 2], max: [f32; 2], color: [f32; 4], radiu
         .rounding(radius)
         .filled(true)
         .build();
+}
+
+pub(crate) fn circle(ui: &Ui, center: [f32; 2], radius: f32, color: [f32; 4]) {
+    ui.get_window_draw_list()
+        .add_circle(center, radius, color)
+        .filled(true)
+        .build();
+}
+
+/// Paint the client caption strip (background, traffic lights, centered label).
+/// Interaction is handled by the caller via invisible buttons over the same geometry.
+pub(crate) fn paint_title_bar(
+    ui: &Ui,
+    font: Option<FontId>,
+    window_w: f32,
+    label: &str,
+    hovered: Option<TrafficLight>,
+) {
+    let bar_h = TITLE_BAR_H;
+    rect(ui, [0.0, 0.0], [window_w, bar_h], TITLE_BAR_BG, 0.0);
+    let show_glyphs = hovered.is_some();
+    let centers = traffic_light_centers(bar_h);
+    for (index, light) in TrafficLight::ALL.into_iter().enumerate() {
+        let center = centers[index];
+        let hot = hovered == Some(light);
+        let fill = match (light, hot) {
+            (TrafficLight::Close, false) => TITLE_BTN_CLOSE,
+            (TrafficLight::Close, true) => TITLE_BTN_CLOSE_HOVER,
+            (TrafficLight::Minimize, false) => TITLE_BTN_MINIMIZE,
+            (TrafficLight::Minimize, true) => TITLE_BTN_MINIMIZE_HOVER,
+            (TrafficLight::Maximize, false) => TITLE_BTN_MAXIMIZE,
+            (TrafficLight::Maximize, true) => TITLE_BTN_MAXIMIZE_HOVER,
+        };
+        circle(ui, center, TITLE_BTN_R, fill);
+        if show_glyphs {
+            paint_traffic_glyph(ui, light, center);
+        }
+    }
+    let label_y = (bar_h - TITLE_BAR_LABEL_SIZE) * 0.5;
+    text_centered(
+        ui,
+        font,
+        TITLE_BAR_LABEL_SIZE,
+        window_w * 0.5,
+        label_y,
+        TITLE_BAR_TEXT,
+        label,
+    );
+}
+
+fn paint_traffic_glyph(ui: &Ui, light: TrafficLight, center: [f32; 2]) {
+    let draw = ui.get_window_draw_list();
+    let c = TITLE_BTN_GLYPH;
+    match light {
+        TrafficLight::Close => {
+            let s = 2.6;
+            draw.add_line(
+                [center[0] - s, center[1] - s],
+                [center[0] + s, center[1] + s],
+                c,
+            )
+            .thickness(1.2)
+            .build();
+            draw.add_line(
+                [center[0] + s, center[1] - s],
+                [center[0] - s, center[1] + s],
+                c,
+            )
+            .thickness(1.2)
+            .build();
+        }
+        TrafficLight::Minimize => {
+            let s = 3.0;
+            draw.add_line(
+                [center[0] - s, center[1]],
+                [center[0] + s, center[1]],
+                c,
+            )
+            .thickness(1.2)
+            .build();
+        }
+        TrafficLight::Maximize => {
+            // Small + (Mac zoom affordance).
+            let s = 2.8;
+            draw.add_line(
+                [center[0] - s, center[1]],
+                [center[0] + s, center[1]],
+                c,
+            )
+            .thickness(1.2)
+            .build();
+            draw.add_line(
+                [center[0], center[1] - s],
+                [center[0], center[1] + s],
+                c,
+            )
+            .thickness(1.2)
+            .build();
+        }
+    }
 }
 
 pub(crate) fn rect_corners(

@@ -7,6 +7,7 @@ use banter::theme;
 
 #[test]
 fn shell_regions_are_named_left_to_right() {
+    assert_eq!(Region::TitleBar.as_str(), "title-bar");
     assert_eq!(Region::Rail.as_str(), "rail");
     assert_eq!(Region::Sidebar.as_str(), "sidebar");
     assert_eq!(Region::Stage.as_str(), "stage");
@@ -18,6 +19,7 @@ fn shell_regions_are_named_left_to_right() {
     assert_eq!(
         Region::ALL,
         [
+            Region::TitleBar,
             Region::Rail,
             Region::Sidebar,
             Region::Stage,
@@ -71,13 +73,24 @@ fn shell_columns_shrink_without_negative_widths() {
 #[test]
 fn shell_columns_expose_each_named_region_rect() {
     let columns = ShellColumns::from_width(1280.0, true);
+    let title = columns.rect(Region::TitleBar, 720.0);
+    assert_eq!(title, [0.0, 0.0, 1280.0, theme::TITLE_BAR_H]);
     let rail = columns.rect(Region::Rail, 720.0);
-    assert_eq!(rail, [0.0, 0.0, theme::RAIL_W, 720.0]);
+    assert_eq!(
+        rail,
+        [
+            0.0,
+            theme::TITLE_BAR_H,
+            theme::RAIL_W,
+            720.0 - theme::TITLE_BAR_H
+        ]
+    );
     let stage = columns.rect(Region::Stage, 720.0);
     assert_eq!(stage[0], columns.stage_x);
+    assert_eq!(stage[1], theme::TITLE_BAR_H);
     assert_eq!(stage[2], columns.stage_w);
     let header = columns.rect(Region::Header, 720.0);
-    assert_eq!(header[1], 0.0);
+    assert_eq!(header[1], theme::TITLE_BAR_H);
     assert_eq!(header[3], theme::HEADER_H);
     let user = columns.rect(Region::UserPanel, 720.0);
     assert!(close(user[1] + user[3], 720.0));

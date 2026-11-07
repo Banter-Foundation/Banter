@@ -51,6 +51,8 @@ fn theme_columns_match_the_shell_layout() {
     assert_eq!(theme::CHANNEL_ROW_H, 32.0);
     assert_eq!(theme::MEMBER_ROW_H, 42.0);
     assert_eq!(theme::RAIL_ICON, 48.0);
+    assert_eq!(theme::TITLE_BAR_H, 28.0);
+    assert!(theme::TITLE_BAR_H < theme::HEADER_H);
 }
 
 #[test]

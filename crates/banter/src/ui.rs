@@ -92,6 +92,10 @@ use crate::stream_watch::{
     streaming_user_ids, STREAM_CHROME_HIDE_ALPHA, STREAM_POPOUT_WINDOW_TITLE,
 };
 use crate::theme::*;
+use crate::titlebar::{
+    point_in_rect, title_bar_drag_rect, traffic_light_hit, TitleBarAction, TitleBarChrome,
+    TrafficLight,
+};
 
 #[derive(Clone, Debug)]
 struct PresenceInfo {
@@ -183,6 +187,14 @@ enum RailTone {
     Server,
     Folder,
     Add,
+}
+
+/// Which GLFW surface owns the client-drawn caption (BA-105).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TitleBarSurface {
+    Main,
+    Settings,
+    Stream,
 }
 
 /// Floating Discord-style context menu opened by right-click (or the message "More" button).
@@ -489,6 +501,12 @@ pub(crate) struct App {
     quality_for: Option<(i64, MediaKind)>,
     quality_draft: f32,
     mods: crate::mods::ModHost,
+    /// Client-drawn Mac-style caption on the main Banter window (BA-105).
+    title_bar: TitleBarChrome,
+    /// Caption chrome for the Banter Settings GLFW window.
+    settings_title_bar: TitleBarChrome,
+    /// Caption chrome for the Banter Stream pop-out GLFW window.
+    stream_title_bar: TitleBarChrome,
 }
 
 impl App {
@@ -743,6 +761,9 @@ impl App {
             quality_for: None,
             quality_draft: 1.0,
             mods,
+            title_bar: TitleBarChrome::default(),
+            settings_title_bar: TitleBarChrome::default(),
+            stream_title_bar: TitleBarChrome::default(),
         };
         app.load_saved();
         app.sync_sfx_output();
@@ -804,6 +825,28 @@ impl App {
 
     pub(crate) fn take_video_apply(&mut self) -> Option<VideoPrefs> {
         self.pending_video.take()
+    }
+
+    /// Main-window caption chrome (drag + pending traffic-light actions).
+    pub(crate) fn title_bar_mut(&mut self) -> &mut TitleBarChrome {
+        &mut self.title_bar
+    }
+
+    pub(crate) fn settings_title_bar_mut(&mut self) -> &mut TitleBarChrome {
+        &mut self.settings_title_bar
+    }
+
+    pub(crate) fn stream_title_bar_mut(&mut self) -> &mut TitleBarChrome {
+        &mut self.stream_title_bar
+    }
+
+    /// Height reserved for the client-drawn caption (0 in OS fullscreen).
+    fn caption_h(&self) -> f32 {
+        if self.video.fullscreen {
+            0.0
+        } else {
+            TITLE_BAR_H
+        }
     }
 
     pub(crate) fn note_input(&mut self) {
@@ -989,6 +1032,7 @@ impl App {
         }
         if self.account.is_none() {
             self.draw_login(ui);
+            self.draw_window_caption(ui, "Banter", TitleBarSurface::Main);
             self.draw_profiler(ui);
             return;
         }
@@ -1050,6 +1094,7 @@ impl App {
             self.draw_avatar_crop(ui);
         }
         self.finish_voice_flags(ui);
+        self.draw_window_caption(ui, "Banter", TitleBarSurface::Main);
     }
 
     /// Dedicated Banter Settings window surface (My Account / Voice & Video / Developer).
@@ -1068,6 +1113,7 @@ impl App {
                 self.settings.escape(self.settings_popup_open);
             }
         }
+        self.draw_window_caption(ui, "Banter Settings", TitleBarSurface::Settings);
     }
 
     /// Shell token from an enabled theme mod, or the Banter default.
@@ -1077,6 +1123,7 @@ impl App {
 
     fn draw_shell(&mut self, ui: &Ui) {
         let size = ui.io().display_size();
+        let top = self.caption_h();
         let media_stage = self.voice_selected() || self.call_stage_open();
         let show_members = self.place != Place::Home && self.members_open && !media_stage;
         let columns = discord_shell_columns(size[0], show_members);
@@ -1099,8 +1146,9 @@ impl App {
             .position([0.0, 0.0], Condition::Always)
             .size(size, Condition::Always)
             .build(|| {
-                // The chat header spans the stage and the member list, as in Discord.
-                let body_h = (size[1] - HEADER_H).max(0.0);
+                // Shell sits under the client-drawn caption (BA-105).
+                let shell_h = (size[1] - top).max(0.0);
+                let body_h = (shell_h - HEADER_H).max(0.0);
                 let rail = self.shell("rail_bg", RAIL_BG);
                 let sidebar = self.shell("sidebar_bg", SIDEBAR_BG);
                 let stage = self.shell("stage_bg", STAGE_BG);
@@ -1109,29 +1157,29 @@ impl App {
                 self.paint_column(
                     ui,
                     "rail",
-                    [columns.rail_x, 0.0],
-                    [columns.rail_w, size[1]],
+                    [columns.rail_x, top],
+                    [columns.rail_w, shell_h],
                     rail,
                 );
                 self.paint_column(
                     ui,
                     "sidebar",
-                    [columns.sidebar_x, 0.0],
-                    [columns.sidebar_w, size[1]],
+                    [columns.sidebar_x, top],
+                    [columns.sidebar_w, shell_h],
                     sidebar,
                 );
                 let header_w = columns.stage_w + columns.members_w;
                 self.paint_column(
                     ui,
                     "stage-header",
-                    [columns.stage_x, 0.0],
-                    [header_w, HEADER_H],
+                    [columns.stage_x, top],
+                    [header_w, HEADER_H.min(shell_h)],
                     header_bg,
                 );
                 self.paint_column(
                     ui,
                     "stage",
-                    [columns.stage_x, HEADER_H],
+                    [columns.stage_x, top + HEADER_H],
                     [columns.stage_w, body_h],
                     stage,
                 );
@@ -1139,12 +1187,94 @@ impl App {
                     self.paint_column(
                         ui,
                         "members",
-                        [columns.members_x, HEADER_H],
+                        [columns.members_x, top + HEADER_H],
                         [columns.members_w, body_h],
                         panel,
                     );
                 }
             });
+    }
+
+    /// Which Banter GLFW surface owns the caption being drawn.
+    fn draw_window_caption(&mut self, ui: &Ui, label: &str, surface: TitleBarSurface) {
+        if self.caption_h() <= 0.0 {
+            return;
+        }
+        let size = ui.io().display_size();
+        let bar_h = TITLE_BAR_H;
+        let mut chrome = match surface {
+            TitleBarSurface::Main => std::mem::take(&mut self.title_bar),
+            TitleBarSurface::Settings => std::mem::take(&mut self.settings_title_bar),
+            TitleBarSurface::Stream => std::mem::take(&mut self.stream_title_bar),
+        };
+        chrome.tick(ui.io().delta_time());
+        let mouse = ui.io().mouse_pos();
+        let hovered = traffic_light_hit(mouse, bar_h);
+
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR
+            | WindowFlags::NO_SCROLL_WITH_MOUSE
+            | WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let caption_id = match surface {
+            TitleBarSurface::Main => "Banter caption",
+            TitleBarSurface::Settings => "Banter Settings caption",
+            TitleBarSurface::Stream => "Banter Stream caption",
+        };
+        ui.window(caption_id)
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size([size[0], bar_h], Condition::Always)
+            .build(|| {
+                skin::paint_title_bar(ui, self.semibold_font, size[0], label, hovered);
+                let centers = crate::titlebar::traffic_light_centers(bar_h);
+                let hit = TITLE_BTN_R + TITLE_BTN_HIT_PAD;
+                for (index, light) in TrafficLight::ALL.into_iter().enumerate() {
+                    let center = centers[index];
+                    ui.set_cursor_screen_pos([center[0] - hit, center[1] - hit]);
+                    let id = match light {
+                        TrafficLight::Close => "##caption-close",
+                        TrafficLight::Minimize => "##caption-min",
+                        TrafficLight::Maximize => "##caption-max",
+                    };
+                    if ui.invisible_button(id, [hit * 2.0, hit * 2.0]) {
+                        chrome.push(light.action());
+                        chrome.end_drag();
+                        chrome.double_click.clear();
+                    }
+                }
+                let drag = title_bar_drag_rect(size[0], bar_h);
+                ui.set_cursor_screen_pos([drag[0], drag[1]]);
+                ui.invisible_button("##caption-drag", [drag[2], drag[3]]);
+                if ui.is_item_activated() {
+                    if chrome
+                        .double_click
+                        .note_click(mouse[0], mouse[1], chrome.clock_ms)
+                    {
+                        chrome.push(TitleBarAction::ToggleMaximize);
+                        chrome.end_drag();
+                    } else if point_in_rect(mouse, drag) {
+                        chrome.begin_drag(mouse[0], mouse[1]);
+                    }
+                }
+                if ui.is_item_deactivated() {
+                    chrome.end_drag();
+                }
+                if chrome.drag_grab.is_some() && !ui.is_mouse_down(MouseButton::Left) {
+                    chrome.end_drag();
+                }
+            });
+
+        match surface {
+            TitleBarSurface::Main => self.title_bar = chrome,
+            TitleBarSurface::Settings => self.settings_title_bar = chrome,
+            TitleBarSurface::Stream => self.stream_title_bar = chrome,
+        }
     }
 
     fn paint_column(
@@ -11458,7 +11588,9 @@ impl App {
 
     fn draw_settings(&mut self, ui: &Ui) {
         let size = ui.io().display_size();
-        let layout = settings_layout(size[0], size[1]);
+        let top = self.caption_h();
+        let body_h = (size[1] - top).max(0.0);
+        let layout = settings_layout(size[0], body_h);
         let flags = WindowFlags::NO_DECORATION
             | WindowFlags::NO_MOVE
             | WindowFlags::NO_RESIZE
@@ -11480,18 +11612,22 @@ impl App {
                 self.settings_popup_open = ui
                     .is_popup_open_with_flags("", PopupQueryFlags::ANY_POPUP)
                     || ui.is_any_item_active();
-                ui.set_cursor_pos([layout.nav_x, 0.0]);
+                // Fill the caption strip so the settings chrome does not flash through.
+                if top > 0.0 {
+                    skin::rect(ui, [0.0, 0.0], [size[0], top], TITLE_BAR_BG, 0.0);
+                }
+                ui.set_cursor_pos([layout.nav_x, top]);
                 let nav_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
                 ui.child_window("settings-nav")
-                    .size([layout.nav_w, size[1]])
+                    .size([layout.nav_w, body_h])
                     .build(ui, || {
                         self.draw_settings_nav(ui, layout.nav_w);
                     });
                 drop(nav_bg);
-                ui.set_cursor_pos([layout.body_x, 0.0]);
+                ui.set_cursor_pos([layout.body_x, top]);
                 let body_bg = ui.push_style_color(StyleColor::ChildBg, STAGE_BG);
                 ui.child_window("settings-body")
-                    .size([layout.body_w, size[1]])
+                    .size([layout.body_w, body_h])
                     .build(ui, || {
                         let window_pos = ui.window_pos();
                         ui.set_cursor_pos([layout.content_x, SETTINGS_TOP_PAD]);
@@ -13503,6 +13639,7 @@ impl App {
     /// Banter Stream OS window content (own ImGui context / textures).
     pub(crate) fn draw_stream_popout_window(&mut self, ui: &Ui) {
         let size = ui.io().display_size();
+        let top = self.caption_h();
         let flags = WindowFlags::NO_DECORATION
             | WindowFlags::NO_MOVE
             | WindowFlags::NO_RESIZE
@@ -13520,10 +13657,11 @@ impl App {
             .build(|| {
                 let origin = [0.0, 0.0];
                 skin::rect(ui, origin, size, CALL_BG, 0.0);
+                let view_h = (size[1] - top).max(1.0);
                 if let Some(shot) = self.stream_popout_shot.as_ref() {
-                    let fitted = fit_inside(shot.size, size[0], size[1]);
+                    let fitted = fit_inside(shot.size, size[0], view_h);
                     let x = (size[0] - fitted[0]) * 0.5;
-                    let y = (size[1] - fitted[1]) * 0.5;
+                    let y = top + (view_h - fitted[1]) * 0.5;
                     ui.get_window_draw_list().add_image(
                         shot.texture,
                         [x, y],
@@ -13550,7 +13688,7 @@ impl App {
                     if live.len() > 1 {
                         x -= STREAM_WATCH_BTN + STREAM_WATCH_BTN_GAP;
                     }
-                    let y = STREAM_WATCH_PAD;
+                    let y = top + STREAM_WATCH_PAD;
                     let fill = [
                         CONTROL_BG[0],
                         CONTROL_BG[1],
@@ -13611,6 +13749,7 @@ impl App {
                     );
                 }
             });
+        self.draw_window_caption(ui, "Banter Stream", TitleBarSurface::Stream);
     }
 
     pub(crate) fn prepare_stream_popout(&mut self, imgui: &mut Context) {

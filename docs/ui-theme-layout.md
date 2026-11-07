@@ -25,11 +25,11 @@ Rules for later agents:
 
 ## Layout regions
 
-Left to right: **rail** (72) → **sidebar** (240) → **stage** (flex) → **members** (240, optional).
+Top: **title-bar** (28, client-drawn Mac-style caption). Below that, left to right: **rail** (72) → **sidebar** (240) → **stage** (flex) → **members** (240, optional).
 
 Also named: **header** (48, over stage + members), **voice-panel** and **user-panel** (bottom of sidebar), **composer** (bottom of stage in text channels).
 
-`layout::shell_columns(width, show_members)` reads widths from `theme::{RAIL_W,SIDEBAR_W,MEMBERS_W}`. Prefer `shell_columns` in new code; `discord_shell_columns` remains as an alias.
+`layout::shell_columns(width, show_members)` reads widths from `theme::{RAIL_W,SIDEBAR_W,MEMBERS_W}`. Prefer `shell_columns` in new code; `discord_shell_columns` remains as an alias. Column rects start at `TITLE_BAR_H` so the shell sits under the caption.
 
 Visual metrics detail: `.cursor/design.md`.
 
@@ -37,12 +37,13 @@ Visual metrics detail: `.cursor/design.md`.
 
 - `crates/banter/tests/layout.rs` — region names, theme-backed columns, rect helpers
 - `crates/banter/tests/theme.rs` — token and shell metrics
+- `crates/banter/tests/titlebar.rs` — caption geometry, traffic lights, drag / double-click
 
 Run from this worktree with its own `target/` (set `CARGO_TARGET_DIR` if another Banter exe holds a lock):
 
 ```
 cd D:\Projects\Banter-ui-theme
-cargo test -p banter --test layout --test theme
+cargo test -p banter --test layout --test theme --test titlebar
 ```
 
 ## Coordination
