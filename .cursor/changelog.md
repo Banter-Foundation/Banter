@@ -1,3 +1,7 @@
+## 2026-11-07 06:00:00 -05:00 [ubuntu] — Version-1-test-13.2 pre-release
+
+Shipped pre-release Version-1-test-13.2 from main after encode-stack optimizations (#83), hardware force-key IDR restore (#79), Windows MF hardware through force_key (#81), and 40 Mbps stream bitrate cap (#82). Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
 ## 2026-11-07 03:35:00 -05:00 [ubuntu] — Fix Windows Media Foundation streams (BAN-35)
 
 BAN-30 kept hardware alive for SPS-less P-frames, but Windows MF still returned Err on `force_key` (LayerEncoder permanently swapped OpenH264 mid-GOP) and could keep non-Annex-B samples. Reopen the MFT on force_key/size change with a NEED_MORE_INPUT flush retry, and reject hardware AUs that are empty or not Annex-B while still allowing SPS-less Annex-B deltas.
