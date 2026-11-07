@@ -36,6 +36,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "006_modding",
         include_str!("migrations/006_modding.sql"),
     ),
+    (
+        "007_chat_commands",
+        include_str!("migrations/007_chat_commands.sql"),
+    ),
 ];
 
 /// Transaction-scoped advisory lock so concurrent boots serialize migrate.

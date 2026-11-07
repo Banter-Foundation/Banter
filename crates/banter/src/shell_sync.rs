@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use banter_server::{
     Account, CategoryLayout, Channel, ChannelKind, ChatTarget, DirectChat, Friend, FriendRequest,
-    Mention, Message, Presence, ServerRail, ServerSummary, VoiceRoster,
+    Mention, Message, Presence, ServerCommandSettings, ServerRail, ServerSummary, VoiceRoster,
 };
 
 use crate::api::{ApiError, Client, MemberView};
@@ -191,6 +191,7 @@ pub(crate) struct ShellSnapshot {
     pub layout: Option<Result<Vec<CategoryLayout>, ApiError>>,
     pub members: Option<Result<Vec<MemberView>, ApiError>>,
     pub voice: Option<Result<Vec<VoiceRoster>, ApiError>>,
+    pub commands: Option<Result<ServerCommandSettings, ApiError>>,
     pub chat: Option<ChatTarget>,
     pub messages: Option<Result<Vec<Message>, ApiError>>,
     pub picked_channel: Option<Channel>,
@@ -383,6 +384,7 @@ fn fetch_shell(query: &ShellQuery) -> ShellSnapshot {
         layout: None,
         members: None,
         voice: None,
+        commands: None,
         chat: None,
         messages: None,
         picked_channel: None,
@@ -404,6 +406,7 @@ fn fetch_shell(query: &ShellQuery) -> ShellSnapshot {
             snap.layout = Some(client.layout(server_id));
             snap.members = Some(client.members(server_id));
             snap.voice = Some(client.server_voice(server_id));
+            snap.commands = Some(client.command_settings(server_id));
         }
     }
     let mut chat = query.chat;
