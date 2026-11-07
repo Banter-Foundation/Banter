@@ -1054,6 +1054,8 @@ Agent: Found clear unbounded retain in Linux FfmpegEncoder stdout capture (never
 ### Summary
 Call-length RSS growth on Linux HW encode drained; remote video textures no longer survive peer leave.
 
+Agent: PR #87 opened (ManagePullRequest). Do not merge until Owl says so.
+
 ## 2026-11-07 06:57:32 +00:00 — BA-100 Windows Go Live 0x80070057
 
 Owl: Voice Connected + 0x80070057 while Go Live/streaming; works on Linux, fails on Windows. Focus Windows-only capture/encode/loopback vs Linux; PR against main.
