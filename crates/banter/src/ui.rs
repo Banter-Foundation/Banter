@@ -45,7 +45,7 @@ use crate::logic::{
     rate_control_label, reconnect_retry_ready, remove_message, resolution_block, resolution_from_key,
     resolution_key, save_json, server_rail_context_menu, server_rail_item_menu,
     set_home_section_visible, speaking_from_level, stream_fps_label, stream_frame_rates,
-    stream_full_bps, stream_interval_ms, stream_max_edge, stream_resolution_label,
+    stream_interval_ms, stream_max_edge, stream_resolution_label,
     stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,
     voice_flags_retry_ready, voice_occupancy_line, voice_rtc_mesh, voice_rtc_session_ready,
     window_size_label,
@@ -8079,7 +8079,12 @@ impl App {
             StreamFps::Fps144 => 144,
         };
         media::EncodeSettings {
-            full_bps: stream_full_bps(self.stream.bitrate_auto, self.stream.bitrate_kbps),
+            full_bps: crate::logic::stream_full_bps_for(
+                self.stream.bitrate_auto,
+                self.stream.bitrate_kbps,
+                self.stream_resolution,
+                self.stream_fps,
+            ),
             pick: match mode {
                 StreamEncoderMode::Auto => media::EncoderPick::Auto,
                 StreamEncoderMode::Hardware => media::EncoderPick::Hardware,

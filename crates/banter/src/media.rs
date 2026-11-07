@@ -1149,7 +1149,7 @@ fn camera_loop(
                     pictures.store(rtc::RawPicture {
                         width,
                         height,
-                        i420,
+                        i420: std::sync::Arc::<[u8]>::from(i420),
                         key,
                     });
                 } else if !send {
@@ -1727,7 +1727,7 @@ fn publish_screen(
     pictures.store(rtc::RawPicture {
         width: out_w,
         height: out_h,
-        i420,
+        i420: std::sync::Arc::<[u8]>::from(i420),
         key,
     });
     crate::profiler::record_media(

@@ -80,13 +80,20 @@ impl SenderQos {
             }
             _ => return Vec::new(),
         };
+        // When dynacast has not spoken yet, encode only the peer-cap layer (Full by
+        // default). Encoding q+h+f until WantedLayers arrives burned ~1.3× uplink and
+        // 2–3× encode work. P2P never gets WantedLayers; peer_cap (and its force_key)
+        // is the subscribe signal there.
         let published: Vec<LayerId> = match wanted {
             Some(layers) => layers
                 .iter()
                 .copied()
                 .filter(|layer| *layer != LayerId::Off)
                 .collect(),
-            None => vec![LayerId::Quarter, LayerId::Half, LayerId::Full],
+            None => match peer_cap {
+                LayerId::Off => Vec::new(),
+                layer => vec![layer],
+            },
         };
         let mut chosen = Vec::new();
         for layer in published {
@@ -201,5 +208,26 @@ mod tests {
         assert!(!qos
             .active_layers(MediaKind::Screen, None, LayerId::Full)
             .is_empty());
+    }
+
+    #[test]
+    fn unused_layers_stay_idle_until_dynacast_or_peer_cap() {
+        let qos = SenderQos::new();
+        assert_eq!(
+            qos.active_layers(MediaKind::Screen, None, LayerId::Full),
+            vec![LayerId::Full]
+        );
+        assert_eq!(
+            qos.active_layers(MediaKind::Camera, None, LayerId::Half),
+            vec![LayerId::Half]
+        );
+        assert_eq!(
+            qos.active_layers(
+                MediaKind::Screen,
+                Some(&[LayerId::Full, LayerId::Half, LayerId::Quarter]),
+                LayerId::Full
+            ),
+            vec![LayerId::Quarter, LayerId::Half, LayerId::Full]
+        );
     }
 }

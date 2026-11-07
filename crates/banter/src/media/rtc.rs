@@ -22,8 +22,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
     PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder,
-    RTCIceCandidateInit, RTCIceServer, RTCSessionDescription,
+    RTCIceCandidateInit, RTCIceServer, RTCSessionDescription, StatsSelector,
 };
+use webrtc::peer_connection::RTCStatsReportEntry;
 
 use crate::logic::resample_mono_i16;
 use crate::profiler;
@@ -36,7 +37,7 @@ const FLAG_DEAFENED: u32 = 2;
 pub struct RawPicture {
     pub width: u32,
     pub height: u32,
-    pub i420: Vec<u8>,
+    pub i420: Arc<[u8]>,
     pub key: bool,
 }
 
@@ -58,7 +59,8 @@ impl PictureSlot {
         self.generation.fetch_add(1, Ordering::Release);
     }
 
-    /// Copies the picture only when a newer one has been stored.
+    /// Clones the slot handle only when a newer picture has been stored.
+    /// The I420 plane is `Arc`, so Full-layer encode can borrow without a copy.
     fn load_since(&self, seen: u64) -> Option<(u64, RawPicture)> {
         let generation = self.generation.load(Ordering::Acquire);
         if generation == 0 || generation == seen {
@@ -74,7 +76,7 @@ impl Clone for RawPicture {
         Self {
             width: self.width,
             height: self.height,
-            i420: self.i420.clone(),
+            i420: Arc::clone(&self.i420),
             key: self.key,
         }
     }
@@ -143,6 +145,12 @@ struct Control {
     rate_control: Mutex<String>,
     /// Set when WantedLayers gains a subscriber so the next AU is an IDR for late joiners.
     force_key: AtomicBool,
+    /// Last WebRTC sender sample used by `SenderQos::observe` (f32 bits / ms / f32 bits).
+    bwe_loss: AtomicU32,
+    bwe_rtt_ms: AtomicU32,
+    bwe_available_ratio: AtomicU32,
+    /// Cumulative outbound `pli_count` from the last stats poll; rise → force_key.
+    last_pli: AtomicU32,
 }
 
 impl Control {
@@ -174,6 +182,10 @@ impl Control {
             encoder_pref: Mutex::new("auto".into()),
             rate_control: Mutex::new("cbr".into()),
             force_key: AtomicBool::new(false),
+            bwe_loss: AtomicU32::new(0),
+            bwe_rtt_ms: AtomicU32::new(30),
+            bwe_available_ratio: AtomicU32::new(1.0f32.to_bits()),
+            last_pli: AtomicU32::new(0),
         }
     }
 
@@ -199,9 +211,9 @@ impl Control {
         if self.encode_fps.swap(fps, Ordering::Relaxed) != fps {
             changed = true;
         }
-        if self.rate_cbr.swap(settings.cbr, Ordering::Relaxed) != settings.cbr {
-            changed = true;
-        }
+        // CBR/VBR is label-only today (backends take a target bitrate). Updating the
+        // label must not bump encode_gen — that cleared every layer encoder mid-stream.
+        self.rate_cbr.store(settings.cbr, Ordering::Relaxed);
         {
             let mut pref = self.encoder_pref.lock().expect("encoder pref");
             if *pref != settings.pref_label {
@@ -213,7 +225,6 @@ impl Control {
             let mut rate = self.rate_control.lock().expect("rate control");
             if *rate != settings.rate_label {
                 *rate = settings.rate_label.into();
-                changed = true;
             }
         }
         if changed {
@@ -378,6 +389,12 @@ impl Rtc {
         self.control.wanted.lock().expect("wanted").clear();
         self.control.peer_cap.lock().expect("cap").clear();
         self.control.subscribers.store(0, Ordering::Relaxed);
+        self.control.last_pli.store(0, Ordering::Relaxed);
+        self.control.bwe_loss.store(0, Ordering::Relaxed);
+        self.control.bwe_rtt_ms.store(30, Ordering::Relaxed);
+        self.control
+            .bwe_available_ratio
+            .store(1.0f32.to_bits(), Ordering::Relaxed);
         self.control.force_key.store(true, Ordering::Relaxed);
         let _ = self.cmd.send(Cmd::Session {
             place,
@@ -523,7 +540,11 @@ fn video_encode_loop(
                 .unwrap_or_else(Instant::now);
         }
         let key_ms = control.keyframe_ms.load(Ordering::Relaxed).max(500);
-        let force_key = last_keyframe.elapsed() >= Duration::from_millis(key_ms);
+        // Periodic keys come from encoder GOP / IntraFramePeriod. Only arm force_key
+        // here when the GOP is overdue *and* we are on software (HW reopen is reserved
+        // for join/PLI/mesh via control.force_key). Overdue soft keys keep OpenH264
+        // honest if IntraFramePeriod drifts.
+        let periodic_soft = last_keyframe.elapsed() >= Duration::from_millis(key_ms);
         let mut keyed = false;
         keyed |= encode_video(
             &control,
@@ -534,7 +555,7 @@ fn video_encode_loop(
             MediaKind::Camera,
             false,
             &camera_layers,
-            force_key,
+            periodic_soft,
         );
         keyed |= encode_video(
             &control,
@@ -545,7 +566,7 @@ fn video_encode_loop(
             MediaKind::Screen,
             true,
             &screen_layers,
-            force_key,
+            periodic_soft,
         );
         if keyed {
             last_keyframe = Instant::now();
@@ -561,7 +582,12 @@ fn video_encode_loop(
             if screen_idle_ticks >= 100 && drops == 0 && !qos.targets().screen_published {
                 qos.reset_ladder();
             } else {
-                let _ = qos.observe(if drops > 0 { 0.08 } else { 0.0 }, 30, 1.0);
+                let loss = f32::from_bits(control.bwe_loss.load(Ordering::Relaxed))
+                    .max(if drops > 0 { 0.08 } else { 0.0 });
+                let rtt = control.bwe_rtt_ms.load(Ordering::Relaxed).max(1);
+                let available =
+                    f32::from_bits(control.bwe_available_ratio.load(Ordering::Relaxed)).max(0.0);
+                let _ = qos.observe(loss, rtt, available);
             }
             *control.ladder.lock().expect("ladder") = qos.step().label().to_string();
         }
@@ -662,7 +688,8 @@ fn layer_label(control: &Control) -> String {
         }
     }
     if parts.is_empty() {
-        "all".into()
+        // Dynacast idle / P2P: encode peer-cap only (Full by default), not q+h+f.
+        "cap-only".into()
     } else {
         parts.join("  ")
     }
@@ -723,7 +750,7 @@ fn encode_video(
     kind: MediaKind,
     screen: bool,
     layers: &[LayerId],
-    force_key: bool,
+    periodic_soft: bool,
 ) -> bool {
     if !can_take_join_key(layers) {
         return false;
@@ -736,6 +763,7 @@ fn encode_video(
     }
     *seen = generation;
     let fps = control.encode_fps.load(Ordering::Relaxed).max(1) as f32;
+    let keyframe_ms = control.keyframe_ms.load(Ordering::Relaxed).max(500);
     let pick = control.encoder_pick();
     let join_key = control.force_key.swap(false, Ordering::Relaxed);
     let mut sent_key = false;
@@ -747,15 +775,19 @@ fn encode_video(
         };
         let bps = control.layer_bps(layer);
         let entry = encoders.entry(layer).or_insert_with(|| {
-            let encoder = match LayerEncoder::open_with(screen, width, height, fps, bps, pick) {
-                Ok(encoder) => encoder,
-                Err(_) => LayerEncoder::software(screen, fps, bps).expect("openh264"),
-            };
+            let encoder =
+                match LayerEncoder::open_with(screen, width, height, fps, bps, keyframe_ms, pick) {
+                    Ok(encoder) => encoder,
+                    Err(_) => LayerEncoder::software(screen, fps, bps, keyframe_ms)
+                        .expect("openh264"),
+                };
             *control.backend.lock().expect("backend") = encoder.backend().label().into();
             (width, height, encoder)
         });
         if entry.0 != width || entry.1 != height {
-            if let Ok(encoder) = LayerEncoder::open_with(screen, width, height, fps, bps, pick) {
+            if let Ok(encoder) =
+                LayerEncoder::open_with(screen, width, height, fps, bps, keyframe_ms, pick)
+            {
                 *entry = (width, height, encoder);
                 *control.backend.lock().expect("backend") = entry.2.backend().label().into();
             }
@@ -767,7 +799,11 @@ fn encode_video(
             control.encode_h.store(height, Ordering::Relaxed);
         }
         let started = Instant::now();
-        let want_key = force_key || picture.key || join_key;
+        // Hard keys (join/PLI/mesh/size picture.key) always force. Periodic soft keys
+        // only force OpenH264 — HW relies on `-g` / CodecAPI+GOP to avoid reopen storms.
+        let soft_key =
+            periodic_soft && matches!(entry.2.backend(), super::encode::Backend::Software);
+        let want_key = soft_key || picture.key || join_key;
         if let Ok(au) = entry.2.encode(&scaled, width, height, want_key) {
             // Refresh after encode: LayerEncoder may have fallen back to OpenH264.
             *control.backend.lock().expect("backend") = entry.2.backend().label().into();
@@ -944,6 +980,8 @@ async fn run_call(
     let mut remote_ready = false;
     let mut pending_ice = Vec::new();
     let mut mids = HashMap::new();
+    let mut stats_tick = tokio::time::interval(Duration::from_millis(500));
+    stats_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     if offerer {
         let offer = pc.create_offer(None).await.map_err(|err| err.to_string())?;
         pc.set_local_description(offer.clone())
@@ -957,6 +995,9 @@ async fn run_call(
     }
     loop {
         tokio::select! {
+            _ = stats_tick.tick() => {
+                sample_sender_stats(&pc, control).await;
+            }
             cmd = cmds.recv() => {
                 let Some(cmd) = cmd else {
                     let _ = pc.close().await;
@@ -1050,6 +1091,58 @@ async fn run_call(
     }
     let _ = pc.close().await;
     Ok(None)
+}
+
+/// Pull TWCC / ICE BWE + remote RR loss/RTT + outbound PLI into Control for the encode ladder.
+async fn sample_sender_stats(pc: &impl PeerConnection, control: &Control) {
+    let report = pc.get_stats(Instant::now(), StatsSelector::None).await;
+    let mut rtt_ms = control.bwe_rtt_ms.load(Ordering::Relaxed).max(1);
+    let mut available_bps = 0.0f64;
+    let mut loss = 0.0f64;
+    let mut pli = 0u32;
+    for entry in report.iter() {
+        match entry {
+            RTCStatsReportEntry::IceCandidatePair(pair) => {
+                if pair.available_outgoing_bitrate > available_bps {
+                    available_bps = pair.available_outgoing_bitrate;
+                }
+                if pair.current_round_trip_time > 0.0 {
+                    rtt_ms = (pair.current_round_trip_time * 1000.0).round() as u32;
+                }
+            }
+            RTCStatsReportEntry::RemoteInboundRtp(remote) => {
+                if remote.fraction_lost > loss {
+                    loss = remote.fraction_lost;
+                }
+                if remote.round_trip_time > 0.0 {
+                    rtt_ms = (remote.round_trip_time * 1000.0).round() as u32;
+                }
+            }
+            RTCStatsReportEntry::OutboundRtp(outbound) => {
+                pli = pli.saturating_add(outbound.pli_count);
+            }
+            _ => {}
+        }
+    }
+    let target = control.full_bps.load(Ordering::Relaxed).max(30_000) as f64;
+    let ratio = if available_bps > 0.0 {
+        (available_bps / target) as f32
+    } else {
+        // No TWCC estimate yet — stay clear of the <0.70 congestion branch.
+        1.0
+    };
+    control
+        .bwe_loss
+        .store((loss as f32).clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    control.bwe_rtt_ms.store(rtt_ms.max(1), Ordering::Relaxed);
+    control
+        .bwe_available_ratio
+        .store(ratio.max(0.0).to_bits(), Ordering::Relaxed);
+    let prev = control.last_pli.swap(pli, Ordering::Relaxed);
+    if pli > prev {
+        // SFU PLI on subscribe/loss — arm the same late-join IDR path as WantedLayers.
+        control.force_key.store(true, Ordering::Relaxed);
+    }
 }
 
 fn apply_control(control: &Control, event: &ServerEvent) {
@@ -1166,7 +1259,8 @@ fn crate_media_engine(
         MediaEngine, MIME_TYPE_H264, MIME_TYPE_OPUS,
     };
     use rtc::rtp_transceiver::rtp_sender::{
-        RTCRtpCodec, RTCRtpCodecParameters, RTCRtpHeaderExtensionCapability, RtpCodecKind,
+        RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpHeaderExtensionCapability,
+        RtpCodecKind,
     };
     let mut media = MediaEngine::default();
     media
@@ -1177,7 +1271,10 @@ fn crate_media_engine(
                     clock_rate: 48_000,
                     channels: 2,
                     sdp_fmtp_line: "minptime=10;useinbandfec=1;usedtx=1".into(),
-                    rtcp_feedback: vec![],
+                    rtcp_feedback: vec![RTCPFeedback {
+                        typ: "transport-cc".into(),
+                        parameter: String::new(),
+                    }],
                 },
                 payload_type: OPUS_PT,
                 ..Default::default()
@@ -1193,7 +1290,24 @@ fn crate_media_engine(
                     clock_rate: 90_000,
                     channels: 0,
                     sdp_fmtp_line: banter_server::H264_FMTP.to_owned(),
-                    rtcp_feedback: vec![],
+                    rtcp_feedback: vec![
+                        RTCPFeedback {
+                            typ: "nack".into(),
+                            parameter: String::new(),
+                        },
+                        RTCPFeedback {
+                            typ: "nack".into(),
+                            parameter: "pli".into(),
+                        },
+                        RTCPFeedback {
+                            typ: "goog-remb".into(),
+                            parameter: String::new(),
+                        },
+                        RTCPFeedback {
+                            typ: "transport-cc".into(),
+                            parameter: String::new(),
+                        },
+                    ],
                 },
                 payload_type: H264_PT,
                 ..Default::default()
@@ -1373,9 +1487,9 @@ fn push_playback(playback: &Mutex<VecDeque<f32>>, output_rate: &AtomicU32, pcm: 
     for sample in samples {
         queue.push_back(sample as f32 / i16::MAX as f32);
     }
-    // Keep about 200 ms of jitter margin. A full second of backlog made late
-    // bursts sound mushy and then underrun when the queue was drained from the front.
-    let cap = (rate as usize / 5).max(960);
+    // ~80 ms jitter target. The old 200 ms cap pinned every mic behind Go Live
+    // stream_audio on the shared queue (mic-lag doc). Hard floor keeps underruns rare.
+    let cap = ((rate as usize * 2) / 25).max(960);
     while queue.len() > cap {
         queue.pop_front();
     }

@@ -12,8 +12,8 @@ use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_H264, MIME_TYPE_OPUS, MediaEngine};
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpHeaderExtensionCapability,
-    RtpCodecKind,
+    RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
+    RTCRtpHeaderExtensionCapability, RtpCodecKind,
 };
 use webrtc::media_stream::track_local::TrackLocal;
 use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
@@ -262,7 +262,24 @@ fn h264_codec() -> RTCRtpCodecParameters {
             clock_rate: 90_000,
             channels: 0,
             sdp_fmtp_line: H264_FMTP.to_owned(),
-            rtcp_feedback: vec![],
+            rtcp_feedback: vec![
+                RTCPFeedback {
+                    typ: "nack".into(),
+                    parameter: String::new(),
+                },
+                RTCPFeedback {
+                    typ: "nack".into(),
+                    parameter: "pli".into(),
+                },
+                RTCPFeedback {
+                    typ: "goog-remb".into(),
+                    parameter: String::new(),
+                },
+                RTCPFeedback {
+                    typ: "transport-cc".into(),
+                    parameter: String::new(),
+                },
+            ],
         },
         payload_type: 102,
         ..Default::default()
@@ -276,7 +293,10 @@ fn opus_codec() -> RTCRtpCodecParameters {
             clock_rate: 48_000,
             channels: 2,
             sdp_fmtp_line: "minptime=10;useinbandfec=1;usedtx=1".to_owned(),
-            rtcp_feedback: vec![],
+            rtcp_feedback: vec![RTCPFeedback {
+                typ: "transport-cc".into(),
+                parameter: String::new(),
+            }],
         },
         payload_type: 111,
         ..Default::default()

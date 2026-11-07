@@ -13,10 +13,14 @@ use std::thread::{self, JoinHandle};
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
+use std::borrow::Cow;
+
 use banter_server::LayerId;
 use openh264::decoder::Decoder;
-use openh264::encoder::{BitRate, Encoder, EncoderConfig, FrameRate, Profile, UsageType};
-use openh264::formats::{YUVBuffer, YUVSource};
+use openh264::encoder::{
+    BitRate, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Profile, UsageType,
+};
+use openh264::formats::{YUVSlices, YUVSource};
 use openh264::OpenH264API;
 
 pub const OPUS_RATE: u32 = 48_000;
@@ -151,9 +155,9 @@ struct SoftwareEncoder {
 }
 
 impl SoftwareEncoder {
-    fn open(screen: bool, fps: f32, bps: u32) -> Result<Self, String> {
+    fn open(screen: bool, fps: f32, bps: u32, keyframe_ms: u64) -> Result<Self, String> {
         Ok(Self {
-            encoder: build_openh264(screen, fps, bps)?,
+            encoder: build_openh264(screen, fps, bps, keyframe_ms)?,
         })
     }
 }
@@ -173,7 +177,18 @@ impl VideoEncoder for SoftwareEncoder {
         if force_key {
             self.encoder.force_intra_frame();
         }
-        let yuv = YUVBuffer::from_vec(i420.to_vec(), width as usize, height as usize);
+        let width = width as usize;
+        let height = height as usize;
+        let y_size = width * height;
+        let uv = y_size / 4;
+        if i420.len() < y_size + uv * 2 {
+            return Err("openh264 picture is short".into());
+        }
+        let yuv = YUVSlices::new(
+            (&i420[..y_size], &i420[y_size..y_size + uv], &i420[y_size + uv..y_size + uv * 2]),
+            (width, height),
+            (width, width / 2, width / 2),
+        );
         let stream = self.encoder.encode(&yuv).map_err(|err| err.to_string())?;
         let mut bytes = stream.to_vec();
         mark_constrained_baseline(&mut bytes);
@@ -201,8 +216,15 @@ pub enum EncoderPick {
 
 impl LayerEncoder {
     #[allow(dead_code)]
-    pub fn open(screen: bool, width: u32, height: u32, fps: f32, bps: u32) -> Result<Self, String> {
-        Self::open_with(screen, width, height, fps, bps, EncoderPick::Auto)
+    pub fn open(
+        screen: bool,
+        width: u32,
+        height: u32,
+        fps: f32,
+        bps: u32,
+        keyframe_ms: u64,
+    ) -> Result<Self, String> {
+        Self::open_with(screen, width, height, fps, bps, keyframe_ms, EncoderPick::Auto)
     }
 
     pub fn open_with(
@@ -211,13 +233,14 @@ impl LayerEncoder {
         height: u32,
         fps: f32,
         bps: u32,
+        keyframe_ms: u64,
         pick: EncoderPick,
     ) -> Result<Self, String> {
         match pick {
-            EncoderPick::Software => Self::software(screen, fps, bps),
+            EncoderPick::Software => Self::software(screen, fps, bps, keyframe_ms),
             EncoderPick::Hardware => {
-                let soft = SoftwareEncoder::open(screen, fps, bps)?;
-                if let Some(inner) = try_hardware(screen, width, height, fps, bps) {
+                let soft = SoftwareEncoder::open(screen, fps, bps, keyframe_ms)?;
+                if let Some(inner) = try_hardware(screen, width, height, fps, bps, keyframe_ms) {
                     Ok(Self {
                         inner,
                         fallback: Some(soft),
@@ -230,8 +253,8 @@ impl LayerEncoder {
                 }
             }
             EncoderPick::Auto => {
-                let soft = SoftwareEncoder::open(screen, fps, bps)?;
-                let hw = try_hardware(screen, width, height, fps, bps);
+                let soft = SoftwareEncoder::open(screen, fps, bps, keyframe_ms)?;
+                let hw = try_hardware(screen, width, height, fps, bps, keyframe_ms);
                 if let Some(inner) = hw {
                     Ok(Self {
                         inner,
@@ -247,9 +270,9 @@ impl LayerEncoder {
         }
     }
 
-    pub fn software(screen: bool, fps: f32, bps: u32) -> Result<Self, String> {
+    pub fn software(screen: bool, fps: f32, bps: u32, keyframe_ms: u64) -> Result<Self, String> {
         Ok(Self {
-            inner: Box::new(SoftwareEncoder::open(screen, fps, bps)?),
+            inner: Box::new(SoftwareEncoder::open(screen, fps, bps, keyframe_ms)?),
             fallback: None,
         })
     }
@@ -414,12 +437,12 @@ pub fn fit_i420_rgba(rgba: &[u8], width: u32, height: u32, max_edge: u32) -> (Ve
     (rgba_to_i420(&scaled, dw, dh), dw, dh)
 }
 
-pub fn scale_i420(
-    src: &[u8],
+pub fn scale_i420<'a>(
+    src: &'a [u8],
     width: u32,
     height: u32,
     layer: LayerId,
-) -> Option<(Vec<u8>, u32, u32)> {
+) -> Option<(Cow<'a, [u8]>, u32, u32)> {
     let div = match layer {
         LayerId::Full => 1,
         LayerId::Half => 2,
@@ -432,7 +455,7 @@ pub fn scale_i420(
         return None;
     }
     if div == 1 {
-        return Some((src.to_vec(), width, height));
+        return Some((Cow::Borrowed(src), width, height));
     }
     let (y_plane, uv_w, uv_h) = planes(src, width, height)?;
     let dw_u = dw / 2;
@@ -457,7 +480,7 @@ pub fn scale_i420(
     let _ = uv_h;
     y.extend(u);
     y.extend(v);
-    Some((y, dw, dh))
+    Some((Cow::Owned(y), dw, dh))
 }
 
 pub fn is_constrained_baseline(annexb: &[u8]) -> bool {
@@ -496,18 +519,27 @@ pub fn access_unit_is_key(annexb: &[u8]) -> bool {
     nals(annexb).any(|nal| !nal.is_empty() && nal[0] & 0x1f == 5)
 }
 
-fn build_openh264(screen: bool, fps: f32, bps: u32) -> Result<Encoder, String> {
+fn build_openh264(screen: bool, fps: f32, bps: u32, keyframe_ms: u64) -> Result<Encoder, String> {
     let usage = if screen {
         UsageType::ScreenContentRealTime
     } else {
         UsageType::CameraVideoRealTime
     };
+    let gop = gop_frames(fps, keyframe_ms);
     let config = EncoderConfig::new()
         .bitrate(BitRate::from_bps(bps.max(30_000)))
         .max_frame_rate(FrameRate::from_hz(fps.max(1.0)))
         .profile(Profile::Baseline)
-        .usage_type(usage);
+        .usage_type(usage)
+        .intra_frame_period(IntraFramePeriod::from_num_frames(gop));
     Encoder::with_api_config(OpenH264API::from_source(), config).map_err(|err| err.to_string())
+}
+
+/// Frames between IDRs from the stream keyframe interval and encode FPS.
+pub fn gop_frames(fps: f32, keyframe_ms: u64) -> u32 {
+    let fps = fps.max(1.0);
+    let ms = keyframe_ms.clamp(500, 10_000) as f32;
+    ((fps * ms) / 1000.0).round().max(1.0) as u32
 }
 
 /// OpenH264 baseline is CAVLC with no B frames. Set constraint_set1 so the SPS
@@ -630,6 +662,7 @@ fn try_hardware(
     height: u32,
     fps: f32,
     bps: u32,
+    keyframe_ms: u64,
 ) -> Option<Box<dyn VideoEncoder>> {
     #[cfg(target_os = "linux")]
     {
@@ -642,6 +675,7 @@ fn try_hardware(
                 height,
                 fps,
                 bps,
+                keyframe_ms,
             ) {
                 return Some(Box::new(encoder));
             }
@@ -662,6 +696,7 @@ fn try_hardware(
                 height,
                 fps,
                 bps,
+                keyframe_ms,
             ) {
                 return Some(Box::new(encoder));
             }
@@ -669,14 +704,14 @@ fn try_hardware(
     }
     #[cfg(windows)]
     {
-        let _ = screen;
+        let _ = (screen, keyframe_ms);
         if let Ok(encoder) = super::mf::open(width, height, fps, bps) {
             return Some(Box::new(encoder));
         }
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let _ = (screen, width, height, fps, bps);
+        let _ = (screen, width, height, fps, bps, keyframe_ms);
     }
     None
 }
@@ -717,6 +752,7 @@ struct FfmpegEncoder {
     height: u32,
     fps: f32,
     bps: u32,
+    keyframe_ms: u64,
     screen: bool,
     name: &'static str,
 }
@@ -731,7 +767,9 @@ impl FfmpegEncoder {
         height: u32,
         fps: f32,
         bps: u32,
+        keyframe_ms: u64,
     ) -> Result<Self, String> {
+        let gop = gop_frames(fps, keyframe_ms);
         let mut command = Command::new("ffmpeg");
         command.args([
             "-hide_banner",
@@ -767,12 +805,22 @@ impl FfmpegEncoder {
             "-bf",
             "0",
             "-g",
-            &format!("{}", fps.max(1.0) as u32),
+            &gop.to_string(),
             "-b:v",
             &bps.to_string(),
         ]);
         if name == "h264_nvenc" {
-            command.args(["-profile:v", "baseline", "-preset", "p1", "-tune", "ll"]);
+            // forced-idr: when a key is requested (reopen path), emit a true IDR.
+            command.args([
+                "-profile:v",
+                "baseline",
+                "-preset",
+                "p1",
+                "-tune",
+                "ll",
+                "-forced-idr",
+                "1",
+            ]);
         } else {
             command.args(["-profile:v", "constrained_baseline"]);
         }
@@ -815,6 +863,7 @@ impl FfmpegEncoder {
             height,
             fps,
             bps,
+            keyframe_ms,
             screen,
             name,
         })
@@ -846,11 +895,12 @@ impl VideoEncoder for FfmpegEncoder {
         height: u32,
         force_key: bool,
     ) -> Result<EncodedAu, String> {
-        // Reopen on size change *or* force_key. Fresh ffmpeg starts with an IDR —
-        // pipe VA-API/NVENC has no reliable mid-stream force-IDR, and ignoring
-        // force_key broke late-join PLI, P2P peer-cap keys, and mesh-flip recovery
-        // (BAN-33). async_depth=1 + the flush retry below keep the first AU from
-        // timing out the way BAN-30 saw before those fixes.
+        // Size change always reopens. force_key also reopens: the rawvideo pipe has
+        // no mid-stream force-IDR API (unlike MF CodecAPI on Windows). Ignoring
+        // force_key broke late-join / mesh recovery (BAN-33). Periodic keys come from
+        // `-g` (gop_frames) so the encode loop only arms force_key for join/PLI/
+        // topology — not every keyframe_ms tick. async_depth=1 + flush keep the first
+        // AU from timing out the way BAN-30 saw before those fixes.
         if force_key || width != self.width || height != self.height {
             let replacement = FfmpegEncoder::open(
                 self.name,
@@ -860,6 +910,7 @@ impl VideoEncoder for FfmpegEncoder {
                 height,
                 self.fps,
                 self.bps,
+                self.keyframe_ms,
             )?;
             *self = replacement;
         }
@@ -1188,7 +1239,7 @@ mod tests {
 
     #[test]
     fn openh264_round_trip_is_constrained_baseline() {
-        let mut encoder = LayerEncoder::software(false, 30.0, 400_000).expect("encoder");
+        let mut encoder = LayerEncoder::software(false, 30.0, 400_000, 2_000).expect("encoder");
         let rgba = vec![40u8, 80, 120, 255].repeat(16 * 16);
         let i420 = rgba_to_i420(&rgba, 16, 16);
         let au = encoder.encode(&i420, 16, 16, true).expect("encode");
@@ -1220,6 +1271,22 @@ mod tests {
         let i420 = rgba_to_i420(&rgba, 32, 32);
         let (_scaled, width, height) = scale_i420(&i420, 32, 32, LayerId::Quarter).expect("scale");
         assert_eq!((width, height), (8, 8));
+    }
+
+    #[test]
+    fn full_layer_borrows_without_copying() {
+        let rgba = vec![10u8, 20, 30, 255].repeat(16 * 16);
+        let i420 = rgba_to_i420(&rgba, 16, 16);
+        let (scaled, width, height) = scale_i420(&i420, 16, 16, LayerId::Full).expect("full");
+        assert_eq!((width, height), (16, 16));
+        assert!(matches!(scaled, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn gop_tracks_keyframe_interval_and_fps() {
+        assert_eq!(gop_frames(30.0, 2_000), 60);
+        assert_eq!(gop_frames(60.0, 1_000), 60);
+        assert_eq!(gop_frames(30.0, 500), 15);
     }
 
     #[test]
@@ -1266,6 +1333,7 @@ mod tests {
             height,
             30.0,
             2_000_000,
+            2_000,
             EncoderPick::Hardware,
         ) {
             Ok(encoder) if matches!(encoder.backend(), Backend::Vaapi | Backend::Nvenc) => encoder,
@@ -1310,7 +1378,7 @@ mod tests {
         let width = 320u32;
         let height = 180u32;
         let mut encoder =
-            LayerEncoder::software(true, 30.0, 500_000).expect("openh264");
+            LayerEncoder::software(true, 30.0, 500_000, 2_000).expect("openh264");
         let rgba = vec![10u8, 20, 30, 255].repeat((width * height) as usize);
         let i420 = rgba_to_i420(&rgba, width, height);
         let _key = encoder.encode(&i420, width, height, true).expect("key");
