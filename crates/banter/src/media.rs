@@ -1621,13 +1621,25 @@ fn screen_loop(
             }
             #[cfg(target_os = "linux")]
             Feed::Cast(cast) => {
-                let Some((width, height, rgba)) = cast.take_picture(edge) else {
+                let want_preview = engine.show_preview.load(Ordering::Relaxed);
+                let capture_started = Instant::now();
+                let Some((width, height, i420, preview)) =
+                    cast.take_encode(edge, want_preview)
+                else {
                     thread::sleep(Duration::from_millis(2));
                     continue;
                 };
                 next_encode = Instant::now() + Duration::from_millis(interval);
-                publish_screen(
-                    &pictures, &local, &engine, &mut keyed, &rgba, width, height, edge,
+                publish_screen_i420(
+                    &pictures,
+                    &local,
+                    &engine,
+                    &mut keyed,
+                    i420,
+                    width,
+                    height,
+                    preview,
+                    capture_started,
                 );
             }
             Feed::Record { .. } => {
@@ -1750,20 +1762,25 @@ fn publish_screen(
     edge: u32,
 ) {
     let started = Instant::now();
-    let (scaled, out_w, out_h) = encode::fit_rgba(rgba, width, height, edge);
+    let (out_w, out_h) = encode::even_fit(width, height, edge);
     if out_w < 2 || out_h < 2 {
         return;
     }
-    let i420 = encode::rgba_to_i420(&scaled, out_w, out_h);
+    // One pass: NN scale + YUV. Old path allocated a full RGBA then converted (~100 ms at Source).
+    let i420 = encode::scale_rgba_to_i420(rgba, width, height, out_w, out_h);
+    if i420.is_empty() {
+        return;
+    }
     let key = picture_needs_key(keyed, out_w, out_h);
     if engine.show_preview.load(Ordering::Relaxed) {
-        let preview = if out_w <= 1280 && out_h <= 1280 {
-            (out_w, out_h, scaled)
+        // Preview is UI-only — cap at 1280 from the *source* so we never allocate
+        // a second full encode-sized RGBA just to shrink it again.
+        let (small, preview_w, preview_h) = encode::fit_rgba(rgba, width, height, 1280.min(edge.max(2)));
+        *local.lock().expect("screen") = if preview_w >= 2 && preview_h >= 2 {
+            Some((preview_w, preview_h, small))
         } else {
-            let (small, preview_w, preview_h) = encode::fit_rgba(&scaled, out_w, out_h, 1280);
-            (preview_w, preview_h, small)
+            None
         };
-        *local.lock().expect("screen") = Some(preview);
     } else {
         *local.lock().expect("screen") = None;
     }
@@ -1777,6 +1794,40 @@ fn publish_screen(
         "screen_capture",
         started.elapsed(),
         (out_w * out_h) as usize,
+    );
+}
+
+/// Publish a frame that is already I420 at the encode size (Wayland Cast one-pass).
+fn publish_screen_i420(
+    pictures: &rtc::PictureSlot,
+    local: &Mutex<Option<(u32, u32, Vec<u8>)>>,
+    engine: &Engine,
+    keyed: &mut Option<(u32, u32)>,
+    i420: Vec<u8>,
+    width: u32,
+    height: u32,
+    preview: Option<(u32, u32, Vec<u8>)>,
+    capture_started: Instant,
+) {
+    if width < 2 || height < 2 || i420.is_empty() {
+        return;
+    }
+    let key = picture_needs_key(keyed, width, height);
+    if engine.show_preview.load(Ordering::Relaxed) {
+        *local.lock().expect("screen") = preview;
+    } else {
+        *local.lock().expect("screen") = None;
+    }
+    pictures.store(rtc::RawPicture {
+        width,
+        height,
+        i420: std::sync::Arc::<[u8]>::from(i420),
+        key,
+    });
+    crate::profiler::record_media(
+        "screen_capture",
+        capture_started.elapsed(),
+        (width * height) as usize,
     );
 }
 

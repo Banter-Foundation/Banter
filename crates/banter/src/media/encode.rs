@@ -757,26 +757,67 @@ fn list_available_encoders_uncached() -> Vec<AvailableEncoder> {
 }
 
 pub fn rgba_to_i420(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let width = width as usize;
-    let height = height as usize;
-    let mut y = vec![0u8; width * height];
-    let mut u = vec![0u8; (width / 2) * (height / 2)];
-    let mut v = vec![0u8; (width / 2) * (height / 2)];
-    for row in 0..height {
-        for col in 0..width {
-            let index = (row * width + col) * 4;
-            let (yy, uu, vv) = yuv_of(rgba[index], rgba[index + 1], rgba[index + 2]);
-            y[row * width + col] = yy;
-            if row % 2 == 0 && col % 2 == 0 {
-                let uv = (row / 2) * (width / 2) + col / 2;
-                u[uv] = uu;
-                v[uv] = vv;
+    scale_rgba_to_i420(rgba, width, height, width, height)
+}
+
+/// Nearest-neighbor scale + BT.601 RGBA→planar I420 in one pass.
+///
+/// Avoids an intermediate full-size RGBA buffer (publish used to `fit_rgba` then
+/// convert — at 1080p that was a multi‑10 ms copy before any YUV work).
+pub fn scale_rgba_to_i420(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    out_w: u32,
+    out_h: u32,
+) -> Vec<u8> {
+    let sw = width as usize;
+    let sh = height as usize;
+    let dw = (out_w.max(2) & !1) as usize;
+    let dh = (out_h.max(2) & !1) as usize;
+    let need = sw.saturating_mul(sh).saturating_mul(4);
+    if dw < 2 || dh < 2 || rgba.len() < need {
+        return Vec::new();
+    }
+    let y_len = dw * dh;
+    let uv_w = dw / 2;
+    let uv_h = dh / 2;
+    let uv_len = uv_w * uv_h;
+    let mut out = vec![0u8; y_len + uv_len * 2];
+    let (y_plane, rest) = out.split_at_mut(y_len);
+    let (u_plane, v_plane) = rest.split_at_mut(uv_len);
+    let same = dw == sw && dh == sh;
+    for row in 0..dh {
+        let src_row = if same {
+            row
+        } else {
+            (row as u64 * sh as u64 / dh as u64) as usize
+        };
+        let src_row_base = src_row * sw * 4;
+        let y_row = row * dw;
+        let uv_row = (row / 2) * uv_w;
+        for col in 0..dw {
+            let src_col = if same {
+                col
+            } else {
+                (col as u64 * sw as u64 / dw as u64) as usize
+            };
+            let i = src_row_base + src_col * 4;
+            let r = rgba[i] as i32;
+            let g = rgba[i + 1] as i32;
+            let b = rgba[i + 2] as i32;
+            y_plane[y_row + col] = (((66 * r + 129 * g + 25 * b + 128) >> 8) + 16).clamp(0, 255) as u8;
+            if (row & 1) == 0 && (col & 1) == 0 {
+                let uv = uv_row + col / 2;
+                u_plane[uv] =
+                    (((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
+                v_plane[uv] =
+                    (((112 * r - 94 * g - 18 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
             }
         }
     }
-    y.extend(u);
-    y.extend(v);
-    y
+    let _ = uv_h;
+    out
 }
 
 #[allow(dead_code)]
@@ -814,28 +855,32 @@ pub fn fit_rgba(rgba: &[u8], width: u32, height: u32, max_edge: u32) -> (Vec<u8>
         return (Vec::new(), 0, 0);
     }
     if dw == width && dh == height {
+        // Callers that only need a borrow should prefer not calling this — identity
+        // still allocates when an owned buffer is required (local preview).
         return (rgba[..need].to_vec(), width, height);
     }
     let mut scaled = vec![0u8; (dw as usize) * (dh as usize) * 4];
     for row in 0..dh {
         let src_row = (row as u64 * height as u64 / dh as u64) as u32;
+        let src_row_base = (src_row * width) as usize * 4;
+        let dst_row_base = (row * dw) as usize * 4;
         for col in 0..dw {
             let src_col = (col as u64 * width as u64 / dw as u64) as u32;
-            let from = ((src_row * width + src_col) * 4) as usize;
-            let to = ((row * dw + col) * 4) as usize;
+            let from = src_row_base + src_col as usize * 4;
+            let to = dst_row_base + col as usize * 4;
             scaled[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
         }
     }
     (scaled, dw, dh)
 }
 
-/// Nearest-neighbor scale onto an even size that fits inside `max_edge`.
+/// Scale (if needed) and convert to I420 without an intermediate RGBA frame.
 pub fn fit_i420_rgba(rgba: &[u8], width: u32, height: u32, max_edge: u32) -> (Vec<u8>, u32, u32) {
-    let (scaled, dw, dh) = fit_rgba(rgba, width, height, max_edge);
+    let (dw, dh) = even_fit(width, height, max_edge);
     if dw < 2 || dh < 2 {
         return (Vec::new(), 0, 0);
     }
-    (rgba_to_i420(&scaled, dw, dh), dw, dh)
+    (scale_rgba_to_i420(rgba, width, height, dw, dh), dw, dh)
 }
 
 pub fn scale_i420<'a>(
@@ -1937,6 +1982,34 @@ mod tests {
         let (scaled, width, height) = scale_i420(&i420, 16, 16, LayerId::Full).expect("full");
         assert_eq!((width, height), (16, 16));
         assert!(matches!(scaled, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn scale_rgba_to_i420_matches_fit_then_convert() {
+        let width = 64u32;
+        let height = 48u32;
+        let rgba = vec![40u8, 80, 120, 255].repeat((width * height) as usize);
+        let one = scale_rgba_to_i420(&rgba, width, height, 32, 24);
+        let (scaled, dw, dh) = fit_rgba(&rgba, width, height, 32);
+        assert_eq!((dw, dh), (32, 24));
+        let two = rgba_to_i420(&scaled, dw, dh);
+        assert_eq!(one, two);
+    }
+
+    #[test]
+    fn scale_rgba_to_i420_1080p_stays_interactive() {
+        // Capture used to sit near ~100 ms on the fit+convert path; keep a budget.
+        let width = 1920u32;
+        let height = 1080u32;
+        let rgba = vec![16u8, 32, 64, 255].repeat((width * height) as usize);
+        let started = std::time::Instant::now();
+        let i420 = scale_rgba_to_i420(&rgba, width, height, 1280, 720);
+        let elapsed = started.elapsed();
+        assert_eq!(i420.len(), 1280 * 720 + 2 * (640 * 360));
+        assert!(
+            elapsed < std::time::Duration::from_millis(80),
+            "one-pass 1080p→720p convert took {elapsed:?}"
+        );
     }
 
     #[test]

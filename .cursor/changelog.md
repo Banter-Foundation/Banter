@@ -46,6 +46,10 @@ Stream Select picker now soft-fades in/out and rises the cover-flow from the bot
 
 Stacked on BA-97 (#85). Safe encoder wins without raising interactive delay: process-cached `hardware_probe`, Auto/Hardware opens GPU first and defers OpenH264 until needed, PictureDecoder defers soft decode while HW is up, OpenH264 screen/camera QP floors, simulcast Half=`full/3` / Quarter=`full/10` (was area share), Linux NVENC/VA-API honor CBR/VBR (+ NVENC `-zerolatency 1`). Keeps #85 bitrate RC / Low / 1-thread / 1 s GOP / screen AQ/BG off. Contracts in `crates/banter/tests/encoder_quality.rs`. Do not merge until Owl says so.
 
+## 2026-11-07 03:05:00 -05:00 [ubuntu] — Cut screen capture convert (~100 ms → one-pass I420)
+
+Hardware encode was already 1–5 ms; F3 `screen_capture` spent ~100 ms on fit RGBA + scalar YUV (and Wayland did a second full pixel walk into RGBA first). Publish now scale→I420 in one pass; PipeWire Cast samples packed buffers straight to I420 with an optional ≤1280 preview. Compositor callback still only copies.
+
 ## 2026-11-07 02:55:00 -05:00 [ubuntu] — List all ffmpeg H.264 encoders; stop settings 1 FPS
 
 Encoder chips now mirror `ffmpeg -encoders` H.264 backends Adam has (NVENC, AMF, QSV, VA-API, Vulkan, V4L2 mem2mem, libx264, libopenh264) plus built-in OpenH264 and Windows Media Foundation. The Voice & Video encoder row was re-running `ffmpeg -encoders` every frame via an uncached prefer path — cache that scan so opening settings no longer drops Banter to ~1 FPS.
