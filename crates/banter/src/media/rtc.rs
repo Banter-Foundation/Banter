@@ -190,11 +190,7 @@ impl Control {
     }
 
     fn apply_encode(&self, settings: EncodeSettings) {
-        let pick = match settings.pick {
-            EncoderPick::Auto => 0u8,
-            EncoderPick::Hardware => 1,
-            EncoderPick::Software => 2,
-        };
+        let pick = settings.pick.as_u8();
         let mut changed = false;
         if self.full_bps.swap(settings.full_bps.max(30_000), Ordering::Relaxed) != settings.full_bps
         {
@@ -233,11 +229,7 @@ impl Control {
     }
 
     fn encoder_pick(&self) -> EncoderPick {
-        match self.encoder_pick.load(Ordering::Relaxed) {
-            1 => EncoderPick::Hardware,
-            2 => EncoderPick::Software,
-            _ => EncoderPick::Auto,
-        }
+        EncoderPick::from_u8(self.encoder_pick.load(Ordering::Relaxed))
     }
 
     fn layer_bps(&self, layer: LayerId) -> u32 {

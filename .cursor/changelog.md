@@ -1,3 +1,7 @@
+## 2026-11-07 02:05:00 -05:00 [ubuntu] — Scan available encoders and let you pick one
+
+Voice & Video / Stream options now probe which H.264 encoders this PC can see (OpenH264 always; NVENC, VA-API, Media Foundation when present) and only offer those chips, plus Auto and Any hardware. A saved backend that disappears stays visible but disabled with a fallback note, and open falls back to OpenH264 instead of assuming missing hardware exists.
+
 ## 2026-11-07 06:00:00 -05:00 [ubuntu] — Version-1-test-13.2 pre-release
 
 Shipped pre-release Version-1-test-13.2 from main after encode-stack optimizations (#83), hardware force-key IDR restore (#79), Windows MF hardware through force_key (#81), and 40 Mbps stream bitrate cap (#82). Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.

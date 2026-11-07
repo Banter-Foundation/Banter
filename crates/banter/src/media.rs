@@ -17,7 +17,9 @@ mod rtc;
 #[cfg(target_os = "linux")]
 mod screencast;
 
-pub use encode::EncoderPick;
+pub use encode::{
+    list_available_encoders, list_available_encoders_preferring, AvailableEncoder, EncoderPick,
+};
 pub use rtc::EncodeSettings;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -1352,6 +1354,11 @@ pub fn camera_preview_rgba(
 /// True when a Constrained Baseline hardware H.264 encoder is visible. OpenH264 is always the fallback.
 pub fn hardware_encoder_available() -> bool {
     !encode::hardware_probe().is_empty()
+}
+
+/// Hardware backend keys this process can see (`nvenc`, `vaapi`, `mediafoundation`).
+pub fn hardware_encoder_names() -> Vec<&'static str> {
+    encode::hardware_probe()
 }
 
 /// The local preview slot holds the device index with each frame, so a frame captured just before the user
