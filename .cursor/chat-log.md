@@ -1045,6 +1045,14 @@ Owl: Ship GitHub pre-release Version-1-test-11 from current main; Win+Linux(+mac
 
 Agent: Tagged `Version-1-test-11` at `dcbba80` (main `8e1efdc` + BANTER_VERSION bump). Built Linux locally; Windows and macOS arm64 via temporary Actions workflows. Published pre-release with six artifacts. Docker image built locally; GHCR push failed (banter-foundation: Create organization package denied; snowedinowl: 403). Docs retarget PR opened on `cursor/version-1-test-11-effc`. Scratch Win/macOS workflows removed from the PR tip (remain on the release tag commit only).
 
+## User
+
+Owl also wants a command system for Banter chat. Coordinate with BA-103 autosuggest worker if overlapping compose UI, but own branch from main and one PR. Prefer `/` slash commands Discord-like: type `/` → popup list, Tab/Enter run, args parsed. v1 commands (wire real ones that exist in client; stubs OK labeled): /me, /shrug or similar fun; /mute /deafen toggles if hooks exist; /join or channel switch if easy; Extensible registry so mods/plugins can register later if plugin API allows; otherwise a clear CommandRegistry trait. Docs: docs/chat-commands.md. Prefs: never E:; clear commits; do not merge; avoid media PRs. Owl: allow the server to change the command prefix (not hardcode `/` only), and support alias commands (multiple names → same command). Persist prefix + aliases server-side (guild/server settings). Client should use the configured prefix for the popup and parsing. Include aliases in registry + docs. Keep one PR. Owl: servers must be able to change the command prefix and define alias commands. Persist per-server (guild) settings; expose in server settings UI if hooks exist. Update docs/chat-commands.md. Keep one PR.
+
+## Summary
+
+Implemented BA-104 on branch cursor/chat-slash-commands-c431: CommandRegistry + Discord-like composer popup, per-guild prefix/aliases via GET|PUT /v1/servers/{id}/commands and Chat Commands server-menu modal, builtins me/shrug/tableflip/mute/deafen/join/nick(stub)/debugnow(hidden). Coordinated with BA-103 via internal/ba104-compose-coord.md. Docs in store and repo docs/chat-commands.md. Do not merge until Owl says.
+
 ## 2026-11-07 BA-103 Chat compose autosuggest
 
 Owl: “can you add a auto suggestion system for test with a some kind of perdicion system” — interpret as chat compose autosuggest with a lightweight prediction system for Banter (typo: prediction). “for test” = ship something they can try in the client.

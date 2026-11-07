@@ -1188,6 +1188,62 @@ impl Store {
         layout_of(&self.pool, server_id).await
     }
 
+    /// Members may read the guild command prefix and aliases.
+    pub async fn command_settings(
+        &self,
+        user_id: i64,
+        server_id: i64,
+    ) -> Result<ServerCommandSettings, BanterError> {
+        self.require_member(user_id, server_id).await?;
+        load_command_settings(&self.pool, server_id).await
+    }
+
+    /// Manage Channels (or Administrator / owner) may change the guild prefix and aliases.
+    pub async fn set_command_settings(
+        &self,
+        user_id: i64,
+        server_id: i64,
+        prefix: &str,
+        aliases: Vec<CommandAlias>,
+    ) -> Result<ServerCommandSettings, BanterError> {
+        self.require_flag(user_id, server_id, PERM_MANAGE_CHANNELS).await?;
+        crate::commands::validate_command_prefix(prefix)?;
+        let aliases = crate::commands::normalize_command_aliases(aliases)?;
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        let updated: Option<i64> = sqlx::query_scalar(
+            "UPDATE servers SET command_prefix = $1 WHERE id = $2 RETURNING id",
+        )
+        .bind(prefix)
+        .bind(server_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        if updated.is_none() {
+            return Err(BanterError::NotFound);
+        }
+        sqlx::query("DELETE FROM server_command_aliases WHERE server_id = $1")
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        for entry in &aliases {
+            sqlx::query(
+                "INSERT INTO server_command_aliases (server_id, alias, target) VALUES ($1, $2, $3)",
+            )
+            .bind(server_id)
+            .bind(&entry.alias)
+            .bind(&entry.target)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(ServerCommandSettings {
+            prefix: prefix.to_string(),
+            aliases,
+        })
+    }
+
     /// Voice channels in this server, including empty ones. Caller must be a member.
     pub async fn voice_channel_ids(&self, user_id: i64, server_id: i64) -> Result<Vec<i64>, BanterError> {
         self.require_member(user_id, server_id).await?;
@@ -2797,6 +2853,36 @@ fn apply_op_to_scene(scene: &mut BoardScene, op: BoardOp, user_id: i64) -> Resul
     }
     scene.elements.sort_by_key(|element| element.z);
     Ok(())
+}
+
+async fn load_command_settings(
+    pool: &PgPool,
+    server_id: i64,
+) -> Result<ServerCommandSettings, BanterError> {
+    let prefix: Option<String> =
+        sqlx::query_scalar("SELECT command_prefix FROM servers WHERE id = $1")
+            .bind(server_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(db_err)?;
+    let Some(prefix) = prefix else {
+        return Err(BanterError::NotFound);
+    };
+    let rows = sqlx::query(
+        "SELECT alias, target FROM server_command_aliases WHERE server_id = $1 ORDER BY alias",
+    )
+    .bind(server_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    let aliases = rows
+        .into_iter()
+        .map(|row| CommandAlias {
+            alias: row.get("alias"),
+            target: row.get("target"),
+        })
+        .collect();
+    Ok(ServerCommandSettings { prefix, aliases })
 }
 
 async fn layout_of(pool: &PgPool, server_id: i64) -> Result<Vec<CategoryLayout>, BanterError> {

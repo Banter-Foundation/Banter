@@ -11,13 +11,14 @@ use std::time::{Duration, Instant};
 
 use banter_server::{
     has_permission, top_hoisted_role, top_role_color, Account, BadgeItem, CallPhase, CallSnapshot,
-    CategoryLayout, Channel, ChannelKind, ChatTarget, ClientSignal, CosmeticItem, CosmeticKind,
-    DirectChat, Friend, FriendRequest, GuildRole, LayerId, LayerPreferences, MediaKind, MediaPlace,
-    Mention, Message, Presence, ProfileActivityInput, ProfileConnectionInput, ProfilePatch,
-    ProfileWidgetInput, ProfileWidgetKind, ProfileWishlistInput, ServerDebug, ServerFolderPatch,
-    ServerRail, ServerSummary, UserProfile, VoiceFlags, VoiceMember, CHANNEL_ICON_CHOICES,
-    MAX_AVATAR_BYTES, MAX_BANNER_BYTES, PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_BOTS,
-    PERM_MANAGE_CHANNELS, PERM_MANAGE_PLUGINS, PERM_MANAGE_ROLES,
+    CategoryLayout, Channel, ChannelKind, ChatTarget, ClientSignal, CommandAlias, CosmeticItem,
+    CosmeticKind, DirectChat, Friend, FriendRequest, GuildRole, LayerId, LayerPreferences,
+    MediaKind, MediaPlace, Mention, Message, Presence, ProfileActivityInput,
+    ProfileConnectionInput, ProfilePatch, ProfileWidgetInput, ProfileWidgetKind,
+    ProfileWishlistInput, ServerCommandSettings, ServerDebug, ServerFolderPatch, ServerRail,
+    ServerSummary, UserProfile, VoiceFlags, VoiceMember, CHANNEL_ICON_CHOICES, MAX_AVATAR_BYTES,
+    MAX_BANNER_BYTES, PERM_ADMINISTRATOR, PERM_CREATE_INVITE, PERM_MANAGE_BOTS, PERM_MANAGE_CHANNELS,
+    PERM_MANAGE_PLUGINS, PERM_MANAGE_ROLES,
 };
 use dear_imgui_rs::{
     fonts::FontId, ChildFlags, Condition, Context, DrawFlags, Key, ManagedTextureId, MouseButton,
@@ -28,6 +29,11 @@ use dear_imgui_rs::{
 use crate::api::{ApiError, Client, MemberView};
 use crate::bfmd;
 use crate::bfmd_paint;
+use crate::commands::{
+    command_popup_partial, default_command_registry, format_me_body, format_shrug_body,
+    format_tableflip_body, parse_command_line, CommandAction, CommandRegistry,
+    DefaultCommandRegistry, DEFAULT_COMMAND_PREFIX,
+};
 use crate::icons::rasterize_lucide;
 use crate::layout::discord_shell_columns;
 use crate::logic::{
@@ -177,6 +183,8 @@ enum Modal {
     AddPlugin,
     /// Permission list, then the file warning when the plugin checked `io` or `os`.
     PluginAllow,
+    /// Edit this guild's command prefix and aliases (BA-104).
+    ChatCommands,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -309,6 +317,16 @@ pub(crate) struct App {
     suggest_index: usize,
     /// When true, Escape this frame dismissed suggestions — skip other Escape handlers.
     suggest_escape_consumed: bool,
+    /// Composer slash/prefix commands (guild prefix + aliases applied on place load).
+    commands: DefaultCommandRegistry,
+    /// Highlighted row in the command popup (0-based into current suggestions).
+    command_suggest: usize,
+    /// Draft fields for [`Modal::ChatCommands`].
+    cmd_prefix_draft: String,
+    cmd_alias_draft: String,
+    cmd_target_draft: String,
+    cmd_aliases_draft: Vec<CommandAlias>,
+    cmd_error: String,
     search: String,
     friend_tab: u8,
     /// Home stage pane: customizable landing vs Friends people list (BA-81).
@@ -638,6 +656,13 @@ impl App {
             suggest_dismiss: DismissState::default(),
             suggest_index: 0,
             suggest_escape_consumed: false,
+            commands: default_command_registry(),
+            command_suggest: 0,
+            cmd_prefix_draft: DEFAULT_COMMAND_PREFIX.to_string(),
+            cmd_alias_draft: String::new(),
+            cmd_target_draft: String::new(),
+            cmd_aliases_draft: Vec::new(),
+            cmd_error: String::new(),
             search: String::new(),
             friend_tab: 0,
             home_pane: HomePane::Landing,
@@ -1905,6 +1930,7 @@ impl App {
             self.selected = None;
             self.messages.clear();
             self.server_menu = false;
+            self.reset_command_settings();
             self.shell.bump();
         }
         self.rail_separator(ui);
@@ -2295,7 +2321,7 @@ impl App {
             items += 1;
         }
         if can_channels {
-            items += 2;
+            items += 3;
         }
         if can_roles {
             items += 1;
@@ -2320,6 +2346,7 @@ impl App {
             Invite,
             CreateChannel,
             CreateCategory,
+            ChatCommands,
             Roles,
             ServerSettings,
             Nickname,
@@ -2374,6 +2401,19 @@ impl App {
                         semi,
                     ) {
                         action = Some(ServerMenuAction::CreateCategory);
+                    }
+                    y += MENU_ITEM_H + 2.0;
+                    if skin::menu_item(
+                        ui,
+                        "menu-commands",
+                        "Chat Commands",
+                        self.icon("settings"),
+                        MenuTone::Normal,
+                        [x, y],
+                        item_w,
+                        semi,
+                    ) {
+                        action = Some(ServerMenuAction::ChatCommands);
                     }
                     y += MENU_ITEM_H + 2.0;
                 }
@@ -2447,6 +2487,7 @@ impl App {
                     }
                     self.open_modal(Modal::Nickname);
                 }
+                ServerMenuAction::ChatCommands => self.open_chat_commands(),
                 ServerMenuAction::Roles => self.open_roles(),
                 ServerMenuAction::ServerSettings => {
                     self.open_server_settings(server_id, ServerSettingsSection::Overview);
@@ -5931,6 +5972,13 @@ impl App {
 
     fn prepare_composer_suggestions(&mut self) -> Vec<Suggestion> {
         self.suggest_dismiss.clear_if_changed(&self.composer);
+        // Commands own the composer while the guild prefix is active (BA-104).
+        let prefix = self.commands.prefix().to_string();
+        let plain = bfmd::plain_text(&self.composer);
+        if command_popup_partial(&plain, &prefix).is_some() {
+            self.suggest_index = 0;
+            return Vec::new();
+        }
         if self.composer.is_empty() || self.suggest_dismiss.is_dismissed(&self.composer) {
             self.suggest_index = 0;
             // Still refresh so own memory stays warm while browsing.
@@ -6161,6 +6209,67 @@ impl App {
                 .enter_returns_true(true)
                 .build()
         };
+        let prefix = self.commands.prefix().to_string();
+        let plain = bfmd::plain_text(&self.composer);
+        let popup_partial = command_popup_partial(&plain, &prefix);
+        let command_suggestions: Vec<(String, String, String)> = popup_partial
+            .as_ref()
+            .map(|partial| {
+                self.commands
+                    .suggestions(partial)
+                    .into_iter()
+                    .map(|spec| {
+                        (
+                            spec.name.clone(),
+                            spec.description.clone(),
+                            spec.args_hint.clone(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // BA-104 wins over BA-103 whenever the buffer starts with the guild prefix.
+        if !command_suggestions.is_empty() {
+            if self.command_suggest >= command_suggestions.len() {
+                self.command_suggest = command_suggestions.len() - 1;
+            }
+            if ui.is_key_pressed(Key::DownArrow) {
+                self.command_suggest = (self.command_suggest + 1) % command_suggestions.len();
+            }
+            if ui.is_key_pressed(Key::UpArrow) {
+                self.command_suggest = if self.command_suggest == 0 {
+                    command_suggestions.len() - 1
+                } else {
+                    self.command_suggest - 1
+                };
+            }
+            if ui.is_key_pressed(Key::Tab) {
+                if let Some((name, _, _)) = command_suggestions.get(self.command_suggest) {
+                    self.composer = format!("{prefix}{name} ");
+                }
+            }
+            if ui.is_key_pressed(Key::Escape) {
+                self.composer.clear();
+                self.command_suggest = 0;
+                self.suggest_escape_consumed = true;
+            }
+            self.draw_command_popup(ui, [bar_x, y], bar_w, &prefix, &command_suggestions);
+            if submit {
+                if let Some((name, _, _)) = command_suggestions.get(self.command_suggest) {
+                    let args = parse_command_line(&plain, &prefix)
+                        .map(|parsed| parsed.args)
+                        .unwrap_or_default();
+                    self.composer = if args.is_empty() {
+                        format!("{prefix}{name}")
+                    } else {
+                        format!("{prefix}{name} {args}")
+                    };
+                }
+                self.submit_composer(target);
+            }
+            return;
+        }
+        self.command_suggest = 0;
         let composer_active = ui.is_item_active() || ui.is_item_hovered();
         if let Some(ghost_text) = ghost.as_ref() {
             if !self.composer.is_empty() {
@@ -6186,6 +6295,78 @@ impl App {
         } else if submit {
             self.submit_composer(target);
         }
+    }
+
+    /// Floating command list above the composer (`##command-popup`). BA-103 should
+    /// yield when the buffer starts with the guild command prefix.
+    fn draw_command_popup(
+        &self,
+        ui: &Ui,
+        bar: [f32; 2],
+        bar_w: f32,
+        prefix: &str,
+        suggestions: &[(String, String, String)],
+    ) {
+        let row_h = 36.0;
+        let height = (suggestions.len() as f32 * row_h + 12.0).min(220.0);
+        let pos = [bar[0], (bar[1] - height - 6.0).max(HEADER_H + 8.0)];
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_FOCUS_ON_APPEARING;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([8.0, 6.0]));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(8.0));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, FLOATING_BG);
+        ui.window("##command-popup")
+            .flags(flags)
+            .position(pos, Condition::Always)
+            .size([bar_w, height], Condition::Always)
+            .build(|| {
+                let semi = self.semibold_font;
+                for (index, (name, description, args_hint)) in suggestions.iter().enumerate() {
+                    let selected = index == self.command_suggest;
+                    let row_min = ui.cursor_screen_pos();
+                    if selected {
+                        skin::rect(
+                            ui,
+                            row_min,
+                            [row_min[0] + bar_w - 16.0, row_min[1] + row_h],
+                            BLURPLE,
+                            4.0,
+                        );
+                    }
+                    let label = if args_hint.is_empty() {
+                        format!("{prefix}{name}")
+                    } else {
+                        format!("{prefix}{name} {args_hint}")
+                    };
+                    let color = if selected { WHITE } else { TEXT_NORMAL };
+                    skin::text_in_row(
+                        ui,
+                        semi,
+                        FONT_SM,
+                        row_min[0] + 8.0,
+                        row_min[1],
+                        20.0,
+                        color,
+                        &label,
+                    );
+                    skin::text_in_row(
+                        ui,
+                        None,
+                        FONT_XS,
+                        row_min[0] + 8.0,
+                        row_min[1] + 16.0,
+                        16.0,
+                        if selected { WHITE } else { TEXT_SECONDARY },
+                        description,
+                    );
+                    ui.dummy([bar_w - 16.0, row_h]);
+                }
+            });
     }
 
     fn join_voice_channel(&mut self, channel_id: i64) {
@@ -6754,6 +6935,7 @@ impl App {
                     Modal::UploadsUnavailable => self.modal_uploads_unavailable(ui, display),
                     Modal::AddPlugin => self.modal_add_plugin(ui, display),
                     Modal::PluginAllow => self.modal_plugin_allow(ui, display),
+                    Modal::ChatCommands => self.modal_chat_commands(ui, display),
                 };
                 if self.modal_frames > 0 && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
                     let mouse = ui.mouse_pos();
@@ -8130,7 +8312,7 @@ impl App {
 
     fn submit_composer(&mut self, target: ChatTarget) {
         let body = self.composer.clone();
-        if self.consume_debug_command(&body) {
+        if self.try_run_chat_command(&body, target) {
             return;
         }
         if let Some(id) = self.editing {
@@ -8163,7 +8345,7 @@ impl App {
             return;
         };
         let body = self.reply_draft.clone();
-        if self.consume_debug_command(&body) {
+        if self.try_run_chat_command(&body, target) {
             return;
         }
         // Chat attachments are disabled (BA-61); never send pending file bytes.
@@ -8185,20 +8367,322 @@ impl App {
         }
     }
 
-    /// `/debugnow` opens the server debug window and is never stored as a message.
-    fn consume_debug_command(&mut self, body: &str) -> bool {
-        if !is_debug_command(&bfmd::plain_text(body)) {
-            return false;
+    /// Run a composer command when the line starts with the guild prefix.
+    /// Returns true when the submit was consumed (sent, toggled, or rejected).
+    fn try_run_chat_command(&mut self, body: &str, target: ChatTarget) -> bool {
+        let plain = bfmd::plain_text(body);
+        // Legacy whole-message `/debugnow` still works even if the guild prefix changed.
+        if is_debug_command(&plain) {
+            self.clear_composer_after_command();
+            self.open_debug_window();
+            return true;
         }
+        let prefix = self.commands.prefix().to_string();
+        let Some(parsed) = parse_command_line(&plain, &prefix) else {
+            return false;
+        };
+        let Some(action) = self.commands.resolve(&parsed.name).map(|spec| spec.action.clone())
+        else {
+            self.status = format!("Unknown command: {prefix}{}", parsed.name);
+            self.clear_composer_after_command();
+            return true;
+        };
+        match action {
+            CommandAction::DebugNow => {
+                self.clear_composer_after_command();
+                self.open_debug_window();
+                true
+            }
+            CommandAction::Mute => {
+                if !self.mute.deafened() {
+                    let next = !self.mute.muted();
+                    self.mute.set_muted(next);
+                    self.play_mute_toggle(next);
+                }
+                self.clear_composer_after_command();
+                true
+            }
+            CommandAction::Deafen => {
+                let next = !self.mute.deafened();
+                self.mute.set_deafened(next);
+                self.clear_composer_after_command();
+                true
+            }
+            CommandAction::Join => {
+                self.run_join_command(&parsed.args);
+                self.clear_composer_after_command();
+                true
+            }
+            CommandAction::Me => {
+                let display = self
+                    .account
+                    .as_ref()
+                    .map(|account| account.display_name.clone())
+                    .unwrap_or_else(|| "Someone".into());
+                let message_body = format_me_body(&display, &parsed.args);
+                self.send_command_message(target, &message_body);
+                true
+            }
+            CommandAction::Shrug => {
+                let message_body = format_shrug_body(&parsed.args);
+                self.send_command_message(target, &message_body);
+                true
+            }
+            CommandAction::Tableflip => {
+                let message_body = format_tableflip_body(&parsed.args);
+                self.send_command_message(target, &message_body);
+                true
+            }
+            CommandAction::Stub { note } => {
+                self.status = format!("{prefix}{} is a stub — {note}", parsed.name);
+                self.clear_composer_after_command();
+                true
+            }
+        }
+    }
+
+    fn clear_composer_after_command(&mut self) {
         self.composer.clear();
         self.reply_draft.clear();
         self.editing = None;
         self.reply_to = None;
         self.pending_file = None;
+        self.command_suggest = 0;
+    }
+
+    fn open_debug_window(&mut self) {
         self.debug_open = true;
         self.debug_error.clear();
         self.refresh_server_debug();
-        true
+    }
+
+    fn send_command_message(&mut self, target: ChatTarget, body: &str) {
+        if self.editing.is_some() {
+            self.status = "Finish or cancel editing before running a command".into();
+            return;
+        }
+        if self.pending_file.take().is_some() {
+            self.open_modal(Modal::UploadsUnavailable);
+            return;
+        }
+        if let Some(message) = self.note(self.client.send_message(target, body, None, &[])) {
+            if self.search.trim().is_empty() {
+                upsert_message(&mut self.messages, message);
+            }
+            self.chat_jump = true;
+            self.clear_composer_after_command();
+        }
+    }
+
+    fn run_join_command(&mut self, args: &str) {
+        let name = args.trim();
+        if name.is_empty() {
+            self.status = "Usage: join <channel>".into();
+            return;
+        }
+        let Place::Server(_) = self.place else {
+            self.status = "join only works inside a server".into();
+            return;
+        };
+        let Some(channel) = self
+            .layout
+            .iter()
+            .flat_map(|category| category.channels.iter())
+            .find(|channel| channel.name.eq_ignore_ascii_case(name))
+            .cloned()
+        else {
+            self.status = format!("No channel named {name}");
+            return;
+        };
+        self.selected = Some(channel.clone());
+        self.search.clear();
+        self.reply_to = None;
+        self.reply_draft.clear();
+        self.collapsed_comments.clear();
+        self.editing = None;
+        self.messages.clear();
+        if channel.kind == ChannelKind::Text {
+            self.navigate_shell(FetchKind::messages());
+        } else if channel.kind == ChannelKind::Voice && self.voice_channel != Some(channel.id) {
+            self.shell.bump();
+            self.join_voice_channel(channel.id);
+        } else {
+            self.shell.bump();
+        }
+    }
+
+    fn apply_command_settings(&mut self, settings: ServerCommandSettings) {
+        if let Err(err) = self.commands.set_prefix(settings.prefix.clone()) {
+            self.status = format!("Bad command prefix from server: {err}");
+            let _ = self.commands.set_prefix(DEFAULT_COMMAND_PREFIX.into());
+        }
+        let aliases: Vec<(String, String)> = settings
+            .aliases
+            .iter()
+            .map(|entry| (entry.alias.clone(), entry.target.clone()))
+            .collect();
+        if let Err(err) = self.commands.set_server_aliases(aliases) {
+            self.status = format!("Bad command aliases from server: {err}");
+            let _ = self.commands.set_server_aliases(Vec::new());
+        }
+    }
+
+    fn reset_command_settings(&mut self) {
+        let _ = self.commands.set_prefix(DEFAULT_COMMAND_PREFIX.into());
+        let _ = self.commands.set_server_aliases(Vec::new());
+        self.command_suggest = 0;
+    }
+
+    fn open_chat_commands(&mut self) {
+        self.cmd_error.clear();
+        self.cmd_alias_draft.clear();
+        self.cmd_target_draft.clear();
+        self.cmd_prefix_draft = self.commands.prefix().to_string();
+        self.cmd_aliases_draft = self
+            .commands
+            .server_aliases()
+            .iter()
+            .map(|(alias, target)| CommandAlias {
+                alias: alias.clone(),
+                target: target.clone(),
+            })
+            .collect();
+        self.open_modal(Modal::ChatCommands);
+    }
+
+    fn modal_chat_commands(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let alias_rows = self.cmd_aliases_draft.len().max(1) as f32;
+        let body_h = 20.0 + INPUT_H + 16.0 + 20.0 + INPUT_H + 8.0 + alias_rows * 28.0 + 40.0;
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Chat Commands",
+            Some("Prefix and aliases for this server. Members type the prefix in chat."),
+            false,
+            body_h,
+            MODAL_FOOTER_H,
+        );
+        let inner_w = max[0] - min[0] - MODAL_PAD * 2.0;
+        let semi = self.semibold_font;
+        skin::field_label(ui, self.bold_font, body, "Command prefix", false, None);
+        self.focus_modal_field(ui);
+        let _ = skin::input(
+            ui,
+            "##cmd-prefix",
+            &mut self.cmd_prefix_draft,
+            "/",
+            [body[0], body[1] + 20.0],
+            inner_w.min(120.0),
+            INPUT_H,
+            FONT_MD,
+            false,
+        );
+        let alias_y = body[1] + 20.0 + INPUT_H + 16.0;
+        skin::field_label(
+            ui,
+            self.bold_font,
+            [body[0], alias_y],
+            "Aliases",
+            false,
+            None,
+        );
+        let mut remove: Option<usize> = None;
+        let mut row_y = alias_y + 20.0;
+        for (index, entry) in self.cmd_aliases_draft.iter().enumerate() {
+            let line = format!("{} → {}", entry.alias, entry.target);
+            skin::text_in_row(ui, semi, FONT_SM, body[0], row_y, 24.0, TEXT_NORMAL, &line);
+            if skin::link(
+                ui,
+                &format!("cmd-alias-remove-{index}"),
+                "Remove",
+                [body[0] + inner_w - 64.0, row_y + 4.0],
+                None,
+                FONT_XS,
+                LINK,
+            ) {
+                remove = Some(index);
+            }
+            row_y += 28.0;
+        }
+        if let Some(index) = remove {
+            self.cmd_aliases_draft.remove(index);
+        }
+        let add_y = row_y + 4.0;
+        let half = ((inner_w - 12.0) * 0.5).max(80.0);
+        let _ = skin::input(
+            ui,
+            "##cmd-alias",
+            &mut self.cmd_alias_draft,
+            "alias",
+            [body[0], add_y],
+            half,
+            INPUT_H,
+            FONT_MD,
+            false,
+        );
+        let _ = skin::input(
+            ui,
+            "##cmd-target",
+            &mut self.cmd_target_draft,
+            "target",
+            [body[0] + half + 12.0, add_y],
+            half,
+            INPUT_H,
+            FONT_MD,
+            false,
+        );
+        if skin::link(
+            ui,
+            "cmd-alias-add",
+            "Add alias",
+            [body[0], add_y + INPUT_H + 6.0],
+            None,
+            FONT_SM,
+            LINK,
+        ) {
+            let alias = self.cmd_alias_draft.trim().to_ascii_lowercase();
+            let target = self.cmd_target_draft.trim().to_ascii_lowercase();
+            if alias.is_empty() || target.is_empty() {
+                self.cmd_error = "Alias and target are required".into();
+            } else {
+                self.cmd_aliases_draft.push(CommandAlias { alias, target });
+                self.cmd_alias_draft.clear();
+                self.cmd_target_draft.clear();
+                self.cmd_error.clear();
+            }
+        }
+        if !self.cmd_error.is_empty() {
+            skin::text_in_row(
+                ui,
+                None,
+                FONT_XS,
+                body[0],
+                max[1] - MODAL_FOOTER_H - 22.0,
+                18.0,
+                RED,
+                &self.cmd_error,
+            );
+        }
+        let (cancel, save) =
+            self.modal_footer(ui, max, min[0], "Cancel", "Save", Tone::Brand, true);
+        if cancel {
+            self.modal = None;
+        } else if save {
+            if let Place::Server(server_id) = self.place {
+                match self.client.set_command_settings(
+                    server_id,
+                    self.cmd_prefix_draft.trim(),
+                    &self.cmd_aliases_draft,
+                ) {
+                    Ok(settings) => {
+                        self.apply_command_settings(settings);
+                        self.modal = None;
+                    }
+                    Err(err) => self.cmd_error = err.to_string(),
+                }
+            }
+        }
+        (min, max)
     }
 
     fn refresh_server_debug(&mut self) {
@@ -8770,6 +9254,11 @@ impl App {
                         }
                     }
                 }
+                if let Some(commands) = snap.commands {
+                    if let Some(settings) = self.note(commands) {
+                        self.apply_command_settings(settings);
+                    }
+                }
                 if let Some(members) = snap.members {
                     if let Some(members) = self.note(members) {
                         for member in &members {
@@ -8862,6 +9351,7 @@ impl App {
         self.collapsed_comments.clear();
         self.editing = None;
         self.messages.clear();
+        self.reset_command_settings();
         self.remember_home_recent(HomeRecentEntry {
             kind: HomeRecentKind::DirectMessage,
             id: dm_id,

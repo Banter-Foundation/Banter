@@ -168,6 +168,10 @@ fn router(state: HttpState) -> Router {
             axum::routing::patch(update_channel),
         )
         .route("/v1/servers/{id}/layout", get(layout))
+        .route(
+            "/v1/servers/{id}/commands",
+            get(get_command_settings).put(put_command_settings),
+        )
         .route("/v1/servers/{id}/voice", get(server_voice))
         .route("/v1/channels/{id}/messages", get(channel_messages))
         .route("/v1/channels/{id}/board", get(get_board))
@@ -899,6 +903,35 @@ async fn layout(
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<CategoryLayout>>, BanterError> {
     Ok(Json(state.store.layout(account.id, id).await?))
+}
+
+async fn get_command_settings(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+) -> Result<Json<ServerCommandSettings>, BanterError> {
+    Ok(Json(state.store.command_settings(account.id, id).await?))
+}
+
+#[derive(Deserialize)]
+struct CommandSettingsBody {
+    prefix: String,
+    #[serde(default)]
+    aliases: Vec<CommandAlias>,
+}
+
+async fn put_command_settings(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Path(id): Path<i64>,
+    Json(body): Json<CommandSettingsBody>,
+) -> Result<Json<ServerCommandSettings>, BanterError> {
+    Ok(Json(
+        state
+            .store
+            .set_command_settings(account.id, id, &body.prefix, body.aliases)
+            .await?,
+    ))
 }
 
 async fn server_voice(

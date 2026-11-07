@@ -60,7 +60,7 @@ pub fn plugin_usage(id: &str) -> &'static str {
     match id {
         "welcome" => "New channel messages become test.",
         "roll" => {
-            "Declares a roll command. Banter does not run plugin commands from the composer yet."
+            "Declares a roll command. Register it on CommandRegistry when client plugin commands ship; the composer registry is ready (BA-104)."
         }
         "notes" => "Stores a note on this server. The client half is not shown in the window yet.",
         _ => "The server script runs on this server after you allow it.",

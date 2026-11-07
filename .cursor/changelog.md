@@ -1,3 +1,7 @@
+## 2026-11-07 07:13:31 +00:00 [ubuntu] — Chat slash command system (BA-104)
+
+Discord-like composer commands with a configurable per-guild prefix (not hard-coded `/`), alias map, popup (Tab/Enter), and `CommandRegistry` for later plugins. Built-ins: `me`, `shrug`/`shruggie`, `tableflip`, `mute`, `deafen`, `join`, stub `nick`, hidden `debugnow`. Server persists prefix + aliases (`007_chat_commands`); Chat Commands in the server menu. Docs: `docs/chat-commands.md`.
+
 ## 2026-11-07 01:20:00 -06:00 [ubuntu] — Autosuggest prefers own history (BA-103)
 
 Next-word prediction weights the signed-in user’s own channel messages and session own-memory (other channels already loaded) above peers (`WEIGHT_OWN` 4 vs `WEIGHT_PEER` 1); the current composer draft trains at `WEIGHT_DRAFT` 3. Tests cover own-vs-peer ranking and draft ingest. Docs updated. PR #90.

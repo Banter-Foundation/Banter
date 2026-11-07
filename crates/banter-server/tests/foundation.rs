@@ -1986,3 +1986,101 @@ fn channel_icon_choices_are_known_lucide_names() {
         BanterError::InvalidName
     );
 }
+
+#[tokio::test]
+async fn server_command_prefix_and_aliases_persist_per_guild() {
+    let (store, _dir) = open_store().await;
+    let owner = store.register("cmdowner", "Owner", "password1").await.unwrap();
+    let member = store.register("cmdmember", "Member", "password1").await.unwrap();
+    let home = store.create_server(owner.id, "Commands").await.unwrap();
+    let server_id = home.server.id;
+    let invite = store.create_invite(owner.id, server_id).await.unwrap();
+    store.join_invite(member.id, &invite).await.unwrap();
+
+    let defaults = store.command_settings(member.id, server_id).await.unwrap();
+    assert_eq!(defaults.prefix, "/");
+    assert!(defaults.aliases.is_empty());
+
+    let updated = store
+        .set_command_settings(
+            owner.id,
+            server_id,
+            "!",
+            vec![
+                banter_server::CommandAlias {
+                    alias: "s".into(),
+                    target: "shrug".into(),
+                },
+                banter_server::CommandAlias {
+                    alias: "goto".into(),
+                    target: "join".into(),
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.prefix, "!");
+    assert_eq!(updated.aliases.len(), 2);
+    assert_eq!(updated.aliases[0].alias, "goto");
+    assert_eq!(updated.aliases[0].target, "join");
+    assert_eq!(updated.aliases[1].alias, "s");
+    assert_eq!(updated.aliases[1].target, "shrug");
+
+    let again = store.command_settings(member.id, server_id).await.unwrap();
+    assert_eq!(again.prefix, "!");
+    assert_eq!(again.aliases, updated.aliases);
+
+    assert_eq!(
+        store
+            .set_command_settings(member.id, server_id, "?", vec![])
+            .await
+            .unwrap_err(),
+        BanterError::NotOwner
+    );
+    assert_eq!(
+        store
+            .set_command_settings(owner.id, server_id, "bad prefix", vec![])
+            .await
+            .unwrap_err(),
+        BanterError::Invalid
+    );
+    assert_eq!(
+        store
+            .set_command_settings(
+                owner.id,
+                server_id,
+                "/",
+                vec![banter_server::CommandAlias {
+                    alias: "BAD".into(),
+                    target: "shrug".into(),
+                }],
+            )
+            .await
+            .unwrap_err(),
+        BanterError::Invalid
+    );
+}
+
+#[test]
+fn command_prefix_validation_rejects_whitespace_and_long_values() {
+    assert_eq!(banter_server::DEFAULT_COMMAND_PREFIX, "/");
+    assert!(banter_server::validate_command_prefix("/").is_ok());
+    assert!(banter_server::validate_command_prefix("!").is_ok());
+    assert!(banter_server::validate_command_prefix("!!").is_ok());
+    assert_eq!(
+        banter_server::validate_command_prefix("").unwrap_err(),
+        BanterError::Invalid
+    );
+    assert_eq!(
+        banter_server::validate_command_prefix(" ").unwrap_err(),
+        BanterError::Invalid
+    );
+    assert_eq!(
+        banter_server::validate_command_prefix("a b").unwrap_err(),
+        BanterError::Invalid
+    );
+    assert_eq!(
+        banter_server::validate_command_prefix(&"x".repeat(9)).unwrap_err(),
+        BanterError::Invalid
+    );
+}

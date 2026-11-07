@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 use crate::profiler;
 use banter_server::{
     format_banter_notice, Account, BanterVersionReport, CallSnapshot, Category, CategoryLayout,
-    Channel, ChannelKind, ChatTarget, CosmeticItem, DirectChat, Friend, FriendRequest, GuildRole,
-    Mention, Message, PluginInfo, Presence, ProfilePatch, ServerDebug, ServerFolder,
-    ServerFolderPatch, ServerHome, ServerRail, ServerRailServer, ServerSummary, Session,
-    UserProfile, VoiceFlags, VoiceMember, VoiceRoster, ERR_HTTP_PARSE, ERR_HTTP_STATUS,
-    ERR_HTTP_TRANSPORT, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
+    Channel, ChannelKind, ChatTarget, CommandAlias, CosmeticItem, DirectChat, Friend,
+    FriendRequest, GuildRole, Mention, Message, PluginInfo, Presence, ProfilePatch, ServerDebug,
+    ServerCommandSettings, ServerFolder, ServerFolderPatch, ServerHome, ServerRail,
+    ServerRailServer, ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember, VoiceRoster,
+    ERR_HTTP_PARSE, ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
 };
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -595,6 +595,22 @@ impl Client {
 
     pub fn layout(&self, server_id: i64) -> Result<Vec<CategoryLayout>, ApiError> {
         self.get_json(&format!("/v1/servers/{server_id}/layout"))
+    }
+
+    pub fn command_settings(&self, server_id: i64) -> Result<ServerCommandSettings, ApiError> {
+        self.get_json(&format!("/v1/servers/{server_id}/commands"))
+    }
+
+    pub fn set_command_settings(
+        &self,
+        server_id: i64,
+        prefix: &str,
+        aliases: &[CommandAlias],
+    ) -> Result<ServerCommandSettings, ApiError> {
+        self.send_json(
+            self.auth(http().put(&self.url(&format!("/v1/servers/{server_id}/commands")))),
+            serde_json::json!({ "prefix": prefix, "aliases": aliases }),
+        )
     }
 
     pub fn server_voice(&self, server_id: i64) -> Result<Vec<VoiceRoster>, ApiError> {

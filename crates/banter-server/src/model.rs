@@ -211,6 +211,20 @@ pub struct ServerSummary {
     pub owner_id: i64,
 }
 
+/// One guild-defined alias: typing `{prefix}{alias}` runs `{target}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandAlias {
+    pub alias: String,
+    pub target: String,
+}
+
+/// Per-server chat command prefix and aliases (BA-104).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerCommandSettings {
+    pub prefix: String,
+    pub aliases: Vec<CommandAlias>,
+}
+
 /// One per-user folder on the server rail. `color` is RGB (`0` = default look).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerFolder {
