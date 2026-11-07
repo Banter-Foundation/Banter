@@ -1244,18 +1244,24 @@ impl VideoEncoder for FfmpegEncoder {
             .stdin
             .as_mut()
             .ok_or_else(|| "encoder is closed".to_string())?;
-        let before = self.captured.lock().expect("ffmpeg bytes").len();
+        // Drop leftovers from a prior timed-out wait so `before` stays at the
+        // start of this frame's AU and RSS cannot accumulate across frames.
+        self.captured.lock().expect("ffmpeg bytes").clear();
+        let before = 0;
         stdin.write_all(i420).map_err(|err| err.to_string())?;
         stdin.flush().map_err(|err| err.to_string())?;
         let deadline = std::time::Instant::now() + Duration::from_millis(800);
         let mut flushed = false;
         loop {
-            let bytes = self.captured.lock().expect("ffmpeg bytes");
+            let mut bytes = self.captured.lock().expect("ffmpeg bytes");
+            if bytes.len() > FFMPEG_CAPTURE_CAP {
+                bytes.clear();
+                return Err("hardware encoder capture grew past the call safety cap".into());
+            }
             if bytes.len() > before && access_unit_is_key(&bytes[before..])
                 || bytes.len() > before + 32 && nals(&bytes[before..]).count() >= 2
             {
-                let au = bytes[before..].to_vec();
-                drop(bytes);
+                let au = take_captured_au(&mut bytes, before);
                 return Ok(EncodedAu {
                     keyframe: access_unit_is_key(&au),
                     bytes: au,
@@ -1274,6 +1280,8 @@ impl VideoEncoder for FfmpegEncoder {
                 flushed = true;
             }
             if std::time::Instant::now() > deadline {
+                // Orphan partial output so the next encode does not keep it forever.
+                self.captured.lock().expect("ffmpeg bytes").clear();
                 return Err("hardware encoder produced no access unit".into());
             }
             thread::sleep(Duration::from_millis(5));
@@ -1475,6 +1483,11 @@ impl FfmpegDecoder {
                 return Err(format!("hardware decoder exited {status}"));
             }
             let mut bytes = self.captured.lock().expect("decoder bytes");
+            if bytes.len() > FFMPEG_CAPTURE_CAP {
+                bytes.clear();
+                self.failed = true;
+                return Err("hardware decoder capture grew past the call safety cap".into());
+            }
             if let Some(picture) = take_ppm(&mut bytes) {
                 self.warmed = true;
                 return Ok(Some(picture));
@@ -1482,6 +1495,8 @@ impl FfmpegDecoder {
             drop(bytes);
             if std::time::Instant::now() > deadline {
                 self.failed = true;
+                // Drop partial PPM so a failing HW path cannot retain call-length stdout.
+                self.captured.lock().expect("decoder bytes").clear();
                 return Err("hardware decoder did not accept the access unit".into());
             }
             thread::sleep(Duration::from_millis(4));
@@ -1499,6 +1514,24 @@ impl Drop for FfmpegDecoder {
             let _ = reader.join();
         }
     }
+}
+
+/// Soft ceiling on the Linux ffmpeg stdout capture buffer. A stuck encoder or
+/// missed drain must not retain unbounded Annex-B for the length of a call.
+#[cfg(target_os = "linux")]
+const FFMPEG_CAPTURE_CAP: usize = 8 * 1024 * 1024;
+
+/// Copy the access unit that starts at `before`, then clear the whole capture
+/// buffer. Prior AUs (and orphaned bytes from a timed-out wait) must not stay
+/// resident across frames — that is the call-length RSS growth on Linux HW encode.
+fn take_captured_au(captured: &mut Vec<u8>, before: usize) -> Vec<u8> {
+    let au = if before >= captured.len() {
+        Vec::new()
+    } else {
+        captured[before..].to_vec()
+    };
+    captured.clear();
+    au
 }
 
 #[cfg(target_os = "linux")]
@@ -1582,6 +1615,37 @@ mod tests {
         } else {
             assert!(nvenc.is_some_and(|e| !e.available));
         }
+    }
+
+    #[test]
+    fn take_captured_au_drains_prefix_and_au() {
+        // Simulate N successful encodes that forgot to drain: the buffer holds
+        // every prior AU. Consuming the latest AU must clear the whole buffer
+        // so call-length RSS cannot grow with every frame on Linux ffmpeg HW.
+        let mut captured = Vec::new();
+        captured.extend_from_slice(b"old-au-1");
+        captured.extend_from_slice(b"old-au-2");
+        let before = captured.len();
+        captured.extend_from_slice(b"new-au");
+        let au = take_captured_au(&mut captured, before);
+        assert_eq!(au, b"new-au");
+        assert!(
+            captured.is_empty(),
+            "ffmpeg stdout capture must drain after each AU; left {}",
+            captured.len()
+        );
+    }
+
+    #[test]
+    fn take_captured_au_clears_orphaned_prefix_after_timeout() {
+        // A timed-out wait leaves bytes at [0..before). The next success must
+        // still drop that orphan instead of retaining it forever.
+        let mut captured = b"orphan".to_vec();
+        let before = captured.len();
+        captured.extend_from_slice(b"au");
+        let au = take_captured_au(&mut captured, before);
+        assert_eq!(au, b"au");
+        assert!(captured.is_empty());
     }
 
     #[test]

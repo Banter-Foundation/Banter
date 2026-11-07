@@ -2523,6 +2523,20 @@ pub fn voice_occupancy_line(names: &[String]) -> String {
     }
 }
 
+/// Remote video / delivered-layer keys whose publisher is no longer seated.
+/// Used so ImGui textures and layer notes cannot accumulate across peer churn
+/// during a long call (or across leave/rejoin).
+pub fn stale_remote_video_keys(
+    seated: &[i64],
+    remote_keys: impl IntoIterator<Item = (i64, u8)>,
+) -> Vec<(i64, u8)> {
+    let live: HashSet<i64> = seated.iter().copied().collect();
+    remote_keys
+        .into_iter()
+        .filter(|(user_id, _)| !live.contains(user_id))
+        .collect()
+}
+
 #[cfg(test)]
 mod member_group_tests {
     use super::plan_member_groups;
@@ -2567,7 +2581,7 @@ mod mute_memory_tests {
 
 #[cfg(test)]
 mod voice_roster_tests {
-    use super::{apply_voice_roster, voice_occupancy_line};
+    use super::{apply_voice_roster, stale_remote_video_keys, voice_occupancy_line};
     use banter_server::{VoiceFlags, VoiceMember};
     use std::collections::HashMap;
 
@@ -2596,6 +2610,20 @@ mod voice_roster_tests {
             voice_occupancy_line(&["Ada".into(), "Bob".into()]),
             "Ada, Bob are in voice"
         );
+    }
+
+    #[test]
+    fn stale_remote_video_keys_drop_users_who_left() {
+        let seated = [1i64, 2];
+        let keys = vec![(1, 2), (2, 3), (9, 2), (9, 3)];
+        let stale = stale_remote_video_keys(&seated, keys);
+        assert_eq!(stale, vec![(9, 2), (9, 3)]);
+    }
+
+    #[test]
+    fn stale_remote_video_keys_empty_roster_clears_all() {
+        let keys = vec![(4, 2), (5, 3)];
+        assert_eq!(stale_remote_video_keys(&[], keys), vec![(4, 2), (5, 3)]);
     }
 }
 

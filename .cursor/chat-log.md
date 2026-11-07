@@ -1045,6 +1045,19 @@ Owl: Ship GitHub pre-release Version-1-test-11 from current main; Win+Linux(+mac
 
 Agent: Tagged `Version-1-test-11` at `dcbba80` (main `8e1efdc` + BANTER_VERSION bump). Built Linux locally; Windows and macOS arm64 via temporary Actions workflows. Published pre-release with six artifacts. Docker image built locally; GHCR push failed (banter-foundation: Create organization package denied; snowedinowl: 403). Docs retarget PR opened on `cursor/version-1-test-11-effc`. Scratch Win/macOS workflows removed from the PR tip (remain on the release tag commit only).
 
+## 2026-11-07 07:02:16 +0000 — BA-99 call memory growth
+
+Owl: Banter RAM keeps growing while in a voice/video call. Investigate and fix retain/leak paths. Own branch from main; do not conflict with BA-97 latency. Document in docs/call-memory-growth.md. At most one PR. Do not touch theme BA-95, cover-flow #80, Emote Library.
+
+Agent: Found clear unbounded retain in Linux FfmpegEncoder stdout capture (never drained after AU). Fixed drain + safety cap; capped H.264 access reassembly; clear/prune remote_video on leave/roster. Branch cursor/call-memory-growth-703c. Report at store docs/call-memory-growth.md. Do not merge until Owl says so.
+
+### Summary
+Call-length RSS growth on Linux HW encode drained; remote video textures no longer survive peer leave.
+
+Agent: PR #87 opened (ManagePullRequest). Do not merge until Owl says so.
+
+Agent: Folded SFU ForwardTable leave/publisher cleanup + accept_offer generation guard into the same PR after SFU audit.
+
 ## 2026-11-07 06:57:32 +00:00 — BA-100 Windows Go Live 0x80070057
 
 Owl: Voice Connected + 0x80070057 while Go Live/streaming; works on Linux, fails on Windows. Focus Windows-only capture/encode/loopback vs Linux; PR against main.

@@ -1393,7 +1393,7 @@ impl PeerConnectionEventHandler for Handler {
                         } else if let Some(decoder) = video.as_mut() {
                             let payload = Bytes::copy_from_slice(&packet.payload);
                             if let Ok(nal) = h264.depacketize(&payload) {
-                                access.extend_from_slice(&nal);
+                                let _ = append_access_nal(&mut access, &nal, ACCESS_UNIT_CAP);
                             }
                             if packet.header.marker && !access.is_empty() {
                                 let started = std::time::Instant::now();
@@ -1494,6 +1494,21 @@ pub fn playback_cap_samples(rate: u32) -> usize {
     ((rate * 3) / 50).max(960)
 }
 
+/// Hard ceiling on one H.264 access-unit reassembly buffer. Missing marker bits
+/// or a corrupt stream must not retain every NAL for the length of the call.
+const ACCESS_UNIT_CAP: usize = 4 * 1024 * 1024;
+
+/// Append one depacketized NAL. Returns false (and clears) when the buffer
+/// would exceed `cap`, so the next keyframe can resync without unbounded growth.
+fn append_access_nal(access: &mut Vec<u8>, nal: &[u8], cap: usize) -> bool {
+    if access.len().saturating_add(nal.len()) > cap {
+        access.clear();
+        return false;
+    }
+    access.extend_from_slice(nal);
+    true
+}
+
 fn push_playback(playback: &Mutex<VecDeque<f32>>, output_rate: &AtomicU32, pcm: &[i16]) {
     let rate = output_rate.load(Ordering::Relaxed).max(1);
     let samples = resample_mono_i16(pcm, 48_000, rate);
@@ -1510,6 +1525,16 @@ fn push_playback(playback: &Mutex<VecDeque<f32>>, output_rate: &AtomicU32, pcm: 
 #[cfg(test)]
 mod receive_tests {
     use super::*;
+
+    #[test]
+    fn append_access_nal_caps_missing_marker_growth() {
+        let mut access = Vec::new();
+        assert!(append_access_nal(&mut access, &[1, 2, 3, 4], 8));
+        assert_eq!(access.len(), 4);
+        // Next NAL would push past the cap — clear instead of growing forever.
+        assert!(!append_access_nal(&mut access, &[5, 6, 7, 8, 9], 8));
+        assert!(access.is_empty());
+    }
 
     #[test]
     fn join_key_waits_until_a_layer_is_publishing() {

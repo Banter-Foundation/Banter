@@ -165,6 +165,10 @@ impl Live {
         }
         if let Some(previous) = previous {
             if previous != channel_id {
+                // Drop the prior SFU seat and pair-subscribe rows so a channel
+                // hop cannot leave ForwardTable entries for the old room.
+                crate::room::close_user(user_id);
+                self.lock().forward.unsubscribe_user(user_id);
                 self.publish_voice(store, user_id, previous).await;
             }
         }
@@ -188,6 +192,9 @@ impl Live {
     pub fn leave_voice(&self, user_id: i64) -> Option<i64> {
         crate::room::close_user(user_id);
         let mut inner = self.lock();
+        // Same ForwardTable cleanup as disconnect — leave without a WS drop
+        // must not keep pair-subscribe rows / queues for the leaver.
+        inner.forward.unsubscribe_user(user_id);
         let Some(user) = inner.users.get_mut(&user_id) else {
             return None;
         };

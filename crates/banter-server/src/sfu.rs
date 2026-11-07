@@ -148,16 +148,25 @@ impl ForwardTable {
         }
     }
 
-    pub fn unsubscribe_user(&mut self, subscriber: i64) {
-        let keys: Vec<TrackKey> = self
+    /// Drop every forward row that involves `user_id` as subscriber **or**
+    /// publisher, plus that user's queue / egress / publishing layers.
+    /// Pair-subscribe inserts both directions; leaving must clear the stayers'
+    /// rows toward the departed publisher or ForwardTable grows with churn.
+    pub fn unsubscribe_user(&mut self, user_id: i64) {
+        let refresh: HashSet<TrackKey> = self
             .subs
             .keys()
-            .filter(|(user, _)| *user == subscriber)
+            .filter(|(subscriber, key)| *subscriber == user_id || key.publisher == user_id)
             .map(|(_, key)| *key)
+            .filter(|key| key.publisher != user_id)
             .collect();
-        self.subs.retain(|(user, _), _| *user != subscriber);
-        self.queues.remove(&subscriber);
-        for key in keys {
+        self.subs
+            .retain(|(subscriber, key), _| *subscriber != user_id && key.publisher != user_id);
+        self.queues.remove(&user_id);
+        self.egress.remove(&user_id);
+        self.publishing.retain(|key, _| key.publisher != user_id);
+        self.keyframes.retain(|request| request.publisher != user_id);
+        for key in refresh {
             self.refresh_dynacast(key, false);
         }
     }
@@ -496,5 +505,50 @@ mod tests {
         assert_eq!(released.len(), 1, "screen Full must reach the subscriber after pair subscribe");
         assert_eq!(released[0].subscriber, 2);
         assert_eq!(table.egress(2), 1200);
+    }
+
+    #[test]
+    fn unsubscribe_drops_stayer_rows_toward_departed_publisher() {
+        // Pair subscribe inserts both directions. When Ada leaves, Bob must not
+        // keep (bob, TrackKey{ada, …}) forever while he stays in the channel.
+        let mut table = ForwardTable::new();
+        table.subscribe(1, 2, MediaKind::UserAudio, LayerId::Full);
+        table.subscribe(2, 1, MediaKind::UserAudio, LayerId::Full);
+        table.subscribe(1, 2, MediaKind::Screen, LayerId::Full);
+        table.subscribe(2, 1, MediaKind::Screen, LayerId::Full);
+        table.note_layer(1, MediaKind::Screen, LayerId::Full);
+        table.push(1, MediaKind::UserAudio, LayerId::Full, 40, false);
+        assert!(table.egress(2) > 0);
+
+        table.unsubscribe_user(1);
+
+        assert!(
+            table.subs.keys().all(|(subscriber, key)| *subscriber != 1 && key.publisher != 1),
+            "leaver must not remain as subscriber or publisher: {:?}",
+            table.subs.keys().collect::<Vec<_>>()
+        );
+        assert!(table.queues.get(&1).is_none());
+        assert_eq!(table.egress(1), 0, "egress counter for the leaver must be dropped");
+        assert!(
+            table
+                .publishing
+                .keys()
+                .all(|key| key.publisher != 1),
+            "publishing layers for the leaver must be pruned"
+        );
+        // Surviving Bob→nobody for Ada's tracks: no forward to Ada.
+        let released = table.push(2, MediaKind::UserAudio, LayerId::Full, 80, false);
+        assert!(released.is_empty() || released.iter().all(|row| row.subscriber != 1));
+    }
+
+    #[test]
+    fn unsubscribe_does_not_wipe_unrelated_pair() {
+        let mut table = ForwardTable::new();
+        table.subscribe(3, 4, MediaKind::UserAudio, LayerId::Full);
+        table.subscribe(4, 3, MediaKind::UserAudio, LayerId::Full);
+        table.subscribe(1, 2, MediaKind::UserAudio, LayerId::Full);
+        table.unsubscribe_user(1);
+        assert!(table.subs.contains_key(&(3, TrackKey { publisher: 4, track: MediaKind::UserAudio })));
+        assert!(table.subs.contains_key(&(4, TrackKey { publisher: 3, track: MediaKind::UserAudio })));
     }
 }
