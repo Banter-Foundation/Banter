@@ -1,3 +1,7 @@
+## 2026-11-07 01:25:20 -06:00 [ubuntu] — Discord-like Server Settings window (BA-106)
+
+Dedicated Banter Server Settings OS window (Overview / Roles / Badges / Member List) opens from the server header gear, server dropdown, or rail right-click. Overview wires nickname + invite; Roles hosts live CRUD; Member List shows hoist preview and assign; Badges is Coming soon until community-badge APIs exist. Shares the secondary GLFW/ImGui host with User Settings (mutually exclusive). Unblocks BA-23 walk inside Settings. Do not merge until Owl says so.
+
 ## 2026-11-07 07:15:00 +00:00 [ubuntu] — SFU ForwardTable cleanup on leave (BA-99)
 
 Pair-subscribe left stayer→departed publisher rows in `ForwardTable`, and `leave_voice` never called `unsubscribe_user`. Expand unsubscribe to drop publisher-side subs, publishing layers, and egress; wire leave and channel hops; generation-guard `accept_offer` teardown so mid-call re-offers cannot remove the replacement slot.
