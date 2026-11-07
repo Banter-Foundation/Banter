@@ -442,6 +442,21 @@ pub fn media_device_notice(device: &str, raw: &str) -> String {
         .user_text()
 }
 
+/// Voice-bar notice for screen / Go Live capture failures (BA-100).
+/// Windows xcap DXGI `video_recorder` can return bare `0x80070057`; keep that in detail only.
+pub fn media_screen_notice(raw: &str) -> String {
+    use banter_server::{BanterIssue, ERR_VC_PUBLISH};
+    BanterIssue::new(ERR_VC_PUBLISH, "couldn't capture the screen")
+        .with_detail(raw)
+        .user_text()
+}
+
+/// When `Monitor::video_recorder` fails, Windows falls back to paced `capture_image` (GDI).
+/// Linux keeps PipeWire Cast / X11 Still and must not take this branch.
+pub fn prefer_still_screen_after_recorder_error() -> bool {
+    cfg!(windows)
+}
+
 /// Capture format for `VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK` (Microsoft ApplicationLoopback sample).
 /// GetMixFormat is unsupported on that virtual device and returns `E_INVALIDARG` (0x80070057).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

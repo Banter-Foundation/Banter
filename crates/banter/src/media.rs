@@ -1091,6 +1091,14 @@ fn remember_loopback_error(errors: &Mutex<Vec<String>>, label: &str, raw: &str) 
     );
 }
 
+fn remember_screen_error(errors: &Mutex<Vec<String>>, raw: &str) {
+    eprintln!("screen: {raw}");
+    remember_error(
+        errors,
+        format!("screen: {}", crate::settings::media_screen_notice(raw)),
+    );
+}
+
 fn camera_loop(
     flags: Arc<AtomicU32>,
     in_place: Arc<AtomicBool>,
@@ -1546,7 +1554,7 @@ fn screen_loop(
                     continue;
                 }
                 Err(err) => {
-                    remember_error(&errors, format!("screen: {err}"));
+                    remember_screen_error(&errors, &err);
                     failed = Some(pick);
                     capture_failed.store(true, Ordering::Relaxed);
                     thread::sleep(Duration::from_millis(200));
@@ -1569,7 +1577,7 @@ fn screen_loop(
             #[cfg(target_os = "linux")]
             Some((_, Feed::Cast(cast))) => {
                 if let Some(err) = cast.take_fault() {
-                    remember_error(&errors, format!("screen: {err}"));
+                    remember_screen_error(&errors, &err);
                     capture_failed.store(true, Ordering::Relaxed);
                     failed = Some(pick);
                     feed = None;
@@ -1583,7 +1591,7 @@ fn screen_loop(
                 } else if latest.is_none()
                     && cast_since.is_some_and(|started| started.elapsed() > Duration::from_secs(3))
                 {
-                    remember_error(&errors, "screen: the desktop sent no picture".into());
+                    remember_screen_error(&errors, "the desktop sent no picture");
                     capture_failed.store(true, Ordering::Relaxed);
                     failed = Some(pick);
                     feed = None;
@@ -1608,7 +1616,7 @@ fn screen_loop(
                     Ok((width, height, rgba)) => publish_screen(
                         &pictures, &local, &engine, &mut keyed, &rgba, width, height, edge,
                     ),
-                    Err(err) => remember_error(&errors, format!("screen: {err}")),
+                    Err(err) => remember_screen_error(&errors, &err),
                 }
             }
             #[cfg(target_os = "linux")]
@@ -1700,14 +1708,33 @@ fn start_recorder(
     stop: &AtomicBool,
 ) -> Result<Option<Feed>, String> {
     // On Wayland this blocks in the system ScreenCast dialog, then delivers a PipeWire stream.
-    let (recorder, frames) = monitor.video_recorder().map_err(|err| err.to_string())?;
-    let current = stream_target.lock().expect("stream target").clone();
-    if stop.load(Ordering::Relaxed) || current != Some(pick) {
-        let _ = recorder.stop();
-        return Ok(None);
+    // On Windows, DXGI Desktop Duplication (`video_recorder`) often returns E_INVALIDARG
+    // (0x80070057) when the D3D device is not created on the output's adapter — same class
+    // as xcap#264. Fall back to paced GDI `capture_image` (already used for window share)
+    // so Go Live still works; Linux Cast / X11 paths never take this Windows branch.
+    match monitor.video_recorder() {
+        Ok((recorder, frames)) => {
+            let current = stream_target.lock().expect("stream target").clone();
+            if stop.load(Ordering::Relaxed) || current != Some(pick) {
+                let _ = recorder.stop();
+                return Ok(None);
+            }
+            recorder.start().map_err(|err| err.to_string())?;
+            Ok(Some(Feed::Record { recorder, frames }))
+        }
+        Err(err) => {
+            if crate::settings::prefer_still_screen_after_recorder_error() {
+                eprintln!(
+                    "screen: video_recorder failed ({err}); falling back to paced capture_image"
+                );
+                Ok(Some(Feed::Still {
+                    grabber: Grabber::Monitor { monitor },
+                }))
+            } else {
+                Err(err.to_string())
+            }
+        }
     }
-    recorder.start().map_err(|err| err.to_string())?;
-    Ok(Some(Feed::Record { recorder, frames }))
 }
 
 /// Scale once to the stream cap, hand that frame to the encoder, and keep a small RGBA preview.

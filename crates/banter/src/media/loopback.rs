@@ -205,14 +205,11 @@ unsafe fn pump_render(
             return Err(message);
         }
     };
-    if let Err(err) = client.Initialize(
-        AUDCLNT_SHAREMODE_SHARED,
-        AUDCLNT_STREAMFLAGS_LOOPBACK,
-        0,
-        0,
-        format,
-        None,
-    ) {
+    // AUTOCONVERTPCM keeps shared-mode loopback open when the mix format is awkward
+    // (same flag pair process loopback uses). LOOPBACK alone has returned E_INVALIDARG
+    // (0x80070057) on some Windows render endpoints during Go Live system-audio capture.
+    let flags = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM;
+    if let Err(err) = client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 0, 0, format, None) {
         CoTaskMemFree(Some(format as *const std::ffi::c_void));
         let message = err.to_string();
         let _ = ready.send(Err(message.clone()));
