@@ -1,3 +1,7 @@
+## 2026-11-07 03:35:00 -05:00 [ubuntu] — Fix Windows Media Foundation streams (BAN-35)
+
+BAN-30 kept hardware alive for SPS-less P-frames, but Windows MF still returned Err on `force_key` (LayerEncoder permanently swapped OpenH264 mid-GOP) and could keep non-Annex-B samples. Reopen the MFT on force_key/size change with a NEED_MORE_INPUT flush retry, and reject hardware AUs that are empty or not Annex-B while still allowing SPS-less Annex-B deltas.
+
 ## 2026-11-07 02:45:00 -05:00 [ubuntu] — Restore hardware force-key IDR after 13.1 (BAN-33)
 
 Version-1-test-13.1 kept VA-API on GPU (#76) by skipping ffmpeg reopen on `force_key`, which left late-join PLI, P2P peer-cap keys, and mesh-flip recovery without an IDR on hardware encode. Reopen on `force_key` again (async_depth=1 still avoids the OpenH264 fallback), and do not burn `control.force_key` while no camera/screen layer is publishing.

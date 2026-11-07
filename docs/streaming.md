@@ -37,7 +37,7 @@ A viewer’s quality slider on a remote screen or camera snaps to full, half, qu
 
 If nobody wants a layer, the publisher is told to pause it (dynacast). The first subscriber to a paused layer asks the publisher for a keyframe.
 
-P2P (DM DirectCall, and guild voice when both peers opted into P2P video) never receives SFU `WantedLayers`. A new or changed peer `SubscribeLayer` cap therefore forces a local IDR so Go Live / camera after the call is up (or a late watcher) can decode. Encode loops also skip camera/screen layers while the matching `publishing_*` flag is off, so a restart after toggle starts on a fresh keyframe instead of orphaned P-frames. Linux VA-API/NVENC has no mid-stream force-IDR on the pipe path, so a `force_key` reopens ffmpeg (safe with `-async_depth 1`); the encode loop does not consume that flag while no layer is publishing, so a mesh flip or WantedLayers arm before Go Live still yields an IDR on the first real frame.
+P2P (DM DirectCall, and guild voice when both peers opted into P2P video) never receives SFU `WantedLayers`. A new or changed peer `SubscribeLayer` cap therefore forces a local IDR so Go Live / camera after the call is up (or a late watcher) can decode. Encode loops also skip camera/screen layers while the matching `publishing_*` flag is off, so a restart after toggle starts on a fresh keyframe instead of orphaned P-frames. Linux VA-API/NVENC and Windows Media Foundation have no mid-stream force-IDR on the pipe/MFT path, so a `force_key` reopens the hardware encoder (Linux keeps `-async_depth 1` + flush; Windows MF duplicates a frame if the MFT buffers the first AU). The encode loop does not consume that flag while no layer is publishing, so a mesh flip or WantedLayers arm before Go Live still yields an IDR on the first real frame. Hardware AUs must be Annex-B; length-prefixed samples fall back to OpenH264 so remotes are not fed an unpacketizable bitstream.
 
 ## Capture
 
@@ -54,7 +54,7 @@ Viewers can **pop out** the focused share into a Banter Stream OS window, **cycl
 Hardware encode is probed and used when the bitstream is Constrained Baseline:
 
 - Linux: `h264_nvenc` when `libnvidia-encode` is present, otherwise `h264_vaapi` when `/dev/dri/renderD128` and ffmpeg’s VA-API encoder exist.
-- Windows: a synchronous Media Foundation hardware H.264 MFT, asked for Constrained Baseline. Async-only MFTs are not driven.
+- Windows: a synchronous Media Foundation hardware H.264 MFT, asked for Constrained Baseline. Async-only MFTs are not driven. `force_key` / size change reopens the MFT for a fresh IDR instead of erroring into a mid-stream OpenH264 swap.
 - Otherwise OpenH264. A hardware encoder that emits a different profile is dropped for that layer.
 
 Receive tries a hardware decoder when one is present: NVDEC or VA-API through ffmpeg on Linux, and a synchronous Media Foundation hardware decoder on Windows. The Linux decoder must return a picture for the first access unit within 800 ms and later frames within 120 ms. The Windows decoder must advertise an NV12 output type before the first sample. Either failure leaves that track on OpenH264.

@@ -5,7 +5,9 @@
 //! access unit is still checked by the caller. A missing MFT, an async-only
 //! MFT, or any other profile falls through to OpenH264. Async hardware MFTs
 //! are not driven: they need a Media Foundation event loop this process does
-//! not run.
+//! not run. `force_key` and size changes reopen the MFT for a fresh IDR
+//! (pipe/MFT has no mid-stream force-IDR); a buffered first AU is flushed with
+//! a duplicate frame before falling back.
 
 use std::ptr;
 
@@ -29,6 +31,7 @@ pub struct MfEncoder {
     width: u32,
     height: u32,
     fps: f32,
+    bps: u32,
     stamp: i64,
     provides: bool,
 }
@@ -56,8 +59,14 @@ impl VideoEncoder for MfEncoder {
         height: u32,
         force_key: bool,
     ) -> Result<EncodedAu, String> {
+        // Reopen on size change *or* force_key. Sync MFTs have no reliable mid-stream
+        // force-IDR; returning Err here used to make LayerEncoder permanently swap in
+        // OpenH264 mid-GOP (BAN-30 kept MF alive for SPS-less P-frames, then the next
+        // PLI / GOP / mesh-flip key burned hardware). Fresh MFT starts with an IDR —
+        // same pattern as Linux ffmpeg after BAN-33.
         if force_key || width != self.width || height != self.height {
-            return Err("media foundation encoder needs a new session for this frame".into());
+            let replacement = open(width, height, self.fps, self.bps)?;
+            *self = replacement;
         }
         unsafe { self.encode_inner(i420) }
     }
@@ -137,6 +146,7 @@ unsafe fn open_inner(width: u32, height: u32, fps: f32, bps: u32) -> Result<MfEn
         width,
         height,
         fps,
+        bps,
         stamp: 0,
         provides: info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0,
     })
@@ -200,7 +210,34 @@ unsafe fn video_type(
 impl MfEncoder {
     unsafe fn encode_inner(&mut self, i420: &[u8]) -> Result<EncodedAu, String> {
         let nv12 = i420_to_nv12(i420, self.width, self.height);
-        let sample = sample_from(&nv12, self.stamp, self.fps)?;
+        if nv12.is_empty() {
+            return Err("media foundation encoder got a short picture".into());
+        }
+        // Some sync MFTs hold the first AU until a second input (same class of bug as
+        // VA-API async_depth on Linux). Feed once, and on NEED_MORE_INPUT duplicate the
+        // frame to flush before giving up to OpenH264.
+        let au = match self.push_frame(&nv12)? {
+            Some(bytes) => bytes,
+            None => {
+                match self.push_frame(&nv12)? {
+                    Some(bytes) => bytes,
+                    None => {
+                        return Err("media foundation encoder buffered the frame".into());
+                    }
+                }
+            }
+        };
+        if au.is_empty() {
+            return Err("media foundation encoder produced an empty sample".into());
+        }
+        Ok(EncodedAu {
+            keyframe: access_unit_is_key(&au),
+            bytes: au,
+        })
+    }
+
+    unsafe fn push_frame(&mut self, nv12: &[u8]) -> Result<Option<Vec<u8>>, String> {
+        let sample = sample_from(nv12, self.stamp, self.fps)?;
         let step = (10_000_000.0 / self.fps.max(1.0)) as i64;
         self.stamp = self.stamp.saturating_add(step);
         self.transform
@@ -209,21 +246,11 @@ impl MfEncoder {
         let mut status = 0u32;
         let mut buffers = [output_buffer(self.provides, nv12.len())?];
         let produced = self.transform.ProcessOutput(0, &mut buffers, &mut status);
-        let au = match produced {
-            Ok(()) => read_sample(buffers[0].pSample.as_ref())?,
-            Err(err) if err.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => {
-                return Err("media foundation encoder buffered the frame".into());
-            }
-            Err(err) => return Err(err.to_string()),
-        };
-        if !access_unit_is_key(&au) && !super::encode::is_constrained_baseline(&au) && au.is_empty()
-        {
-            return Err("media foundation encoder produced an empty sample".into());
+        match produced {
+            Ok(()) => Ok(Some(read_sample(buffers[0].pSample.as_ref())?)),
+            Err(err) if err.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => Ok(None),
+            Err(err) => Err(err.to_string()),
         }
-        Ok(EncodedAu {
-            keyframe: access_unit_is_key(&au),
-            bytes: au,
-        })
     }
 }
 
