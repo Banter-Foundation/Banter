@@ -1,3 +1,7 @@
+## 2026-11-07 07:02:16 +00:00 [ubuntu] — Fix call memory growth (BA-99)
+
+Linux ffmpeg hardware encode kept every Annex-B access unit in the stdout capture `Vec` for the life of the encoder (copy from `before..` without drain), so RSS grew for the whole camera / Go Live session. Drain after each AU, clear on timeout/start, and hard-cap at 8 MiB (decoder path too). Cap H.264 receive AU reassembly at 4 MiB when markers are missing. Clear/prune remote ImGui video textures and delivered-layer notes when leaving voice or when peers leave the roster.
+
 ## 2026-11-07 06:57:32 +00:00 [ubuntu] — Fix Windows Go Live 0x80070057 (BA-100)
 
 Voice Connected showed raw `The parameter is incorrect. (0x80070057)` while Go Live worked on Linux and failed on Windows. BA-92 already fixed WASAPI process-loopback GetMixFormat on main (#53); the remaining toast was Windows xcap DXGI `Monitor::video_recorder` (Desktop Duplication E_INVALIDARG, same as xcap#264) stored via unsanitized `screen: {err}`. Windows now falls back to paced GDI `capture_image` Still feed when the recorder fails; speaker loopback adds AUTOCONVERTPCM; screen failures use `BANTER_VC_PUBLISH_FAILED`. Linux Cast/X11 paths unchanged.

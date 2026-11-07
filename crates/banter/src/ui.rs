@@ -47,8 +47,9 @@ use crate::logic::{
     resolution_key, save_json, server_rail_context_menu, server_rail_item_menu,
     set_home_section_visible, speaking_from_level, stream_fps_label, stream_frame_rates,
     stream_interval_ms, stream_max_edge, stream_resolution_label,
-    stream_resolutions, toggle_comment_collapsed, upsert_message, visible_home_sections,
-    voice_flags_retry_ready, voice_occupancy_line, voice_rtc_mesh, voice_rtc_session_ready,
+    stale_remote_video_keys, stream_resolutions, toggle_comment_collapsed, upsert_message,
+    visible_home_sections, voice_flags_retry_ready, voice_occupancy_line, voice_rtc_mesh,
+    voice_rtc_session_ready,
     window_size_label,
     window_size_presets, CameraChoice, CaptureKind, ContextMenuAction, ContextMenuEntry,
     ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind, HomeSectionId,
@@ -3282,6 +3283,7 @@ impl App {
                     prefer_p2p_video: false,
                 },
             ];
+            self.prune_remote_video_for_roster();
         } else if ringing {
             self.begin_ringing();
         } else {
@@ -8446,6 +8448,7 @@ impl App {
         if let Some(channel_id) = self.voice_channel {
             if let Some(members) = self.voice_rosters.get(&channel_id) {
                 self.voice_members = members.clone();
+                self.prune_remote_video_for_roster();
             }
         }
     }
@@ -8809,6 +8812,7 @@ impl App {
                 apply_voice_roster(&mut self.voice_rosters, channel_id, members.clone());
                 if self.voice_channel == Some(channel_id) {
                     self.voice_members = members;
+                    self.prune_remote_video_for_roster();
                 }
             }
             ServerEvent::Call { call } => {
@@ -11282,6 +11286,33 @@ impl App {
         self.share.stop();
         dismiss_stream_overlays(&mut self.share_open, &mut self.stream_menu);
         self.close_stream_watch();
+        self.clear_remote_video();
+    }
+
+    /// Drop every remote video texture and delivered-layer note. Call when leaving
+    /// voice / ending a call so GPU tiles cannot survive into the next session.
+    fn clear_remote_video(&mut self) {
+        for (_, shot) in self.remote_video.drain() {
+            self.retired_shots.push(shot);
+        }
+        self.delivered.clear();
+    }
+
+    /// Free textures for publishers who left the current voice roster mid-call.
+    fn prune_remote_video_for_roster(&mut self) {
+        let seated: Vec<i64> = self
+            .voice_members
+            .iter()
+            .map(|member| member.user_id)
+            .collect();
+        let stale = stale_remote_video_keys(&seated, self.remote_video.keys().copied());
+        for key in stale {
+            if let Some(shot) = self.remote_video.remove(&key) {
+                self.retired_shots.push(shot);
+            }
+        }
+        self.delivered
+            .retain(|(user_id, _), _| seated.contains(user_id));
     }
 
     fn stop_streaming(&mut self) {
