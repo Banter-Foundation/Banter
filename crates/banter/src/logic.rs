@@ -1236,7 +1236,7 @@ mod stream_encoder_settings_tests {
         .expect("legacy stream.json");
         assert_eq!(view.encoder, "auto");
         assert_eq!(view.rate_control, "cbr");
-        assert_eq!(view.keyframe_secs, 2);
+        assert_eq!(view.keyframe_secs, 1);
         assert_eq!(view.bitrate_kbps, 4000);
         assert!(!view.bitrate_auto);
     }
@@ -1391,6 +1391,7 @@ pub struct StreamDefaults {
     pub bitrate_auto: bool,
     pub bitrate_kbps: u32,
     /// Force an IDR about this often while Go Live is up (1–10s).
+    /// Default is 1 s so late join / loss recovers without waiting a long GOP.
     pub keyframe_secs: u32,
     pub show_cursor: bool,
     pub show_preview: bool,
@@ -1407,12 +1408,17 @@ impl Default for StreamDefaults {
             rate_control: "cbr".into(),
             bitrate_auto: true,
             bitrate_kbps: 2500,
-            keyframe_secs: 2,
+            keyframe_secs: 1,
             show_cursor: true,
             show_preview: true,
             sources: Vec::new(),
         }
     }
+}
+
+/// Default stream keyframe interval in seconds (interactive VC preference).
+pub fn stream_defaults_keyframe_secs() -> u32 {
+    StreamDefaults::default().keyframe_secs
 }
 
 pub fn encoder_mode_key(mode: StreamEncoderMode) -> &'static str {

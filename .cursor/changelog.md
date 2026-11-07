@@ -2,6 +2,10 @@
 
 Voice & Video / Stream options now probe which H.264 encoders this PC can see (OpenH264 always; NVENC, VA-API, Media Foundation when present) and only offer those chips, plus Auto and Any hardware. A saved backend that disappears stays visible but disabled with a fallback note, and open falls back to OpenH264 instead of assuming missing hardware exists.
 
+## 2026-11-07 00:51:26 -06:00 [ubuntu] — Cut interactive VC latency (BA-97)
+
+Full-stack latency pass (not encoder-only): playout deque ~60 ms (was ~80 ms after prior cut from 200 ms), capture/Opus PCM backlog ~200 ms (was 1–2 s), video RTP sample duration follows encode FPS, default keyframe 1 s, OpenH264 bitrate RC + Low complexity + 1 thread (screen disables AdaptiveQuant/BackgroundDetection), Opus complexity 5, encode tick floor 2 ms, SFU forward caps 24/16. Contract tests in `crates/banter/tests/vc_latency.rs`. Favor interactive delay over archive quality. Do not merge until Owl says so.
+
 ## 2026-11-07 06:00:00 -05:00 [ubuntu] — Version-1-test-13.2 pre-release
 
 Shipped pre-release Version-1-test-13.2 from main after encode-stack optimizations (#83), hardware force-key IDR restore (#79), Windows MF hardware through force_key (#81), and 40 Mbps stream bitrate cap (#82). Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.

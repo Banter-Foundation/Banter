@@ -63,6 +63,8 @@ OpenH264’s high-level settings do not expose temporal layers, so the capture i
 
 Microphone Opus runs on `banter-audio` with its own queue. Screen and camera H.264 run on `banter-video`. A slow screen frame does not hold the next voice packet, and a full video queue drops a picture instead of an Opus packet. The largest simulcast layer is encoded first.
 
+Interactive latency (voice/video call feel, not archive quality): speaker playout keeps about 60 ms of jitter margin; capture/Opus PCM backlog is capped around 200 ms; video RTP sample duration follows the encode FPS (not a fixed 33 ms); default keyframe interval is 1 s; OpenH264 uses bitrate RC, low complexity, and a single encode thread (screen disables AdaptiveQuant/BackgroundDetection, which ScreenContentRealTime rejects as ParamValidation — those warnings are not the latency bug); Opus runs at complexity 5; SFU forward queues cap at 24 video / 16 audio packets for stalled subscribers (live path still drains immediately).
+
 On Wayland the PipeWire callback only copies the newest desktop buffer. The screen thread scales that copy when it is time to publish, so the compositor is not blocked on a pixel walk of frames that will be dropped.
 
 ## Bots

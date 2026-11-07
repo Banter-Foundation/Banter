@@ -135,7 +135,7 @@ fn push_s16(id: &str, bytes: &[u8], pcm: &Mutex<HashMap<String, VecDeque<i16>>>)
     for sample in bytes.chunks_exact(2) {
         bucket.push_back(i16::from_le_bytes([sample[0], sample[1]]));
     }
-    while bucket.len() > 48_000 {
+    while bucket.len() > super::pcm_backlog_samples() {
         bucket.pop_front();
     }
 }

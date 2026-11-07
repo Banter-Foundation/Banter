@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use banter_server::{
-    mids_by_track, sample_bytes, simulcast_extensions, ClientSignal, LayerId, MediaKind,
-    MediaPlace, ServerEvent, CAMERA_SSRC_Q, H264_PT, OPUS_PT, SCREEN_SSRC_Q, STREAM_AUDIO_SSRC,
-    USER_AUDIO_SSRC,
+    mids_by_track, sample_bytes, simulcast_extensions, video_rtp_duration_ms, ClientSignal,
+    LayerId, MediaKind, MediaPlace, ServerEvent, CAMERA_SSRC_Q, H264_PT, OPUS_PT, SCREEN_SSRC_Q,
+    STREAM_AUDIO_SSRC, USER_AUDIO_SSRC,
 };
 use bytes::Bytes;
 use rtc::rtp::codec::h264::H264Packet;
@@ -108,7 +108,7 @@ impl Default for EncodeSettings {
         Self {
             full_bps: 2_500_000,
             pick: EncoderPick::Auto,
-            keyframe_ms: 2_000,
+            keyframe_ms: 1_000,
             fps: 30,
             cbr: true,
             pref_label: "auto",
@@ -171,7 +171,7 @@ impl Control {
             congested_drops: AtomicU32::new(0),
             full_bps: AtomicU32::new(2_500_000),
             encoder_pick: AtomicU8::new(0),
-            keyframe_ms: AtomicU64::new(2_000),
+            keyframe_ms: AtomicU64::new(1_000),
             encode_fps: AtomicU32::new(30),
             rate_cbr: AtomicBool::new(true),
             encode_gen: AtomicU64::new(0),
@@ -595,7 +595,8 @@ fn video_encode_loop(
             reported = Instant::now();
         }
         drop(qos);
-        let pause = Duration::from_millis(5).saturating_sub(encode_started.elapsed());
+        // 2 ms floor keeps the encode thread snappy at 60–144 FPS without busy-spinning.
+        let pause = Duration::from_millis(2).saturating_sub(encode_started.elapsed());
         if !pause.is_zero() {
             thread::sleep(pause);
         }
@@ -1064,11 +1065,11 @@ async fn run_call(
             }
             packet = audio_rx.recv() => {
                 let Some(packet) = packet else { break };
-                write_packet(&tracks, packet, &mids).await;
+                write_packet(&tracks, packet, &mids, control).await;
             }
             packet = video_rx.recv() => {
                 let Some(packet) = packet else { break };
-                write_packet(&tracks, packet, &mids).await;
+                write_packet(&tracks, packet, &mids, control).await;
             }
             ice = ice_rx.recv() => {
                 let Some(ice) = ice else { continue };
@@ -1181,6 +1182,7 @@ async fn write_packet(
     tracks: &banter_server::PublishTracks,
     packet: Outgoing,
     mids: &HashMap<String, String>,
+    control: &Control,
 ) {
     match packet {
         Outgoing::Audio { kind, bytes } => {
@@ -1215,7 +1217,8 @@ async fn write_packet(
                 LayerId::Full => base + 2,
                 LayerId::Off => return,
             };
-            let sample = sample_bytes(bytes, 33);
+            let fps = control.encode_fps.load(Ordering::Relaxed);
+            let sample = sample_bytes(bytes, video_rtp_duration_ms(fps));
             let extensions = simulcast_extensions(mid, rid);
             let _ = track
                 .write_sample(ssrc, H264_PT, &sample, &extensions)
@@ -1472,6 +1475,15 @@ fn kind_of(id: &str) -> MediaKind {
     }
 }
 
+/// Max samples held in the speaker playout deque (~60 ms at `rate`).
+///
+/// Was 1 s, then 200 ms, then 80 ms. Interactive VC prefers ~60 ms of jitter
+/// margin; the 960-sample floor keeps one 20 ms Opus frame at low device rates.
+pub fn playback_cap_samples(rate: u32) -> usize {
+    let rate = rate.max(1) as usize;
+    ((rate * 3) / 50).max(960)
+}
+
 fn push_playback(playback: &Mutex<VecDeque<f32>>, output_rate: &AtomicU32, pcm: &[i16]) {
     let rate = output_rate.load(Ordering::Relaxed).max(1);
     let samples = resample_mono_i16(pcm, 48_000, rate);
@@ -1479,9 +1491,7 @@ fn push_playback(playback: &Mutex<VecDeque<f32>>, output_rate: &AtomicU32, pcm: 
     for sample in samples {
         queue.push_back(sample as f32 / i16::MAX as f32);
     }
-    // ~80 ms jitter target. The old 200 ms cap pinned every mic behind Go Live
-    // stream_audio on the shared queue (mic-lag doc). Hard floor keeps underruns rare.
-    let cap = ((rate as usize * 2) / 25).max(960);
+    let cap = playback_cap_samples(rate);
     while queue.len() > cap {
         queue.pop_front();
     }
