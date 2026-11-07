@@ -207,9 +207,10 @@ impl Control {
         if self.encode_fps.swap(fps, Ordering::Relaxed) != fps {
             changed = true;
         }
-        // CBR/VBR is label-only today (backends take a target bitrate). Updating the
-        // label must not bump encode_gen — that cleared every layer encoder mid-stream.
-        self.rate_cbr.store(settings.cbr, Ordering::Relaxed);
+        // CBR/VBR now reaches Linux HW ffmpeg args; reopen layers when it flips.
+        if self.rate_cbr.swap(settings.cbr, Ordering::Relaxed) != settings.cbr {
+            changed = true;
+        }
         {
             let mut pref = self.encoder_pref.lock().expect("encoder pref");
             if *pref != settings.pref_label {
@@ -233,13 +234,7 @@ impl Control {
     }
 
     fn layer_bps(&self, layer: LayerId) -> u32 {
-        let full = self.full_bps.load(Ordering::Relaxed).max(30_000);
-        match layer {
-            LayerId::Full => full,
-            LayerId::Half => (full / 4).max(80_000),
-            LayerId::Quarter => (full / 16).max(40_000),
-            LayerId::Off => 0,
-        }
+        super::encode::layer_target_bps(self.full_bps.load(Ordering::Relaxed), layer)
     }
 }
 
@@ -767,20 +762,35 @@ fn encode_video(
             continue;
         };
         let bps = control.layer_bps(layer);
+        let cbr = control.rate_cbr.load(Ordering::Relaxed);
         let entry = encoders.entry(layer).or_insert_with(|| {
-            let encoder =
-                match LayerEncoder::open_with(screen, width, height, fps, bps, keyframe_ms, pick) {
-                    Ok(encoder) => encoder,
-                    Err(_) => LayerEncoder::software(screen, fps, bps, keyframe_ms)
-                        .expect("openh264"),
-                };
+            let encoder = match LayerEncoder::open_with(
+                screen,
+                width,
+                height,
+                fps,
+                bps,
+                keyframe_ms,
+                pick,
+                cbr,
+            ) {
+                Ok(encoder) => encoder,
+                Err(_) => LayerEncoder::software(screen, fps, bps, keyframe_ms).expect("openh264"),
+            };
             *control.backend.lock().expect("backend") = encoder.backend().label().into();
             (width, height, encoder)
         });
         if entry.0 != width || entry.1 != height {
-            if let Ok(encoder) =
-                LayerEncoder::open_with(screen, width, height, fps, bps, keyframe_ms, pick)
-            {
+            if let Ok(encoder) = LayerEncoder::open_with(
+                screen,
+                width,
+                height,
+                fps,
+                bps,
+                keyframe_ms,
+                pick,
+                cbr,
+            ) {
                 *entry = (width, height, encoder);
                 *control.backend.lock().expect("backend") = entry.2.backend().label().into();
             }

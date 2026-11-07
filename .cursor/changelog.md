@@ -1,3 +1,7 @@
+## 2026-11-07 06:58:43 +00:00 [ubuntu] — Improve video encoder quality/CPU (BA-101)
+
+Stacked on BA-97 (#85). Safe encoder wins without raising interactive delay: process-cached `hardware_probe`, Auto/Hardware opens GPU first and defers OpenH264 until needed, PictureDecoder defers soft decode while HW is up, OpenH264 screen/camera QP floors, simulcast Half=`full/3` / Quarter=`full/10` (was area share), Linux NVENC/VA-API honor CBR/VBR (+ NVENC `-zerolatency 1`). Keeps #85 bitrate RC / Low / 1-thread / 1 s GOP / screen AQ/BG off. Contracts in `crates/banter/tests/encoder_quality.rs`. Do not merge until Owl says so.
+
 ## 2026-11-07 02:05:00 -05:00 [ubuntu] — Scan available encoders and let you pick one
 
 Voice & Video / Stream options now probe which H.264 encoders this PC can see (OpenH264 always; NVENC, VA-API, Media Foundation when present) and only offer those chips, plus Auto and Any hardware. A saved backend that disappears stays visible but disabled with a fallback note, and open falls back to OpenH264 instead of assuming missing hardware exists.

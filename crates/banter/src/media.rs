@@ -18,7 +18,8 @@ mod rtc;
 mod screencast;
 
 pub use encode::{
-    list_available_encoders, list_available_encoders_preferring, AvailableEncoder, EncoderPick,
+    hardware_probe, layer_target_bps, list_available_encoders, list_available_encoders_preferring,
+    openh264_qp_bounds, AvailableEncoder, EncoderPick,
 };
 pub use rtc::{playback_cap_samples, EncodeSettings};
 

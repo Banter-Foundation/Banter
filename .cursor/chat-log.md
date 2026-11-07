@@ -1070,3 +1070,14 @@ Agent: Mapped full path; implemented safe buffer/preset cuts on cursor/vc-latenc
 Interactive VC latency: ~60 ms playout, ~200 ms PCM caps, FPS-matched video RTP duration, 1 s keyframes, OpenH264/Opus low-latency presets, smaller SFU queues.
 
 Agent: PR #85 opened (https://github.com/Banter-Foundation/Banter/pull/85). Do not merge until Owl says so.
+
+## 2026-11-07 BA-101 Improve Banter video encoder
+
+Owl: Improve the Banter video encoder as well. Coordinate with PR #85 (interactive latency); prefer stacking. Safe wins only: presets, rate control, spatial layers, HW-first without double-open, cached probe. One PR. Note in store internal/banter-encoder-improvements.md. No theme/cover-flow/emote work. Never E:.
+
+Agent: Stacked cursor/encoder-quality-aa4c on #85; HW-first open + cached probe + QP floors + layer bitrate + Linux HW RC; contracts in encoder_quality.rs; opened PR (do not merge).
+
+### Summary
+Encoder quality/CPU: cached probe, HW-first without dual OpenH264 open, QP floors, richer Half/Quarter bitrate, Linux HW CBR/VBR + zerolatency — keeps #85 latency goals.
+
+Agent: PR #88 opened (https://github.com/Banter-Foundation/Banter/pull/88). Do not merge until Owl says so.
