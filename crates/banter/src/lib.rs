@@ -60,8 +60,9 @@ pub use media::{
     camera_preview_rgba, current_camera_frame, decode_camera_frame, hardware_encoder_available,
     hardware_encoder_names, hardware_probe, layer_target_bps, list_available_encoders,
     list_available_encoders_preferring, openh264_qp_bounds, pcm_backlog_samples,
-    pick_preferred_camera_mode, playback_cap_samples, preferred_camera_height,
-    preferred_camera_width, AvailableEncoder, CameraModeChoice, EncoderPick,
+    is_virtual_camera_name, pick_preferred_camera_mode, playback_cap_samples,
+    preferred_camera_height, preferred_camera_width, AvailableEncoder, CameraModeChoice,
+    EncoderPick,
 };
 pub use mods::{default_mod_order, disable_mod, enable_mod, memory_warning, move_mod, ModHost};
 pub use plugins::{

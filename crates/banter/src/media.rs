@@ -1175,6 +1175,7 @@ fn camera_loop(
         let Some(device) = camera.as_mut() else {
             continue;
         };
+        let frame_started = Instant::now();
         match capture_camera(device) {
             Ok((preview_w, preview_h, preview_rgba, width, height, i420)) => {
                 if reported {
@@ -1202,7 +1203,13 @@ fn camera_loop(
             }
             Err(_) => {}
         }
-        thread::sleep(Duration::from_millis(33));
+        // Pace ~30 FPS from the start of the grab, not after convert — a slow frame
+        // must not stack another fixed 33 ms of sleep on top (that is what made OBS /
+        // MJPEG cameras feel like ~10–15 FPS).
+        const FRAME_BUDGET: Duration = Duration::from_millis(33);
+        if let Some(rest) = FRAME_BUDGET.checked_sub(frame_started.elapsed()) {
+            thread::sleep(rest);
+        }
     }
 }
 
@@ -1213,27 +1220,74 @@ fn picture_needs_key(keyed: &mut Option<(u32, u32)>, width: u32, height: u32) ->
     key
 }
 
+/// High bit marks a nokhwa `CameraIndex::String` device (OBS / some AVFoundation ids).
+const STRING_CAMERA_FLAG: u32 = 0x8000_0000;
+
+fn string_camera_id(key: &str) -> u32 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    key.hash(&mut hasher);
+    STRING_CAMERA_FLAG | (hasher.finish() as u32 & !STRING_CAMERA_FLAG)
+}
+
+fn string_camera_map() -> &'static Mutex<HashMap<u32, String>> {
+    static MAP: std::sync::OnceLock<Mutex<HashMap<u32, String>>> = std::sync::OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remember_string_camera(id: u32, key: String) {
+    string_camera_map()
+        .lock()
+        .expect("string cameras")
+        .insert(id, key);
+}
+
+fn string_camera_key(id: u32) -> Option<String> {
+    string_camera_map()
+        .lock()
+        .expect("string cameras")
+        .get(&id)
+        .cloned()
+}
+
 /// Real camera names from the operating system. An empty list means none are available.
+///
+/// Includes OBS Virtual Camera / other virtual devices when the OS exposes them. Virtual
+/// names are sorted to the top so they are easy to pick. String-backed nokhwa indices
+/// (some macOS / driver paths) are kept via a stable high-bit id.
 pub(crate) fn camera_names() -> Vec<(u32, String)> {
     use nokhwa::utils::{ApiBackend, CameraIndex};
     nokhwa::nokhwa_initialize(|_| {});
     let Ok(list) = nokhwa::query(ApiBackend::Auto) else {
         return Vec::new();
     };
-    list.into_iter()
+    let mut out: Vec<(u32, String)> = list
+        .into_iter()
         .filter_map(|info| {
-            let &CameraIndex::Index(index) = info.index() else {
-                return None;
-            };
             let human = info.human_name();
+            let (index, fallback) = match info.index() {
+                CameraIndex::Index(index) => (*index, format!("Camera {index}")),
+                CameraIndex::String(key) => {
+                    let id = string_camera_id(key);
+                    remember_string_camera(id, key.clone());
+                    (id, key.clone())
+                }
+            };
             let name = if human.trim().is_empty() {
-                format!("Camera {index}")
+                fallback
             } else {
                 human
             };
             Some((index, name))
         })
-        .collect()
+        .collect();
+    out.sort_by(|(_, a), (_, b)| {
+        is_virtual_camera_name(b)
+            .cmp(&is_virtual_camera_name(a))
+            .then_with(|| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()))
+    });
+    out
 }
 
 /// Target capture size for a webcam. Banter asks for this (or the nearest available mode) instead of
@@ -1255,9 +1309,23 @@ pub struct CameraModeChoice {
     pub mjpeg: bool,
 }
 
+/// True for OBS Virtual Camera / v4l2loopback-style devices. Prefer raw YUYV over MJPEG there.
+pub fn is_virtual_camera_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("obs")
+        || lower.contains("virtual")
+        || lower.contains("v4l2loopback")
+        || lower.contains("unity capture")
+        || lower.contains("iriun")
+}
+
 /// Picks ~720p capture. Modes at or above 720p beat anything smaller when both exist; then nearest
-/// resolution wins; at the same size, FPS near 30 then MJPEG.
-pub fn pick_preferred_camera_mode(modes: &[CameraModeChoice]) -> Option<CameraModeChoice> {
+/// resolution wins; at the same size, FPS near 30 then MJPEG (or raw when `prefer_mjpeg` is false —
+/// OBS Virtual Camera stays on YUYV/NV12 instead of a CPU JPEG decode).
+pub fn pick_preferred_camera_mode(
+    modes: &[CameraModeChoice],
+    prefer_mjpeg: bool,
+) -> Option<CameraModeChoice> {
     const TARGET_FPS: u32 = 30;
     let target_w = preferred_camera_width();
     let target_h = preferred_camera_height();
@@ -1267,15 +1335,33 @@ pub fn pick_preferred_camera_mode(modes: &[CameraModeChoice]) -> Option<CameraMo
         let dy = mode.height as i64 - target_h as i64;
         let distance = (dx * dx + dy * dy) as u64;
         let fps_delta = (mode.fps as i64 - TARGET_FPS as i64).unsigned_abs() as u64;
-        let mjpeg_rank = if mode.mjpeg { 0u64 } else { 1 };
+        let mjpeg_rank = if mode.mjpeg == prefer_mjpeg { 0u64 } else { 1 };
         (undersized, distance, fps_delta, mjpeg_rank)
     })
+}
+
+fn camera_index_for(id: u32) -> nokhwa::utils::CameraIndex {
+    use nokhwa::utils::CameraIndex;
+    if id & STRING_CAMERA_FLAG != 0 {
+        if let Some(key) = string_camera_key(id) {
+            return CameraIndex::String(key);
+        }
+    }
+    CameraIndex::Index(id)
+}
+
+fn camera_display_name(id: u32) -> String {
+    camera_names()
+        .into_iter()
+        .find(|(index, _)| *index == id)
+        .map(|(_, name)| name)
+        .unwrap_or_default()
 }
 
 fn open_camera(index: u32) -> Result<nokhwa::Camera, String> {
     use nokhwa::pixel_format::RgbFormat;
     use nokhwa::utils::{
-        CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution,
+        CameraFormat, FrameFormat, RequestedFormat, RequestedFormatType, Resolution,
     };
     static CAMERA_DENIED: AtomicBool = AtomicBool::new(false);
     nokhwa::nokhwa_initialize(|granted| {
@@ -1294,28 +1380,40 @@ fn open_camera(index: u32) -> Result<nokhwa::Camera, String> {
             return Err("camera permission was denied".into());
         }
     }
+    let camera_index = camera_index_for(index);
+    let prefer_mjpeg = !is_virtual_camera_name(&camera_display_name(index));
+    let first_format = if prefer_mjpeg {
+        FrameFormat::MJPEG
+    } else {
+        FrameFormat::YUYV
+    };
+    let second_format = if prefer_mjpeg {
+        FrameFormat::YUYV
+    } else {
+        FrameFormat::MJPEG
+    };
     // Open with a flexible request so we can list modes, then switch to ~720p (or nearest).
     let mut camera = nokhwa::Camera::new(
-        CameraIndex::Index(index),
+        camera_index.clone(),
         RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(CameraFormat::new(
             Resolution::new(preferred_camera_width(), preferred_camera_height()),
-            FrameFormat::MJPEG,
+            first_format,
             30,
         ))),
     )
     .or_else(|_| {
         nokhwa::Camera::new(
-            CameraIndex::Index(index),
+            camera_index.clone(),
             RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(CameraFormat::new(
                 Resolution::new(preferred_camera_width(), preferred_camera_height()),
-                FrameFormat::YUYV,
+                second_format,
                 30,
             ))),
         )
     })
     .or_else(|_| {
         nokhwa::Camera::new(
-            CameraIndex::Index(index),
+            camera_index,
             RequestedFormat::new::<RgbFormat>(RequestedFormatType::None),
         )
     })
@@ -1333,7 +1431,7 @@ fn open_camera(index: u32) -> Result<nokhwa::Camera, String> {
                 }
             })
             .collect();
-        if let Some(pick) = pick_preferred_camera_mode(&modes) {
+        if let Some(pick) = pick_preferred_camera_mode(&modes, prefer_mjpeg) {
             if let Some(exact) = formats.iter().copied().find(|format| {
                 let resolution = format.resolution();
                 resolution.width() == pick.width
@@ -1413,19 +1511,20 @@ pub fn current_camera_frame(
 fn capture_camera(
     camera: &mut nokhwa::Camera,
 ) -> Result<(u32, u32, Vec<u8>, u32, u32, Vec<u8>), String> {
+    let started = Instant::now();
     let frame = camera.frame().map_err(|err| err.to_string())?;
     let (width, height, rgb) = decode_camera_frame(&frame)?;
-    let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
-    for pixel in rgb.chunks_exact(3) {
-        rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
-    }
+    // Stay on packed RGB → I420 (SIMD). The old path expanded every pixel to RGBA
+    // then converted, which stacked lag on OBS Virtual Camera / MJPEG webcams.
     let (i420, out_w, out_h) = if width >= 2 && height >= 2 {
-        encode::fit_i420_rgba(&rgba, width, height, 1280)
+        encode::fit_i420_rgb(&rgb, width, height, 1280)
     } else {
         (Vec::new(), 0, 0)
     };
-    let started = Instant::now();
-    let (preview_w, preview_h, preview) = camera_preview_rgba(width, height, &rgba)?;
+    let (preview, preview_w, preview_h) = encode::fit_rgb_preview(&rgb, width, height, 640);
+    if preview_w < 2 || preview_h < 2 {
+        return Err("camera preview scale failed".into());
+    }
     crate::profiler::record_media("camera_capture", started.elapsed(), preview.len());
     Ok((preview_w, preview_h, preview, out_w, out_h, i420))
 }

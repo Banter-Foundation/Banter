@@ -756,6 +756,7 @@ fn list_available_encoders_uncached() -> Vec<AvailableEncoder> {
     out
 }
 
+#[allow(dead_code)] // exercised by encode unit tests / screen callers that prefer scale_*
 pub fn rgba_to_i420(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
     scale_rgba_to_i420(rgba, width, height, width, height)
 }
@@ -976,12 +977,61 @@ pub fn fit_rgba(rgba: &[u8], width: u32, height: u32, max_edge: u32) -> (Vec<u8>
 }
 
 /// Scale (if needed) and convert to I420 without an intermediate RGBA frame.
+#[allow(dead_code)] // kept for RGBA callers; camera publish uses [`fit_i420_rgb`]
 pub fn fit_i420_rgba(rgba: &[u8], width: u32, height: u32, max_edge: u32) -> (Vec<u8>, u32, u32) {
     let (dw, dh) = even_fit(width, height, max_edge);
     if dw < 2 || dh < 2 {
         return (Vec::new(), 0, 0);
     }
     (scale_rgba_to_i420(rgba, width, height, dw, dh), dw, dh)
+}
+
+/// Scale + convert packed RGB (3 bytes/pixel) to I420 — camera path skips RGBA expand.
+pub fn fit_i420_rgb(rgb: &[u8], width: u32, height: u32, max_edge: u32) -> (Vec<u8>, u32, u32) {
+    let (dw, dh) = even_fit(width, height, max_edge);
+    if dw < 2 || dh < 2 {
+        return (Vec::new(), 0, 0);
+    }
+    let need = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(3);
+    if rgb.len() < need {
+        return (Vec::new(), 0, 0);
+    }
+    match scale_packed_to_i420(rgb, width, height, width as usize * 3, PackedOrder::Rgb, dw, dh)
+    {
+        Some(i420) => (i420, dw, dh),
+        None => (Vec::new(), 0, 0),
+    }
+}
+
+/// Nearest-neighbor scale packed RGB then expand to RGBA for the local camera tile.
+pub fn fit_rgb_preview(rgb: &[u8], width: u32, height: u32, max_edge: u32) -> (Vec<u8>, u32, u32) {
+    let (dw, dh) = even_fit(width, height, max_edge);
+    let need = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(3);
+    if dw < 2 || dh < 2 || rgb.len() < need {
+        return (Vec::new(), 0, 0);
+    }
+    let scaled = if dw == width && dh == height {
+        rgb[..need].to_vec()
+    } else {
+        nn_scale_packed(
+            rgb,
+            width as usize,
+            height as usize,
+            width as usize * 3,
+            PackedOrder::Rgb,
+            dw as usize,
+            dh as usize,
+        )
+    };
+    let mut rgba = Vec::with_capacity(scaled.len() / 3 * 4);
+    for pixel in scaled.chunks_exact(3) {
+        rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+    }
+    (rgba, dw, dh)
 }
 
 pub fn scale_i420<'a>(
@@ -2105,6 +2155,28 @@ mod tests {
         assert_eq!((dw, dh), (32, 24));
         let two = rgba_to_i420(&scaled, dw, dh);
         assert_eq!(one, two);
+    }
+
+    #[test]
+    fn fit_i420_rgb_matches_rgba_path() {
+        let width = 64u32;
+        let height = 48u32;
+        let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for i in 0..(width * height) {
+            let r = (i % 251) as u8;
+            let g = (i % 241) as u8;
+            let b = (i % 239) as u8;
+            rgb.extend_from_slice(&[r, g, b]);
+            rgba.extend_from_slice(&[r, g, b, 255]);
+        }
+        let (from_rgb, rw, rh) = fit_i420_rgb(&rgb, width, height, 32);
+        let (from_rgba, aw, ah) = fit_i420_rgba(&rgba, width, height, 32);
+        assert_eq!((rw, rh), (aw, ah));
+        assert_eq!(from_rgb, from_rgba);
+        let (preview, pw, ph) = fit_rgb_preview(&rgb, width, height, 32);
+        assert_eq!((pw, ph), (rw, rh));
+        assert_eq!(preview.len(), (pw * ph * 4) as usize);
     }
 
     #[test]

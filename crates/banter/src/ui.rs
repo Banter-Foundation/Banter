@@ -12512,13 +12512,17 @@ impl App {
     fn refresh_cameras(&mut self) {
         self.cameras = media::camera_names();
         self.cameras_loaded = true;
-        if !self
-            .cameras
-            .iter()
-            .any(|(index, _)| *index == self.camera_choice.device_index())
+        // Prefer the saved name (OBS Virtual Camera sticks across index churn), then
+        // the currently open index, then the first device.
+        if let Some(index) =
+            crate::settings::pick_camera(&self.cameras, &self.voice.camera, self.camera_choice.device_index())
         {
-            if let Some((index, _)) = self.cameras.first() {
-                self.camera_choice.select(*index);
+            self.camera_choice.select(index);
+            if let Some((_, name)) = self.cameras.iter().find(|(id, _)| *id == index) {
+                if self.voice.camera != *name {
+                    self.voice.camera = name.clone();
+                    self.save_voice();
+                }
             }
         }
     }
@@ -13970,7 +13974,10 @@ impl App {
         }
         settings_form_label(ui, self.bold_font, "CAMERA");
         if self.cameras.is_empty() {
-            ui.text_colored(MUTED, "No camera is available.");
+            ui.text_colored(
+                MUTED,
+                "No camera is available. Start OBS Virtual Camera (or plug in a webcam), then Refresh.",
+            );
         } else {
             let labels: Vec<String> = self.cameras.iter().map(|(_, name)| name.clone()).collect();
             let mut index = self
@@ -13984,6 +13991,19 @@ impl App {
                 self.voice.camera = name;
                 self.save_voice();
             }
+            if self
+                .cameras
+                .iter()
+                .any(|(_, name)| media::is_virtual_camera_name(name))
+            {
+                ui.text_colored(
+                    MUTED,
+                    "OBS Virtual Camera and other virtual devices are listed above.",
+                );
+            }
+        }
+        if ui.small_button("Refresh cameras") {
+            self.refresh_cameras();
         }
         settings_spacer(ui);
         settings_form_label(ui, self.bold_font, "PREVIEW");

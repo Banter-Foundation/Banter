@@ -1,3 +1,7 @@
+## 2026-11-08 02:30:00 -05:00 [ubuntu] — Faster camera + OBS Virtual Camera pick
+
+Camera grab no longer expands every pixel to RGBA before I420 — packed RGB goes through the SIMD convert, and the local tile scales RGB then expands only the small preview. Frame pacing subtracts convert time from the 33 ms budget so a slow frame does not stack another fixed sleep (OBS / MJPEG felt like ~10–15 FPS). Voice & Video restores the saved camera name (OBS Virtual Camera sticks), lists virtual devices first, keeps string-backed nokhwa indices, prefers YUYV over MJPEG for OBS/virtual names, and adds Refresh cameras.
+
 ## 2026-11-08 01:34:00 -05:00 [ubuntu] — Version-1-test-13.3 pre-release
 
 Shipped pre-release Version-1-test-13.3 from main after window chrome move/resize (#101 / BA-111), off-LAN ICE + stream A/V lag sync (#102), pipelined screen capture (#100 / #97), Appearance font size (#99), Dongle/Shantell fonts (#98), encoder picker/scan (#95 / #89), Emote Library (#94), slash commands (#91), autosuggest (#90), Server Settings (#93), custom title bar (#92 / #96), VC latency (#85), and related media fixes. Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
