@@ -1432,6 +1432,157 @@ struct FfmpegEncoder {
     name: &'static str,
 }
 
+/// OBS-inspired interactive H.264 argv (after `-i`). No B-frames, low-latency tunes,
+/// zero lookahead — same goals as OBS `ull` / `zerolatency` for live VC, not VOD.
+#[cfg(target_os = "linux")]
+pub(crate) fn interactive_ffmpeg_video_args(
+    name: &str,
+    gop: u32,
+    bps: u32,
+    cbr: bool,
+) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    match name {
+        "h264_vaapi" => {
+            // async_depth defaults to 2, which holds the first AU until a second
+            // frame is submitted. Realtime WebRTC can't wait that long — Banter
+            // timed out and fell back to OpenH264 after every keyframe open.
+            args.extend(
+                [
+                    "-vaapi_device",
+                    "/dev/dri/renderD128",
+                    "-vf",
+                    "format=nv12,hwupload",
+                    "-async_depth",
+                    "1",
+                ]
+                .map(str::to_string),
+            );
+        }
+        "h264_vulkan" => {
+            args.extend(["-vf", "format=nv12,hwupload"].map(str::to_string));
+        }
+        _ => {}
+    }
+    args.extend(
+        [
+            "-c:v",
+            name,
+            "-bf",
+            "0",
+            "-g",
+            &gop.to_string(),
+            "-b:v",
+            &bps.to_string(),
+        ]
+        .map(|s| s.to_string()),
+    );
+    match name {
+        "h264_nvenc" => {
+            // ull + p1 + zerolatency + no lookahead: OBS-style interactive NVENC.
+            // psycho-AQ left off — it adds analysis delay for little VC benefit.
+            args.extend(
+                [
+                    "-profile:v",
+                    "baseline",
+                    "-preset",
+                    "p1",
+                    "-tune",
+                    "ull",
+                    "-rc",
+                    if cbr { "cbr" } else { "vbr" },
+                    "-zerolatency",
+                    "1",
+                    "-rc-lookahead",
+                    "0",
+                    "-delay",
+                    "0",
+                    "-no-scenecut",
+                    "1",
+                    "-multipass",
+                    "disabled",
+                    "-spatial-aq",
+                    "0",
+                    "-temporal-aq",
+                    "0",
+                    "-forced-idr",
+                    "1",
+                ]
+                .map(str::to_string),
+            );
+        }
+        "h264_vaapi" => {
+            args.extend(
+                [
+                    "-profile:v",
+                    "constrained_baseline",
+                    "-rc_mode",
+                    if cbr { "CBR" } else { "VBR" },
+                    "-idr_interval",
+                    "0",
+                ]
+                .map(str::to_string),
+            );
+        }
+        "h264_amf" => {
+            args.extend(
+                [
+                    "-profile:v",
+                    "constrained_baseline",
+                    "-usage",
+                    "ultralowlatency",
+                    "-quality",
+                    "speed",
+                    "-rc",
+                    if cbr { "cbr" } else { "vbr_latency" },
+                    "-preanalysis",
+                    "false",
+                ]
+                .map(str::to_string),
+            );
+        }
+        "h264_qsv" => {
+            args.extend(
+                [
+                    "-profile:v",
+                    "baseline",
+                    "-look_ahead",
+                    "0",
+                    "-async_depth",
+                    "1",
+                    "-bf",
+                    "0",
+                ]
+                .map(str::to_string),
+            );
+        }
+        "libx264" => {
+            args.extend(
+                [
+                    "-profile:v",
+                    "baseline",
+                    "-preset",
+                    "ultrafast",
+                    "-tune",
+                    "zerolatency",
+                    "-scenecut",
+                    "0",
+                ]
+                .map(str::to_string),
+            );
+        }
+        "libopenh264" => {
+            args.push("-profile:v".into());
+            args.push("baseline".into());
+        }
+        _ => {
+            args.push("-profile:v".into());
+            args.push("baseline".into());
+        }
+    }
+    args
+}
+
 #[cfg(target_os = "linux")]
 impl FfmpegEncoder {
     fn open(
@@ -1462,99 +1613,8 @@ impl FfmpegEncoder {
             "-i",
             "pipe:0",
         ]);
-        match name {
-            "h264_vaapi" => {
-                // async_depth defaults to 2, which holds the first AU until a second
-                // frame is submitted. Realtime WebRTC can't wait that long — Banter
-                // timed out and fell back to OpenH264 after every keyframe open.
-                command.args([
-                    "-vaapi_device",
-                    "/dev/dri/renderD128",
-                    "-vf",
-                    "format=nv12,hwupload",
-                    "-async_depth",
-                    "1",
-                ]);
-            }
-            "h264_vulkan" => {
-                command.args(["-vf", "format=nv12,hwupload"]);
-            }
-            _ => {}
-        }
-        command.args([
-            "-c:v",
-            name,
-            "-bf",
-            "0",
-            "-g",
-            &gop.to_string(),
-            "-b:v",
-            &bps.to_string(),
-        ]);
-        match name {
-            "h264_nvenc" => {
-                // forced-idr: when a key is requested (reopen path), emit a true IDR.
-                // p1 + ll + zerolatency keep interactive delay; CBR/VBR follows stream prefs.
-                command.args([
-                    "-profile:v",
-                    "baseline",
-                    "-preset",
-                    "p1",
-                    "-tune",
-                    "ll",
-                    "-rc",
-                    if cbr { "cbr" } else { "vbr" },
-                    "-zerolatency",
-                    "1",
-                    "-forced-idr",
-                    "1",
-                ]);
-            }
-            "h264_vaapi" => {
-                command.args([
-                    "-profile:v",
-                    "constrained_baseline",
-                    "-rc_mode",
-                    if cbr { "CBR" } else { "VBR" },
-                ]);
-            }
-            "h264_amf" => {
-                command.args([
-                    "-profile:v",
-                    "constrained_baseline",
-                    "-quality",
-                    "speed",
-                    "-rc",
-                    if cbr { "cbr" } else { "vbr_latency" },
-                ]);
-            }
-            "h264_qsv" => {
-                command.args([
-                    "-profile:v",
-                    "baseline",
-                    "-look_ahead",
-                    "0",
-                    "-bf",
-                    "0",
-                ]);
-            }
-            "libx264" => {
-                command.args([
-                    "-profile:v",
-                    "baseline",
-                    "-preset",
-                    "ultrafast",
-                    "-tune",
-                    "zerolatency",
-                ]);
-            }
-            "libopenh264" => {
-                command.args(["-profile:v", "baseline"]);
-            }
-            _ => {
-                // vulkan / v4l2m2m / unknown — keep bitrate + no B-frames from above.
-                command.args(["-profile:v", "baseline"]);
-            }
+        for arg in interactive_ffmpeg_video_args(name, gop, bps, cbr) {
+            command.arg(arg);
         }
         command.args(["-f", "h264", "pipe:1"]);
         command
@@ -2206,6 +2266,32 @@ mod tests {
         assert_eq!(gop_frames(30.0, 2_000), 60);
         assert_eq!(gop_frames(60.0, 1_000), 60);
         assert_eq!(gop_frames(30.0, 500), 15);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn interactive_nvenc_args_are_ultra_low_latency() {
+        let args = interactive_ffmpeg_video_args("h264_nvenc", 30, 2_500_000, true);
+        let joined = args.join(" ");
+        assert!(joined.contains("-bf 0"));
+        assert!(joined.contains("-tune ull"), "{joined}");
+        assert!(joined.contains("-zerolatency 1"));
+        assert!(joined.contains("-rc-lookahead 0"));
+        assert!(joined.contains("-delay 0"));
+        assert!(joined.contains("-no-scenecut 1"));
+        assert!(joined.contains("-multipass disabled"));
+        assert!(!joined.contains("-tune ll "));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn interactive_x264_and_qsv_disable_lookahead() {
+        let x264 = interactive_ffmpeg_video_args("libx264", 60, 1_000_000, false).join(" ");
+        assert!(x264.contains("-tune zerolatency"));
+        assert!(x264.contains("-scenecut 0"));
+        let qsv = interactive_ffmpeg_video_args("h264_qsv", 60, 1_000_000, true).join(" ");
+        assert!(qsv.contains("-look_ahead 0"));
+        assert!(qsv.contains("-async_depth 1"));
     }
 
     #[test]
