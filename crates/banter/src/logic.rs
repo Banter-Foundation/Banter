@@ -514,15 +514,17 @@ pub enum SettingsSection {
     Appearance,
     Mods,
     Developer,
+    Experimental,
 }
 
-pub fn settings_sections() -> [SettingsSection; 5] {
+pub fn settings_sections() -> [SettingsSection; 6] {
     [
         SettingsSection::Account,
         SettingsSection::Voice,
         SettingsSection::Appearance,
         SettingsSection::Mods,
         SettingsSection::Developer,
+        SettingsSection::Experimental,
     ]
 }
 
@@ -550,6 +552,25 @@ impl Default for DevServerPrefs {
         Self {
             target: ServerTarget::Local,
             remote_host: String::new(),
+        }
+    }
+}
+
+/// Opt-in experiments. Lives in `experimental.json` under the data directory.
+///
+/// Linux kmsgrab maps to the same policy as `BANTER_KMSGRAB=1` (auto + fallback).
+/// Process env (`BANTER_KMSGRAB` / `BANTER_SCREEN_CAPTURE`) still overrides when set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExperimentalPrefs {
+    /// Prefer DRM kmsgrab → ffmpeg I420 for Linux monitor share when available.
+    #[serde(default)]
+    pub kmsgrab_linux: bool,
+}
+
+impl Default for ExperimentalPrefs {
+    fn default() -> Self {
+        Self {
+            kmsgrab_linux: false,
         }
     }
 }

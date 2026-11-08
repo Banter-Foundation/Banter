@@ -59,8 +59,9 @@ use crate::logic::{
     voice_rtc_session_ready,
     window_size_label,
     window_size_presets, AppearancePrefs, CameraChoice, CaptureKind, ContextMenuAction,
-    ContextMenuEntry, ContextMenuTone, DevServerPrefs, HomeLayout, HomeRecentEntry, HomeRecentKind,
-    HomeSectionId, MixSource, MuteMemory, RailTreeRow, ScreenShare, ServerTarget, SettingsSection,
+    ContextMenuEntry, ContextMenuTone, DevServerPrefs, ExperimentalPrefs, HomeLayout,
+    HomeRecentEntry, HomeRecentKind, HomeSectionId, MixSource, MuteMemory, RailTreeRow, ScreenShare,
+    ServerTarget, SettingsSection,
     StreamDefaults, StreamEncoderMode, StreamFps, StreamRateControl, StreamResolution, VideoPrefs,
     VoicePrefs, VoiceRejoinIntent, clamp_font_scale, font_scale_presets, OPEN_MIC_RMS,
     RECONNECTING_STATUS,
@@ -366,6 +367,8 @@ pub(crate) struct App {
     version_warn: String,
     /// Local vs remote API target from User Settings → Developer.
     dev_server: DevServerPrefs,
+    /// Opt-in experiments from User Settings → Experimental (`experimental.json`).
+    experimental: ExperimentalPrefs,
     /// Server options panel on the sign-in / register screen.
     login_options: bool,
     /// Frames the login options panel has been open (skips the opening click for dismiss).
@@ -720,6 +723,7 @@ impl App {
             video: VideoPrefs::default(),
             pending_video: None,
             appearance: AppearancePrefs::default(),
+            experimental: ExperimentalPrefs::default(),
             stream: StreamDefaults::default(),
             stream_menu: false,
             stream_anchor: [0.0, 0.0],
@@ -1213,7 +1217,7 @@ impl App {
         self.draw_window_caption(ui, "Banter", TitleBarSurface::Main);
     }
 
-    /// Dedicated Banter Settings window surface (My Account / Voice & Video / Developer).
+    /// Dedicated Banter Settings window surface (My Account / Voice & Video / Developer / Experimental).
     pub(crate) fn draw_settings_window(&mut self, ui: &Ui) {
         if !self.settings.is_open() {
             return;
@@ -12689,6 +12693,9 @@ impl App {
                             SettingsSection::Developer => {
                                 self.draw_developer_settings(ui, layout.content_w)
                             }
+                            SettingsSection::Experimental => {
+                                self.draw_experimental_settings(ui, layout.content_w)
+                            }
                         }
                         ui.dummy([layout.content_w, 80.0]);
                         ui.unindent_by(layout.content_x);
@@ -13118,6 +13125,9 @@ impl App {
                         SettingsSection::Developer => {
                             unreachable!("developer is under its own heading")
                         }
+                        SettingsSection::Experimental => {
+                            unreachable!("experimental is under its own heading")
+                        }
                     };
                     if nav_row(
                         ui,
@@ -13157,6 +13167,20 @@ impl App {
                     self.settings.section() == SettingsSection::Developer,
                 ) {
                     self.select_settings(SettingsSection::Developer);
+                }
+                ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
+                settings_divider(ui, ui.content_region_avail()[0]);
+                ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
+                settings_form_label(ui, self.bold_font, "EXPERIMENTAL");
+                ui.dummy([0.0, SETTINGS_NAV_HEADING_GAP]);
+                if nav_row(
+                    ui,
+                    "settings-experimental",
+                    self.icon("monitor"),
+                    "Experimental",
+                    self.settings.section() == SettingsSection::Experimental,
+                ) {
+                    self.select_settings(SettingsSection::Experimental);
                 }
                 ui.dummy([0.0, SETTINGS_NAV_SECTION_GAP]);
                 settings_divider(ui, ui.content_region_avail()[0]);
@@ -13412,6 +13436,52 @@ impl App {
         if !self.settings_error.is_empty() {
             settings_spacer(ui);
             ui.text_colored(RED, &self.settings_error);
+        }
+    }
+
+    fn draw_experimental_settings(&mut self, ui: &Ui, width: f32) {
+        settings_page_title(ui, self.bold_font, "Experimental");
+        ui.text_colored(
+            MUTED,
+            "Optional capture and encode experiments. Saved on this PC; takes effect on the next Go Live.",
+        );
+        settings_spacer(ui);
+
+        settings_form_label(ui, self.bold_font, "LINUX SCREEN CAPTURE");
+        ui.text_colored(
+            MUTED,
+            "DRM kmsgrab through ffmpeg (I420). Experimental — may need a usable /dev/dri card, ffmpeg with kmsgrab, and often root / CAP_SYS_ADMIN / DRM master. Falls back to PipeWire (Wayland) or xcap (X11) when Auto cannot start. Window share is unchanged.",
+        );
+        settings_spacer(ui);
+
+        let linux = cfg!(target_os = "linux");
+        let mut enabled = self.experimental.kmsgrab_linux;
+        let _disabled = ui.begin_disabled_with_cond(!linux);
+        if settings_toggle_row(
+            ui,
+            "exp-kmsgrab",
+            "Prefer kmsgrab + ffmpeg capture",
+            &mut enabled,
+            width,
+        ) {
+            self.experimental.kmsgrab_linux = enabled;
+            self.save_experimental();
+        }
+        drop(_disabled);
+        if !linux {
+            settings_spacer(ui);
+            ui.text_colored(
+                MUTED,
+                "Available on Linux only. Windows DXGI / GDI screen share is unchanged.",
+            );
+        } else if std::env::var_os("BANTER_KMSGRAB").is_some()
+            || std::env::var_os("BANTER_SCREEN_CAPTURE").is_some()
+        {
+            settings_spacer(ui);
+            ui.text_colored(
+                MUTED,
+                "BANTER_KMSGRAB / BANTER_SCREEN_CAPTURE is set in the environment and overrides this toggle.",
+            );
         }
     }
 
@@ -15692,9 +15762,23 @@ impl App {
         if let Some(dev) = load_json::<DevServerPrefs>(&self.data_dir.join("dev-server.json")) {
             self.dev_server = dev;
         }
+        if let Some(experimental) =
+            load_json::<ExperimentalPrefs>(&self.data_dir.join("experimental.json"))
+        {
+            self.experimental = experimental;
+        }
+        media::set_kmsgrab_ui_preferred(self.experimental.kmsgrab_linux);
         if let Some(home) = load_json::<HomeLayout>(&self.data_dir.join("home.json")) {
             self.home_layout = HomeLayout::normalize(home);
         }
+    }
+
+    fn save_experimental(&mut self) {
+        let _ = save_json(
+            &self.data_dir.join("experimental.json"),
+            &self.experimental,
+        );
+        media::set_kmsgrab_ui_preferred(self.experimental.kmsgrab_linux);
     }
 
     fn save_home_layout(&self) {

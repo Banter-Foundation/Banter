@@ -17,6 +17,7 @@ fn settings_menu_lists_account_voice_then_developer() {
             SettingsSection::Appearance,
             SettingsSection::Mods,
             SettingsSection::Developer,
+            SettingsSection::Experimental,
         ]
     );
 }
