@@ -25,9 +25,13 @@ Voice-channel SFU notes (reliability):
 - Open-mic quiet frames still feed Opus (DTX); mute / deafen / PTT-up stop the track. Speaking glow still uses the RMS / PTT level.
 - P2P remote screen/camera tiles use the live peer id from signaling once it is known; SFU forward track ids already embed the publisher.
 
-ICE is host candidates, `BANTER_STUN` (default `stun:stun.l.google.com:19302`, empty disables it), and optional `BANTER_TURN` with `BANTER_TURN_USER` and `BANTER_TURN_PASSWORD`.
+ICE is host candidates, `BANTER_STUN` (default `stun:stun.l.google.com:19302`, empty disables it), and optional `BANTER_TURN` with `BANTER_TURN_USER` and `BANTER_TURN_PASSWORD`. After sign-in the desktop loads `GET /v1/ice` from the host and uses that STUN/TURN for PeerConnections, so off-LAN clients do not need local TURN env vars.
+
+**Same Wi‑Fi works, other network does not:** almost always missing reachable SFU ICE. Set `BANTER_ADVERTISE_IP` to the host’s public (or VPN) address, open UDP `40000-40049` / `40100-40149`, and for DM P2P through hard NATs run a TURN server and set `BANTER_TURN*`. Talking glow over the websocket can still light while media UDP never connects.
 
 Compose does not publish the SFU’s random UDP port, so a desktop can finish websocket signaling (the talking glow) and a direct call, and still receive no guild media. `BANTER_UDP_MIN` / `BANTER_UDP_MAX` bind each voice PeerConnection to that range. `BANTER_ADVERTISE_IP` rewrites host candidates to an address the client can reach (the compose default is `127.0.0.1`). Slot A publishes UDP `40000-40049`. Slot B publishes `40100-40149`. A client on another machine needs the host’s reachable IP in `BANTER_ADVERTISE_IP` and that range open. Direct calls stay peer-to-peer and do not use these ports.
+
+**Go Live A/V when FPS drops:** stream audio is delayed on the publisher to match measured screen grab→publish lag (EMA), capped at **5 seconds**, so desktop sound does not race ahead of the picture. Microphone `user_audio` stays on the short interactive path (~60 ms playout).
 
 ## Layers and the slider
 
@@ -64,7 +68,7 @@ OpenH264’s high-level settings do not expose temporal layers, so the capture i
 
 Microphone Opus runs on `banter-audio` with its own queue. Screen and camera H.264 run on `banter-video`. A slow screen frame does not hold the next voice packet, and a full video queue drops a picture instead of an Opus packet. The largest simulcast layer is encoded first.
 
-Interactive latency (voice/video call feel, not archive quality): speaker playout keeps about 60 ms of jitter margin; capture/Opus PCM backlog is capped around 200 ms; video RTP sample duration follows the encode FPS (not a fixed 33 ms); default keyframe interval is 1 s; OpenH264 uses bitrate RC, low complexity, and a single encode thread (screen disables AdaptiveQuant/BackgroundDetection, which ScreenContentRealTime rejects as ParamValidation — those warnings are not the latency bug); Opus runs at complexity 5; SFU forward queues cap at 24 video / 16 audio packets for stalled subscribers (live path still drains immediately).
+Interactive latency (voice/video call feel, not archive quality): speaker playout keeps about 60 ms of jitter margin for mics; capture/Opus PCM backlog is capped around 200 ms; **stream_audio** may be held up to 5 s to track screen pipeline lag; video RTP sample duration follows the encode FPS (not a fixed 33 ms); default keyframe interval is 1 s; OpenH264 uses bitrate RC, low complexity, and a single encode thread (screen disables AdaptiveQuant/BackgroundDetection, which ScreenContentRealTime rejects as ParamValidation — those warnings are not the latency bug); Opus runs at complexity 5; SFU forward queues cap at 24 video / 16 audio packets for stalled subscribers (live path still drains immediately).
 
 On Wayland the PipeWire callback only copies the newest desktop buffer. A dedicated **screen convert** thread turns that buffer (or Still/DXGI RGBA) into I420 with SIMD BT.601 — optional small RGBA preview — so capture can grab the next frame while convert finishes. Hand-off is latest-wins (no deep queue). The compositor is not blocked on a pixel walk. That publish convert was the ~100 ms “capture” cost when hardware encode was already 1–5 ms.
 

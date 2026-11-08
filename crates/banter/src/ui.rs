@@ -9236,12 +9236,22 @@ impl App {
         let Some(token) = self.client.token().map(str::to_string) else {
             return;
         };
+        // Pull host STUN/TURN before opening PeerConnections so off-LAN works
+        // without BANTER_TURN* on the desktop.
+        self.refresh_ice_config();
         let realtime = Realtime::connect(websocket_url(&self.base, &token));
         let media = Media::start(realtime.signal_sender());
         self.media = Some(media);
         self.realtime = Some(realtime);
         self.sent_guild_p2p_video = None;
         self.sync_guild_p2p_video_pref();
+    }
+
+    fn refresh_ice_config(&self) {
+        match self.client.ice_config() {
+            Ok(cfg) => media::store_ice_config(cfg),
+            Err(_) => media::clear_ice_config(),
+        }
     }
 
     /// Drop the dead socket/media, keep local voice/call for UI, and schedule reconnect.
@@ -9329,6 +9339,7 @@ impl App {
         let _ = self.client.logout();
         let _ = clear_token(&self.data_dir);
         self.clear_reconnect_state();
+        media::clear_ice_config();
         self.media = None;
         self.realtime = None;
         self.client.set_token(None);
