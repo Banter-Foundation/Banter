@@ -78,9 +78,11 @@ pub use shell_sync::{
 };
 pub use stream_watch::*;
 pub use titlebar::{
-    caption_height, client_caption_enabled, dragged_window_pos, point_in_rect, title_bar_drag_rect,
-    title_bar_rect, traffic_light_centers, traffic_light_hit, DoubleClickTracker, TitleBarAction,
-    TitleBarChrome, TrafficLight, TITLE_BAR_DOUBLE_CLICK_MS, TITLE_BAR_DOUBLE_CLICK_SLOP,
+    caption_height, centered_window_pos, client_caption_enabled, content_below_caption,
+    dragged_window_pos, glfw_decorated, glfw_resizable, point_in_rect, resize_edge_at,
+    resized_window_frame, title_bar_drag_rect, title_bar_rect, traffic_light_centers,
+    traffic_light_hit, DoubleClickTracker, ResizeEdge, ResizeGrab, TitleBarAction, TitleBarChrome,
+    TrafficLight, RESIZE_BORDER_PX, TITLE_BAR_DOUBLE_CLICK_MS, TITLE_BAR_DOUBLE_CLICK_SLOP,
 };
 
 /// This client's Banter release label (same constant as the embedded server).

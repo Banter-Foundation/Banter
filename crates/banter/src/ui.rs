@@ -1268,13 +1268,16 @@ impl App {
         let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
         let _child = ui.push_style_var(StyleVar::ChildBorderSize(0.0));
         let _dock = ui.push_style_var(StyleVar::DockingSeparatorSize(0.0));
+        // BA-111: host below the caption so the full-bleed shell cannot steal
+        // traffic-light / drag hits on undecorated Windows chrome.
+        let shell_h = (size[1] - top).max(0.0);
         ui.window("Banter")
             .flags(flags)
-            .position([0.0, 0.0], Condition::Always)
-            .size(size, Condition::Always)
+            .position([0.0, top], Condition::Always)
+            .size([size[0], shell_h], Condition::Always)
             .build(|| {
                 // Shell sits under the client-drawn caption (BA-105).
-                let shell_h = (size[1] - top).max(0.0);
+                // paint_column uses screen coords, so Y still includes `top`.
                 let body_h = (shell_h - HEADER_H).max(0.0);
                 let rail = self.shell("rail_bg", RAIL_BG);
                 let sidebar = self.shell("sidebar_bg", SIDEBAR_BG);
@@ -1435,6 +1438,8 @@ impl App {
 
     fn draw_login(&mut self, ui: &Ui) {
         let size = ui.io().display_size();
+        let top = self.caption_h();
+        let host_h = (size[1] - top).max(0.0);
         let flags = WindowFlags::NO_DECORATION
             | WindowFlags::NO_MOVE
             | WindowFlags::NO_RESIZE
@@ -1446,10 +1451,11 @@ impl App {
         let _gap = ui.push_style_var(StyleVar::ItemSpacing([0.0, 0.0]));
         let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
         let _round = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        // Keep the caption strip free for drag / traffic lights (BA-111).
         ui.window("Banter sign in")
             .flags(flags)
-            .position([0.0, 0.0], Condition::Always)
-            .size(size, Condition::Always)
+            .position([0.0, top], Condition::Always)
+            .size([size[0], host_h], Condition::Always)
             .build(|| {
                 self.draw_login_card(ui, size);
                 self.draw_login_options_button(ui, size);
@@ -12629,18 +12635,15 @@ impl App {
         let mut close = false;
         ui.window("Settings")
             .flags(flags)
-            .position([0.0, 0.0], Condition::Always)
-            .size(size, Condition::Always)
+            .position([0.0, top], Condition::Always)
+            .size([size[0], body_h], Condition::Always)
             .build(|| {
                 // Read before drawing: a dropdown that closes on this Escape is still open here.
                 self.settings_popup_open = ui
                     .is_popup_open_with_flags("", PopupQueryFlags::ANY_POPUP)
                     || ui.is_any_item_active();
-                // Fill the caption strip so the settings chrome does not flash through.
-                if top > 0.0 {
-                    skin::rect(ui, [0.0, 0.0], [size[0], top], TITLE_BAR_BG, 0.0);
-                }
-                ui.set_cursor_pos([layout.nav_x, top]);
+                // Content is hosted below the caption (BA-111); nav/body use local Y.
+                ui.set_cursor_pos([layout.nav_x, 0.0]);
                 let nav_bg = ui.push_style_color(StyleColor::ChildBg, SIDEBAR_BG);
                 ui.child_window("settings-nav")
                     .size([layout.nav_w, body_h])
@@ -12648,7 +12651,7 @@ impl App {
                         self.draw_settings_nav(ui, layout.nav_w);
                     });
                 drop(nav_bg);
-                ui.set_cursor_pos([layout.body_x, top]);
+                ui.set_cursor_pos([layout.body_x, 0.0]);
                 let body_bg = ui.push_style_color(StyleColor::ChildBg, STAGE_BG);
                 ui.child_window("settings-body")
                     .size([layout.body_w, body_h])
@@ -12675,6 +12678,7 @@ impl App {
                         ui.dummy([layout.content_w, 80.0]);
                         ui.unindent_by(layout.content_x);
                         // Screen position, so the button stays put while the page scrolls.
+                        // close_y is relative to the settings host (already below caption).
                         ui.set_cursor_screen_pos([
                             window_pos[0] + layout.close_x - layout.body_x,
                             window_pos[1] + layout.close_y,
@@ -15068,18 +15072,19 @@ impl App {
         let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
         let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
         let _bg = ui.push_style_color(StyleColor::WindowBg, CALL_BG);
+        let view_h = (size[1] - top).max(1.0);
         ui.window(STREAM_POPOUT_WINDOW_TITLE)
             .flags(flags)
-            .position([0.0, 0.0], Condition::Always)
-            .size(size, Condition::Always)
+            .position([0.0, top], Condition::Always)
+            .size([size[0], view_h], Condition::Always)
             .build(|| {
                 let origin = [0.0, 0.0];
-                skin::rect(ui, origin, size, CALL_BG, 0.0);
-                let view_h = (size[1] - top).max(1.0);
+                let host = [size[0], view_h];
+                skin::rect(ui, origin, host, CALL_BG, 0.0);
                 if let Some(shot) = self.stream_popout_shot.as_ref() {
                     let fitted = fit_inside(shot.size, size[0], view_h);
                     let x = (size[0] - fitted[0]) * 0.5;
-                    let y = top + (view_h - fitted[1]) * 0.5;
+                    let y = (view_h - fitted[1]) * 0.5;
                     ui.get_window_draw_list().add_image(
                         shot.texture,
                         [x, y],
@@ -15106,6 +15111,7 @@ impl App {
                     if live.len() > 1 {
                         x -= STREAM_WATCH_BTN + STREAM_WATCH_BTN_GAP;
                     }
+                    // Screen Y: host starts at `top`, pad below the caption.
                     let y = top + STREAM_WATCH_PAD;
                     let fill = [
                         CONTROL_BG[0],
