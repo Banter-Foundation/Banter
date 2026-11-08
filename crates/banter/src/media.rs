@@ -4,6 +4,7 @@
 //! A stream change is captured on a side thread and cut in only after that frame is encoded.
 
 mod encode;
+mod ice_cache;
 #[cfg(windows)]
 mod loopback;
 #[cfg(target_os = "linux")]
@@ -14,6 +15,7 @@ mod macos;
 mod mf;
 mod qos;
 mod rtc;
+mod screen_lag;
 mod screen_pipeline;
 #[cfg(target_os = "linux")]
 mod screencast;
@@ -22,6 +24,7 @@ pub use encode::{
     hardware_probe, layer_target_bps, list_available_encoders, list_available_encoders_preferring,
     openh264_qp_bounds, AvailableEncoder, EncoderPick,
 };
+pub use ice_cache::{clear as clear_ice_config, store as store_ice_config};
 pub use rtc::{playback_cap_samples, EncodeSettings};
 
 /// Max PCM samples retained before Opus encode / capture drop (~200 ms @ 48 kHz).

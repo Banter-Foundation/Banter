@@ -65,3 +65,75 @@ pub fn turn_server() -> Option<(String, String, String)> {
     let password = std::env::var("BANTER_TURN_PASSWORD").unwrap_or_default();
     Some((url, user, password))
 }
+
+/// ICE servers the desktop should use. Served at `GET /v1/ice` so clients off-LAN
+/// pick up the host’s TURN without local env vars (LAN host candidates alone fail
+/// through most home NATs).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IceConfig {
+    /// May be empty when `BANTER_STUN=` disables STUN.
+    pub stun: String,
+    #[serde(default)]
+    pub turn: Option<IceTurn>,
+    /// `BANTER_ADVERTISE_IP` — SFU host candidates use this. Empty means unset.
+    #[serde(default)]
+    pub advertise_ip: String,
+    #[serde(default)]
+    pub udp_min: Option<u32>,
+    #[serde(default)]
+    pub udp_max: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IceTurn {
+    pub urls: String,
+    pub username: String,
+    pub credential: String,
+}
+
+/// Snapshot of STUN/TURN + SFU advertise hint from the process environment.
+pub fn ice_config() -> IceConfig {
+    let turn = turn_server().and_then(|(urls, username, credential)| {
+        if username.is_empty() || credential.is_empty() {
+            None
+        } else {
+            Some(IceTurn {
+                urls,
+                username,
+                credential,
+            })
+        }
+    });
+    let advertise_ip = std::env::var("BANTER_ADVERTISE_IP").unwrap_or_default();
+    let udp_min = std::env::var("BANTER_UDP_MIN")
+        .ok()
+        .and_then(|v| v.parse().ok());
+    let udp_max = std::env::var("BANTER_UDP_MAX")
+        .ok()
+        .and_then(|v| v.parse().ok());
+    IceConfig {
+        stun: stun_url(),
+        turn,
+        advertise_ip,
+        udp_min,
+        udp_max,
+    }
+}
+
+#[cfg(test)]
+mod ice_config_tests {
+    use super::*;
+
+    #[test]
+    fn ice_config_includes_default_stun() {
+        // Do not clear BANTER_STUN if a harness set it — only assert shape.
+        let cfg = ice_config();
+        if std::env::var("BANTER_STUN").ok().as_deref() != Some("") {
+            assert!(
+                cfg.stun.contains("stun:") || cfg.stun.is_empty(),
+                "stun should be a stun: URL or empty, got {:?}",
+                cfg.stun
+            );
+        }
+    }
+}

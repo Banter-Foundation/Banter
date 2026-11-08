@@ -329,9 +329,11 @@ fn publish_i420(
         i420: std::sync::Arc::<[u8]>::from(i420),
         key,
     });
+    let elapsed = grabbed_at.elapsed();
+    super::screen_lag::note_pipeline_lag_ms(elapsed.as_millis() as u64);
     crate::profiler::record_media(
         "screen_capture",
-        grabbed_at.elapsed(),
+        elapsed,
         (width * height) as usize,
     );
 }

@@ -416,6 +416,9 @@ fn audio_encode_loop(
 ) {
     let mut user = OpusTrack::user_audio().ok();
     let mut stream = OpusTrack::stream_audio().ok();
+    // Stream Opus held until screen grab→publish lag elapses (≤5 s). User audio
+    // stays interactive and is never delayed here.
+    let mut stream_delay: VecDeque<(Instant, Vec<i16>)> = VecDeque::new();
     while !stop.load(Ordering::Relaxed) {
         let mut sent = false;
         if let Some(encoder) = user.as_mut() {
@@ -434,6 +437,10 @@ fn audio_encode_loop(
         }
         let ratio = qos.lock().expect("qos").targets().stream_audio;
         let stream_wanted = wanted_of(&control, MediaKind::StreamAudio);
+        let publishing_screen = control.publishing_screen.load(Ordering::Relaxed);
+        if !publishing_screen {
+            super::screen_lag::clear_pipeline_lag();
+        }
         if ratio > 0.0
             && stream_wanted
                 .map(|layers| !layers.is_empty())
@@ -441,7 +448,23 @@ fn audio_encode_loop(
         {
             if let Some(encoder) = stream.as_mut() {
                 let _ = encoder.set_ratio(ratio);
-                if let Some(frame) = take_frame(&stream_pcm) {
+                let lag = Duration::from_millis(super::screen_lag::pipeline_lag_ms());
+                while let Some(frame) = take_frame(&stream_pcm) {
+                    stream_delay.push_back((Instant::now() + lag, frame));
+                }
+                // Cap hold at ~5 s of Opus frames (50 frames/s × 5 × 960 samples).
+                let max_frames = (super::screen_lag::STREAM_AUDIO_MAX_LAG_MS as usize / 20).max(1);
+                while stream_delay.len() > max_frames {
+                    stream_delay.pop_front();
+                }
+                let now = Instant::now();
+                while stream_delay
+                    .front()
+                    .is_some_and(|(ready, _)| *ready <= now)
+                {
+                    let Some((_, frame)) = stream_delay.pop_front() else {
+                        break;
+                    };
                     sent = true;
                     if let Ok(packet) = encoder.encode(&frame) {
                         control
@@ -454,6 +477,9 @@ fn audio_encode_loop(
                     }
                 }
             }
+        } else {
+            stream_delay.clear();
+            while take_frame(&stream_pcm).is_some() {}
         }
         if !sent {
             thread::sleep(Duration::from_millis(2));
@@ -1238,15 +1264,27 @@ async fn write_packet(
 }
 
 fn ice_servers() -> Vec<RTCIceServer> {
+    // Prefer the signed-in host’s `/v1/ice` snapshot so off-LAN desktops get TURN
+    // without local BANTER_TURN* env. Fall back to process env (embedded / CI).
+    let from_host = super::ice_cache::get();
+    let stun = from_host
+        .as_ref()
+        .map(|cfg| cfg.stun.clone())
+        .unwrap_or_else(banter_server::stun_url);
+    let turn = from_host
+        .as_ref()
+        .and_then(|cfg| cfg.turn.clone())
+        .map(|t| (t.urls, t.username, t.credential))
+        .or_else(banter_server::turn_server);
+
     let mut servers = Vec::new();
-    let stun = banter_server::stun_url();
     if !stun.is_empty() {
         servers.push(RTCIceServer {
             urls: vec![stun],
             ..Default::default()
         });
     }
-    if let Some((url, username, credential)) = banter_server::turn_server() {
+    if let Some((url, username, credential)) = turn {
         if !username.is_empty() && !credential.is_empty() {
             servers.push(RTCIceServer {
                 urls: vec![url],
