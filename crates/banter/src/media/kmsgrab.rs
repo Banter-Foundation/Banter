@@ -7,6 +7,7 @@
 //! (Auto) or Err (Force).
 //!
 //! Env: `BANTER_KMSGRAB`, `BANTER_KMSGRAB_DEVICE`, optional `BANTER_SCREEN_CAPTURE`.
+//! UI: User Settings → Experimental → Prefer kmsgrab (`experimental.json` / [`set_ui_preferred`]).
 //! See store plan `docs/kmsgrab-ffmpeg-capture.md` and repo `docs/streaming.md`.
 
 use std::io::{BufRead, BufReader, Read};
@@ -20,6 +21,19 @@ use std::time::{Duration, Instant};
 use pipewire::spa::param::video::VideoFormat;
 
 use super::screencast::RawFrame;
+
+/// UI / `experimental.json` preference (same as `BANTER_KMSGRAB=1` when env is unset).
+static UI_PREFERRED: AtomicBool = AtomicBool::new(false);
+
+/// Apply the Experimental settings toggle. Takes effect on the next monitor Go Live
+/// (`open_feed` re-reads [`mode`]); no process restart.
+pub fn set_ui_preferred(enabled: bool) {
+    UI_PREFERRED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn ui_preferred() -> bool {
+    UI_PREFERRED.load(Ordering::Relaxed)
+}
 
 /// How aggressively Banter should prefer kmsgrab for monitor capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,7 +86,7 @@ impl Drop for KmsStream {
     }
 }
 
-/// Resolve capture policy from the environment.
+/// Resolve capture policy: process env overrides the Experimental UI toggle.
 pub fn mode() -> Mode {
     if let Ok(raw) = std::env::var("BANTER_SCREEN_CAPTURE") {
         match normalize(&raw).as_str() {
@@ -83,9 +97,14 @@ pub fn mode() -> Mode {
     }
     match std::env::var("BANTER_KMSGRAB") {
         Ok(raw) => parse_mode(&raw),
-        // Unset: keep PipeWire/xcap. Opt in with BANTER_KMSGRAB=1 (auto fallback)
-        // or =force. Avoids a multi-second failed DRM probe on every Wayland Go Live.
-        Err(_) => Mode::Off,
+        // Unset: Experimental toggle → Auto (same as BANTER_KMSGRAB=1); else Off.
+        Err(_) => {
+            if ui_preferred() {
+                Mode::Auto
+            } else {
+                Mode::Off
+            }
+        }
     }
 }
 
@@ -481,6 +500,15 @@ mod tests {
         assert_eq!(parse_mode("auto"), Mode::Auto);
         assert_eq!(parse_mode("force"), Mode::Force);
         assert_eq!(parse_mode("kmsgrab"), Mode::Force);
+    }
+
+    #[test]
+    fn ui_preferred_maps_to_auto_when_env_unset() {
+        // Do not assert full mode() here — process env in the test runner may set BANTER_*.
+        set_ui_preferred(true);
+        assert!(ui_preferred());
+        set_ui_preferred(false);
+        assert!(!ui_preferred());
     }
 
     #[test]

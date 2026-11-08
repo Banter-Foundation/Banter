@@ -22,6 +22,15 @@ mod kmsgrab;
 #[cfg(target_os = "linux")]
 mod screencast;
 
+/// Experimental UI / `experimental.json` → prefer Linux kmsgrab (auto + fallback).
+/// No-op on Windows/macOS. Env `BANTER_KMSGRAB` / `BANTER_SCREEN_CAPTURE` still override.
+pub fn set_kmsgrab_ui_preferred(enabled: bool) {
+    #[cfg(target_os = "linux")]
+    kmsgrab::set_ui_preferred(enabled);
+    #[cfg(not(target_os = "linux"))]
+    let _ = enabled;
+}
+
 pub use encode::{
     hardware_probe, layer_target_bps, list_available_encoders, list_available_encoders_preferring,
     openh264_qp_bounds, AvailableEncoder, EncoderPick,

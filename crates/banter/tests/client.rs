@@ -190,6 +190,7 @@ fn settings_menu_lists_account_then_voice() {
             SettingsSection::Appearance,
             SettingsSection::Mods,
             SettingsSection::Developer,
+            SettingsSection::Experimental,
         ]
     );
 }

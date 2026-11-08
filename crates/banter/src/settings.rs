@@ -156,7 +156,7 @@ impl SettingsState {
         self.needs_focus = true;
     }
 
-    /// Open settings on a specific sidebar page (My Account, Voice & Video, Developer).
+    /// Open settings on a specific sidebar page (My Account, Voice & Video, Developer, Experimental, …).
     pub fn open_section(&mut self, section: SettingsSection) {
         self.open();
         self.select(section);
