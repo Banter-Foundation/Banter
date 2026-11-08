@@ -31,6 +31,8 @@ tungstenite = "0.26"
 ureq = { version = "2.12", features = ["json"] }
 webrtc = "0.21"
 xcap = "0.9"
+# SIMD BT.601 RGBA/BGRA→I420 for screen publish (capture convert was the slow path).
+yuv = { version = "0.8", default-features = true, features = ["fast_mode"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

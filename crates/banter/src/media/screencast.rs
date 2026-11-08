@@ -33,7 +33,7 @@ use pipewire::{
 use zbus::blocking::Proxy;
 use zbus::zvariant::{DeserializeDict, OwnedObjectPath, OwnedValue, Type, Value};
 
-use super::encode::even_fit;
+use super::encode::{self, even_fit, PackedOrder};
 
 struct Latest {
     width: u32,
@@ -41,13 +41,30 @@ struct Latest {
     rgba: Vec<u8>,
 }
 
-/// Unscaled copy of one PipeWire buffer. The screen thread scales it.
-struct RawFrame {
-    width: u32,
-    height: u32,
-    stride: i32,
-    format: VideoFormat,
-    bytes: Vec<u8>,
+/// Unscaled copy of one PipeWire buffer. The convert thread scales it.
+pub struct RawFrame {
+    pub width: u32,
+    pub height: u32,
+    pub stride: i32,
+    pub format: VideoFormat,
+    pub bytes: Vec<u8>,
+}
+
+/// Convert a pending Cast frame to encode-sized I420 (optional preview).
+pub fn encode_raw_frame(
+    raw: &RawFrame,
+    edge: u32,
+    want_preview: bool,
+) -> Option<(u32, u32, Vec<u8>, Option<(u32, u32, Vec<u8>)>)> {
+    sample_encode_frame(
+        &raw.bytes,
+        raw.width,
+        raw.height,
+        raw.stride,
+        raw.format,
+        edge,
+        want_preview,
+    )
 }
 
 struct StreamData {
@@ -119,32 +136,31 @@ impl CastStream {
     }
 
     /// Takes the newest raw frame and scales it to RGBA at `edge` on this thread.
-    #[allow(dead_code)] // kept for tests / preview-only callers; Go Live uses [`Self::take_encode`].
+    #[allow(dead_code)] // kept for tests / preview-only callers; Go Live uses the convert pipeline.
     pub fn take_picture(&self, edge: u32) -> Option<(u32, u32, Vec<u8>)> {
-        let raw = self.latest.lock().expect("screencast frame").take()?;
+        let raw = self.take_raw()?;
         let frame = sample_frame(
             &raw.bytes, raw.width, raw.height, raw.stride, raw.format, edge,
         )?;
         Some((frame.width, frame.height, frame.rgba))
     }
 
+    /// Move the newest unscaled PipeWire buffer off the portal slot (no pixel walk).
+    /// The screen convert thread turns this into I420 via [`encode_raw_frame`].
+    pub fn take_raw(&self) -> Option<RawFrame> {
+        self.latest.lock().expect("screencast frame").take()
+    }
+
     /// One-pass packed→I420 (optional small RGBA preview). Avoids RGBA intermediate
     /// then another `fit_rgba`+`rgba_to_i420` on the screen thread (~100 ms at Source).
+    #[allow(dead_code)]
     pub fn take_encode(
         &self,
         edge: u32,
         want_preview: bool,
     ) -> Option<(u32, u32, Vec<u8>, Option<(u32, u32, Vec<u8>)>)> {
-        let raw = self.latest.lock().expect("screencast frame").take()?;
-        sample_encode_frame(
-            &raw.bytes,
-            raw.width,
-            raw.height,
-            raw.stride,
-            raw.format,
-            edge,
-            want_preview,
-        )
+        let raw = self.take_raw()?;
+        encode_raw_frame(&raw, edge, want_preview)
     }
 
     pub fn take_fault(&self) -> Option<String> {
@@ -432,12 +448,15 @@ fn format_pod(edge: u32, fps: u32) -> Result<Vec<u8>, String> {
         ParamType::EnumFormat,
         pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
         pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
+        // Prefer planar I420 when the compositor offers it — skips CPU BT.601.
+        // Packed BGRA/RGBA remain the common fallback on KWin/Mutter.
         pod::property!(
             FormatProperties::VideoFormat,
             Choice,
             Enum,
             Id,
-            VideoFormat::BGRA,
+            VideoFormat::I420,
+            VideoFormat::I420,
             VideoFormat::BGRA,
             VideoFormat::BGRx,
             VideoFormat::RGBA,
@@ -581,7 +600,16 @@ fn sample_encode_frame(
             {
                 return None;
             }
-            let i420 = packed_scale_to_i420(src, width, height, stride, bpp, swap_rb, dw, dh)?;
+            let order = match (bpp, swap_rb) {
+                (4, true) => PackedOrder::Bgra,
+                (4, false) => PackedOrder::Rgba,
+                (3, true) => PackedOrder::Bgr,
+                (3, false) => PackedOrder::Rgb,
+                _ => return None,
+            };
+            let i420 = encode::scale_packed_to_i420(
+                src, width, height, stride, order, dw, dh,
+            )?;
             let preview = if want_preview && pw >= 2 && ph >= 2 {
                 let mut rgba = vec![0u8; (pw as usize) * (ph as usize) * 4];
                 for row in 0..ph {
@@ -601,66 +629,6 @@ fn sample_encode_frame(
             Some((dw, dh, i420, preview))
         }
     }
-}
-
-fn packed_scale_to_i420(
-    src: &[u8],
-    width: u32,
-    height: u32,
-    stride: usize,
-    bpp: usize,
-    swap_rb: bool,
-    dw: u32,
-    dh: u32,
-) -> Option<Vec<u8>> {
-    let sw = width as usize;
-    let sh = height as usize;
-    let dw = dw as usize;
-    let dh = dh as usize;
-    let y_len = dw * dh;
-    let uv_w = dw / 2;
-    let uv_len = uv_w * (dh / 2);
-    let mut out = vec![0u8; y_len + uv_len * 2];
-    let (y_plane, rest) = out.split_at_mut(y_len);
-    let (u_plane, v_plane) = rest.split_at_mut(uv_len);
-    let same = dw == sw && dh == sh;
-    for row in 0..dh {
-        let src_row = if same {
-            row
-        } else {
-            (row as u64 * sh as u64 / dh as u64) as usize
-        };
-        let row_bytes = src.get(src_row * stride..)?;
-        let y_row = row * dw;
-        let uv_row = (row / 2) * uv_w;
-        for col in 0..dw {
-            let src_col = if same {
-                col
-            } else {
-                (col as u64 * sw as u64 / dw as u64) as usize
-            };
-            let pixel = row_bytes.get(src_col * bpp..)?.get(..bpp)?;
-            let (r, g, b) = if bpp >= 3 {
-                if swap_rb {
-                    (pixel[2] as i32, pixel[1] as i32, pixel[0] as i32)
-                } else {
-                    (pixel[0] as i32, pixel[1] as i32, pixel[2] as i32)
-                }
-            } else {
-                return None;
-            };
-            y_plane[y_row + col] =
-                (((66 * r + 129 * g + 25 * b + 128) >> 8) + 16).clamp(0, 255) as u8;
-            if (row & 1) == 0 && (col & 1) == 0 {
-                let uv = uv_row + col / 2;
-                u_plane[uv] =
-                    (((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
-                v_plane[uv] =
-                    (((112 * r - 94 * g - 18 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
-            }
-        }
-    }
-    Some(out)
 }
 
 fn scale_i420_planes(src: &[u8], width: u32, height: u32, dw: u32, dh: u32) -> Option<Vec<u8>> {
