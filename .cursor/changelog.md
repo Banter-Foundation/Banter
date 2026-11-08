@@ -1,3 +1,7 @@
+## 2026-11-08 02:45:00 -05:00 [ubuntu] — OBS-style interactive encode presets
+
+Hardware ffmpeg paths take ultra-low-latency knobs inspired by OBS (NVENC `ull`, rc-lookahead/delay 0, no scenecut/multipass/AQ; QSV async_depth 1; AMF ultralowlatency; x264 scenecut 0). Windows MF sets CodecAPI low-latency + zero B-frames when supported. PipeWire ScreenCast prefers NV12 after I420 and converts semi-planar→I420 without a BGRA detour. Full GPU texture→NVENC remains a follow-up.
+
 ## 2026-11-08 02:30:00 -05:00 [ubuntu] — Faster camera + OBS Virtual Camera pick
 
 Camera grab no longer expands every pixel to RGBA before I420 — packed RGB goes through the SIMD convert, and the local tile scales RGB then expands only the small preview. Frame pacing subtracts convert time from the 33 ms budget so a slow frame does not stack another fixed sleep (OBS / MJPEG felt like ~10–15 FPS). Voice & Video restores the saved camera name (OBS Virtual Camera sticks), lists virtual devices first, keeps string-backed nokhwa indices, prefers YUYV over MJPEG for OBS/virtual names, and adds Refresh cameras.
