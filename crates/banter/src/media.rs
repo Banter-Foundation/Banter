@@ -4,6 +4,7 @@
 //! A stream change is captured on a side thread and cut in only after that frame is encoded.
 
 mod encode;
+mod ice_cache;
 #[cfg(windows)]
 mod loopback;
 #[cfg(target_os = "linux")]
@@ -14,6 +15,8 @@ mod macos;
 mod mf;
 mod qos;
 mod rtc;
+mod screen_lag;
+mod screen_pipeline;
 #[cfg(target_os = "linux")]
 mod screencast;
 
@@ -21,6 +24,7 @@ pub use encode::{
     hardware_probe, layer_target_bps, list_available_encoders, list_available_encoders_preferring,
     openh264_qp_bounds, AvailableEncoder, EncoderPick,
 };
+pub use ice_cache::{clear as clear_ice_config, store as store_ice_config};
 pub use rtc::{playback_cap_samples, EncodeSettings};
 
 /// Max PCM samples retained before Opus encode / capture drop (~200 ms @ 48 kHz).
@@ -176,6 +180,8 @@ pub struct Media {
     engine: Arc<Engine>,
     remote_pictures: Arc<Mutex<Vec<rtc::RemotePicture>>>,
     session: rtc::Rtc,
+    /// Latest-wins producer for the screen convert worker (wake on shutdown).
+    screen_convert: Arc<screen_pipeline::ScreenConvertTx>,
     threads: Vec<JoinHandle<()>>,
 }
 
@@ -274,36 +280,46 @@ impl Media {
                 )
             }
         });
-        let screen = thread::spawn({
-            let flags = Arc::clone(&flags);
-            let in_place = Arc::clone(&in_place);
-            let stop = Arc::clone(&stop);
-            let local_screen = Arc::clone(&local_screen);
-            let errors = Arc::clone(&errors);
-            let stream_edge = Arc::clone(&stream_edge);
-            let stream_interval = Arc::clone(&stream_interval);
-            let stream_target = Arc::clone(&stream_target);
-            let stream_epoch = Arc::clone(&stream_epoch);
-            let capture_failed = Arc::clone(&capture_failed);
-            let engine = Arc::clone(&engine);
-            let screen_picture = Arc::clone(&screen_picture);
-            move || {
-                screen_loop(
-                    flags,
-                    in_place,
-                    stop,
-                    local_screen,
-                    errors,
-                    stream_edge,
-                    stream_interval,
-                    stream_target,
-                    stream_epoch,
-                    capture_failed,
-                    engine,
-                    screen_picture,
-                )
-            }
-        });
+        let (screen_convert, convert_thread) = screen_pipeline::start_convert_thread(
+            Arc::clone(&stop),
+            Arc::clone(&local_screen),
+            Arc::clone(&engine),
+            Arc::clone(&screen_picture),
+        );
+        let screen_convert = Arc::new(screen_convert);
+        let screen = thread::Builder::new()
+            .name("banter-screen-capture".into())
+            .spawn({
+                let flags = Arc::clone(&flags);
+                let in_place = Arc::clone(&in_place);
+                let stop = Arc::clone(&stop);
+                let local_screen = Arc::clone(&local_screen);
+                let errors = Arc::clone(&errors);
+                let stream_edge = Arc::clone(&stream_edge);
+                let stream_interval = Arc::clone(&stream_interval);
+                let stream_target = Arc::clone(&stream_target);
+                let stream_epoch = Arc::clone(&stream_epoch);
+                let capture_failed = Arc::clone(&capture_failed);
+                let engine = Arc::clone(&engine);
+                let screen_convert = Arc::clone(&screen_convert);
+                move || {
+                    screen_loop(
+                        flags,
+                        in_place,
+                        stop,
+                        local_screen,
+                        errors,
+                        stream_edge,
+                        stream_interval,
+                        stream_target,
+                        stream_epoch,
+                        capture_failed,
+                        engine,
+                        screen_convert,
+                    )
+                }
+            })
+            .expect("spawn screen capture");
 
         let session = rtc::Rtc::start(
             signals,
@@ -334,7 +350,8 @@ impl Media {
             engine,
             remote_pictures,
             session,
-            threads: vec![devices, audio, camera, screen],
+            screen_convert,
+            threads: vec![devices, audio, camera, screen, convert_thread],
         }
     }
 
@@ -482,6 +499,7 @@ impl Media {
 impl Drop for Media {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        self.screen_convert.wake();
         for thread in self.threads.drain(..) {
             let _ = thread.join();
         }
@@ -1157,6 +1175,7 @@ fn camera_loop(
         let Some(device) = camera.as_mut() else {
             continue;
         };
+        let frame_started = Instant::now();
         match capture_camera(device) {
             Ok((preview_w, preview_h, preview_rgba, width, height, i420)) => {
                 if reported {
@@ -1184,7 +1203,13 @@ fn camera_loop(
             }
             Err(_) => {}
         }
-        thread::sleep(Duration::from_millis(33));
+        // Pace ~30 FPS from the start of the grab, not after convert — a slow frame
+        // must not stack another fixed 33 ms of sleep on top (that is what made OBS /
+        // MJPEG cameras feel like ~10–15 FPS).
+        const FRAME_BUDGET: Duration = Duration::from_millis(33);
+        if let Some(rest) = FRAME_BUDGET.checked_sub(frame_started.elapsed()) {
+            thread::sleep(rest);
+        }
     }
 }
 
@@ -1195,27 +1220,74 @@ fn picture_needs_key(keyed: &mut Option<(u32, u32)>, width: u32, height: u32) ->
     key
 }
 
+/// High bit marks a nokhwa `CameraIndex::String` device (OBS / some AVFoundation ids).
+const STRING_CAMERA_FLAG: u32 = 0x8000_0000;
+
+fn string_camera_id(key: &str) -> u32 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    key.hash(&mut hasher);
+    STRING_CAMERA_FLAG | (hasher.finish() as u32 & !STRING_CAMERA_FLAG)
+}
+
+fn string_camera_map() -> &'static Mutex<HashMap<u32, String>> {
+    static MAP: std::sync::OnceLock<Mutex<HashMap<u32, String>>> = std::sync::OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remember_string_camera(id: u32, key: String) {
+    string_camera_map()
+        .lock()
+        .expect("string cameras")
+        .insert(id, key);
+}
+
+fn string_camera_key(id: u32) -> Option<String> {
+    string_camera_map()
+        .lock()
+        .expect("string cameras")
+        .get(&id)
+        .cloned()
+}
+
 /// Real camera names from the operating system. An empty list means none are available.
+///
+/// Includes OBS Virtual Camera / other virtual devices when the OS exposes them. Virtual
+/// names are sorted to the top so they are easy to pick. String-backed nokhwa indices
+/// (some macOS / driver paths) are kept via a stable high-bit id.
 pub(crate) fn camera_names() -> Vec<(u32, String)> {
     use nokhwa::utils::{ApiBackend, CameraIndex};
     nokhwa::nokhwa_initialize(|_| {});
     let Ok(list) = nokhwa::query(ApiBackend::Auto) else {
         return Vec::new();
     };
-    list.into_iter()
+    let mut out: Vec<(u32, String)> = list
+        .into_iter()
         .filter_map(|info| {
-            let &CameraIndex::Index(index) = info.index() else {
-                return None;
-            };
             let human = info.human_name();
+            let (index, fallback) = match info.index() {
+                CameraIndex::Index(index) => (*index, format!("Camera {index}")),
+                CameraIndex::String(key) => {
+                    let id = string_camera_id(key);
+                    remember_string_camera(id, key.clone());
+                    (id, key.clone())
+                }
+            };
             let name = if human.trim().is_empty() {
-                format!("Camera {index}")
+                fallback
             } else {
                 human
             };
             Some((index, name))
         })
-        .collect()
+        .collect();
+    out.sort_by(|(_, a), (_, b)| {
+        is_virtual_camera_name(b)
+            .cmp(&is_virtual_camera_name(a))
+            .then_with(|| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()))
+    });
+    out
 }
 
 /// Target capture size for a webcam. Banter asks for this (or the nearest available mode) instead of
@@ -1237,9 +1309,23 @@ pub struct CameraModeChoice {
     pub mjpeg: bool,
 }
 
+/// True for OBS Virtual Camera / v4l2loopback-style devices. Prefer raw YUYV over MJPEG there.
+pub fn is_virtual_camera_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("obs")
+        || lower.contains("virtual")
+        || lower.contains("v4l2loopback")
+        || lower.contains("unity capture")
+        || lower.contains("iriun")
+}
+
 /// Picks ~720p capture. Modes at or above 720p beat anything smaller when both exist; then nearest
-/// resolution wins; at the same size, FPS near 30 then MJPEG.
-pub fn pick_preferred_camera_mode(modes: &[CameraModeChoice]) -> Option<CameraModeChoice> {
+/// resolution wins; at the same size, FPS near 30 then MJPEG (or raw when `prefer_mjpeg` is false —
+/// OBS Virtual Camera stays on YUYV/NV12 instead of a CPU JPEG decode).
+pub fn pick_preferred_camera_mode(
+    modes: &[CameraModeChoice],
+    prefer_mjpeg: bool,
+) -> Option<CameraModeChoice> {
     const TARGET_FPS: u32 = 30;
     let target_w = preferred_camera_width();
     let target_h = preferred_camera_height();
@@ -1249,15 +1335,33 @@ pub fn pick_preferred_camera_mode(modes: &[CameraModeChoice]) -> Option<CameraMo
         let dy = mode.height as i64 - target_h as i64;
         let distance = (dx * dx + dy * dy) as u64;
         let fps_delta = (mode.fps as i64 - TARGET_FPS as i64).unsigned_abs() as u64;
-        let mjpeg_rank = if mode.mjpeg { 0u64 } else { 1 };
+        let mjpeg_rank = if mode.mjpeg == prefer_mjpeg { 0u64 } else { 1 };
         (undersized, distance, fps_delta, mjpeg_rank)
     })
+}
+
+fn camera_index_for(id: u32) -> nokhwa::utils::CameraIndex {
+    use nokhwa::utils::CameraIndex;
+    if id & STRING_CAMERA_FLAG != 0 {
+        if let Some(key) = string_camera_key(id) {
+            return CameraIndex::String(key);
+        }
+    }
+    CameraIndex::Index(id)
+}
+
+fn camera_display_name(id: u32) -> String {
+    camera_names()
+        .into_iter()
+        .find(|(index, _)| *index == id)
+        .map(|(_, name)| name)
+        .unwrap_or_default()
 }
 
 fn open_camera(index: u32) -> Result<nokhwa::Camera, String> {
     use nokhwa::pixel_format::RgbFormat;
     use nokhwa::utils::{
-        CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution,
+        CameraFormat, FrameFormat, RequestedFormat, RequestedFormatType, Resolution,
     };
     static CAMERA_DENIED: AtomicBool = AtomicBool::new(false);
     nokhwa::nokhwa_initialize(|granted| {
@@ -1276,28 +1380,40 @@ fn open_camera(index: u32) -> Result<nokhwa::Camera, String> {
             return Err("camera permission was denied".into());
         }
     }
+    let camera_index = camera_index_for(index);
+    let prefer_mjpeg = !is_virtual_camera_name(&camera_display_name(index));
+    let first_format = if prefer_mjpeg {
+        FrameFormat::MJPEG
+    } else {
+        FrameFormat::YUYV
+    };
+    let second_format = if prefer_mjpeg {
+        FrameFormat::YUYV
+    } else {
+        FrameFormat::MJPEG
+    };
     // Open with a flexible request so we can list modes, then switch to ~720p (or nearest).
     let mut camera = nokhwa::Camera::new(
-        CameraIndex::Index(index),
+        camera_index.clone(),
         RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(CameraFormat::new(
             Resolution::new(preferred_camera_width(), preferred_camera_height()),
-            FrameFormat::MJPEG,
+            first_format,
             30,
         ))),
     )
     .or_else(|_| {
         nokhwa::Camera::new(
-            CameraIndex::Index(index),
+            camera_index.clone(),
             RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(CameraFormat::new(
                 Resolution::new(preferred_camera_width(), preferred_camera_height()),
-                FrameFormat::YUYV,
+                second_format,
                 30,
             ))),
         )
     })
     .or_else(|_| {
         nokhwa::Camera::new(
-            CameraIndex::Index(index),
+            camera_index,
             RequestedFormat::new::<RgbFormat>(RequestedFormatType::None),
         )
     })
@@ -1315,7 +1431,7 @@ fn open_camera(index: u32) -> Result<nokhwa::Camera, String> {
                 }
             })
             .collect();
-        if let Some(pick) = pick_preferred_camera_mode(&modes) {
+        if let Some(pick) = pick_preferred_camera_mode(&modes, prefer_mjpeg) {
             if let Some(exact) = formats.iter().copied().find(|format| {
                 let resolution = format.resolution();
                 resolution.width() == pick.width
@@ -1395,19 +1511,20 @@ pub fn current_camera_frame(
 fn capture_camera(
     camera: &mut nokhwa::Camera,
 ) -> Result<(u32, u32, Vec<u8>, u32, u32, Vec<u8>), String> {
+    let started = Instant::now();
     let frame = camera.frame().map_err(|err| err.to_string())?;
     let (width, height, rgb) = decode_camera_frame(&frame)?;
-    let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
-    for pixel in rgb.chunks_exact(3) {
-        rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
-    }
+    // Stay on packed RGB → I420 (SIMD). The old path expanded every pixel to RGBA
+    // then converted, which stacked lag on OBS Virtual Camera / MJPEG webcams.
     let (i420, out_w, out_h) = if width >= 2 && height >= 2 {
-        encode::fit_i420_rgba(&rgba, width, height, 1280)
+        encode::fit_i420_rgb(&rgb, width, height, 1280)
     } else {
         (Vec::new(), 0, 0)
     };
-    let started = Instant::now();
-    let (preview_w, preview_h, preview) = camera_preview_rgba(width, height, &rgba)?;
+    let (preview, preview_w, preview_h) = encode::fit_rgb_preview(&rgb, width, height, 640);
+    if preview_w < 2 || preview_h < 2 {
+        return Err("camera preview scale failed".into());
+    }
     crate::profiler::record_media("camera_capture", started.elapsed(), preview.len());
     Ok((preview_w, preview_h, preview, out_w, out_h, i420))
 }
@@ -1466,14 +1583,13 @@ fn screen_loop(
     stream_epoch: Arc<AtomicU64>,
     capture_failed: Arc<AtomicBool>,
     engine: Arc<Engine>,
-    pictures: Arc<rtc::PictureSlot>,
+    convert: Arc<screen_pipeline::ScreenConvertTx>,
 ) {
     let mut feed: Option<(StreamPick, Feed)> = None;
     let mut latest: Option<(u32, u32, Vec<u8>)> = None;
     let mut fresh = false;
     let mut next_encode = Instant::now();
     let mut failed: Option<StreamPick> = None;
-    let mut keyed: Option<(u32, u32)> = None;
     let mut seen_epoch = stream_epoch.load(Ordering::Relaxed);
     // After a feed is dropped, give the OS / portal a beat before reopening the same source.
     let mut settle_until: Option<Instant> = None;
@@ -1487,6 +1603,7 @@ fn screen_loop(
             // open failed for the same StreamPick while the UI still showed live.
             failed = None;
             seen_epoch = epoch;
+            convert.reset();
         }
         let state = unpack(flags.load(Ordering::Relaxed));
         let enabled = in_place.load(Ordering::Relaxed) && should_send_screen(&state);
@@ -1503,7 +1620,7 @@ fn screen_loop(
             latest = None;
             fresh = false;
             failed = None;
-            keyed = None;
+            convert.reset();
             *local.lock().expect("screen") = None;
             #[cfg(target_os = "linux")]
             {
@@ -1526,6 +1643,7 @@ fn screen_loop(
             feed = None;
             latest = None;
             fresh = false;
+            convert.reset();
             #[cfg(target_os = "linux")]
             {
                 cast_since = None;
@@ -1547,7 +1665,7 @@ fn screen_loop(
                     }
                     feed = Some((pick, opened));
                     next_encode = Instant::now();
-                    keyed = None;
+                    convert.reset();
                 }
                 Ok(None) => {
                     thread::sleep(Duration::from_millis(20));
@@ -1582,10 +1700,11 @@ fn screen_loop(
                     failed = Some(pick);
                     feed = None;
                     cast_since = None;
+                    convert.reset();
                     continue;
                 }
                 // Leave the raw frame in the portal slot until publish time.
-                // Scaling here would walk pixels the share is about to drop.
+                // Scaling on the convert thread — never on the PipeWire callback.
                 if cast.has_frame() {
                     cast_since = None;
                 } else if latest.is_none()
@@ -1596,6 +1715,7 @@ fn screen_loop(
                     failed = Some(pick);
                     feed = None;
                     cast_since = None;
+                    convert.reset();
                     continue;
                 }
             }
@@ -1606,41 +1726,35 @@ fn screen_loop(
             continue;
         }
         let show_cursor = engine.show_cursor.load(Ordering::Relaxed);
+        let want_preview = engine.show_preview.load(Ordering::Relaxed);
         let Some((_, current)) = feed.as_ref() else {
             continue;
         };
         match current {
             Feed::Still { grabber } => {
                 next_encode = Instant::now() + Duration::from_millis(interval);
+                let grabbed_at = Instant::now();
                 match capture_rgba(grabber, show_cursor) {
-                    Ok((width, height, rgba)) => publish_screen(
-                        &pictures, &local, &engine, &mut keyed, &rgba, width, height, edge,
+                    Ok((width, height, rgba)) => convert.push_rgba(
+                        width,
+                        height,
+                        rgba,
+                        edge,
+                        want_preview,
+                        grabbed_at,
                     ),
                     Err(err) => remember_screen_error(&errors, &err),
                 }
             }
             #[cfg(target_os = "linux")]
             Feed::Cast(cast) => {
-                let want_preview = engine.show_preview.load(Ordering::Relaxed);
-                let capture_started = Instant::now();
-                let Some((width, height, i420, preview)) =
-                    cast.take_encode(edge, want_preview)
-                else {
+                let grabbed_at = Instant::now();
+                let Some(raw) = cast.take_raw() else {
                     thread::sleep(Duration::from_millis(2));
                     continue;
                 };
                 next_encode = Instant::now() + Duration::from_millis(interval);
-                publish_screen_i420(
-                    &pictures,
-                    &local,
-                    &engine,
-                    &mut keyed,
-                    i420,
-                    width,
-                    height,
-                    preview,
-                    capture_started,
-                );
+                convert.push_cast(raw, edge, want_preview, grabbed_at);
             }
             Feed::Record { .. } => {
                 if !fresh {
@@ -1649,11 +1763,18 @@ fn screen_loop(
                 }
                 fresh = false;
                 next_encode = Instant::now() + Duration::from_millis(interval);
-                let Some((width, height, rgba)) = latest.as_ref() else {
+                let Some((width, height, rgba)) = latest.take() else {
                     continue;
                 };
-                publish_screen(
-                    &pictures, &local, &engine, &mut keyed, rgba, *width, *height, edge,
+                // Keep a copy only if DXGI delivers another frame before convert finishes;
+                // latest-wins convert slot already drops stale jobs.
+                convert.push_rgba(
+                    width,
+                    height,
+                    rgba,
+                    edge,
+                    want_preview,
+                    Instant::now(),
                 );
             }
         }
@@ -1747,88 +1868,6 @@ fn start_recorder(
             }
         }
     }
-}
-
-/// Scale once to the stream cap, hand that frame to the encoder, and keep a small RGBA preview.
-/// The first frame at a given size is a keyframe. Later frames stay deltas so the encoder is not rebuilt.
-fn publish_screen(
-    pictures: &rtc::PictureSlot,
-    local: &Mutex<Option<(u32, u32, Vec<u8>)>>,
-    engine: &Engine,
-    keyed: &mut Option<(u32, u32)>,
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-    edge: u32,
-) {
-    let started = Instant::now();
-    let (out_w, out_h) = encode::even_fit(width, height, edge);
-    if out_w < 2 || out_h < 2 {
-        return;
-    }
-    // One pass: NN scale + YUV. Old path allocated a full RGBA then converted (~100 ms at Source).
-    let i420 = encode::scale_rgba_to_i420(rgba, width, height, out_w, out_h);
-    if i420.is_empty() {
-        return;
-    }
-    let key = picture_needs_key(keyed, out_w, out_h);
-    if engine.show_preview.load(Ordering::Relaxed) {
-        // Preview is UI-only — cap at 1280 from the *source* so we never allocate
-        // a second full encode-sized RGBA just to shrink it again.
-        let (small, preview_w, preview_h) = encode::fit_rgba(rgba, width, height, 1280.min(edge.max(2)));
-        *local.lock().expect("screen") = if preview_w >= 2 && preview_h >= 2 {
-            Some((preview_w, preview_h, small))
-        } else {
-            None
-        };
-    } else {
-        *local.lock().expect("screen") = None;
-    }
-    pictures.store(rtc::RawPicture {
-        width: out_w,
-        height: out_h,
-        i420: std::sync::Arc::<[u8]>::from(i420),
-        key,
-    });
-    crate::profiler::record_media(
-        "screen_capture",
-        started.elapsed(),
-        (out_w * out_h) as usize,
-    );
-}
-
-/// Publish a frame that is already I420 at the encode size (Wayland Cast one-pass).
-fn publish_screen_i420(
-    pictures: &rtc::PictureSlot,
-    local: &Mutex<Option<(u32, u32, Vec<u8>)>>,
-    engine: &Engine,
-    keyed: &mut Option<(u32, u32)>,
-    i420: Vec<u8>,
-    width: u32,
-    height: u32,
-    preview: Option<(u32, u32, Vec<u8>)>,
-    capture_started: Instant,
-) {
-    if width < 2 || height < 2 || i420.is_empty() {
-        return;
-    }
-    let key = picture_needs_key(keyed, width, height);
-    if engine.show_preview.load(Ordering::Relaxed) {
-        *local.lock().expect("screen") = preview;
-    } else {
-        *local.lock().expect("screen") = None;
-    }
-    pictures.store(rtc::RawPicture {
-        width,
-        height,
-        i420: std::sync::Arc::<[u8]>::from(i420),
-        key,
-    });
-    crate::profiler::record_media(
-        "screen_capture",
-        capture_started.elapsed(),
-        (width * height) as usize,
-    );
 }
 
 #[cfg(test)]

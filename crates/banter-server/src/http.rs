@@ -125,6 +125,7 @@ fn router(state: HttpState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/version", get(version))
+        .route("/v1/ice", get(ice))
         .route("/v1/debug", get(server_debug))
         .route("/v1/register", post(register))
         .route("/v1/login", post(login))
@@ -329,6 +330,12 @@ async fn health() -> Json<serde_json::Value> {
 
 async fn version() -> Json<serde_json::Value> {
     Json(crate::health_payload())
+}
+
+/// Authenticated ICE snapshot so desktops off-LAN can use the host’s TURN/STUN
+/// without setting `BANTER_TURN*` on every client.
+async fn ice(Auth(_account): Auth) -> Json<crate::IceConfig> {
+    Json(crate::ice_config())
 }
 
 async fn server_debug(State(state): State<HttpState>, Auth(_account): Auth) -> Result<Json<ServerDebug>, BanterError> {

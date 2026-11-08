@@ -1,3 +1,19 @@
+## 2026-11-08 02:45:00 -05:00 [ubuntu] — OBS-style interactive encode presets
+
+Hardware ffmpeg paths take ultra-low-latency knobs inspired by OBS (NVENC `ull`, rc-lookahead/delay 0, no scenecut/multipass/AQ; QSV async_depth 1; AMF ultralowlatency; x264 scenecut 0). Windows MF sets CodecAPI low-latency + zero B-frames when supported. PipeWire ScreenCast prefers NV12 after I420 and converts semi-planar→I420 without a BGRA detour. Full GPU texture→NVENC remains a follow-up.
+
+## 2026-11-08 02:30:00 -05:00 [ubuntu] — Faster camera + OBS Virtual Camera pick
+
+Camera grab no longer expands every pixel to RGBA before I420 — packed RGB goes through the SIMD convert, and the local tile scales RGB then expands only the small preview. Frame pacing subtracts convert time from the 33 ms budget so a slow frame does not stack another fixed sleep (OBS / MJPEG felt like ~10–15 FPS). Voice & Video restores the saved camera name (OBS Virtual Camera sticks), lists virtual devices first, keeps string-backed nokhwa indices, prefers YUYV over MJPEG for OBS/virtual names, and adds Refresh cameras.
+
+## 2026-11-08 01:34:00 -05:00 [ubuntu] — Version-1-test-13.3 pre-release
+
+Shipped pre-release Version-1-test-13.3 from main after window chrome move/resize (#101 / BA-111), off-LAN ICE + stream A/V lag sync (#102), pipelined screen capture (#100 / #97), Appearance font size (#99), Dongle/Shantell fonts (#98), encoder picker/scan (#95 / #89), Emote Library (#94), slash commands (#91), autosuggest (#90), Server Settings (#93), custom title bar (#92 / #96), VC latency (#85), and related media fixes. Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
+## 2026-11-08 06:08:36 +00:00 [ubuntu] — Fix window chrome move/resize (BA-111)
+
+BA-105 undecorated GLFW windows could not be resized (GLFW ignores `RESIZABLE` without decorations) and often opened stuck at (0,0). Center primary placement; keep Linux `Decorated` + `Resizable` system chrome; on Windows keep client traffic lights and add 6 px client edge-resize; stop ImGui shell/settings/login/stream hosts from covering the caption hit strip. Unblocks CI: `scale_rgba_to_i420_1080p_stays_interactive` keeps size check on Actions; wall-clock budget is local-only (Actions saw 46–116 ms).
+
 ## 2026-11-07 02:02:25 -06:00 [ubuntu] — Dongle UI + Shantell Sans chat fonts
 
 Vendored OFL faces: Dongle (UI chrome — ImGui default + bold/semibold) and Shantell Sans (chat / BFMD body / bold / italic / bold-italic). Embedded via `include_bytes` in `platform::install_ui_fonts`; system Segoe/Liberation/Noto/DejaVu stay as fallbacks. Assets under `crates/banter/assets/fonts/{dongle,shantell-sans}/`.

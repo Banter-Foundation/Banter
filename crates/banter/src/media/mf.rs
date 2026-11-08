@@ -12,7 +12,7 @@
 
 use std::ptr;
 
-use windows::core::{Interface, VARIANT};
+use windows::core::{Interface, GUID, VARIANT};
 use windows::Win32::Media::MediaFoundation::{
     eAVEncH264VProfile_ConstrainedBase, ICodecAPI, IMFActivate, IMFMediaBuffer, IMFSample,
     IMFTransform, MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video,
@@ -25,6 +25,13 @@ use windows::Win32::Media::MediaFoundation::{
     MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_SUBTYPE, MF_VERSION,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
+
+/// `CODECAPI_AVLowLatencyMode` — prefer low delay over throughput (OBS-style interactive).
+const CODECAPI_AV_LOW_LATENCY_MODE: GUID =
+    GUID::from_u128(0x9c27891a_ed7a_40e1_88e8_d227f6639a54);
+/// `CODECAPI_AVEncMPVDefaultBPictureCount` — force zero B-frames when the MFT honors it.
+const CODECAPI_AV_ENC_MPV_DEFAULT_B_PICTURE_COUNT: GUID =
+    GUID::from_u128(0xb098d157_9db1_4d2e_b8a1_d3a0f6e4b1b7);
 
 use super::encode::{access_unit_is_key, Backend, EncodedAu, VideoEncoder};
 
@@ -141,6 +148,9 @@ unsafe fn open_inner(width: u32, height: u32, fps: f32, bps: u32) -> Result<MfEn
     transform
         .SetInputType(0, &input, 0)
         .map_err(|err| err.to_string())?;
+    // Best-effort interactive CodecAPI knobs (same intent as ffmpeg `-tune ull` /
+    // `-bf 0`). Unsupported properties are ignored so older MFTs still open.
+    apply_interactive_codecapi(&transform);
     transform
         .ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)
         .map_err(|err| err.to_string())?;
@@ -159,6 +169,17 @@ unsafe fn open_inner(width: u32, height: u32, fps: f32, bps: u32) -> Result<MfEn
         stamp: 0,
         provides: info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0,
     })
+}
+
+unsafe fn apply_interactive_codecapi(transform: &IMFTransform) {
+    let Ok(codec) = transform.cast::<ICodecAPI>() else {
+        return;
+    };
+    let _ = codec.SetValue(&CODECAPI_AV_LOW_LATENCY_MODE, &VARIANT::from(true));
+    let _ = codec.SetValue(
+        &CODECAPI_AV_ENC_MPV_DEFAULT_B_PICTURE_COUNT,
+        &VARIANT::from(0u32),
+    );
 }
 
 unsafe fn first_activate() -> Result<IMFActivate, String> {

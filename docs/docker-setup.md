@@ -19,7 +19,7 @@ Where Arch server + release auto-deploy stand right now:
 | GHCR package `banter` | **Not created yet** — every release `build-push` has failed before a successful push |
 | Server first boot / hot-swap via Actions | **Blocked** on a successful image push |
 | Latest Actions release tried | `Version-1-test-6` — login OK, push failed: *token does not match expected scopes* |
-| Manual Podman publish | Last image that landed is `ghcr.io/snowedinowl/banter:version-1-test-8` (+ `:latest` from that publish). `version-1-test-9` through `version-1-test-13.2` did not push. Desktop/server binaries for the current pre-release are `Version-1-test-13.2`. |
+| Manual Podman publish | Last image that landed is `ghcr.io/snowedinowl/banter:version-1-test-8` (+ `:latest` from that publish). `version-1-test-9` through `version-1-test-13.3` did not push. Desktop/server binaries for the current pre-release are `Version-1-test-13.3`. |
 | Compose app image | Default is `banter-server:local`, built from this checkout. A published tag is used only when `BANTER_IMAGE` is set and the pull succeeds. |
 
 **Next step (human):** replace `GHCR_WRITE_TOKEN` (and ideally `GHCR_READ_TOKEN`) with a **classic** PAT that has both **`write:packages`** and **`read:packages`** so Actions can push like the manual Podman path. Fine-grained / read-only tokens produce the scopes error. Then re-run a failed workflow. Deploy job has not been reached yet via Actions; SSH secrets are untested until Actions push succeeds.

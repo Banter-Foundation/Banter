@@ -30,7 +30,7 @@ Top: **title-bar** (`caption_height()` — 28 px client-drawn Mac-style caption 
 
 Also named: **header** (48, over stage + members), **voice-panel** and **user-panel** (bottom of sidebar), **composer** (bottom of stage in text channels).
 
-`layout::shell_columns(width, show_members)` reads widths from `theme::{RAIL_W,SIDEBAR_W,MEMBERS_W}`. Prefer `shell_columns` in new code; `discord_shell_columns` remains as an alias. Column rects start at `caption_height()` so the shell sits under the client caption when one is drawn.
+`layout::shell_columns(width, show_members)` reads widths from `theme::{RAIL_W,SIDEBAR_W,MEMBERS_W}`. Prefer `shell_columns` in new code; `discord_shell_columns` remains as an alias. Column rects start at `caption_height()` so the shell sits under the client caption when one is drawn. ImGui hosts for shell / settings / login / stream must also start at `caption_height()` (BA-111) so caption drag and traffic lights keep their hits; undecorated Windows chrome adds a 6 px client resize border via `titlebar::resize_edge_at`.
 
 Visual metrics detail: `.cursor/design.md`.
 

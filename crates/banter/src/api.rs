@@ -220,6 +220,11 @@ impl Client {
         self.get_json("/v1/health")
     }
 
+    /// Authenticated ICE/TURN snapshot from the server (`GET /v1/ice`).
+    pub fn ice_config(&self) -> Result<banter_server::IceConfig, ApiError> {
+        self.get_json("/v1/ice")
+    }
+
     pub fn server_debug(&self) -> Result<ServerDebug, ApiError> {
         self.get_json("/v1/debug")
     }

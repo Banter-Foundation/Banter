@@ -33,7 +33,7 @@ use pipewire::{
 use zbus::blocking::Proxy;
 use zbus::zvariant::{DeserializeDict, OwnedObjectPath, OwnedValue, Type, Value};
 
-use super::encode::even_fit;
+use super::encode::{self, even_fit, PackedOrder};
 
 struct Latest {
     width: u32,
@@ -41,13 +41,30 @@ struct Latest {
     rgba: Vec<u8>,
 }
 
-/// Unscaled copy of one PipeWire buffer. The screen thread scales it.
-struct RawFrame {
-    width: u32,
-    height: u32,
-    stride: i32,
-    format: VideoFormat,
-    bytes: Vec<u8>,
+/// Unscaled copy of one PipeWire buffer. The convert thread scales it.
+pub struct RawFrame {
+    pub width: u32,
+    pub height: u32,
+    pub stride: i32,
+    pub format: VideoFormat,
+    pub bytes: Vec<u8>,
+}
+
+/// Convert a pending Cast frame to encode-sized I420 (optional preview).
+pub fn encode_raw_frame(
+    raw: &RawFrame,
+    edge: u32,
+    want_preview: bool,
+) -> Option<(u32, u32, Vec<u8>, Option<(u32, u32, Vec<u8>)>)> {
+    sample_encode_frame(
+        &raw.bytes,
+        raw.width,
+        raw.height,
+        raw.stride,
+        raw.format,
+        edge,
+        want_preview,
+    )
 }
 
 struct StreamData {
@@ -119,32 +136,31 @@ impl CastStream {
     }
 
     /// Takes the newest raw frame and scales it to RGBA at `edge` on this thread.
-    #[allow(dead_code)] // kept for tests / preview-only callers; Go Live uses [`Self::take_encode`].
+    #[allow(dead_code)] // kept for tests / preview-only callers; Go Live uses the convert pipeline.
     pub fn take_picture(&self, edge: u32) -> Option<(u32, u32, Vec<u8>)> {
-        let raw = self.latest.lock().expect("screencast frame").take()?;
+        let raw = self.take_raw()?;
         let frame = sample_frame(
             &raw.bytes, raw.width, raw.height, raw.stride, raw.format, edge,
         )?;
         Some((frame.width, frame.height, frame.rgba))
     }
 
+    /// Move the newest unscaled PipeWire buffer off the portal slot (no pixel walk).
+    /// The screen convert thread turns this into I420 via [`encode_raw_frame`].
+    pub fn take_raw(&self) -> Option<RawFrame> {
+        self.latest.lock().expect("screencast frame").take()
+    }
+
     /// One-pass packed→I420 (optional small RGBA preview). Avoids RGBA intermediate
     /// then another `fit_rgba`+`rgba_to_i420` on the screen thread (~100 ms at Source).
+    #[allow(dead_code)]
     pub fn take_encode(
         &self,
         edge: u32,
         want_preview: bool,
     ) -> Option<(u32, u32, Vec<u8>, Option<(u32, u32, Vec<u8>)>)> {
-        let raw = self.latest.lock().expect("screencast frame").take()?;
-        sample_encode_frame(
-            &raw.bytes,
-            raw.width,
-            raw.height,
-            raw.stride,
-            raw.format,
-            edge,
-            want_preview,
-        )
+        let raw = self.take_raw()?;
+        encode_raw_frame(&raw, edge, want_preview)
     }
 
     pub fn take_fault(&self) -> Option<String> {
@@ -432,12 +448,17 @@ fn format_pod(edge: u32, fps: u32) -> Result<Vec<u8>, String> {
         ParamType::EnumFormat,
         pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
         pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
+        // Prefer planar I420 / NV12 when the compositor offers them — skips a full
+        // BT.601 packed→YUV walk (OBS PipeWire path also prefers DMA/planar).
+        // Packed BGRA/RGBA remain the common fallback on KWin/Mutter.
         pod::property!(
             FormatProperties::VideoFormat,
             Choice,
             Enum,
             Id,
-            VideoFormat::BGRA,
+            VideoFormat::I420,
+            VideoFormat::I420,
+            VideoFormat::NV12,
             VideoFormat::BGRA,
             VideoFormat::BGRx,
             VideoFormat::RGBA,
@@ -502,6 +523,7 @@ fn sample_frame(
             .saturating_mul(height as usize)
             .max(width as usize * bpp)
         && kind != Pixel::I420
+        && kind != Pixel::Nv12
     {
         if src.len() < width as usize * bpp * height as usize {
             return None;
@@ -514,6 +536,10 @@ fn sample_frame(
     let mut rgba = vec![0u8; (dw as usize) * (dh as usize) * 4];
     match kind {
         Pixel::I420 => sample_i420(src, width, height, dw, dh, &mut rgba)?,
+        Pixel::Nv12 => {
+            let i420 = scale_nv12_to_i420(src, width, height, stride, dw, dh)?;
+            sample_i420(&i420, dw, dh, dw, dh, &mut rgba)?;
+        }
         Pixel::Packed { swap_rb } => {
             if stride < width as usize * bpp {
                 return None;
@@ -572,6 +598,18 @@ fn sample_encode_frame(
             };
             Some((dw, dh, i420, preview))
         }
+        Pixel::Nv12 => {
+            let i420 = scale_nv12_to_i420(src, width, height, stride, dw, dh)?;
+            let preview = if want_preview && pw >= 2 && ph >= 2 {
+                // Preview from the converted I420 (small); avoids a second NV12 walk.
+                let mut rgba = vec![0u8; (pw as usize) * (ph as usize) * 4];
+                sample_i420(&i420, dw, dh, pw, ph, &mut rgba)?;
+                Some((pw, ph, rgba))
+            } else {
+                None
+            };
+            Some((dw, dh, i420, preview))
+        }
         Pixel::Packed { swap_rb } => {
             if stride < width as usize * bpp {
                 return None;
@@ -581,7 +619,16 @@ fn sample_encode_frame(
             {
                 return None;
             }
-            let i420 = packed_scale_to_i420(src, width, height, stride, bpp, swap_rb, dw, dh)?;
+            let order = match (bpp, swap_rb) {
+                (4, true) => PackedOrder::Bgra,
+                (4, false) => PackedOrder::Rgba,
+                (3, true) => PackedOrder::Bgr,
+                (3, false) => PackedOrder::Rgb,
+                _ => return None,
+            };
+            let i420 = encode::scale_packed_to_i420(
+                src, width, height, stride, order, dw, dh,
+            )?;
             let preview = if want_preview && pw >= 2 && ph >= 2 {
                 let mut rgba = vec![0u8; (pw as usize) * (ph as usize) * 4];
                 for row in 0..ph {
@@ -601,66 +648,6 @@ fn sample_encode_frame(
             Some((dw, dh, i420, preview))
         }
     }
-}
-
-fn packed_scale_to_i420(
-    src: &[u8],
-    width: u32,
-    height: u32,
-    stride: usize,
-    bpp: usize,
-    swap_rb: bool,
-    dw: u32,
-    dh: u32,
-) -> Option<Vec<u8>> {
-    let sw = width as usize;
-    let sh = height as usize;
-    let dw = dw as usize;
-    let dh = dh as usize;
-    let y_len = dw * dh;
-    let uv_w = dw / 2;
-    let uv_len = uv_w * (dh / 2);
-    let mut out = vec![0u8; y_len + uv_len * 2];
-    let (y_plane, rest) = out.split_at_mut(y_len);
-    let (u_plane, v_plane) = rest.split_at_mut(uv_len);
-    let same = dw == sw && dh == sh;
-    for row in 0..dh {
-        let src_row = if same {
-            row
-        } else {
-            (row as u64 * sh as u64 / dh as u64) as usize
-        };
-        let row_bytes = src.get(src_row * stride..)?;
-        let y_row = row * dw;
-        let uv_row = (row / 2) * uv_w;
-        for col in 0..dw {
-            let src_col = if same {
-                col
-            } else {
-                (col as u64 * sw as u64 / dw as u64) as usize
-            };
-            let pixel = row_bytes.get(src_col * bpp..)?.get(..bpp)?;
-            let (r, g, b) = if bpp >= 3 {
-                if swap_rb {
-                    (pixel[2] as i32, pixel[1] as i32, pixel[0] as i32)
-                } else {
-                    (pixel[0] as i32, pixel[1] as i32, pixel[2] as i32)
-                }
-            } else {
-                return None;
-            };
-            y_plane[y_row + col] =
-                (((66 * r + 129 * g + 25 * b + 128) >> 8) + 16).clamp(0, 255) as u8;
-            if (row & 1) == 0 && (col & 1) == 0 {
-                let uv = uv_row + col / 2;
-                u_plane[uv] =
-                    (((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
-                v_plane[uv] =
-                    (((112 * r - 94 * g - 18 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
-            }
-        }
-    }
-    Some(out)
 }
 
 fn scale_i420_planes(src: &[u8], width: u32, height: u32, dw: u32, dh: u32) -> Option<Vec<u8>> {
@@ -709,6 +696,7 @@ fn scale_i420_planes(src: &[u8], width: u32, height: u32, dw: u32, dh: u32) -> O
 enum Pixel {
     Packed { swap_rb: bool },
     I420,
+    Nv12,
 }
 
 fn pixel_kind(format: VideoFormat) -> Option<(usize, Pixel)> {
@@ -735,7 +723,61 @@ fn pixel_kind(format: VideoFormat) -> Option<(usize, Pixel)> {
     if format == VideoFormat::I420 {
         return Some((1, Pixel::I420));
     }
+    if format == VideoFormat::NV12 {
+        return Some((1, Pixel::Nv12));
+    }
     None
+}
+
+/// Semi-planar NV12 → planar I420 with optional NN scale (OBS-style prefer YUV).
+fn scale_nv12_to_i420(
+    src: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    dw: u32,
+    dh: u32,
+) -> Option<Vec<u8>> {
+    let sw = width as usize;
+    let sh = height as usize;
+    let dw = dw as usize;
+    let dh = dh as usize;
+    if sw < 2 || sh < 2 || dw < 2 || dh < 2 || (sw & 1) != 0 || (sh & 1) != 0 {
+        return None;
+    }
+    let y_stride = stride.max(sw);
+    let y_plane_size = y_stride.saturating_mul(sh);
+    let uv_stride = y_stride;
+    let uv_plane_size = uv_stride.saturating_mul(sh / 2);
+    if src.len() < y_plane_size + uv_plane_size {
+        return None;
+    }
+    let y = &src[..y_plane_size];
+    let uv = &src[y_plane_size..y_plane_size + uv_plane_size];
+    let out_y_len = dw * dh;
+    let out_uv_w = dw / 2;
+    let out_uv_len = out_uv_w * (dh / 2);
+    let mut out = vec![0u8; out_y_len + out_uv_len * 2];
+    for row in 0..dh {
+        let src_row = (row as u64 * sh as u64 / dh as u64) as usize;
+        let row_base = src_row * y_stride;
+        for col in 0..dw {
+            let src_col = (col as u64 * sw as u64 / dw as u64) as usize;
+            out[row * dw + col] = *y.get(row_base + src_col)?;
+        }
+    }
+    for row in 0..(dh / 2) {
+        let src_row = (row as u64 * (sh / 2) as u64 / (dh / 2) as u64) as usize;
+        let row_base = src_row * uv_stride;
+        for col in 0..out_uv_w {
+            let src_col = (col as u64 * (sw / 2) as u64 / out_uv_w as u64) as usize;
+            let at = row_base + src_col * 2;
+            let dst = out_y_len + row * out_uv_w + col;
+            out[dst] = *uv.get(at)?;
+            out[dst + out_uv_len] = *uv.get(at + 1)?;
+        }
+    }
+    Some(out)
 }
 
 fn write_pixel(dst: &mut [u8], src: &[u8], bpp: usize, swap_rb: bool) {
@@ -1003,6 +1045,21 @@ mod tests {
         assert_eq!(rgba.len(), 4 * 4 * 4);
         // BGRX → R from blue channel (180).
         assert_eq!(rgba[0], 180);
+    }
+
+    #[test]
+    fn nv12_encode_path_splits_to_planar_i420() {
+        // 4x4 NV12: Y plane then interleaved UV.
+        let mut src = vec![40u8; 4 * 4];
+        src.extend_from_slice(&[128, 140, 128, 140, 128, 140, 128, 140]);
+        let (w, h, i420, preview) =
+            sample_encode_frame(&src, 4, 4, 4, VideoFormat::NV12, 4, true).expect("nv12");
+        assert_eq!((w, h), (4, 4));
+        assert_eq!(i420.len(), 4 * 4 + 2 * (2 * 2));
+        assert_eq!(&i420[..16], &[40u8; 16]);
+        assert_eq!(&i420[16..20], &[128, 128, 128, 128]);
+        assert_eq!(&i420[20..24], &[140, 140, 140, 140]);
+        assert!(preview.is_some());
     }
 }
 
