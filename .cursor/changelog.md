@@ -1,3 +1,7 @@
+## 2026-11-08 01:34:00 -05:00 [ubuntu] — Version-1-test-13.3 pre-release
+
+Shipped pre-release Version-1-test-13.3 from main after window chrome move/resize (#101 / BA-111), off-LAN ICE + stream A/V lag sync (#102), pipelined screen capture (#100 / #97), Appearance font size (#99), Dongle/Shantell fonts (#98), encoder picker/scan (#95 / #89), Emote Library (#94), slash commands (#91), autosuggest (#90), Server Settings (#93), custom title bar (#92 / #96), VC latency (#85), and related media fixes. Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
 ## 2026-11-08 06:08:36 +00:00 [ubuntu] — Fix window chrome move/resize (BA-111)
 
 BA-105 undecorated GLFW windows could not be resized (GLFW ignores `RESIZABLE` without decorations) and often opened stuck at (0,0). Center primary placement; keep Linux `Decorated` + `Resizable` system chrome; on Windows keep client traffic lights and add 6 px client edge-resize; stop ImGui shell/settings/login/stream hosts from covering the caption hit strip. Unblocks CI: `scale_rgba_to_i420_1080p_stays_interactive` keeps size check on Actions; wall-clock budget is local-only (Actions saw 46–116 ms).
