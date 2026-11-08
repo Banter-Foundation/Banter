@@ -1080,7 +1080,10 @@ pub fn scale_i420<'a>(
     Some((Cow::Owned(y), dw, dh))
 }
 
-pub fn is_constrained_baseline(annexb: &[u8]) -> bool {
+/// Test helper: true when an Annex-B AU carries a Constrained Baseline SPS.
+/// Production paths use [`sps_rejects_constrained_baseline`] / [`hardware_au_unusable`].
+#[cfg(test)]
+fn is_constrained_baseline(annexb: &[u8]) -> bool {
     nals(annexb)
         .any(|nal| nal.len() >= 4 && nal[0] & 0x1f == 7 && nal[1] == 66 && nal[2] & 0x40 != 0)
 }

@@ -274,7 +274,7 @@ fn place_window_centered(glfw: &mut glfw::Glfw, window: &mut glfw::Window, width
         })
     });
     if let Some((x, y)) = placement {
-        window.set_pos(x, y);
+        set_window_pos(glfw, window, x, y);
     }
 }
 
@@ -353,7 +353,7 @@ fn apply_title_bar_chrome(
                     480,
                 );
                 if (nx, ny) != (wx, wy) {
-                    window.set_pos(nx, ny);
+                    set_window_pos(glfw, window, nx, ny);
                 }
                 if (nw, nh) != (fw, fh) {
                     window.set_size(nw, nh);
@@ -374,7 +374,7 @@ fn apply_title_bar_chrome(
                 grab_x,
                 grab_y,
             );
-            window.set_pos(nx.round() as i32, ny.round() as i32);
+            set_window_pos(glfw, window, nx.round() as i32, ny.round() as i32);
         }
     }
     if chrome.drag_grab.is_some() && !pressed {
@@ -668,7 +668,7 @@ fn create_settings_window(
         .ok_or_else(|| "GLFW could not open the Banter Settings window.".to_string())?;
     window.set_all_polling(true);
     if let Some((x, y)) = window_origin(glfw, main) {
-        window.set_pos(x + 48, y + 48);
+        set_window_pos(glfw, &mut window, x + 48, y + 48);
     } else {
         place_window_centered(glfw, &mut window, width, height);
     }
@@ -798,7 +798,7 @@ fn create_stream_popout_window(
         .ok_or_else(|| "GLFW could not open the Banter Stream window.".to_string())?;
     window.set_all_polling(true);
     if let Some((x, y)) = window_origin(glfw, main) {
-        window.set_pos(x + 72, y + 72);
+        set_window_pos(glfw, &mut window, x + 72, y + 72);
     } else {
         place_window_centered(glfw, &mut window, width, height);
     }
@@ -1175,14 +1175,22 @@ fn window_center_for_refresh(glfw: &mut glfw::Glfw, window: &glfw::Window) -> (i
     (x + width / 2, y + height / 2)
 }
 
-/// Wayland compositors place windows themselves. `glfwGetWindowPos` reports that as an error,
-/// and the default GLFW callback turns the error into a panic.
+/// Wayland compositors place windows themselves. `glfwGetWindowPos` / `glfwSetWindowPos`
+/// report that as an error, and Banter's GLFW callback would otherwise turn it into a panic.
 fn window_origin(glfw: &glfw::Glfw, window: &glfw::Window) -> Option<(i32, i32)> {
     if glfw.get_platform() == glfw::Platform::Wayland {
         None
     } else {
         Some(window.get_pos())
     }
+}
+
+/// Skip programmatic placement on Wayland — the compositor owns window position.
+fn set_window_pos(glfw: &glfw::Glfw, window: &mut glfw::Window, x: i32, y: i32) {
+    if glfw.get_platform() == glfw::Platform::Wayland {
+        return;
+    }
+    window.set_pos(x, y);
 }
 
 fn glfw_error(error: glfw::Error, description: String) {
@@ -1193,7 +1201,9 @@ fn glfw_error(error: glfw::Error, description: String) {
 }
 
 fn wayland_position_unavailable(description: &str) -> bool {
+    // glfwGetWindowPos / glfwSetWindowPos use slightly different messages.
     description.contains("does not provide the window position")
+        || description.contains("does not support setting the window position")
 }
 
 /// True when something already accepts TCP on the loopback Banter address.
@@ -1541,6 +1551,9 @@ mod tests {
     fn wayland_window_position_is_not_fatal() {
         assert!(wayland_position_unavailable(
             "Wayland: The platform does not provide the window position"
+        ));
+        assert!(wayland_position_unavailable(
+            "Wayland: The platform does not support setting the window position"
         ));
         assert!(!wayland_position_unavailable(
             "GLFW: an OpenGL context could not be created"
