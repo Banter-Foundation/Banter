@@ -72,6 +72,8 @@ Interactive latency (voice/video call feel, not archive quality): speaker playou
 
 On Wayland the PipeWire callback only copies the newest desktop buffer. A dedicated **screen convert** thread turns that buffer (or Still/DXGI RGBA) into I420 with SIMD BT.601 — optional small RGBA preview — so capture can grab the next frame while convert finishes. Hand-off is latest-wins (no deep queue). The compositor is not blocked on a pixel walk. That publish convert was the ~100 ms “capture” cost when hardware encode was already 1–5 ms.
 
+**Linux opt-in kmsgrab:** set `BANTER_KMSGRAB=1` (auto fallback) or `=force` to capture a DRM CRTC through ffmpeg’s `kmsgrab` demuxer and feed planar I420 into the same convert/encode path. Unset or `=0` keeps PipeWire (Wayland) / xcap Still (X11). Needs a usable `/dev/dri/card*` (override with `BANTER_KMSGRAB_DEVICE`), ffmpeg built with kmsgrab, and often **root / `CAP_SYS_ADMIN` / DRM master**. Wayland compositors usually hold DRM master — expect silent fallback to the portal when Auto cannot start. Window share never uses kmsgrab. Windows DXGI/GDI and macOS paths are unchanged. `BANTER_SCREEN_CAPTURE=pipewire|xcap` also disables kmsgrab; `=kmsgrab` forces it.
+
 ## Bots
 
 A bot subscribes the same way a person does: join the voice channel, offer the four tracks, and send `SubscribeLayer` for the publisher and track it wants. There is no separate bot API.

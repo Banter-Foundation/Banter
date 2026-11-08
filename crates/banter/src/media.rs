@@ -18,6 +18,8 @@ mod rtc;
 mod screen_lag;
 mod screen_pipeline;
 #[cfg(target_os = "linux")]
+mod kmsgrab;
+#[cfg(target_os = "linux")]
 mod screencast;
 
 pub use encode::{
@@ -1561,6 +1563,9 @@ enum Feed {
     },
     #[cfg(target_os = "linux")]
     Cast(screencast::CastStream),
+    /// DRM kmsgrab → ffmpeg I420 (Linux monitors only; see `kmsgrab`).
+    #[cfg(target_os = "linux")]
+    Kms(kmsgrab::KmsStream),
 }
 
 impl Drop for Feed {
@@ -1719,6 +1724,31 @@ fn screen_loop(
                     continue;
                 }
             }
+            #[cfg(target_os = "linux")]
+            Some((_, Feed::Kms(kms))) => {
+                if let Some(err) = kms.take_fault() {
+                    remember_screen_error(&errors, &err);
+                    capture_failed.store(true, Ordering::Relaxed);
+                    failed = Some(pick);
+                    feed = None;
+                    cast_since = None;
+                    convert.reset();
+                    continue;
+                }
+                if kms.has_frame() {
+                    cast_since = None;
+                } else if latest.is_none()
+                    && cast_since.is_some_and(|started| started.elapsed() > Duration::from_secs(3))
+                {
+                    remember_screen_error(&errors, "kmsgrab sent no picture");
+                    capture_failed.store(true, Ordering::Relaxed);
+                    failed = Some(pick);
+                    feed = None;
+                    cast_since = None;
+                    convert.reset();
+                    continue;
+                }
+            }
             _ => {}
         }
         if Instant::now() < next_encode {
@@ -1756,6 +1786,17 @@ fn screen_loop(
                 next_encode = Instant::now() + Duration::from_millis(interval);
                 convert.push_cast(raw, edge, want_preview, grabbed_at);
             }
+            #[cfg(target_os = "linux")]
+            Feed::Kms(kms) => {
+                let grabbed_at = Instant::now();
+                let Some(raw) = kms.take_raw() else {
+                    thread::sleep(Duration::from_millis(2));
+                    continue;
+                };
+                next_encode = Instant::now() + Duration::from_millis(interval);
+                // I420 from ffmpeg — same convert path as PipeWire Cast.
+                convert.push_cast(raw, edge, want_preview, grabbed_at);
+            }
             Feed::Record { .. } => {
                 if !fresh {
                     thread::sleep(Duration::from_millis(2));
@@ -1790,9 +1831,24 @@ fn open_feed(
 ) -> Result<Option<Feed>, String> {
     #[cfg(target_os = "macos")]
     macos::ensure_screen_recording()?;
+    let fps = (1000 / interval_ms.max(1)).clamp(1, 60) as u32;
+    // Linux monitors only: optional DRM kmsgrab → ffmpeg I420 before PipeWire/xcap.
+    // Window picks stay on Still — kmsgrab is a CRTC/plane, not a single window.
+    #[cfg(target_os = "linux")]
+    if matches!(
+        pick,
+        StreamPick::Portal | StreamPick::Source(CaptureKind::Screen, _)
+    ) {
+        if let Some(kms) = kmsgrab::try_open(fps)? {
+            let current = stream_target.lock().expect("stream target").clone();
+            if stop.load(Ordering::Relaxed) || current != Some(pick) {
+                return Ok(None);
+            }
+            return Ok(Some(Feed::Kms(kms)));
+        }
+    }
     #[cfg(target_os = "linux")]
     if native_screen_picker() {
-        let fps = (1000 / interval_ms.max(1)).clamp(1, 60) as u32;
         let cast = screencast::CastStream::open(edge, fps)?;
         let current = stream_target.lock().expect("stream target").clone();
         if stop.load(Ordering::Relaxed) || current != Some(pick) {
@@ -1802,7 +1858,7 @@ fn open_feed(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (edge, interval_ms);
+        let _ = (edge, interval_ms, fps);
     }
     match pick {
         StreamPick::Portal => {
