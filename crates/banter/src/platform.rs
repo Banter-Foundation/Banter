@@ -33,7 +33,10 @@ use crate::server_settings::{
     settings_os_window_default_size, settings_os_window_title, SettingsOsKind,
 };
 use crate::stream_watch::{stream_popout_default_size, STREAM_POPOUT_WINDOW_TITLE};
-use crate::titlebar::{dragged_window_pos, TitleBarAction, TitleBarChrome};
+use crate::titlebar::{
+    centered_window_pos, dragged_window_pos, glfw_decorated, glfw_resizable, resize_edge_at,
+    resized_window_frame, ResizeGrab, TitleBarAction, TitleBarChrome, RESIZE_BORDER_PX,
+};
 use crate::ui::App;
 
 pub(crate) fn run() -> Result<(), String> {
@@ -58,10 +61,7 @@ pub(crate) fn run() -> Result<(), String> {
         glfw::OpenGlProfileHint::Core,
     ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
-    // BA-105: client Mac-style caption on Windows; Linux keeps system / DE chrome.
-    glfw.window_hint(glfw::WindowHint::Decorated(
-        !crate::titlebar::client_caption_enabled(),
-    ));
+    apply_banter_window_chrome_hints(&mut glfw);
     let (mut window, events) = glfw
         .create_window(
             start_w as u32,
@@ -72,6 +72,9 @@ pub(crate) fn run() -> Result<(), String> {
         .ok_or_else(|| "GLFW could not open a window. Banter needs a display.".to_string())?;
     window.make_current();
     window.set_all_polling(true);
+    // BA-111: GLFW often births undecorated (and some decorated) windows at (0,0).
+    // Center on the primary monitor so the frame is not locked to a corner.
+    place_window_centered(&mut glfw, &mut window, start_w, start_h);
 
     let mut windowed = WindowedPlace {
         x: 100,
@@ -242,7 +245,40 @@ pub(crate) fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// Apply traffic-light actions and caption drag from the ImGui pass.
+/// BA-105 / BA-111: Decorated on Linux (system chrome); undecorated on Windows
+/// (client caption). Always request resizable — OS edges when decorated, Banter
+/// edge hits when undecorated (GLFW ignores RESIZABLE without decorations).
+fn apply_banter_window_chrome_hints(glfw: &mut glfw::Glfw) {
+    glfw.window_hint(glfw::WindowHint::Decorated(glfw_decorated()));
+    glfw.window_hint(glfw::WindowHint::Resizable(glfw_resizable()));
+    glfw.window_hint(glfw::WindowHint::Floating(false));
+}
+
+/// Place a freshly created windowed frame on the primary monitor center.
+///
+/// Wayland may ignore `set_pos` (compositor-owned); X11 / Windows honor it so the
+/// window is not stuck at the (0,0) corner GLFW often picks for undecorated frames.
+fn place_window_centered(glfw: &mut glfw::Glfw, window: &mut glfw::Window, width: i32, height: i32) {
+    let placement = glfw.with_primary_monitor(|_, monitor| {
+        monitor.and_then(|monitor| {
+            let mode = monitor.get_video_mode()?;
+            let (mx, my) = monitor.get_pos();
+            Some(centered_window_pos(
+                mx,
+                my,
+                mode.width as i32,
+                mode.height as i32,
+                width,
+                height,
+            ))
+        })
+    });
+    if let Some((x, y)) = placement {
+        window.set_pos(x, y);
+    }
+}
+
+/// Apply traffic-light actions, caption drag, and client edge-resize from the ImGui pass.
 fn apply_title_bar_chrome(
     glfw: &glfw::Glfw,
     window: &mut glfw::Window,
@@ -251,6 +287,7 @@ fn apply_title_bar_chrome(
     if !crate::titlebar::client_caption_enabled() {
         chrome.take_actions();
         chrome.drag_grab = None;
+        chrome.resize_grab = None;
         return;
     }
     for action in chrome.take_actions() {
@@ -266,9 +303,69 @@ fn apply_title_bar_chrome(
             }
         }
     }
+
+    let pressed =
+        window.get_mouse_button(glfw::MouseButton::Button1) == glfw::Action::Press;
+    let (cx, cy) = window.get_cursor_pos();
+    let (fw, fh) = window.get_size();
+
+    // Undecorated hosts: GLFW drops OS edge resize. Own a 6 px border hit zone.
+    if chrome.resize_grab.is_none()
+        && chrome.drag_grab.is_none()
+        && pressed
+        && !window.is_maximized()
+    {
+        if let Some(edge) = resize_edge_at(
+            [cx as f32, cy as f32],
+            fw as f32,
+            fh as f32,
+            RESIZE_BORDER_PX,
+        ) {
+            if let Some((wx, wy)) = window_origin(glfw, window) {
+                // Screen-space cursor = window origin + window-relative cursor.
+                chrome.begin_resize(ResizeGrab {
+                    edge,
+                    start_cursor_x: wx as f64 + cx,
+                    start_cursor_y: wy as f64 + cy,
+                    origin_x: wx,
+                    origin_y: wy,
+                    origin_w: fw,
+                    origin_h: fh,
+                });
+            }
+        }
+    }
+
+    if let Some(grab) = chrome.resize_grab {
+        if pressed {
+            if let Some((wx, wy)) = window_origin(glfw, window) {
+                let screen_x = wx as f64 + cx;
+                let screen_y = wy as f64 + cy;
+                let (nx, ny, nw, nh) = resized_window_frame(
+                    grab.edge,
+                    grab.origin_x,
+                    grab.origin_y,
+                    grab.origin_w,
+                    grab.origin_h,
+                    (screen_x - grab.start_cursor_x) as f32,
+                    (screen_y - grab.start_cursor_y) as f32,
+                    640,
+                    480,
+                );
+                if (nx, ny) != (wx, wy) {
+                    window.set_pos(nx, ny);
+                }
+                if (nw, nh) != (fw, fh) {
+                    window.set_size(nw, nh);
+                }
+            }
+        } else {
+            chrome.end_resize();
+        }
+    }
+
     if let Some((grab_x, grab_y)) = chrome.drag_grab {
         if let Some((wx, wy)) = window_origin(glfw, window) {
-            let (cx, cy) = window.get_cursor_pos();
             let (nx, ny) = dragged_window_pos(
                 wx as f32,
                 wy as f32,
@@ -280,9 +377,7 @@ fn apply_title_bar_chrome(
             window.set_pos(nx.round() as i32, ny.round() as i32);
         }
     }
-    if chrome.drag_grab.is_some()
-        && window.get_mouse_button(glfw::MouseButton::Button1) != glfw::Action::Press
-    {
+    if chrome.drag_grab.is_some() && !pressed {
         chrome.end_drag();
     }
 }
@@ -560,9 +655,7 @@ fn create_settings_window(
         glfw::OpenGlProfileHint::Core,
     ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
-    glfw.window_hint(glfw::WindowHint::Decorated(
-        !crate::titlebar::client_caption_enabled(),
-    ));
+    apply_banter_window_chrome_hints(glfw);
     glfw.window_hint(glfw::WindowHint::Visible(true));
     glfw.window_hint(glfw::WindowHint::Focused(true));
     let (mut window, events) = main
@@ -576,6 +669,8 @@ fn create_settings_window(
     window.set_all_polling(true);
     if let Some((x, y)) = window_origin(glfw, main) {
         window.set_pos(x + 48, y + 48);
+    } else {
+        place_window_centered(glfw, &mut window, width, height);
     }
     window.focus();
     window.make_current();
@@ -690,9 +785,7 @@ fn create_stream_popout_window(
         glfw::OpenGlProfileHint::Core,
     ));
     glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
-    glfw.window_hint(glfw::WindowHint::Decorated(
-        !crate::titlebar::client_caption_enabled(),
-    ));
+    apply_banter_window_chrome_hints(glfw);
     glfw.window_hint(glfw::WindowHint::Visible(true));
     glfw.window_hint(glfw::WindowHint::Focused(true));
     let (mut window, events) = main
@@ -706,6 +799,8 @@ fn create_stream_popout_window(
     window.set_all_polling(true);
     if let Some((x, y)) = window_origin(glfw, main) {
         window.set_pos(x + 72, y + 72);
+    } else {
+        place_window_centered(glfw, &mut window, width, height);
     }
     window.focus();
     window.make_current();

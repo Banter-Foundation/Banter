@@ -1212,3 +1212,10 @@ Agent: Merged #96 squash to main as 7cb1f0b82c8bad7321c86b6ed735ca0590126f0d. Fo
 - #96 Linux system title bar landed on main (`7cb1f0b`).
 - Dongle = UI chrome; Shantell Sans = chat/BFMD; vendored OFL assets + wiring.
 
+## 2026-11-08 BA-111 Fix broken Banter window chrome
+
+Owl: Banter window UI is broken — title/window bar still wrong; window cannot be resized or moved and is locked to a corner. Screenshot: /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/media/devtools-panel-tail-header.png History: #92 custom Mac title bar; #96 Linux uses system title bar. Bug may be Windows client caption or cross-platform GLFW flags (decorated, resizable, position). Fix so windows can move, resize, and use correct chrome per platform (Linux system bar; Windows custom traffic lights if still desired — but must not break drag/resize). Open one PR. Notes: /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/internal/window-chrome-fix.md Return PR URL + root cause.
+Owl: when your window-chrome fix PR is open and green, merge it to main (do not wait for further ask).
+
+Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
+
