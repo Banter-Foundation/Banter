@@ -1974,14 +1974,24 @@ mod tests {
     #[test]
     fn preferring_does_not_respawn_ffmpeg_each_call() {
         // Voice & Video used to re-run `ffmpeg -encoders` every frame (~1 FPS).
+        // Warm the OnceLock, then require subsequent preferring calls stay cheap.
+        let _ = list_available_encoders_preferring(Some("auto"));
+        assert!(
+            AVAILABLE_ENCODERS.get().is_some(),
+            "encoder list must stay cached after the first scan"
+        );
         let start = std::time::Instant::now();
         for _ in 0..200 {
             let _ = list_available_encoders_preferring(Some("auto"));
         }
-        assert!(
-            start.elapsed() < std::time::Duration::from_millis(200),
-            "encoder preferring must stay cached for UI frames"
-        );
+        // Shared Actions hosts are too noisy for a hard wall-clock; keep timing
+        // as a local regression net (same pattern as the 1080p convert gate).
+        if std::env::var_os("GITHUB_ACTIONS").is_none() {
+            assert!(
+                start.elapsed() < std::time::Duration::from_millis(200),
+                "encoder preferring must stay cached for UI frames"
+            );
+        }
     }
 
     #[test]
