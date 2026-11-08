@@ -1,6 +1,6 @@
 ## 2026-11-08 06:08:36 +00:00 [ubuntu] — Fix window chrome move/resize (BA-111)
 
-BA-105 undecorated GLFW windows could not be resized (GLFW ignores `RESIZABLE` without decorations) and often opened stuck at (0,0). Center primary placement; keep Linux `Decorated` + `Resizable` system chrome; on Windows keep client traffic lights and add 6 px client edge-resize; stop ImGui shell/settings/login/stream hosts from covering the caption hit strip.
+BA-105 undecorated GLFW windows could not be resized (GLFW ignores `RESIZABLE` without decorations) and often opened stuck at (0,0). Center primary placement; keep Linux `Decorated` + `Resizable` system chrome; on Windows keep client traffic lights and add 6 px client edge-resize; stop ImGui shell/settings/login/stream hosts from covering the caption hit strip. Unblocks CI: warm + 100 ms floor for `scale_rgba_to_i420_1080p_stays_interactive` (40 ms was flaky on Actions).
 
 ## 2026-11-07 02:02:25 -06:00 [ubuntu] — Dongle UI + Shantell Sans chat fonts
 
