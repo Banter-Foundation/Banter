@@ -66,7 +66,7 @@ Microphone Opus runs on `banter-audio` with its own queue. Screen and camera H.2
 
 Interactive latency (voice/video call feel, not archive quality): speaker playout keeps about 60 ms of jitter margin; capture/Opus PCM backlog is capped around 200 ms; video RTP sample duration follows the encode FPS (not a fixed 33 ms); default keyframe interval is 1 s; OpenH264 uses bitrate RC, low complexity, and a single encode thread (screen disables AdaptiveQuant/BackgroundDetection, which ScreenContentRealTime rejects as ParamValidation — those warnings are not the latency bug); Opus runs at complexity 5; SFU forward queues cap at 24 video / 16 audio packets for stalled subscribers (live path still drains immediately).
 
-On Wayland the PipeWire callback only copies the newest desktop buffer. The screen thread converts that buffer straight to I420 (optional small RGBA preview) when it is time to publish, so the compositor is not blocked on a pixel walk and publish no longer builds a full intermediate RGBA then converts again. Still / DXGI paths use the same one-pass scale→I420 helper. That publish convert was the ~100 ms “capture” cost when hardware encode was already 1–5 ms.
+On Wayland the PipeWire callback only copies the newest desktop buffer. A dedicated **screen convert** thread turns that buffer (or Still/DXGI RGBA) into I420 with SIMD BT.601 — optional small RGBA preview — so capture can grab the next frame while convert finishes. Hand-off is latest-wins (no deep queue). The compositor is not blocked on a pixel walk. That publish convert was the ~100 ms “capture” cost when hardware encode was already 1–5 ms.
 
 ## Bots
 

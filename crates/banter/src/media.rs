@@ -14,6 +14,7 @@ mod macos;
 mod mf;
 mod qos;
 mod rtc;
+mod screen_pipeline;
 #[cfg(target_os = "linux")]
 mod screencast;
 
@@ -176,6 +177,8 @@ pub struct Media {
     engine: Arc<Engine>,
     remote_pictures: Arc<Mutex<Vec<rtc::RemotePicture>>>,
     session: rtc::Rtc,
+    /// Latest-wins producer for the screen convert worker (wake on shutdown).
+    screen_convert: Arc<screen_pipeline::ScreenConvertTx>,
     threads: Vec<JoinHandle<()>>,
 }
 
@@ -274,36 +277,46 @@ impl Media {
                 )
             }
         });
-        let screen = thread::spawn({
-            let flags = Arc::clone(&flags);
-            let in_place = Arc::clone(&in_place);
-            let stop = Arc::clone(&stop);
-            let local_screen = Arc::clone(&local_screen);
-            let errors = Arc::clone(&errors);
-            let stream_edge = Arc::clone(&stream_edge);
-            let stream_interval = Arc::clone(&stream_interval);
-            let stream_target = Arc::clone(&stream_target);
-            let stream_epoch = Arc::clone(&stream_epoch);
-            let capture_failed = Arc::clone(&capture_failed);
-            let engine = Arc::clone(&engine);
-            let screen_picture = Arc::clone(&screen_picture);
-            move || {
-                screen_loop(
-                    flags,
-                    in_place,
-                    stop,
-                    local_screen,
-                    errors,
-                    stream_edge,
-                    stream_interval,
-                    stream_target,
-                    stream_epoch,
-                    capture_failed,
-                    engine,
-                    screen_picture,
-                )
-            }
-        });
+        let (screen_convert, convert_thread) = screen_pipeline::start_convert_thread(
+            Arc::clone(&stop),
+            Arc::clone(&local_screen),
+            Arc::clone(&engine),
+            Arc::clone(&screen_picture),
+        );
+        let screen_convert = Arc::new(screen_convert);
+        let screen = thread::Builder::new()
+            .name("banter-screen-capture".into())
+            .spawn({
+                let flags = Arc::clone(&flags);
+                let in_place = Arc::clone(&in_place);
+                let stop = Arc::clone(&stop);
+                let local_screen = Arc::clone(&local_screen);
+                let errors = Arc::clone(&errors);
+                let stream_edge = Arc::clone(&stream_edge);
+                let stream_interval = Arc::clone(&stream_interval);
+                let stream_target = Arc::clone(&stream_target);
+                let stream_epoch = Arc::clone(&stream_epoch);
+                let capture_failed = Arc::clone(&capture_failed);
+                let engine = Arc::clone(&engine);
+                let screen_convert = Arc::clone(&screen_convert);
+                move || {
+                    screen_loop(
+                        flags,
+                        in_place,
+                        stop,
+                        local_screen,
+                        errors,
+                        stream_edge,
+                        stream_interval,
+                        stream_target,
+                        stream_epoch,
+                        capture_failed,
+                        engine,
+                        screen_convert,
+                    )
+                }
+            })
+            .expect("spawn screen capture");
 
         let session = rtc::Rtc::start(
             signals,
@@ -334,7 +347,8 @@ impl Media {
             engine,
             remote_pictures,
             session,
-            threads: vec![devices, audio, camera, screen],
+            screen_convert,
+            threads: vec![devices, audio, camera, screen, convert_thread],
         }
     }
 
@@ -482,6 +496,7 @@ impl Media {
 impl Drop for Media {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        self.screen_convert.wake();
         for thread in self.threads.drain(..) {
             let _ = thread.join();
         }
@@ -1466,14 +1481,13 @@ fn screen_loop(
     stream_epoch: Arc<AtomicU64>,
     capture_failed: Arc<AtomicBool>,
     engine: Arc<Engine>,
-    pictures: Arc<rtc::PictureSlot>,
+    convert: Arc<screen_pipeline::ScreenConvertTx>,
 ) {
     let mut feed: Option<(StreamPick, Feed)> = None;
     let mut latest: Option<(u32, u32, Vec<u8>)> = None;
     let mut fresh = false;
     let mut next_encode = Instant::now();
     let mut failed: Option<StreamPick> = None;
-    let mut keyed: Option<(u32, u32)> = None;
     let mut seen_epoch = stream_epoch.load(Ordering::Relaxed);
     // After a feed is dropped, give the OS / portal a beat before reopening the same source.
     let mut settle_until: Option<Instant> = None;
@@ -1487,6 +1501,7 @@ fn screen_loop(
             // open failed for the same StreamPick while the UI still showed live.
             failed = None;
             seen_epoch = epoch;
+            convert.reset();
         }
         let state = unpack(flags.load(Ordering::Relaxed));
         let enabled = in_place.load(Ordering::Relaxed) && should_send_screen(&state);
@@ -1503,7 +1518,7 @@ fn screen_loop(
             latest = None;
             fresh = false;
             failed = None;
-            keyed = None;
+            convert.reset();
             *local.lock().expect("screen") = None;
             #[cfg(target_os = "linux")]
             {
@@ -1526,6 +1541,7 @@ fn screen_loop(
             feed = None;
             latest = None;
             fresh = false;
+            convert.reset();
             #[cfg(target_os = "linux")]
             {
                 cast_since = None;
@@ -1547,7 +1563,7 @@ fn screen_loop(
                     }
                     feed = Some((pick, opened));
                     next_encode = Instant::now();
-                    keyed = None;
+                    convert.reset();
                 }
                 Ok(None) => {
                     thread::sleep(Duration::from_millis(20));
@@ -1582,10 +1598,11 @@ fn screen_loop(
                     failed = Some(pick);
                     feed = None;
                     cast_since = None;
+                    convert.reset();
                     continue;
                 }
                 // Leave the raw frame in the portal slot until publish time.
-                // Scaling here would walk pixels the share is about to drop.
+                // Scaling on the convert thread — never on the PipeWire callback.
                 if cast.has_frame() {
                     cast_since = None;
                 } else if latest.is_none()
@@ -1596,6 +1613,7 @@ fn screen_loop(
                     failed = Some(pick);
                     feed = None;
                     cast_since = None;
+                    convert.reset();
                     continue;
                 }
             }
@@ -1606,41 +1624,35 @@ fn screen_loop(
             continue;
         }
         let show_cursor = engine.show_cursor.load(Ordering::Relaxed);
+        let want_preview = engine.show_preview.load(Ordering::Relaxed);
         let Some((_, current)) = feed.as_ref() else {
             continue;
         };
         match current {
             Feed::Still { grabber } => {
                 next_encode = Instant::now() + Duration::from_millis(interval);
+                let grabbed_at = Instant::now();
                 match capture_rgba(grabber, show_cursor) {
-                    Ok((width, height, rgba)) => publish_screen(
-                        &pictures, &local, &engine, &mut keyed, &rgba, width, height, edge,
+                    Ok((width, height, rgba)) => convert.push_rgba(
+                        width,
+                        height,
+                        rgba,
+                        edge,
+                        want_preview,
+                        grabbed_at,
                     ),
                     Err(err) => remember_screen_error(&errors, &err),
                 }
             }
             #[cfg(target_os = "linux")]
             Feed::Cast(cast) => {
-                let want_preview = engine.show_preview.load(Ordering::Relaxed);
-                let capture_started = Instant::now();
-                let Some((width, height, i420, preview)) =
-                    cast.take_encode(edge, want_preview)
-                else {
+                let grabbed_at = Instant::now();
+                let Some(raw) = cast.take_raw() else {
                     thread::sleep(Duration::from_millis(2));
                     continue;
                 };
                 next_encode = Instant::now() + Duration::from_millis(interval);
-                publish_screen_i420(
-                    &pictures,
-                    &local,
-                    &engine,
-                    &mut keyed,
-                    i420,
-                    width,
-                    height,
-                    preview,
-                    capture_started,
-                );
+                convert.push_cast(raw, edge, want_preview, grabbed_at);
             }
             Feed::Record { .. } => {
                 if !fresh {
@@ -1649,11 +1661,18 @@ fn screen_loop(
                 }
                 fresh = false;
                 next_encode = Instant::now() + Duration::from_millis(interval);
-                let Some((width, height, rgba)) = latest.as_ref() else {
+                let Some((width, height, rgba)) = latest.take() else {
                     continue;
                 };
-                publish_screen(
-                    &pictures, &local, &engine, &mut keyed, rgba, *width, *height, edge,
+                // Keep a copy only if DXGI delivers another frame before convert finishes;
+                // latest-wins convert slot already drops stale jobs.
+                convert.push_rgba(
+                    width,
+                    height,
+                    rgba,
+                    edge,
+                    want_preview,
+                    Instant::now(),
                 );
             }
         }
@@ -1747,88 +1766,6 @@ fn start_recorder(
             }
         }
     }
-}
-
-/// Scale once to the stream cap, hand that frame to the encoder, and keep a small RGBA preview.
-/// The first frame at a given size is a keyframe. Later frames stay deltas so the encoder is not rebuilt.
-fn publish_screen(
-    pictures: &rtc::PictureSlot,
-    local: &Mutex<Option<(u32, u32, Vec<u8>)>>,
-    engine: &Engine,
-    keyed: &mut Option<(u32, u32)>,
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-    edge: u32,
-) {
-    let started = Instant::now();
-    let (out_w, out_h) = encode::even_fit(width, height, edge);
-    if out_w < 2 || out_h < 2 {
-        return;
-    }
-    // One pass: NN scale + YUV. Old path allocated a full RGBA then converted (~100 ms at Source).
-    let i420 = encode::scale_rgba_to_i420(rgba, width, height, out_w, out_h);
-    if i420.is_empty() {
-        return;
-    }
-    let key = picture_needs_key(keyed, out_w, out_h);
-    if engine.show_preview.load(Ordering::Relaxed) {
-        // Preview is UI-only — cap at 1280 from the *source* so we never allocate
-        // a second full encode-sized RGBA just to shrink it again.
-        let (small, preview_w, preview_h) = encode::fit_rgba(rgba, width, height, 1280.min(edge.max(2)));
-        *local.lock().expect("screen") = if preview_w >= 2 && preview_h >= 2 {
-            Some((preview_w, preview_h, small))
-        } else {
-            None
-        };
-    } else {
-        *local.lock().expect("screen") = None;
-    }
-    pictures.store(rtc::RawPicture {
-        width: out_w,
-        height: out_h,
-        i420: std::sync::Arc::<[u8]>::from(i420),
-        key,
-    });
-    crate::profiler::record_media(
-        "screen_capture",
-        started.elapsed(),
-        (out_w * out_h) as usize,
-    );
-}
-
-/// Publish a frame that is already I420 at the encode size (Wayland Cast one-pass).
-fn publish_screen_i420(
-    pictures: &rtc::PictureSlot,
-    local: &Mutex<Option<(u32, u32, Vec<u8>)>>,
-    engine: &Engine,
-    keyed: &mut Option<(u32, u32)>,
-    i420: Vec<u8>,
-    width: u32,
-    height: u32,
-    preview: Option<(u32, u32, Vec<u8>)>,
-    capture_started: Instant,
-) {
-    if width < 2 || height < 2 || i420.is_empty() {
-        return;
-    }
-    let key = picture_needs_key(keyed, width, height);
-    if engine.show_preview.load(Ordering::Relaxed) {
-        *local.lock().expect("screen") = preview;
-    } else {
-        *local.lock().expect("screen") = None;
-    }
-    pictures.store(rtc::RawPicture {
-        width,
-        height,
-        i420: std::sync::Arc::<[u8]>::from(i420),
-        key,
-    });
-    crate::profiler::record_media(
-        "screen_capture",
-        capture_started.elapsed(),
-        (width * height) as usize,
-    );
 }
 
 #[cfg(test)]

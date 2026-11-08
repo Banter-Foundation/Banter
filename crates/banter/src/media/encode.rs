@@ -760,10 +760,29 @@ pub fn rgba_to_i420(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
     scale_rgba_to_i420(rgba, width, height, width, height)
 }
 
-/// Nearest-neighbor scale + BT.601 RGBA→planar I420 in one pass.
+/// Packed channel order for [`scale_packed_to_i420`] (PipeWire / DXGI-style buffers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PackedOrder {
+    Rgba,
+    Bgra,
+    Rgb,
+    Bgr,
+}
+
+impl PackedOrder {
+    fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Rgba | Self::Bgra => 4,
+            Self::Rgb | Self::Bgr => 3,
+        }
+    }
+}
+
+/// Nearest-neighbor scale + BT.601 limited-range RGBA→planar I420.
 ///
-/// Avoids an intermediate full-size RGBA buffer (publish used to `fit_rgba` then
-/// convert — at 1080p that was a multi‑10 ms copy before any YUV work).
+/// Same-size frames go through SIMD (`yuv` crate). Scaled frames NN-resize then
+/// convert — still faster than the old scalar one-pass at 1080p/4K, and avoids a
+/// full intermediate RGBA→I420 double walk on the publish path (#97).
 pub fn scale_rgba_to_i420(
     rgba: &[u8],
     width: u32,
@@ -779,45 +798,127 @@ pub fn scale_rgba_to_i420(
     if dw < 2 || dh < 2 || rgba.len() < need {
         return Vec::new();
     }
-    let y_len = dw * dh;
-    let uv_w = dw / 2;
-    let uv_h = dh / 2;
-    let uv_len = uv_w * uv_h;
+    if dw == sw && dh == sh {
+        return packed_to_i420_simd(rgba, sw, sh, (sw * 4) as u32, PackedOrder::Rgba)
+            .unwrap_or_default();
+    }
+    let scaled = nn_scale_packed(rgba, sw, sh, sw * 4, PackedOrder::Rgba, dw, dh);
+    packed_to_i420_simd(&scaled, dw, dh, (dw * 4) as u32, PackedOrder::Rgba).unwrap_or_default()
+}
+
+/// Scale + convert a packed buffer (optional row stride) to planar I420.
+///
+/// Used by Wayland Cast so BGRA/RGBA PipeWire frames share the SIMD path with
+/// Still/DXGI publish instead of a separate scalar loop in `screencast.rs`.
+pub fn scale_packed_to_i420(
+    src: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    order: PackedOrder,
+    out_w: u32,
+    out_h: u32,
+) -> Option<Vec<u8>> {
+    let sw = width as usize;
+    let sh = height as usize;
+    let dw = (out_w.max(2) & !1) as usize;
+    let dh = (out_h.max(2) & !1) as usize;
+    let bpp = order.bytes_per_pixel();
+    if dw < 2 || dh < 2 || stride < sw * bpp {
+        return None;
+    }
+    let min_len = stride.saturating_mul(sh).max(sw * bpp * sh);
+    if src.len() < min_len {
+        return None;
+    }
+    if dw == sw && dh == sh && stride == sw * bpp {
+        return packed_to_i420_simd(src, sw, sh, stride as u32, order);
+    }
+    if dw == sw && dh == sh {
+        // Contiguous-enough for SIMD: copy rows into tight packed, then convert.
+        let mut tight = vec![0u8; sw * sh * bpp];
+        for row in 0..sh {
+            let src_off = row * stride;
+            let dst_off = row * sw * bpp;
+            tight[dst_off..dst_off + sw * bpp]
+                .copy_from_slice(&src[src_off..src_off + sw * bpp]);
+        }
+        return packed_to_i420_simd(&tight, sw, sh, (sw * bpp) as u32, order);
+    }
+    let scaled = nn_scale_packed(src, sw, sh, stride, order, dw, dh);
+    let out_bpp = order.bytes_per_pixel();
+    packed_to_i420_simd(&scaled, dw, dh, (dw * out_bpp) as u32, order)
+}
+
+fn packed_to_i420_simd(
+    src: &[u8],
+    width: usize,
+    height: usize,
+    stride: u32,
+    order: PackedOrder,
+) -> Option<Vec<u8>> {
+    let y_len = width * height;
+    let uv_w = width / 2;
+    let uv_len = uv_w * (height / 2);
+    if width < 2 || height < 2 || (width & 1) != 0 || (height & 1) != 0 {
+        return None;
+    }
     let mut out = vec![0u8; y_len + uv_len * 2];
     let (y_plane, rest) = out.split_at_mut(y_len);
     let (u_plane, v_plane) = rest.split_at_mut(uv_len);
-    let same = dw == sw && dh == sh;
+    let mut planar = yuv::YuvPlanarImageMut {
+        y_plane: yuv::BufferStoreMut::Borrowed(y_plane),
+        y_stride: width as u32,
+        u_plane: yuv::BufferStoreMut::Borrowed(u_plane),
+        u_stride: uv_w as u32,
+        v_plane: yuv::BufferStoreMut::Borrowed(v_plane),
+        v_stride: uv_w as u32,
+        width: width as u32,
+        height: height as u32,
+    };
+    let range = yuv::YuvRange::Limited;
+    let matrix = yuv::YuvStandardMatrix::Bt601;
+    let mode = yuv::YuvConversionMode::Fast;
+    let result = match order {
+        PackedOrder::Rgba => {
+            yuv::rgba_to_yuv420(&mut planar, src, stride, range, matrix, mode)
+        }
+        PackedOrder::Bgra => {
+            yuv::bgra_to_yuv420(&mut planar, src, stride, range, matrix, mode)
+        }
+        PackedOrder::Rgb => yuv::rgb_to_yuv420(&mut planar, src, stride, range, matrix, mode),
+        PackedOrder::Bgr => yuv::bgr_to_yuv420(&mut planar, src, stride, range, matrix, mode),
+    };
+    match result {
+        Ok(()) => Some(out),
+        Err(_) => None,
+    }
+}
+
+/// Nearest-neighbor scale keeping the source packed channel order.
+fn nn_scale_packed(
+    src: &[u8],
+    sw: usize,
+    sh: usize,
+    stride: usize,
+    order: PackedOrder,
+    dw: usize,
+    dh: usize,
+) -> Vec<u8> {
+    let bpp = order.bytes_per_pixel();
+    let mut scaled = vec![0u8; dw * dh * bpp];
     for row in 0..dh {
-        let src_row = if same {
-            row
-        } else {
-            (row as u64 * sh as u64 / dh as u64) as usize
-        };
-        let src_row_base = src_row * sw * 4;
-        let y_row = row * dw;
-        let uv_row = (row / 2) * uv_w;
+        let src_row = (row as u64 * sh as u64 / dh as u64) as usize;
+        let src_row_base = src_row * stride;
+        let dst_row_base = row * dw * bpp;
         for col in 0..dw {
-            let src_col = if same {
-                col
-            } else {
-                (col as u64 * sw as u64 / dw as u64) as usize
-            };
-            let i = src_row_base + src_col * 4;
-            let r = rgba[i] as i32;
-            let g = rgba[i + 1] as i32;
-            let b = rgba[i + 2] as i32;
-            y_plane[y_row + col] = (((66 * r + 129 * g + 25 * b + 128) >> 8) + 16).clamp(0, 255) as u8;
-            if (row & 1) == 0 && (col & 1) == 0 {
-                let uv = uv_row + col / 2;
-                u_plane[uv] =
-                    (((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
-                v_plane[uv] =
-                    (((112 * r - 94 * g - 18 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
-            }
+            let src_col = (col as u64 * sw as u64 / dw as u64) as usize;
+            let from = src_row_base + src_col * bpp;
+            let to = dst_row_base + col * bpp;
+            scaled[to..to + bpp].copy_from_slice(&src[from..from + bpp]);
         }
     }
-    let _ = uv_h;
-    out
+    scaled
 }
 
 #[allow(dead_code)]
@@ -1998,7 +2099,8 @@ mod tests {
 
     #[test]
     fn scale_rgba_to_i420_1080p_stays_interactive() {
-        // Capture used to sit near ~100 ms on the fit+convert path; keep a budget.
+        // Capture used to sit near ~100 ms on the fit+convert path; SIMD + NN
+        // scale should stay well under that interactive budget.
         let width = 1920u32;
         let height = 1080u32;
         let rgba = vec![16u8, 32, 64, 255].repeat((width * height) as usize);
@@ -2007,8 +2109,8 @@ mod tests {
         let elapsed = started.elapsed();
         assert_eq!(i420.len(), 1280 * 720 + 2 * (640 * 360));
         assert!(
-            elapsed < std::time::Duration::from_millis(80),
-            "one-pass 1080p→720p convert took {elapsed:?}"
+            elapsed < std::time::Duration::from_millis(40),
+            "SIMD 1080p→720p convert took {elapsed:?}"
         );
     }
 
