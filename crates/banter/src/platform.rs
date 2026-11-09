@@ -120,6 +120,7 @@ pub(crate) fn run() -> Result<(), String> {
         fonts.chat_bold,
         fonts.italic,
         fonts.bold_italic,
+        fonts.mono,
     );
     let mut last_time = glfw.get_time();
     // (vsync, refresh_hz) last pushed to GLFW. Reapplied when the window moves
@@ -468,6 +469,7 @@ fn draw_settings_surface(
         chat_bold: fonts.chat_bold,
         italic: fonts.italic,
         bold_italic: fonts.bold_italic,
+        mono: fonts.mono,
     };
 
     // Main ImGui context is already suspended by the caller. Activate Settings for this pass.
@@ -542,6 +544,8 @@ struct UiFonts {
     italic: Option<dear_imgui_rs::fonts::FontId>,
     /// Shantell Sans Bold Italic — BFMD bold+italic runs.
     bold_italic: Option<dear_imgui_rs::fonts::FontId>,
+    /// System monospace — BFMD code/text blocks.
+    mono: Option<dear_imgui_rs::fonts::FontId>,
 }
 
 struct SettingsHost {
@@ -859,6 +863,7 @@ fn draw_stream_popout_surface(
         chat_bold: fonts.chat_bold,
         italic: fonts.italic,
         bold_italic: fonts.bold_italic,
+        mono: fonts.mono,
     };
 
     imgui
@@ -1020,6 +1025,7 @@ fn install_ui_fonts(imgui: &mut Context) -> UiFonts {
     let bold_italic = load_embedded_face(atlas, shantell_bold_italic_bytes(), 16.0)
         .or_else(|| load_first_face(atlas, &bold_italic_font_paths(), 16.0))
         .or(chat_bold);
+    let mono = load_first_face(atlas, &mono_font_paths(), 14.0).or(body);
 
     UiFonts {
         bold,
@@ -1028,6 +1034,7 @@ fn install_ui_fonts(imgui: &mut Context) -> UiFonts {
         chat_bold,
         italic,
         bold_italic,
+        mono,
     }
 }
 
@@ -1402,6 +1409,37 @@ fn bold_italic_font_paths() -> Vec<&'static str> {
             "/usr/share/fonts/truetype/noto/NotoSans-BoldItalic.ttf",
             "/usr/share/fonts/TTF/DejaVuSans-BoldOblique.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+        ]
+    }
+}
+
+fn mono_font_paths() -> Vec<&'static str> {
+    #[cfg(windows)]
+    {
+        return vec![
+            r"C:\Windows\Fonts\consola.ttf",
+            r"C:\Windows\Fonts\CascadiaMono.ttf",
+            r"C:\Windows\Fonts\lucon.ttf",
+        ];
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return vec![
+            "/System/Library/Fonts/Menlo.ttc",
+            "/Library/Fonts/Menlo.ttc",
+            "/System/Library/Fonts/Supplemental/Courier New.ttf",
+        ];
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        vec![
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/liberation/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
+            "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
         ]
     }
 }

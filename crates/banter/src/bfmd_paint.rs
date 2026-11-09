@@ -2,11 +2,17 @@
 
 use dear_imgui_rs::{fonts::FontId, Ui};
 
-use crate::bfmd::{self, Run, Style};
+use crate::bfmd::{self, Block, Run, Style};
 use crate::skin;
-use crate::theme::{DIVIDER, TEXT_NORMAL};
+use crate::theme::{
+    CODE_BLOCK_BG, CODE_BLOCK_BORDER, CODE_BLOCK_HEADER, DIVIDER, MUTED, TEXT_NORMAL, TEXT_SECONDARY,
+};
 
 const LINE_GAP: f32 = 4.0;
+const BLOCK_PAD: f32 = 8.0;
+const BLOCK_HEADER_H: f32 = 22.0;
+const BLOCK_RADIUS: f32 = 6.0;
+const BLOCK_FONT_PT: f32 = 14.0;
 
 /// Fonts available for BFMD runs. Missing italic falls back to body; bold to bold_font.
 #[derive(Clone, Copy)]
@@ -15,10 +21,15 @@ pub struct Fonts {
     pub bold: Option<FontId>,
     pub italic: Option<FontId>,
     pub bold_italic: Option<FontId>,
+    /// Optional monospace face for `{cb}` / `{tb}` bodies.
+    pub mono: Option<FontId>,
 }
 
 impl Fonts {
     fn pick(self, style: &Style) -> Option<FontId> {
+        if style.block.is_some() {
+            return self.mono.or(self.body);
+        }
         match (style.bold, style.italic) {
             (true, true) => self.bold_italic.or(self.bold).or(self.italic).or(self.body),
             (true, false) => self.bold.or(self.body),
@@ -34,10 +45,10 @@ pub fn measure(ui: &Ui, fonts: Fonts, source: &str, wrap_w: f32) -> f32 {
     if runs.is_empty() {
         return 0.0;
     }
-    layout(ui, fonts, &runs, wrap_w, None)
+    layout(ui, fonts, &runs, wrap_w, None).0
 }
 
-/// Draw BFMD body at `origin`; returns height used.
+/// Draw BFMD body at `origin`; returns `(height, clipboard text if Copy clicked)`.
 pub fn draw(
     ui: &Ui,
     fonts: Fonts,
@@ -45,7 +56,7 @@ pub fn draw(
     origin: [f32; 2],
     wrap_w: f32,
     edited_suffix: &str,
-) -> f32 {
+) -> (f32, Option<String>) {
     let mut runs = bfmd::parse(source).runs;
     if !edited_suffix.is_empty() {
         if let Some(last) = runs.last_mut() {
@@ -58,19 +69,51 @@ pub fn draw(
         }
     }
     if runs.is_empty() {
-        return 0.0;
+        return (0.0, None);
     }
     layout(ui, fonts, &runs, wrap_w, Some(origin))
 }
 
-fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32; 2]>) -> f32 {
+fn layout(
+    ui: &Ui,
+    fonts: Fonts,
+    runs: &[Run],
+    wrap_w: f32,
+    origin: Option<[f32; 2]>,
+) -> (f32, Option<String>) {
     let wrap_w = wrap_w.max(8.0);
     let mut x = 0.0f32;
     let mut y = 0.0f32;
     let mut line_h = 0.0f32;
     let mut saw_hr = false;
+    let mut copy: Option<String> = None;
+    let mut block_id = 0u32;
 
     for run in runs {
+        if let Some(block) = &run.style.block {
+            if x > 0.0 || line_h > 0.0 {
+                y += line_h + LINE_GAP;
+                x = 0.0;
+                line_h = 0.0;
+            }
+            let (h, clicked) = layout_block(
+                ui,
+                fonts,
+                block,
+                &run.text,
+                wrap_w,
+                origin.map(|o| [o[0], o[1] + y]),
+                block_id,
+            );
+            block_id = block_id.wrapping_add(1);
+            if clicked.is_some() {
+                copy = clicked;
+            }
+            y += h + LINE_GAP;
+            saw_hr = false;
+            continue;
+        }
+
         if run.style.hr && !saw_hr {
             // Full-width rule for the paragraph while hr is on.
             if x > 0.0 {
@@ -182,7 +225,206 @@ fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32;
             &mut line_h,
         );
     }
-    y + line_h.max(0.0)
+    (y + line_h.max(0.0), copy)
+}
+
+fn layout_block(
+    ui: &Ui,
+    fonts: Fonts,
+    block: &Block,
+    text: &str,
+    wrap_w: f32,
+    origin: Option<[f32; 2]>,
+    id: u32,
+) -> (f32, Option<String>) {
+    let font = fonts.mono.or(fonts.body);
+    let size = BLOCK_FONT_PT;
+    let inner_w = (wrap_w - BLOCK_PAD * 2.0).max(8.0);
+    let label = match block {
+        Block::Code {
+            language: Some(lang),
+        } => lang.as_str(),
+        Block::Code { language: None } => "code",
+        Block::Text => "text",
+    };
+
+    let lines: Vec<Vec<(String, [f32; 4])>> = match block {
+        Block::Code { language } => bfmd::highlight_code(language.as_deref(), text)
+            .into_iter()
+            .map(|line| {
+                line.into_iter()
+                    .map(|s| (s.text, s.color))
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+        Block::Text => text
+            .split('\n')
+            .map(|line| vec![(line.to_string(), TEXT_NORMAL)])
+            .collect(),
+    };
+
+    // Soft-wrap each visual line to inner_w while preserving span colors.
+    let mut wrapped: Vec<Vec<(String, [f32; 4])>> = Vec::new();
+    for line in &lines {
+        wrap_spans(ui, font, size, line, inner_w, &mut wrapped);
+    }
+    if wrapped.is_empty() {
+        wrapped.push(vec![(String::new(), TEXT_NORMAL)]);
+    }
+
+    let mut body_h = 0.0f32;
+    for line in &wrapped {
+        let mut lh = size;
+        for (t, _) in line {
+            if !t.is_empty() {
+                lh = lh.max(skin::text_size(ui, font, size, t)[1].max(size));
+            }
+        }
+        body_h += lh + 2.0;
+    }
+    body_h = body_h.max(size);
+
+    let total_h = BLOCK_PAD + BLOCK_HEADER_H + body_h + BLOCK_PAD;
+    let mut copy = None;
+
+    if let Some(origin) = origin {
+        let min = origin;
+        let max = [origin[0] + wrap_w, origin[1] + total_h];
+        let draw = ui.get_window_draw_list();
+        draw.add_rect(min, max, CODE_BLOCK_BG)
+            .filled(true)
+            .rounding(BLOCK_RADIUS)
+            .build();
+        draw.add_rect(min, max, CODE_BLOCK_BORDER)
+            .filled(false)
+            .rounding(BLOCK_RADIUS)
+            .thickness(1.0)
+            .build();
+        // Header strip
+        draw.add_rect(
+            min,
+            [max[0], min[1] + BLOCK_PAD + BLOCK_HEADER_H],
+            CODE_BLOCK_HEADER,
+        )
+        .filled(true)
+        .rounding(BLOCK_RADIUS)
+        .build();
+
+        skin::text(
+            ui,
+            fonts.body,
+            12.0,
+            [min[0] + BLOCK_PAD, min[1] + BLOCK_PAD + 2.0],
+            MUTED,
+            label,
+        );
+
+        // Copy button (top-right).
+        let btn_label = "Copy";
+        let btn_size = skin::text_size(ui, fonts.body, 12.0, btn_label);
+        let btn_w = btn_size[0] + 12.0;
+        let btn_h = BLOCK_HEADER_H - 2.0;
+        let btn_min = [
+            max[0] - BLOCK_PAD - btn_w,
+            min[1] + BLOCK_PAD + 1.0,
+        ];
+        let btn_max = [btn_min[0] + btn_w, btn_min[1] + btn_h];
+        ui.set_cursor_screen_pos(btn_min);
+        let clicked = {
+            let _id = ui.push_id(id as i32);
+            ui.invisible_button("bfmd-block-copy", [btn_w, btn_h])
+        };
+        let hovered = ui.is_item_hovered();
+        if hovered {
+            draw.add_rect(btn_min, btn_max, TEXT_SECONDARY)
+                .filled(true)
+                .rounding(4.0)
+                .build();
+        }
+        skin::text(
+            ui,
+            fonts.body,
+            12.0,
+            [btn_min[0] + 6.0, btn_min[1] + (btn_h - btn_size[1]) * 0.5],
+            if hovered { CODE_BLOCK_BG } else { TEXT_SECONDARY },
+            btn_label,
+        );
+        if clicked {
+            copy = Some(text.to_string());
+        }
+
+        let mut cy = min[1] + BLOCK_PAD + BLOCK_HEADER_H;
+        for line in &wrapped {
+            let mut cx = min[0] + BLOCK_PAD;
+            let mut lh = size;
+            for (t, _) in line {
+                if !t.is_empty() {
+                    lh = lh.max(skin::text_size(ui, font, size, t)[1].max(size));
+                }
+            }
+            for (t, color) in line {
+                if t.is_empty() {
+                    continue;
+                }
+                skin::text(ui, font, size, [cx, cy], *color, t);
+                cx += skin::text_size(ui, font, size, t)[0];
+            }
+            cy += lh + 2.0;
+        }
+    }
+
+    (total_h, copy)
+}
+
+fn wrap_spans(
+    ui: &Ui,
+    font: Option<FontId>,
+    size: f32,
+    spans: &[(String, [f32; 4])],
+    width: f32,
+    out: &mut Vec<Vec<(String, [f32; 4])>>,
+) {
+    let mut row: Vec<(String, [f32; 4])> = Vec::new();
+    let mut row_w = 0.0f32;
+    for (text, color) in spans {
+        if text.is_empty() {
+            continue;
+        }
+        let mut rest = text.as_str();
+        while !rest.is_empty() {
+            let mut take = 0usize;
+            let mut w = 0.0f32;
+            for (i, ch) in rest.char_indices() {
+                let cw = skin::text_size(ui, font, size, &ch.to_string())[0];
+                if row_w + w + cw > width && (take > 0 || row_w > 0.0) {
+                    break;
+                }
+                take = i + ch.len_utf8();
+                w += cw;
+            }
+            if take == 0 {
+                // Single character wider than remaining space — force it.
+                let ch = rest.chars().next().unwrap();
+                take = ch.len_utf8();
+                w = skin::text_size(ui, font, size, &ch.to_string())[0];
+            }
+            let piece = rest[..take].to_string();
+            rest = &rest[take..];
+            if row_w > 0.0 && row_w + w > width {
+                out.push(std::mem::take(&mut row));
+                row_w = 0.0;
+            }
+            row_w += w;
+            if let Some(last) = row.last_mut() {
+                if last.1 == *color {
+                    last.0.push_str(&piece);
+                    continue;
+                }
+            }
+            row.push((piece, *color));
+        }
+    }
+    out.push(row);
 }
 
 #[allow(clippy::too_many_arguments)]

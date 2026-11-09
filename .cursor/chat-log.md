@@ -1219,3 +1219,23 @@ Owl: when your window-chrome fix PR is open and green, merge it to main (do not 
 
 Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
 
+
+## User
+
+Build BFMD features on Banter (https://github.com/Banter-Foundation/Banter), branch from main. Project store: /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5. Spec: docs/bfmd.md in repo and store. Ask notes: /cursor/stores/bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/docs/bfmd-code-preview-textblock-ask.md
+
+Build:
+1) Code blocks with as many syntax-highlight languages as practical (use a mature highlighter crate / engine already fit for Rust ImGui if possible; document language list).
+2) New BFMD "text block" — like code block but NO highlighting / language fence requirements; easy copy.
+
+Open PRs (one or stacked). Update docs/bfmd.md. Tests. Prefer GitHub MCP if git push 403. Return PR URLs.
+
+Do NOT build text document preview (separate worker). Do NOT invent Discord UI features.
+
+## User
+
+HARD RULE: Do not add Discord-markdown gap features (spoilers, subtext, etc.) to BFMD without Owl’s explicit approval. Only build code blocks+highlighting and text blocks as assigned.
+
+## Summary
+
+Implemented BFMD `{cb}` / `{tb}` verbatim blocks with syntect highlighting for code and Copy UI for both. Spec updated in repo and store `docs/bfmd.md`. Text-document preview and Discord-markdown extras were not built.

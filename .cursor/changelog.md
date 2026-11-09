@@ -1,3 +1,7 @@
+## 2026-11-09 00:56:00 +00:00 [ubuntu] — BFMD code blocks + text blocks (BA-120 / BA-122)
+
+BFMD gains verbatim `{cb:lang}` / `{cb}` code blocks with syntect highlighting (default Sublime pack, ~75 languages, fancy-regex) and `{tb}` text blocks (no highlight, easy Copy). Parser enters verbatim mode inside blocks so nested `<{…}>` stays literal except block close/replace. Chat paint draws boxed panels with language/text headers and a Copy control; optional system monospace face. Spec + language list in `docs/bfmd.md`; tests in `crates/banter/tests/bfmd.rs`. No Discord-markdown extras and no text-document preview.
+
 ## 2026-11-08 02:45:00 -05:00 [ubuntu] — OBS-style interactive encode presets
 
 Hardware ffmpeg paths take ultra-low-latency knobs inspired by OBS (NVENC `ull`, rc-lookahead/delay 0, no scenecut/multipass/AQ; QSV async_depth 1; AMF ultralowlatency; x264 scenecut 0). Windows MF sets CodecAPI low-latency + zero B-frames when supported. PipeWire ScreenCast prefers NV12 after I420 and converts semi-planar→I420 without a BGRA detour. Full GPU texture→NVENC remains a follow-up.

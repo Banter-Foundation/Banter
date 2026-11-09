@@ -160,3 +160,149 @@ fn emote_token_scan_finds_stable_asset_ids() {
     assert!(bfmd::scan_emote_tokens(":party_parrot:").is_empty());
     assert!(bfmd::scan_emote_tokens(":{e:}:").is_empty());
 }
+
+#[test]
+fn code_block_verbatim_with_language() {
+    let src = "<{cb:rust}>\nfn main() {}\n<{!cb}>after";
+    let runs = bfmd::parse(src).runs;
+    assert_eq!(runs.len(), 2);
+    assert_eq!(
+        runs[0].style.block,
+        Some(bfmd::Block::Code {
+            language: Some("rust".into())
+        })
+    );
+    assert_eq!(runs[0].text, "\nfn main() {}\n");
+    assert!(runs[1].style.block.is_none());
+    assert_eq!(runs[1].text, "after");
+}
+
+#[test]
+fn code_block_without_language() {
+    let runs = bfmd::parse("<{cb}>plain code<{!cb}>").runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(
+        runs[0].style.block,
+        Some(bfmd::Block::Code { language: None })
+    );
+    assert_eq!(runs[0].text, "plain code");
+}
+
+#[test]
+fn code_block_content_is_not_parsed_as_bfmd() {
+    let src = "<{cb:js}>let x = <{b:t}>not bold<{!cb}>";
+    let runs = bfmd::parse(src).runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "let x = <{b:t}>not bold");
+    assert!(!runs[0].style.bold);
+}
+
+#[test]
+fn text_block_verbatim_no_language() {
+    let src = "<{tb}>\ncopy me\n<{!tb}>";
+    let runs = bfmd::parse(src).runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].style.block, Some(bfmd::Block::Text));
+    assert_eq!(runs[0].text, "\ncopy me\n");
+}
+
+#[test]
+fn text_block_flag_forms() {
+    assert_eq!(
+        bfmd::parse("<{tb:t}>x<{!tb}>").runs[0].style.block,
+        Some(bfmd::Block::Text)
+    );
+    assert!(bfmd::parse("<{tb:f}>x").runs[0].style.block.is_none());
+}
+
+#[test]
+fn close_all_ends_code_block() {
+    let runs = bfmd::parse("<{cb:python}>x = 1<{!}>y").runs;
+    assert_eq!(runs.len(), 2);
+    assert!(matches!(runs[0].style.block, Some(bfmd::Block::Code { .. })));
+    assert_eq!(runs[0].text, "x = 1");
+    assert!(runs[1].style.block.is_none());
+    assert_eq!(runs[1].text, "y");
+}
+
+#[test]
+fn cb_and_tb_replace_each_other() {
+    let runs = bfmd::parse("<{cb:c}>int x;<{tb}>note<{!tb}>").runs;
+    assert_eq!(runs.len(), 2);
+    assert!(matches!(
+        runs[0].style.block,
+        Some(bfmd::Block::Code {
+            language: Some(_)
+        })
+    ));
+    assert_eq!(runs[0].text, "int x;");
+    assert_eq!(runs[1].style.block, Some(bfmd::Block::Text));
+    assert_eq!(runs[1].text, "note");
+}
+
+#[test]
+fn escaped_angle_inside_code_block_is_literal() {
+    let src = r"<{cb}>\<{!cb}> still code<{!cb}>";
+    let runs = bfmd::parse(src).runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "<{!cb}> still code");
+}
+
+#[test]
+fn code_and_text_blocks_round_trip_serialize() {
+    let src = "<{cb:rust}>\nfn main() {}\n<{!cb}>hi <{tb}>copy<{!tb}>";
+    let runs = bfmd::parse(src).runs;
+    let again = bfmd::serialize(&runs);
+    let reruns = bfmd::parse(&again).runs;
+    assert_eq!(runs.len(), reruns.len());
+    for (a, b) in runs.iter().zip(reruns.iter()) {
+        assert_eq!(a.text, b.text);
+        assert_eq!(a.style.block, b.style.block);
+    }
+}
+
+#[test]
+fn plain_text_includes_block_body() {
+    assert_eq!(
+        bfmd::plain_text("<{cb:rust}>fn x()<{!cb}>"),
+        "fn x()"
+    );
+    assert_eq!(bfmd::plain_text("<{tb}>hello<{!tb}>"), "hello");
+}
+
+#[test]
+fn highlight_rust_produces_colored_spans() {
+    let lines = bfmd::highlight_code(Some("rust"), "fn main() {\n    let x = 1;\n}");
+    assert!(lines.len() >= 3);
+    assert!(lines.iter().any(|line| line.iter().any(|s| s.text.contains("fn"))));
+    assert!(lines.iter().flatten().any(|s| {
+        s.color != [0.0, 0.0, 0.0, 0.0] && (s.color[0] > 0.0 || s.color[1] > 0.0 || s.color[2] > 0.0)
+    }));
+}
+
+#[test]
+fn highlight_unknown_language_falls_back_uncolored_or_plain() {
+    let lines = bfmd::highlight_code(Some("not-a-real-lang-xyz"), "hello");
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].len(), 1);
+    assert_eq!(lines[0][0].text, "hello");
+}
+
+#[test]
+fn supported_highlight_languages_is_broad() {
+    let langs = bfmd::supported_highlight_languages();
+    assert!(
+        langs.len() >= 40,
+        "expected a broad syntect pack, got {}",
+        langs.len()
+    );
+    let names: Vec<_> = langs.iter().map(|l| l.name.to_ascii_lowercase()).collect();
+    for need in ["rust", "python", "javascript", "c", "c++", "go", "json", "html", "css", "sql"] {
+        assert!(
+            names.iter().any(|n| n.contains(need)),
+            "missing language covering {need}"
+        );
+    }
+    // Every entry exposes at least a name; extensions may be empty for some packs.
+    assert!(langs.iter().all(|l| !l.name.is_empty()));
+}
