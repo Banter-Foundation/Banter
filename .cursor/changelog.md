@@ -1,3 +1,7 @@
+## 2026-11-08 22:40:00 -05:00 [ubuntu] — Name PipeWire screencast formats in logs
+
+`banter: screencast format …` now prints `BGRA` / `NV12` / … plus the SPA id. kmsgrab Auto fallback notes that Wayland DRM-master denial is common so the PipeWire/xcap line is less alarming.
+
 ## 2026-11-08 02:45:00 -05:00 [ubuntu] — OBS-style interactive encode presets
 
 Hardware ffmpeg paths take ultra-low-latency knobs inspired by OBS (NVENC `ull`, rc-lookahead/delay 0, no scenecut/multipass/AQ; QSV async_depth 1; AMF ultralowlatency; x264 scenecut 0). Windows MF sets CodecAPI low-latency + zero B-frames when supported. PipeWire ScreenCast prefers NV12 after I420 and converts semi-planar→I420 without a BGRA detour. Full GPU texture→NVENC remains a follow-up.

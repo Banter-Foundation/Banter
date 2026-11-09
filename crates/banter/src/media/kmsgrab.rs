@@ -136,7 +136,11 @@ pub fn try_open(fps: u32) -> Result<Option<KmsStream>, String> {
                 Ok(Some(stream))
             }
             Err(err) => {
-                eprintln!("screen: kmsgrab unavailable ({err}); using PipeWire/xcap");
+                // Wayland compositors usually hold DRM master — Auto is expected to
+                // fall through here; Force surfaces the same error to the UI.
+                eprintln!(
+                    "screen: kmsgrab unavailable ({err}); using PipeWire/xcap (common on Wayland when the compositor holds DRM master)"
+                );
                 Ok(None)
             }
         },

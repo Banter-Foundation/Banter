@@ -268,9 +268,11 @@ fn stream_loop(
             if !data.logged {
                 data.logged = true;
                 let size = data.format.size();
+                let fmt = data.format.format();
                 eprintln!(
-                    "banter: screencast format {} {}x{}",
-                    data.format.format().0,
+                    "banter: screencast format {} ({}) {}x{}",
+                    format_name(fmt),
+                    fmt.0,
                     size.width,
                     size.height
                 );
@@ -699,6 +701,28 @@ enum Pixel {
     Nv12,
 }
 
+fn format_name(format: VideoFormat) -> &'static str {
+    if format == VideoFormat::I420 {
+        "I420"
+    } else if format == VideoFormat::NV12 {
+        "NV12"
+    } else if format == VideoFormat::BGRA {
+        "BGRA"
+    } else if format == VideoFormat::BGRx {
+        "BGRx"
+    } else if format == VideoFormat::RGBA {
+        "RGBA"
+    } else if format == VideoFormat::RGBx {
+        "RGBx"
+    } else if format == VideoFormat::RGB {
+        "RGB"
+    } else if format == VideoFormat::BGR {
+        "BGR"
+    } else {
+        "unknown"
+    }
+}
+
 fn pixel_kind(format: VideoFormat) -> Option<(usize, Pixel)> {
     if format == VideoFormat::RGB || format == VideoFormat::BGR {
         return Some((
@@ -1045,6 +1069,15 @@ mod tests {
         assert_eq!(rgba.len(), 4 * 4 * 4);
         // BGRX → R from blue channel (180).
         assert_eq!(rgba[0], 180);
+    }
+
+    #[test]
+    fn format_name_labels_common_spa_ids() {
+        assert_eq!(format_name(VideoFormat::BGRA), "BGRA");
+        assert_eq!(format_name(VideoFormat::NV12), "NV12");
+        assert_eq!(format_name(VideoFormat::I420), "I420");
+        // SPA raw.h: BGRA is enum value 12 (UNKNOWN=0 … BGRA=12).
+        assert_eq!(VideoFormat::BGRA.0, 12);
     }
 
     #[test]
