@@ -19,6 +19,8 @@ pub struct CaptureSnapshot {
     pub bytes_copied: u64,
     pub dmabuf_frames: u64,
     pub mem_frames: u64,
+    pub egl_import_ok: u64,
+    pub egl_import_fail: u64,
     pub last_modifier: u64,
     pub last_dmabuf_planes: u32,
     pub callback_p50_us: u64,
@@ -107,6 +109,8 @@ struct CaptureMetrics {
     bytes_copied: AtomicU64,
     dmabuf_frames: AtomicU64,
     mem_frames: AtomicU64,
+    egl_import_ok: AtomicU64,
+    egl_import_fail: AtomicU64,
     last_modifier: AtomicU64,
     last_dmabuf_planes: AtomicU64,
     last_receive_ns: AtomicU64,
@@ -131,6 +135,8 @@ impl CaptureMetrics {
             bytes_copied: AtomicU64::new(0),
             dmabuf_frames: AtomicU64::new(0),
             mem_frames: AtomicU64::new(0),
+            egl_import_ok: AtomicU64::new(0),
+            egl_import_fail: AtomicU64::new(0),
             last_modifier: AtomicU64::new(0),
             last_dmabuf_planes: AtomicU64::new(0),
             last_receive_ns: AtomicU64::new(0),
@@ -221,6 +227,16 @@ pub fn note_mem_frame() {
     global().mem_frames.fetch_add(1, Ordering::Relaxed);
 }
 
+/// EGL_EXT_image_dma_buf_import succeeded (image created then destroyed for M3 proof).
+pub fn note_egl_import_ok() {
+    global().egl_import_ok.fetch_add(1, Ordering::Relaxed);
+}
+
+/// EGL import failed (sticky disable lives in egl_dmabuf session).
+pub fn note_egl_import_fail() {
+    global().egl_import_fail.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Convert thread published an I420 frame to the encoder slot.
 pub fn note_converted(convert: Duration) {
     let m = global();
@@ -251,8 +267,12 @@ pub fn clear() {
     m.bytes_copied.store(0, Ordering::Relaxed);
     m.dmabuf_frames.store(0, Ordering::Relaxed);
     m.mem_frames.store(0, Ordering::Relaxed);
+    m.egl_import_ok.store(0, Ordering::Relaxed);
+    m.egl_import_fail.store(0, Ordering::Relaxed);
     m.last_modifier.store(0, Ordering::Relaxed);
     m.last_dmabuf_planes.store(0, Ordering::Relaxed);
+    #[cfg(target_os = "linux")]
+    super::egl_dmabuf::clear_counters();
     m.last_receive_ns.store(0, Ordering::Relaxed);
     m.receive_interval_sum_ns.store(0, Ordering::Relaxed);
     m.receive_interval_count.store(0, Ordering::Relaxed);
@@ -290,6 +310,8 @@ pub fn snapshot() -> CaptureSnapshot {
         bytes_copied: m.bytes_copied.load(Ordering::Relaxed),
         dmabuf_frames: m.dmabuf_frames.load(Ordering::Relaxed),
         mem_frames: m.mem_frames.load(Ordering::Relaxed),
+        egl_import_ok: m.egl_import_ok.load(Ordering::Relaxed),
+        egl_import_fail: m.egl_import_fail.load(Ordering::Relaxed),
         last_modifier: m.last_modifier.load(Ordering::Relaxed),
         last_dmabuf_planes: m.last_dmabuf_planes.load(Ordering::Relaxed) as u32,
         callback_p50_us,
@@ -319,11 +341,23 @@ pub fn summary_line() -> String {
         (s.frames_dropped as f64) * 100.0 / (s.frames_received as f64)
     };
     let buf_kind = if s.dmabuf_frames > 0 && s.mem_frames == 0 {
-        format!("dmabuf×{} planes={} mod={:#x}", s.dmabuf_frames, s.last_dmabuf_planes, s.last_modifier)
+        format!(
+            "dmabuf×{} planes={} mod={:#x} egl_ok={} egl_fail={}",
+            s.dmabuf_frames,
+            s.last_dmabuf_planes,
+            s.last_modifier,
+            s.egl_import_ok,
+            s.egl_import_fail
+        )
     } else if s.dmabuf_frames > 0 {
         format!(
-            "mem={} dmabuf={} planes={} mod={:#x}",
-            s.mem_frames, s.dmabuf_frames, s.last_dmabuf_planes, s.last_modifier
+            "mem={} dmabuf={} planes={} mod={:#x} egl_ok={} egl_fail={}",
+            s.mem_frames,
+            s.dmabuf_frames,
+            s.last_dmabuf_planes,
+            s.last_modifier,
+            s.egl_import_ok,
+            s.egl_import_fail
         )
     } else {
         format!("mem={}", s.mem_frames)

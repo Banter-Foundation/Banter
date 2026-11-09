@@ -1,3 +1,7 @@
+## 2026-11-09 00:10:00 -05:00 [ubuntu] — EGL DMA-BUF import proof (M3)
+
+Headless EGL/GBM session imports PipeWire DMA-BUF planes via `eglCreateImageKHR` (destroy immediately). Sticky fail keeps MemFd encode working without GPU. Capture metrics expose `egl_ok` / `egl_fail`. Docs: `docs/linux-egl-dmabuf.md`. VA-API hardware frames remain M4.
+
 ## 2026-11-08 23:55:00 -05:00 [ubuntu] — PipeWire DMA-BUF negotiate + plane parse (M2)
 
 Advertise MemFd EnumFormat first plus a DMA-BUF EnumFormat with VIDEO_modifier (INVALID/LINEAR). Update SPA_PARAM_Buffers dataType on Format fixation; parse DMA-BUF planes into metrics (/debugnow mem=/dmabuf=/mod=). Encode path still MemFd until EGL import. Docs: `docs/linux-dmabuf-negotiate.md`. Escape hatch: `BANTER_DMABUF=0`.

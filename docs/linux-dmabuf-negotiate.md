@@ -13,7 +13,7 @@ Stacked on capture metrics (`docs/linux-capture-metrics.md`). Implements PipeWir
 
 ## Deferred (next stacked PRs)
 
-- **M3:** `EGL_EXT_image_dma_buf_import` (+ modifiers), GPU scale/convert, sync before requeue
+- **M3:** landed separately — `docs/linux-egl-dmabuf.md` (import proof + metrics; no encode yet)
 - **M4:** VA-API `AVHWFramesContext` / hardware-frame encode without GPU→CPU readback
 - Consuming DMA-BUF into the convert/encode path (today MemFd still produces the I420)
 

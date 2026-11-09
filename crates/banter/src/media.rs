@@ -21,6 +21,8 @@ mod screen_pipeline;
 #[cfg(target_os = "linux")]
 mod dmabuf;
 #[cfg(target_os = "linux")]
+mod egl_dmabuf;
+#[cfg(target_os = "linux")]
 mod kmsgrab;
 #[cfg(target_os = "linux")]
 mod screencast;

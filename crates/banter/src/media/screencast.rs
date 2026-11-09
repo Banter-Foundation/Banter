@@ -39,6 +39,7 @@ use zbus::blocking::Proxy;
 use zbus::zvariant::{DeserializeDict, OwnedObjectPath, OwnedValue, Type, Value};
 
 use super::dmabuf::{self, DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, PARAM_BUFFERS_DATA_TYPE};
+use super::egl_dmabuf::{self, ImportAttempt};
 use super::encode::{self, even_fit, PackedOrder};
 
 struct Latest {
@@ -133,7 +134,7 @@ struct StreamData {
     modifier: u64,
     /// True when the fixated format included a VIDEO_modifier property.
     has_modifier: bool,
-    /// Logged once when DMA-BUF arrives but EGL import is not wired yet.
+    /// Logged once for DMA-BUF / EGL import status (ok, fail, or disabled).
     dmabuf_warned: bool,
 }
 
@@ -405,31 +406,51 @@ fn stream_loop(
                 );
             }
 
-            // DMA-BUF: parse planes + metrics. EGL import (M3) is not wired yet —
-            // do not mmap tiled/compressed buffers. MemFd/MemPtr still feed encode.
+            // DMA-BUF: parse planes, prove EGL import (M3), do not mmap tiled buffers.
+            // MemFd/MemPtr still feed encode until VA-API hardware frames (M4).
             if chunk_src.type_() == DataType::DmaBuf {
                 let planes = dmabuf::parse_planes(datas);
                 let n = planes.len() as u32;
                 capture_metrics::note_dmabuf(n.max(1), data.modifier);
+                let size = data.format.size();
+                let info = dmabuf::DmaBufInfo {
+                    width: size.width,
+                    height: size.height,
+                    format: data.format.format(),
+                    modifier: data.modifier,
+                    planes,
+                };
+                match egl_dmabuf::try_import(&info) {
+                    ImportAttempt::Success => {}
+                    ImportAttempt::Disabled => {}
+                    ImportAttempt::Failed(err) => {
+                        if !data.dmabuf_warned {
+                            data.dmabuf_warned = true;
+                            eprintln!(
+                                "banter: EGL DMA-BUF import failed ({err}); \
+                                 encode still uses MemFd/MemPtr when offered \
+                                 (set BANTER_DMABUF=0 to advertise MemFd-only)"
+                            );
+                        }
+                    }
+                }
+                if !data.dmabuf_warned && egl_dmabuf::import_ok() > 0 {
+                    data.dmabuf_warned = true;
+                    eprintln!(
+                        "banter: screencast DMA-BUF + EGL import active ({}x{} planes={} mod={:#x}); \
+                         encode path remains MemFd until M4",
+                        info.width,
+                        info.height,
+                        n.max(1),
+                        data.modifier
+                    );
+                }
                 capture_metrics::note_received(
                     callback_started.elapsed(),
                     Duration::ZERO,
                     0,
                     false,
                 );
-                if !data.dmabuf_warned {
-                    data.dmabuf_warned = true;
-                    let mappable = planes
-                        .iter()
-                        .all(|p| p.flags & dmabuf::SPA_DATA_FLAG_MAPPABLE != 0);
-                    eprintln!(
-                        "banter: screencast DMA-BUF frame (planes={} mod={:#x} mappable={mappable}); \
-                         EGL import deferred — encode still uses MemFd/MemPtr when offered \
-                         (set BANTER_DMABUF=0 to advertise MemFd-only)",
-                        n.max(1),
-                        data.modifier
-                    );
-                }
                 return;
             }
 
