@@ -1219,3 +1219,12 @@ Owl: when your window-chrome fix PR is open and green, merge it to main (do not 
 
 Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
 
+
+## 2026-11-09 BA-125 BFMD heading size table
+
+Owl: Implement BFMD heading size table for Banter. Make `{h:1}`…`{h:6}` apply a set font size from a table based on heading level. `{h}` is a prerequisite to size; not Discord `#` markers; do not add Discord markdown features; update docs/bfmd.md; open PR to main.
+
+Agent: Added HEADING_SIZE_PT [32,24,20,18,16,14]; Style::size_or_default uses explicit `{s}` then heading table then body 16pt. `{h}` does not write `{s}`. Spec + tests updated. Branch cursor/bfmd-heading-size-table-39c0.
+
+### Summary
+BFMD headings render at designated sizes from a level→pt table; `{s}` still overrides; no Discord hash markers.
