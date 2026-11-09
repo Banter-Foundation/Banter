@@ -14,6 +14,19 @@ pub const DEFAULT_EMOTE_PX: f32 = 22.0;
 pub const EMOTE_PX_MIN: f32 = 16.0;
 pub const EMOTE_PX_MAX: f32 = 128.0;
 
+/// Inclusive clamp for `{ld}` list nesting depth.
+pub const LIST_DEPTH_MIN: u8 = 1;
+pub const LIST_DEPTH_MAX: u8 = 8;
+
+/// List kind for the `{lk}` slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListKind {
+    /// Bulleted item (`{lk:u}`). Markdown `-`/`*`/`+` flat markers also map here.
+    Unordered,
+    /// Numbered item (`{lk:o}`). BFMD-only — Markdown `1.` is not a list.
+    Ordered,
+}
+
 /// One styled text span produced by the parser.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Run {
@@ -37,6 +50,10 @@ pub struct Style {
     pub align: Option<Align>,
     pub heading: Option<u8>,
     pub hr: bool,
+    /// `{lk:u}` / `{lk:o}` — list item kind while set.
+    pub list_kind: Option<ListKind>,
+    /// `{ld:N}` — nesting depth 1..=8. When `list_kind` is set and this is `None`, depth is 1.
+    pub list_depth: Option<u8>,
 }
 
 impl Style {
@@ -50,6 +67,16 @@ impl Style {
 
     pub fn emote_size_or_default(&self) -> f32 {
         self.emote_size.unwrap_or(DEFAULT_EMOTE_PX)
+    }
+
+    /// Effective list depth when `list_kind` is set; otherwise `0` (not a list item).
+    pub fn list_depth_or_default(&self) -> u8 {
+        if self.list_kind.is_none() {
+            return 0;
+        }
+        self.list_depth
+            .unwrap_or(LIST_DEPTH_MIN)
+            .clamp(LIST_DEPTH_MIN, LIST_DEPTH_MAX)
     }
 }
 
@@ -180,11 +207,80 @@ pub fn parse(source: &str) -> ParseResult {
         first_group = false;
     }
     flush(&mut text, &style, &mut runs);
+    let runs = apply_markdown_flat_bullets(runs);
     ParseResult {
         runs,
         diagnostics,
         version,
     }
+}
+
+/// Flat Markdown bullets only (`-`/`*`/`+` at column 0). Never numbers, never indent-nesting.
+///
+/// When a line already has BFMD `{lk}` set, markers stay literal. Numbered Markdown (`1. `)
+/// is never promoted to a list — use `{lk:o}` instead.
+fn apply_markdown_flat_bullets(runs: Vec<Run>) -> Vec<Run> {
+    if runs.is_empty() {
+        return runs;
+    }
+    let mut out: Vec<Run> = Vec::new();
+    let mut at_line_start = true;
+
+    let flush = |buf: &mut String, style: &Style, out: &mut Vec<Run>| {
+        if buf.is_empty() {
+            return;
+        }
+        if let Some(last) = out.last_mut() {
+            if last.style == *style {
+                last.text.push_str(buf);
+                buf.clear();
+                return;
+            }
+        }
+        out.push(Run {
+            text: std::mem::take(buf),
+            style: style.clone(),
+        });
+    };
+
+    for run in runs {
+        let base = run.style;
+        let chars: Vec<char> = run.text.chars().collect();
+        let mut i = 0usize;
+        let mut buf = String::new();
+        let mut buf_style = base.clone();
+
+        while i < chars.len() {
+            if at_line_start && base.list_kind.is_none() {
+                if i + 1 < chars.len()
+                    && matches!(chars[i], '-' | '*' | '+')
+                    && chars[i + 1] == ' '
+                {
+                    flush(&mut buf, &buf_style, &mut out);
+                    i += 2;
+                    let mut line_style = base.clone();
+                    line_style.list_kind = Some(ListKind::Unordered);
+                    line_style.list_depth = None;
+                    buf_style = line_style;
+                    at_line_start = false;
+                    continue;
+                }
+            }
+            let ch = chars[i];
+            i += 1;
+            if ch == '\n' {
+                buf.push(ch);
+                flush(&mut buf, &buf_style, &mut out);
+                buf_style = base.clone();
+                at_line_start = true;
+                continue;
+            }
+            at_line_start = false;
+            buf.push(ch);
+        }
+        flush(&mut buf, &buf_style, &mut out);
+    }
+    compact_runs(out)
 }
 
 /// Plain visible text (commands stripped). Useful for search previews / mentions.
@@ -845,7 +941,9 @@ fn apply_commands(
     }
 }
 
-const KNOWN_NAMES: &[&str] = &["v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr"];
+const KNOWN_NAMES: &[&str] = &[
+    "v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr", "lk", "ld",
+];
 
 fn close_slot(style: &mut Style, name: &str) {
     match name {
@@ -861,6 +959,12 @@ fn close_slot(style: &mut Style, name: &str) {
         "a" => style.align = None,
         "h" => style.heading = None,
         "hr" => style.hr = false,
+        // Closing list kind also drops depth — depth alone is not a list item.
+        "lk" => {
+            style.list_kind = None;
+            style.list_depth = None;
+        }
+        "ld" => style.list_depth = None,
         "v" => {}
         _ => {}
     }
@@ -962,6 +1066,41 @@ fn apply_set(style: &mut Style, name: &str, value: Option<&Value>) -> bool {
             }
             _ => false,
         },
+        "lk" => match value {
+            Some(Value::Ident(s)) => match s.as_str() {
+                "u" => {
+                    style.list_kind = Some(ListKind::Unordered);
+                    true
+                }
+                "o" => {
+                    style.list_kind = Some(ListKind::Ordered);
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        },
+        "ld" => match value {
+            Some(Value::Number(n)) => {
+                let depth = *n as u8;
+                if (LIST_DEPTH_MIN..=LIST_DEPTH_MAX).contains(&depth) {
+                    style.list_depth = Some(depth);
+                    true
+                } else {
+                    false
+                }
+            }
+            Some(Value::Ident(s)) => {
+                if let Ok(depth) = s.parse::<u8>() {
+                    if (LIST_DEPTH_MIN..=LIST_DEPTH_MAX).contains(&depth) {
+                        style.list_depth = Some(depth);
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        },
         _ => false, // unknown name — skip
     }
 }
@@ -1004,6 +1143,15 @@ fn diff_group(from: &Style, to: &Style) -> String {
     }
     if from.hr && !to.hr {
         parts.push("{!hr}".into());
+    }
+    if from.list_kind.is_some() && to.list_kind.is_none() {
+        parts.push("{!lk}".into());
+    }
+    if from.list_depth.is_some() && to.list_depth.is_none() {
+        // `{!lk}` already clears depth; only emit `{!ld}` when kind remains.
+        if to.list_kind.is_some() {
+            parts.push("{!ld}".into());
+        }
     }
 
     if to.size != from.size {
@@ -1070,6 +1218,20 @@ fn diff_group(from: &Style, to: &Style) -> String {
     }
     if to.hr && !from.hr {
         parts.push("{hr:t}".into());
+    }
+    if to.list_kind != from.list_kind {
+        if let Some(kind) = to.list_kind {
+            let letter = match kind {
+                ListKind::Unordered => "u",
+                ListKind::Ordered => "o",
+            };
+            parts.push(format!("{{lk:{letter}}}"));
+        }
+    }
+    if to.list_depth != from.list_depth {
+        if let Some(d) = to.list_depth {
+            parts.push(format!("{{ld:{d}}}"));
+        }
     }
 
     if parts.is_empty() {

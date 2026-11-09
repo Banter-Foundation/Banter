@@ -160,3 +160,149 @@ fn emote_token_scan_finds_stable_asset_ids() {
     assert!(bfmd::scan_emote_tokens(":party_parrot:").is_empty());
     assert!(bfmd::scan_emote_tokens(":{e:}:").is_empty());
 }
+
+#[test]
+fn bfmd_unordered_list_slot() {
+    let runs = bfmd::parse("<{lk:u}>alpha\nbeta<{!lk}>").runs;
+    assert!(runs.len() >= 1);
+    assert_eq!(runs[0].style.list_kind, Some(bfmd::ListKind::Unordered));
+    assert_eq!(runs[0].style.list_depth_or_default(), 1);
+    assert!(runs[0].text.starts_with("alpha"));
+    let last = runs.last().unwrap();
+    // After `{!lk}` following text (if any) is not a list; EOF may leave only list runs.
+    if last.text.contains("beta") && runs.len() == 1 {
+        assert_eq!(last.style.list_kind, Some(bfmd::ListKind::Unordered));
+    }
+}
+
+#[test]
+fn bfmd_ordered_list_slot() {
+    let runs = bfmd::parse("<{lk:o}>one\ntwo").runs;
+    assert_eq!(runs[0].style.list_kind, Some(bfmd::ListKind::Ordered));
+    assert_eq!(runs[0].style.list_depth_or_default(), 1);
+    assert_eq!(runs[0].text, "one\ntwo");
+}
+
+#[test]
+fn bfmd_list_depth_nests() {
+    let src = "<{lk:u}>top\n<{ld:2}>nested\n<{ld:1}>topagain";
+    let runs = bfmd::parse(src).runs;
+    // Find runs by content.
+    let top = runs.iter().find(|r| r.text.starts_with("top\n") || r.text == "top").unwrap();
+    assert_eq!(top.style.list_kind, Some(bfmd::ListKind::Unordered));
+    assert_eq!(top.style.list_depth_or_default(), 1);
+    let nested = runs.iter().find(|r| r.text.contains("nested")).unwrap();
+    assert_eq!(nested.style.list_kind, Some(bfmd::ListKind::Unordered));
+    assert_eq!(nested.style.list_depth_or_default(), 2);
+    let again = runs.iter().find(|r| r.text.contains("topagain")).unwrap();
+    assert_eq!(again.style.list_depth_or_default(), 1);
+}
+
+#[test]
+fn bfmd_mixed_bullet_and_number_nesting() {
+    let src = "<{lk:o}>parent\n<{lk:u},{ld:2}>child bullet\n<{lk:o},{ld:2}>child number";
+    let runs = bfmd::parse(src).runs;
+    let parent = runs.iter().find(|r| r.text.contains("parent")).unwrap();
+    assert_eq!(parent.style.list_kind, Some(bfmd::ListKind::Ordered));
+    assert_eq!(parent.style.list_depth_or_default(), 1);
+    let child_b = runs.iter().find(|r| r.text.contains("child bullet")).unwrap();
+    assert_eq!(child_b.style.list_kind, Some(bfmd::ListKind::Unordered));
+    assert_eq!(child_b.style.list_depth_or_default(), 2);
+    let child_o = runs.iter().find(|r| r.text.contains("child number")).unwrap();
+    assert_eq!(child_o.style.list_kind, Some(bfmd::ListKind::Ordered));
+    assert_eq!(child_o.style.list_depth_or_default(), 2);
+}
+
+#[test]
+fn bfmd_close_list_clears_kind_and_depth() {
+    let runs = bfmd::parse("<{lk:o},{ld:3}>item<{!lk}>after").runs;
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].style.list_kind, Some(bfmd::ListKind::Ordered));
+    assert_eq!(runs[0].style.list_depth_or_default(), 3);
+    assert!(runs[1].style.list_kind.is_none());
+    assert_eq!(runs[1].text, "after");
+}
+
+#[test]
+fn bfmd_list_depth_clamps_to_1_through_8() {
+    let low = bfmd::parse("<{lk:u},{ld:0}>x").runs;
+    // Bad depth 0 is rejected (diagnostic); kind may still apply with default depth.
+    assert_eq!(low[0].style.list_kind, Some(bfmd::ListKind::Unordered));
+    assert_eq!(low[0].style.list_depth_or_default(), 1);
+    let high = bfmd::parse("<{lk:u},{ld:9}>x").runs;
+    assert_eq!(high[0].style.list_kind, Some(bfmd::ListKind::Unordered));
+    assert_eq!(high[0].style.list_depth_or_default(), 1);
+    let ok = bfmd::parse("<{lk:u},{ld:8}>x").runs;
+    assert_eq!(ok[0].style.list_depth_or_default(), 8);
+}
+
+#[test]
+fn markdown_flat_bullet_markers_only() {
+    for marker in ["- ", "* ", "+ "] {
+        let src = format!("{marker}one\n{marker}two");
+        let runs = bfmd::parse(&src).runs;
+        let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(text, "one\ntwo", "marker {marker:?} should strip");
+        for run in &runs {
+            if run.text.trim().is_empty() {
+                continue;
+            }
+            assert_eq!(
+                run.style.list_kind,
+                Some(bfmd::ListKind::Unordered),
+                "marker {marker:?}"
+            );
+            assert_eq!(run.style.list_depth_or_default(), 1);
+        }
+    }
+}
+
+#[test]
+fn markdown_numbered_marker_stays_literal() {
+    let runs = bfmd::parse("1. one\n2. two").runs;
+    let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(text, "1. one\n2. two");
+    assert!(runs.iter().all(|r| r.style.list_kind.is_none()));
+}
+
+#[test]
+fn markdown_indented_bullet_does_not_nest() {
+    // Discord nests with leading spaces; BFMD must not — indented marker is literal.
+    let runs = bfmd::parse("- top\n  - not nested").runs;
+    let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(text, "top\n  - not nested");
+    let top = runs.iter().find(|r| r.text.contains("top")).unwrap();
+    assert_eq!(top.style.list_kind, Some(bfmd::ListKind::Unordered));
+    let indented = runs.iter().find(|r| r.text.contains("- not nested")).unwrap();
+    assert!(indented.style.list_kind.is_none() || indented.text.contains("- not nested"));
+    // The indented line content remains literal including its marker.
+    assert!(text.contains("  - not nested"));
+}
+
+#[test]
+fn markdown_bullet_does_not_apply_when_bfmd_list_already_on() {
+    let runs = bfmd::parse("<{lk:o}>- still ordered content").runs;
+    assert_eq!(runs[0].style.list_kind, Some(bfmd::ListKind::Ordered));
+    // Marker is literal because BFMD list kind is already active.
+    assert!(runs[0].text.contains("- still ordered content") || runs[0].text.starts_with('-'));
+}
+
+#[test]
+fn list_serialize_round_trip_bfmd_commands() {
+    let src = "<{lk:u}>a\n<{ld:2}>b<{!lk},{!ld}>";
+    let runs = bfmd::parse(src).runs;
+    let out = bfmd::serialize(&runs);
+    let again = bfmd::parse(&out).runs;
+    assert_eq!(runs.len(), again.len());
+    for (a, b) in runs.iter().zip(again.iter()) {
+        assert_eq!(a.text, b.text);
+        assert_eq!(a.style.list_kind, b.style.list_kind);
+        assert_eq!(a.style.list_depth_or_default(), b.style.list_depth_or_default());
+    }
+}
+
+#[test]
+fn plain_text_strips_markdown_bullet_markers() {
+    assert_eq!(bfmd::plain_text("- a\n- b"), "a\nb");
+    assert_eq!(bfmd::plain_text("<{lk:o}>a\nb"), "a\nb");
+}

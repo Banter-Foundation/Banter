@@ -1219,3 +1219,17 @@ Owl: when your window-chrome fix PR is open and green, merge it to main (do not 
 
 Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
 
+## 2026-11-09 BA-126 BFMD Discord-style lists → BFMD-native lists
+
+Owl: Implement Discord-style lists in BFMD — bulleted, numbered, nested only; no other Discord markdown.
+Owl: STOP copying Discord list syntax/behavior. Bulleted, numbered, nested must follow BFMD's own spec rules, not Discord.
+Owl: Basic (non-nested) bulleted and numbered lists: accept both BFMD-spec and common Markdown markers; nesting still BFMD-only.
+Owl: Standard Markdown list syntax for basic lists has a fixed default that cannot be changed. It only produces a normal bulleted list (dot-one / `-` style). It never produces a numbered list via Markdown. Numbered lists are BFMD-only. Nesting still BFMD rules, not Discord.
+
+Agent: Implemented `{lk:u}`/`{lk:o}` + `{ld:1..8}`; Markdown `-`/`*`/`+` at column 0 → unordered depth 1 only; `1.` literal; no indent nesting. Spec §6.1 + paint markers. Branch `cursor/bfmd-lists-b2d0`.
+
+### Summary
+- Markdown → fixed bullet-only flat lists.
+- BFMD `{lk:o}` + `{ld}` for numbered and nesting.
+- Differs from Discord: no `1.` authoring, no 2-space nest.
+

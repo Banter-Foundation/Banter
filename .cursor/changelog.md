@@ -1,3 +1,7 @@
+## 2026-11-09 00:55:37 +00:00 [ubuntu] — BFMD lists (BA-126)
+
+BFMD gains list slots `{lk:u}`/`{lk:o}` and nesting `{ld:1..8}`. Flat Markdown `-`/`*`/`+` at column 0 maps to unordered depth-1 only (fixed bullet; never numbered; never indent-nest). Numbered lists and nesting are BFMD-only. Parser + ImGui paint updated; `docs/bfmd.md` §6.1 documents rules vs Discord.
+
 ## 2026-11-08 02:45:00 -05:00 [ubuntu] — OBS-style interactive encode presets
 
 Hardware ffmpeg paths take ultra-low-latency knobs inspired by OBS (NVENC `ull`, rc-lookahead/delay 0, no scenecut/multipass/AQ; QSV async_depth 1; AMF ultralowlatency; x264 scenecut 0). Windows MF sets CodecAPI low-latency + zero B-frames when supported. PipeWire ScreenCast prefers NV12 after I420 and converts semi-planar→I420 without a BGRA detour. Full GPU texture→NVENC remains a follow-up.
