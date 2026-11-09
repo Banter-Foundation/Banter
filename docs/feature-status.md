@@ -19,6 +19,7 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Send / reply / edit / delete / search messages | Working |
 | Reddit-style reply threading (nested replies, collapse, inline composer) | Working — text channels + DMs; `reply_to` is the parent pointer; BA-82 thread lines match Reddit dark-mode gutters (thin vertical guides, circular (−)/(+) collapse, line-click); Reply link + distinct inline composer |
 | Attach a file to a message (composer upload) | Disabled — popup **Currently Unavailable** (BA-61); existing attachments still downloadable |
+| Text document attachment inline preview | Working — Discord-style expandable card for text extensions; no line-count refuse gate yet (BA-121); see [text-document-preview.md](text-document-preview.md) |
 | Mentions + presence | Working |
 | Discord-like temporary skin (rail, sidebar, chat, members, modals) | Working — **not** final Banter branding |
 | Chat rows (avatar, hover toolbar, bottom-anchored history; threaded tree layout) | Working |
@@ -59,8 +60,9 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | Message-row ImGui render (runs) | Working — bold/italic/underline/strike/size/color/bg/hr/`{e}` |
 | Composer B/I/U/S toolbar | Removed (BA-94) — chrome only; paste/typed BFMD still parses and renders |
 | Emote Library (packs, upload, subscribe, picker, Model A stickers, GIF 15s) | Working vertical slice — see [emote-library.md](emote-library.md) (BA-83); inline image decode / Library page polish follow |
+| Text document attachment preview (chat) | Working — expandable inline preview for text attachments (BA-121); not code-block highlighting / text-block type |
 
-Authoritative language: [bfmd.md](bfmd.md). Not CommonMark.
+Authoritative language: [bfmd.md](bfmd.md). Not CommonMark. Attachment preview: [text-document-preview.md](text-document-preview.md).
 
 ## Deferred (options kept)
 

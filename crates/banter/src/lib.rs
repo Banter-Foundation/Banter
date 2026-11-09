@@ -35,6 +35,7 @@ mod shell_sync;
 mod skin;
 mod stream_watch;
 pub mod suggest;
+pub mod text_preview;
 pub mod theme;
 pub mod titlebar;
 mod ui;

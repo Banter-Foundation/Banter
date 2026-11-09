@@ -108,6 +108,10 @@ use crate::suggest::{
     apply_suggestion, suggest, DismissState, MemberHint, SuggestQuery, Suggestion,
     SuggestionEngine, MAX_OWN_MEMORY, WEIGHT_DRAFT, WEIGHT_OWN, WEIGHT_PEER,
 };
+use crate::text_preview::{
+    decode_text_bytes, format_byte_size, is_text_document, needs_expand_control,
+    preview_visible_text, toggle_expanded, TextPreviewError,
+};
 use crate::theme::*;
 use crate::titlebar::{
     point_in_rect, title_bar_drag_rect, traffic_light_hit, TitleBarAction, TitleBarChrome,
@@ -478,6 +482,10 @@ pub(crate) struct App {
     reply_draft: String,
     /// Locally collapsed comment threads (Reddit fold); not persisted.
     collapsed_comments: HashSet<i64>,
+    /// Attachment ids whose Discord-style text preview is expanded (BA-121).
+    text_preview_expanded: HashSet<i64>,
+    /// Lazily fetched UTF-8 bodies for text-document attachments (`Err` = binary/unavailable).
+    attachment_text: HashMap<i64, Result<String, TextPreviewError>>,
     editing: Option<i64>,
     pending_file: Option<(String, Vec<u8>)>,
     avatars: HashMap<i64, Shot>,
@@ -780,6 +788,8 @@ impl App {
             reply_to: None,
             reply_draft: String::new(),
             collapsed_comments: HashSet::new(),
+            text_preview_expanded: HashSet::new(),
+            attachment_text: HashMap::new(),
             editing: None,
             pending_file: None,
             avatars: HashMap::new(),
@@ -5587,17 +5597,99 @@ impl App {
                 }
             }
             let mut attachment_y = action_y + action_h;
+            let preview_w = (width - text_x - 24.0).max(120.0);
             for attachment in &message.attachments {
-                ui.set_cursor_screen_pos([origin[0] + text_x, attachment_y]);
-                ui.text(format!(
-                    "file: {} ({} bytes)",
-                    attachment.filename, attachment.byte_size
-                ));
-                ui.same_line();
-                if ui.button(format!("Save##att{}", attachment.id)) {
-                    *save = Some((attachment.id, attachment.filename.clone()));
+                let att_id = attachment.id;
+                let filename = attachment.filename.clone();
+                let byte_size = attachment.byte_size;
+                let text_doc = is_text_document(&filename);
+                if text_doc {
+                    self.ensure_attachment_text(att_id);
                 }
-                attachment_y += 22.0;
+                let expanded = self.text_preview_expanded.contains(&att_id);
+                let body = self
+                    .attachment_text
+                    .get(&att_id)
+                    .and_then(|result| result.as_ref().ok())
+                    .cloned();
+                let header_h = 28.0;
+                let pad = 8.0;
+                let line_h = FONT_SM + 2.0;
+                let (preview_h, show_expand) = match body.as_deref() {
+                    Some(text) if text_doc => {
+                        let visible = preview_visible_text(text, expanded);
+                        let lines = visible.lines().count().max(1) as f32;
+                        let h = lines * line_h + pad * 2.0;
+                        (h, needs_expand_control(text))
+                    }
+                    None if text_doc => (line_h + pad * 2.0, false),
+                    _ => (0.0, false),
+                };
+                let expand_h = if show_expand { 22.0 } else { 0.0 };
+                let card_h = header_h + preview_h + expand_h + 4.0;
+                let card_min = [origin[0] + text_x, attachment_y];
+                let card_max = [card_min[0] + preview_w, card_min[1] + card_h];
+                {
+                    let draw = ui.get_window_draw_list();
+                    draw.add_rect(card_min, card_max, PANEL_BG)
+                        .rounding(4.0)
+                        .filled(true)
+                        .build();
+                    draw.add_rect(card_min, card_max, DIVIDER)
+                        .rounding(4.0)
+                        .build();
+                }
+                ui.set_cursor_screen_pos([card_min[0] + pad, card_min[1] + 6.0]);
+                {
+                    let _semi = ui.push_font_with_size(self.semibold_font, FONT_SM);
+                    ui.text_colored(TEXT, &filename);
+                }
+                ui.same_line();
+                ui.text_colored(MUTED, format_byte_size(byte_size));
+                ui.same_line();
+                if ui.button(format!("Save##att{att_id}")) {
+                    *save = Some((att_id, filename.clone()));
+                }
+                if text_doc {
+                    let preview_min = [card_min[0] + 1.0, card_min[1] + header_h];
+                    let preview_max = [card_max[0] - 1.0, preview_min[1] + preview_h];
+                    {
+                        let draw = ui.get_window_draw_list();
+                        draw.add_rect(preview_min, preview_max, INPUT_BG)
+                            .filled(true)
+                            .build();
+                    }
+                    let text_pos = [preview_min[0] + pad, preview_min[1] + pad];
+                    match body.as_deref() {
+                        Some(text) => {
+                            let visible = preview_visible_text(text, expanded);
+                            let _font = ui.push_font_with_size(None, FONT_SM);
+                            ui.set_cursor_screen_pos(text_pos);
+                            let _wrap = ui.push_text_wrap_pos(preview_max[0] - pad);
+                            ui.text_colored(TEXT_NORMAL, visible);
+                        }
+                        None => {
+                            let label = match self.attachment_text.get(&att_id) {
+                                Some(Err(TextPreviewError::Binary)) => "Preview unavailable",
+                                _ => "Loading…",
+                            };
+                            let _font = ui.push_font_with_size(None, FONT_SM);
+                            ui.set_cursor_screen_pos(text_pos);
+                            ui.text_colored(MUTED, label);
+                        }
+                    }
+                    if show_expand {
+                        ui.set_cursor_screen_pos([
+                            card_min[0] + pad,
+                            preview_max[1] + 2.0,
+                        ]);
+                        let label = if expanded { "Collapse" } else { "Expand" };
+                        if ui.small_button(format!("{label}##txtprev{att_id}")) {
+                            toggle_expanded(&mut self.text_preview_expanded, att_id);
+                        }
+                    }
+                }
+                attachment_y += card_h + 6.0;
             }
             let mut row_end = attachment_y.max(origin[1] + row_h + 2.0);
             if hot {
@@ -10330,6 +10422,23 @@ impl App {
     fn pick_attachment(&mut self) {
         self.pending_file = None;
         self.open_modal(Modal::UploadsUnavailable);
+    }
+
+    /// Fetch and cache UTF-8 body for a text-document attachment (BA-121).
+    fn ensure_attachment_text(&mut self, id: i64) {
+        if self.attachment_text.contains_key(&id) {
+            return;
+        }
+        match self.client.attachment(id) {
+            Ok(bytes) => {
+                self.attachment_text.insert(id, decode_text_bytes(&bytes));
+            }
+            Err(err) => {
+                self.status = err.to_string();
+                self.attachment_text
+                    .insert(id, Err(TextPreviewError::Binary));
+            }
+        }
     }
 
     fn save_attachment(&mut self, id: i64, filename: &str) {
