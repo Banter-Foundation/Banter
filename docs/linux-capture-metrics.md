@@ -60,6 +60,7 @@ Prefer a toolbox/dev environment for builds. Same diagnostics (`vainfo`, `pw-cli
 **Follow-ups:**
 
 - M2 DMA-BUF negotiate/parse: `docs/linux-dmabuf-negotiate.md`
-- M3/M4: EGL import + VA-API hardware frames (still deferred)
+- M3 EGL import proof: `docs/linux-egl-dmabuf.md`
+- M4: VA-API hardware frames (still deferred)
 
 Windows DXGI/GDI and macOS paths are unchanged aside from shared convert timing counters when those feeds publish.
