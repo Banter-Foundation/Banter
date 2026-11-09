@@ -2,14 +2,18 @@
 
 Owl (2026-11-08): these long-lived branches stay in the Banter repo. They are **not** feature branches and must not be deleted by cleanup jobs or agents.
 
-| Branch | Role |
+## Branch descriptions
+
+GitHub does not expose a remote “branch description” field via API. These texts are the canonical descriptions (also set locally with `git config branch.<name>.description` on Black-Birb).
+
+| Branch | Description |
 | --- | --- |
-| `main` | Integration trunk |
-| `linux` | Linux client / packaging line |
-| `windows` | Windows client / packaging line |
-| `mac` | macOS client / packaging line |
-| `android` | Android client line (future native or wrapper work) |
-| `website` | Banter website / web surface |
+| `main` | Universal shared trunk of Banter — the base all permanent platform-specific branches (linux, windows, mac, android, website) build from and keep in sync with. |
+| `linux` | Permanent Linux platform line — Linux client builds, packaging, and Linux-specific Banter work. |
+| `windows` | Permanent Windows platform line — Windows client builds, packaging, and Windows-specific Banter work. |
+| `mac` | Permanent macOS platform line — Mac client builds, packaging, and macOS-specific Banter work. |
+| `android` | Permanent Android platform line — Android client builds, packaging, or wrapper work for Banter on Android. |
+| `website` | Permanent website line — Banter website / web surface builds and content. |
 
 Created from `main` at `3f80f2b7e4d6021e90f9d7c1cf98ce3b4eca974e` (2026-11-08).
 
@@ -22,22 +26,10 @@ Created from `main` at `3f80f2b7e4d6021e90f9d7c1cf98ce3b4eca974e` (2026-11-08).
 
 ### GitHub branch protection
 
-The GitHub tools available to agents cannot set branch protection rules. Owl (or an org admin) should turn on protection for these refs in **Settings → Branches** (prevent deletion; optionally require PRs). Until that UI step is done, this document is the contract agents follow.
+Owl (or an org admin) should turn on protection for these refs in **Settings → Branches** (prevent deletion; optionally require PRs). Until that UI step is done, this document is the contract agents follow.
 
 ## iOS feasibility
 
-**Native iOS Banter is not feasible on the current stack without a separate client.**
+**Native iOS Banter is not feasible on the current stack without a separate client.** See also [ios-distribution-without-app-store.md](../../../../bc-e4b22778-c5d8-48db-9fd0-9e26860dabb5/docs/ios-distribution-without-app-store.md) in the Project store for AltStore / no–App Store options.
 
-Today's desktop client is **Rust + GLFW + OpenGL 3.3 + Dear ImGui (docking)**. That stack does not ship as a normal App Store iOS app:
-
-- GLFW / desktop OpenGL 3.3 are not the iOS UIKit / Metal path.
-- Dear ImGui can run on Metal in specialized ports, but Banter's windowing, input, and OS chrome assume a desktop GLFW host.
-- App Store rules, background voice, and push notifications need Apple frameworks Banter does not use yet.
-
-**Practical options later (not chosen yet):**
-
-1. Keep an optional permanent `ios` branch as a placeholder (same pattern as `android`) once Owl wants the empty line reserved.
-2. Ship iOS later as a **different client** (SwiftUI / native, or a web-first shell over `website`) that talks to the same Banter server APIs.
-3. Do **not** expect the current desktop binary to cross-compile into a store iOS build.
-
-Until Owl picks one of those, **do not create an `ios` branch** and do not start an iOS client in this repo.
+Until Owl picks a path, **do not create an `ios` branch** and do not start an iOS client in this repo.
