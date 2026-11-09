@@ -233,6 +233,7 @@ struct SurfaceFonts {
     chat_bold: Option<FontId>,
     italic: Option<FontId>,
     bold_italic: Option<FontId>,
+    mono: Option<FontId>,
 }
 
 pub(crate) struct App {
@@ -450,6 +451,8 @@ pub(crate) struct App {
     italic_font: Option<FontId>,
     /// Shantell Sans Bold Italic — BFMD bold+italic.
     bold_italic_font: Option<FontId>,
+    /// System monospace — BFMD `{cb}` / `{tb}` bodies (optional).
+    mono_font: Option<FontId>,
     modal: Option<Modal>,
     modal_frames: u32,
     server_menu: bool,
@@ -758,6 +761,7 @@ impl App {
             chat_bold_font: None,
             italic_font: None,
             bold_italic_font: None,
+            mono_font: None,
             modal: None,
             modal_frames: 0,
             server_menu: false,
@@ -874,9 +878,11 @@ impl App {
         chat_bold: Option<FontId>,
         italic: Option<FontId>,
         bold_italic: Option<FontId>,
+        mono: Option<FontId>,
     ) {
         self.body_font = body;
         self.chat_bold_font = chat_bold;
+        self.mono_font = mono;
         self.italic_font = italic;
         self.bold_italic_font = bold_italic;
     }
@@ -887,6 +893,7 @@ impl App {
             bold: self.chat_bold_font,
             italic: self.italic_font,
             bold_italic: self.bold_italic_font.or(self.chat_bold_font),
+            mono: self.mono_font,
         }
     }
 
@@ -896,6 +903,7 @@ impl App {
             semibold: self.semibold_font,
             body: self.body_font,
             chat_bold: self.chat_bold_font,
+            mono: self.mono_font,
             italic: self.italic_font,
             bold_italic: self.bold_italic_font,
         }
@@ -908,6 +916,7 @@ impl App {
         self.chat_bold_font = fonts.chat_bold;
         self.italic_font = fonts.italic;
         self.bold_italic_font = fonts.bold_italic;
+        self.mono_font = fonts.mono;
     }
 
     /// Open the sign-in Server options overlay and show why Banter is asking for a remote.
@@ -1022,6 +1031,7 @@ impl App {
             chat_bold,
             italic,
             bold_italic,
+            mono: None,
         });
         std::mem::swap(&mut self.icons, &mut self.settings_icons);
         std::mem::swap(&mut self.icons_ready, &mut self.settings_icons_ready);
@@ -5516,7 +5526,7 @@ impl App {
             }
             if !message.body.is_empty() {
                 let body_origin = [origin[0] + text_x, origin[1] + 22.0];
-                bfmd_paint::draw(
+                let (_h, copy) = bfmd_paint::draw(
                     ui,
                     self.bfmd_fonts(),
                     &message.body,
@@ -5524,6 +5534,9 @@ impl App {
                     text_w,
                     edited,
                 );
+                if let Some(text) = copy {
+                    self.copy_message = Some(text);
+                }
             }
             if row.collapsed && row.child_count > 0 {
                 let note_y = origin[1] + 22.0 + body_h.max(20.0);
@@ -15337,6 +15350,7 @@ impl App {
             chat_bold,
             italic,
             bold_italic,
+            mono: None,
         });
         std::mem::swap(&mut self.icons, &mut self.stream_popout_icons);
         std::mem::swap(&mut self.icons_ready, &mut self.stream_popout_icons_ready);

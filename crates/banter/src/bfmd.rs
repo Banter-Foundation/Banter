@@ -4,6 +4,8 @@
 //! language, not CommonMark. Messages store BFMD source in `body`; plain text
 //! with no command groups is valid BFMD and round-trips unchanged.
 
+use crate::bfmd_highlight::{self, HighlightLanguage, HighlightSpan};
+
 /// Default body size in points when `{s}` is unset (theme body).
 pub const DEFAULT_SIZE_PT: f32 = 16.0;
 
@@ -13,6 +15,15 @@ pub const DEFAULT_EMOTE_PX: f32 = 22.0;
 /// Inclusive clamp for `{e}` emote height (plan: 16–128).
 pub const EMOTE_PX_MIN: f32 = 16.0;
 pub const EMOTE_PX_MAX: f32 = 128.0;
+
+/// Fenced block kind for `{cb}` / `{tb}` (verbatim body until close).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Block {
+    /// Code block; optional language drives syntect highlighting.
+    Code { language: Option<String> },
+    /// Plain text block — no highlighting, easy copy.
+    Text,
+}
 
 /// One styled text span produced by the parser.
 #[derive(Clone, Debug, PartialEq)]
@@ -37,6 +48,8 @@ pub struct Style {
     pub align: Option<Align>,
     pub heading: Option<u8>,
     pub hr: bool,
+    /// Verbatim code (`cb`) or text (`tb`) block. Content is not BFMD-parsed.
+    pub block: Option<Block>,
 }
 
 impl Style {
@@ -121,6 +134,44 @@ pub fn parse(source: &str) -> ParseResult {
     };
 
     while i < bytes.len() {
+        // Verbatim body while a code/text block slot is active.
+        if style.block.is_some() {
+            match take_verbatim_chunk(bytes, i, &mut diagnostics) {
+                VerbatimEvent::Text { chunk, next } => {
+                    text.push_str(&chunk);
+                    i = next;
+                    first_group = false;
+                }
+                VerbatimEvent::Group {
+                    cmds,
+                    next,
+                    start,
+                    raw,
+                } => {
+                    if group_touches_block(&cmds) {
+                        flush(&mut text, &style, &mut runs);
+                        apply_commands(&cmds, &mut style, &mut diagnostics, start);
+                        i = next;
+                    } else {
+                        // Non-block groups stay literal inside `{cb}` / `{tb}`.
+                        text.push_str(&raw);
+                        i = next;
+                    }
+                    first_group = false;
+                }
+                VerbatimEvent::Unclosed { next } => {
+                    diagnostics.push(Diagnostic {
+                        message: "unclosed BFMD group".into(),
+                        index: i,
+                    });
+                    text.push('<');
+                    i = next;
+                    first_group = false;
+                }
+            }
+            continue;
+        }
+
         let c = bytes[i];
         if c == b'\\' {
             let (ch, next, diag) = parse_text_escape(bytes, i);
@@ -187,6 +238,103 @@ pub fn parse(source: &str) -> ParseResult {
     }
 }
 
+/// Syntax-highlight a code block body (syntect). See `bfmd_highlight`.
+pub fn highlight_code(language: Option<&str>, source: &str) -> Vec<Vec<HighlightSpan>> {
+    bfmd_highlight::highlight(language, source)
+}
+
+/// Languages available for `{cb:lang}` (syntect default pack).
+pub fn supported_highlight_languages() -> Vec<HighlightLanguage> {
+    bfmd_highlight::supported_languages()
+}
+
+enum VerbatimEvent {
+    Text { chunk: String, next: usize },
+    Group {
+        cmds: Vec<ParsedCommand>,
+        next: usize,
+        start: usize,
+        raw: String,
+    },
+    Unclosed { next: usize },
+}
+
+fn group_touches_block(cmds: &[ParsedCommand]) -> bool {
+    cmds.iter().any(|cmd| match cmd {
+        ParsedCommand::CloseAll => true,
+        ParsedCommand::Close { name } => name == "cb" || name == "tb",
+        ParsedCommand::Set { name, .. } => name == "cb" || name == "tb",
+    })
+}
+
+/// In a `{cb}` / `{tb}` body: only `\\` and `\<` are escapes; every other byte is
+/// literal until the next block-affecting command group.
+fn take_verbatim_chunk(
+    bytes: &[u8],
+    i: usize,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> VerbatimEvent {
+    if bytes.get(i) == Some(&b'\\') {
+        if i + 1 >= bytes.len() {
+            return VerbatimEvent::Text {
+                chunk: "\\".into(),
+                next: i + 1,
+            };
+        }
+        let next = bytes[i + 1];
+        // Only `\<` and `\\` are special inside blocks; other escapes drop the slash.
+        let ch = next as char;
+        if next != b'<' && next != b'\\' {
+            diagnostics.push(Diagnostic {
+                message: format!("unknown escape \\{ch}"),
+                index: i,
+            });
+        }
+        return VerbatimEvent::Text {
+            chunk: ch.to_string(),
+            next: i + 2,
+        };
+    }
+    if bytes.get(i) == Some(&b'<') && group_starts_at(bytes, i) {
+        return match parse_group(bytes, i, &mut Style::default(), diagnostics) {
+            Ok((next, cmds)) => {
+                let raw = String::from_utf8_lossy(&bytes[i..next]).into_owned();
+                VerbatimEvent::Group {
+                    cmds,
+                    next,
+                    start: i,
+                    raw,
+                }
+            }
+            Err(_) => VerbatimEvent::Unclosed { next: i + 1 },
+        };
+    }
+    // Take the longest run of non-special bytes (stop before `\` or `<{`).
+    let mut j = i;
+    while j < bytes.len() {
+        if bytes[j] == b'\\' {
+            break;
+        }
+        if bytes[j] == b'<' && group_starts_at(bytes, j) {
+            break;
+        }
+        j += 1;
+    }
+    if j == i {
+        // Lone `<` that does not start a group.
+        let ch = std::str::from_utf8(&bytes[i..])
+            .ok()
+            .and_then(|s| s.chars().next())
+            .unwrap_or('<');
+        return VerbatimEvent::Text {
+            chunk: ch.to_string(),
+            next: i + ch.len_utf8(),
+        };
+    }
+    let chunk = String::from_utf8_lossy(&bytes[i..j]).into_owned();
+    VerbatimEvent::Text { chunk, next: j }
+}
+
 /// Plain visible text (commands stripped). Useful for search previews / mentions.
 pub fn plain_text(source: &str) -> String {
     parse(source).runs.into_iter().map(|r| r.text).collect()
@@ -243,7 +391,11 @@ pub fn serialize(runs: &[Run]) -> String {
             out.push_str(&diff_group(&current, &run.style));
             current = run.style.clone();
         }
-        escape_text_into(&run.text, &mut out);
+        if current.block.is_some() {
+            escape_block_text_into(&run.text, &mut out);
+        } else {
+            escape_text_into(&run.text, &mut out);
+        }
     }
     out
 }
@@ -845,7 +997,9 @@ fn apply_commands(
     }
 }
 
-const KNOWN_NAMES: &[&str] = &["v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr"];
+const KNOWN_NAMES: &[&str] = &[
+    "v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr", "cb", "tb",
+];
 
 fn close_slot(style: &mut Style, name: &str) {
     match name {
@@ -861,6 +1015,7 @@ fn close_slot(style: &mut Style, name: &str) {
         "a" => style.align = None,
         "h" => style.heading = None,
         "hr" => style.hr = false,
+        "cb" | "tb" => style.block = None,
         "v" => {}
         _ => {}
     }
@@ -962,6 +1117,42 @@ fn apply_set(style: &mut Style, name: &str, value: Option<&Value>) -> bool {
             }
             _ => false,
         },
+        "cb" => match value {
+            None => {
+                style.block = Some(Block::Code { language: None });
+                true
+            }
+            Some(Value::Ident(s)) | Some(Value::Quoted(s)) => {
+                let s = s.trim();
+                let language = if s.is_empty() {
+                    None
+                } else {
+                    Some(s.to_string())
+                };
+                style.block = Some(Block::Code { language });
+                true
+            }
+            Some(Value::Bool(false)) => {
+                style.block = None;
+                true
+            }
+            Some(Value::Number(n)) if *n == 0.0 => {
+                style.block = None;
+                true
+            }
+            _ => false,
+        },
+        "tb" => {
+            let on = match value {
+                None => true,
+                Some(Value::Bool(b)) => *b,
+                Some(Value::Number(n)) => *n != 0.0,
+                Some(Value::Ident(s)) => parse_bool(s).unwrap_or(true),
+                _ => return false,
+            };
+            style.block = if on { Some(Block::Text) } else { None };
+            true
+        }
         _ => false, // unknown name — skip
     }
 }
@@ -1004,6 +1195,16 @@ fn diff_group(from: &Style, to: &Style) -> String {
     }
     if from.hr && !to.hr {
         parts.push("{!hr}".into());
+    }
+    match (&from.block, &to.block) {
+        (Some(Block::Code { .. }), None) => parts.push("{!cb}".into()),
+        (Some(Block::Text), None) => parts.push("{!tb}".into()),
+        (Some(Block::Code { .. }), Some(Block::Text)) => parts.push("{!cb}".into()),
+        (Some(Block::Text), Some(Block::Code { .. })) => parts.push("{!tb}".into()),
+        (Some(Block::Code { language: a }), Some(Block::Code { language: b })) if a != b => {
+            parts.push("{!cb}".into());
+        }
+        _ => {}
     }
 
     if to.size != from.size {
@@ -1071,6 +1272,28 @@ fn diff_group(from: &Style, to: &Style) -> String {
     if to.hr && !from.hr {
         parts.push("{hr:t}".into());
     }
+    if to.block != from.block {
+        match &to.block {
+            Some(Block::Code { language: None }) => parts.push("{cb}".into()),
+            Some(Block::Code {
+                language: Some(lang),
+            }) => {
+                if lang
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '+')
+                {
+                    parts.push(format!("{{cb:{lang}}}"));
+                } else {
+                    parts.push(format!(
+                        "{{cb:\"{}\"}}",
+                        lang.replace('\\', "\\\\").replace('"', "\\\"")
+                    ));
+                }
+            }
+            Some(Block::Text) => parts.push("{tb}".into()),
+            None => {}
+        }
+    }
 
     if parts.is_empty() {
         String::new()
@@ -1094,6 +1317,17 @@ fn escape_text_into(text: &str, out: &mut String) {
             '{' => out.push_str("\\{"),
             '>' => out.push_str("\\>"),
             '}' => out.push_str("\\}"),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(ch),
+        }
+    }
+}
+
+/// Block bodies only need `\<` and `\\` so a literal `<{!cb}>` can round-trip.
+fn escape_block_text_into(text: &str, out: &mut String) {
+    for ch in text.chars() {
+        match ch {
+            '<' => out.push_str("\\<"),
             '\\' => out.push_str("\\\\"),
             _ => out.push(ch),
         }

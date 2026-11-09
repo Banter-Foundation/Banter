@@ -12,6 +12,7 @@
 
 mod api;
 pub mod bfmd;
+mod bfmd_highlight;
 mod bfmd_paint;
 mod commands;
 mod coverflow;

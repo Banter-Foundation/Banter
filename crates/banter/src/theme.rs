@@ -34,6 +34,10 @@ pub const SIDEBAR_BG: [f32; 4] = hex(0x2B2D31);
 pub const STAGE_BG: [f32; 4] = hex(0x313338);
 pub const PANEL_BG: [f32; 4] = hex(0x232428);
 pub const FLOATING_BG: [f32; 4] = hex(0x111214);
+/// BFMD `{cb}` / `{tb}` block fill.
+pub const CODE_BLOCK_BG: [f32; 4] = hex(0x2B2D31);
+pub const CODE_BLOCK_BORDER: [f32; 4] = hex(0x1E1F22);
+pub const CODE_BLOCK_HEADER: [f32; 4] = hex(0x232428);
 pub const INPUT_BG: [f32; 4] = hex(0x1E1F22);
 pub const COMPOSER_BG: [f32; 4] = hex(0x383A40);
 pub const CALL_BG: [f32; 4] = hex(0x000000);

@@ -26,6 +26,13 @@ rfd = "0.15"
 rtc = "0.21"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Fancy-regex backend avoids native oniguruma; default Sublime syntax pack (~75 langs).
+syntect = { version = "5.3", default-features = false, features = [
+    "parsing",
+    "default-syntaxes",
+    "default-themes",
+    "regex-fancy",
+] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "process", "io-util"] }
 tungstenite = "0.26"
 ureq = { version = "2.12", features = ["json"] }

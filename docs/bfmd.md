@@ -105,7 +105,7 @@ Inside quoted values, `\"` and `\\` are the only required escapes.
 
 Document defaults (slots empty): theme foreground, theme body size (**16pt**), theme font, not bold/italic/underline/strike, no highlight, align inherit (start), heading none.
 
-**Flag commands** (`b`, `i`, `u`, `k`, `hr`): omitted value means `t`. `{b}` == `{b:t}`. `{b:f}` turns the slot off (same as `{!b}`).
+**Flag commands** (`b`, `i`, `u`, `k`, `hr`, `tb`): omitted value means `t`. `{b}` == `{b:t}`. `{b:f}` turns the slot off (same as `{!b}`).
 
 | Name | Slot | Value | Effect |
 | --- | --- | --- | --- |
@@ -122,8 +122,26 @@ Document defaults (slots empty): theme foreground, theme body size (**16pt**), t
 | `a` | align | `l` `c` `r` `j` | Paragraph align from this point until next `a` or `{!a}`. Applies to the paragraph containing the command and following paragraphs. |
 | `h` | heading | `1`..`6` | Heading level until `{!h}` or another `h`. Used for title and for export. **Semantic only** — not a font-size preset. Applying `{h}` must not set, replace, or close `{s}`. The renderer does **not** substitute a heading size table; body size is theme `size_note` unless `{s}` is set. |
 | `hr` | rule | bool | Horizontal rule. `{hr}` == `{hr:t}` (flag; omitted value means `t`). `{hr:f}` is the same as `{!hr}`. While the slot is on, the renderer draws a full-width rule for that paragraph (theme `border`, or the active `{c}` if set). Keep the style-map model; this is not HTML `<hr>`. |
+| `cb` | block | ident / quoted / omitted | **Code block.** Opens a verbatim region until `{!cb}`, `{!}`, or a replacing `{cb}` / `{tb}`. Optional language token (e.g. `{cb:rust}`, `{cb:js}`) drives syntect highlighting. `{cb}` with no value is a monospace code block with no language. Body text is **not** BFMD-parsed (only `\<` and `\\` escapes apply). Banter draws a boxed panel with a **Copy** control. |
+| `tb` | block | bool | **Text block.** Like a code block but **no** language and **no** syntax highlighting — plain copyable text. `{tb}` / `{tb:t}` open; `{!tb}` / `{tb:f}` close. Same verbatim rules and Copy UI as `{cb}`. Setting `cb` replaces `tb` and vice versa (one block slot). |
 
-**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!}` or `{!*}` clears **all** slots.
+**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!cb}` / `{!tb}` end the active block. `{!}` or `{!*}` clears **all** slots.
+
+### 6.1 Code / text blocks (verbatim)
+
+While `{cb}` or `{tb}` is active, the parser enters **verbatim mode**:
+
+1. Ordinary BFMD groups such as `<{b:t}>` are **literal text** inside the block (they do not change style).
+2. Only a group that sets/closes `cb` or `tb`, or `{!}` / `{!*}`, is treated as a real command.
+3. Escapes inside the body: `\<` → `<`, `\\` → `\`. Other `\` sequences drop the slash (with a diagnostic), same recovery spirit as §5.
+4. To include a literal close marker in the body, write `\<{!cb}>` (or `\<{!tb}>`).
+5. EOF still closes the block (no trailing close required).
+
+**Not Discord markdown.** There are no `` ``` `` fences and no spoilers/subtext/etc. — only these BFMD commands.
+
+**Highlighting engine:** [syntect](https://github.com/trishume/syntect) 5.x with the default Sublime Text syntax pack (fancy-regex backend). Banter resolves `{cb:lang}` by token, file extension, or case-insensitive syntax name. Unknown languages render as plain monospace (no colors).
+
+**Supported languages (syntect default pack):** the pack ships **~75** syntaxes. Common tokens / extensions include: `rust`/`rs`, `python`/`py`, `javascript`/`js`, `typescript` (via JS when present), `c`, `c++`/`cpp`, `c#`/`cs`, `go`, `java`, `kotlin` (when present), `swift` (when present), `ruby`/`rb`, `php`, `html`, `css`, `json`, `yaml`/`yml`, `xml`, `sql`, `bash`/`sh`/`zsh`, `makefile`, `lua`, `perl`, `r`, `scala`, `haskell`/`hs`, `erlang`, `clojure`, `lisp`, `ocaml`, `pascal`, `diff`/`patch`, `markdown`/`md`, `latex`/`tex`, `objective-c`, and `Plain Text`. Call `banter::bfmd::supported_highlight_languages()` at runtime for the authoritative name + extension list (unit-tested to stay broad).
 
 **Emote tokens (not BFMD commands):** message bodies may include stable `:{e:ASSET_ID}:` tokens for custom library emotes. Display size follows the active `{e}` slot (default 22px). Stickers and GIFs are message media, not BFMD tokens.
 
@@ -190,6 +208,32 @@ Source:
 <{!h},{!s},{a:c},{b}>centered bold
 ```
 
+**Example F** — code block with language (verbatim body):
+
+Source:
+
+```
+<{cb:rust}>
+fn main() {
+    println!("hi");
+}
+<{!cb}>
+```
+
+Parsed runs: one run whose style has `block = Code { language: Some("rust") }` and text equal to the body (including the newlines after the open group). Commands inside the body are not applied.
+
+**Example G** — text block (easy copy, no highlight):
+
+Source:
+
+```
+<{tb}>
+paste this somewhere
+<{!tb}>
+```
+
+Parsed runs: one run with `block = Text`.
+
 ### 8. Errors and diagnostics
 
 The editor **must not refuse to open** a note because of parse errors. Recover:
@@ -242,6 +286,8 @@ Not in the v1 app cut. Exporters must read this table so the native format does 
 - `{u:t}` `{k:t}` `{c}` `{bg}` `{s}` `{f}` → HTML `<span style="...">` / `<u>` / `<s>` inside the `.md` file (lossy-but-faithful). Plain-md mode may drop these.
 - `{a:c}` / `{a:r}` / `{a:j}` → HTML align on the paragraph.
 - `{hr}` → Markdown `---` / HTML `<hr>` (lossy).
+- `{cb:lang}` / `{cb}` → fenced Markdown code block (`` ```lang `` … `` ``` ``); unknown/empty lang → plain fence.
+- `{tb}` → fenced plain Markdown code block (no language) or an HTML `<pre>` in HTML-ish md mode.
 - Command groups themselves are never written to the export.
 
 **DOCX**
@@ -262,9 +308,15 @@ These are **required unit tests**, inputs taken as exact source strings:
 8. `<` not followed by `{` is literal.
 9. Both `{c=0xFFFFFF}` and `{c:#FFFFFF}` yield the same RGB.
 10. `{hr}` / `{hr:t}` then a newline then `{!hr}` → one run whose style has `hr` on; `{!hr}` (or `{hr:f}`) clears the slot for following text.
+11. `<{cb:rust}>\nfn main() {}\n<{!cb}>after` → one code-block run (language `rust`) then plain `after`.
+12. `<{cb:js}>let x = <{b:t}>not bold<{!cb}>` → body text contains the literal `<{b:t}>`; bold is not applied.
+13. `<{tb}>\ncopy me\n<{!tb}>` → one text-block run with no language / no highlighting.
+14. `\<{!cb}>` inside an open `{cb}` body is literal `<{!cb}>` and does not close the block.
 
 ### 13. Out of scope for this format
 
 - Embedded images or board ink (those are **AGWF** documents or future `{img:"..."}` — do not add until specified here).
 - Macros, scripts, or arbitrary command execution. `{...}` is a **closed set of style commands**, not a programming language.
 - Nested / stacked values for the same slot.
+- Discord-markdown gap features (spoilers, subtext, `` ``` `` fences, etc.) unless Owl explicitly approves them.
+- Inline text-document attachment previews (separate feature; not part of `{cb}` / `{tb}`).
