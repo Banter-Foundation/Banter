@@ -26,6 +26,9 @@ banter-out.txt
 .banter-linux-smoke/
 *.log
 
+# Keep the Linux debug binary under testing-debug/; ignore rebuild scratch only.
+testing-debug/banter-stream-debug.old
+
 # Linked worktrees and agent scratch under the primary tree
 /worktrees/
 .agent/

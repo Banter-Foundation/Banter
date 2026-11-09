@@ -1,0 +1,17 @@
+[package]
+name = "banter-stream-debug"
+version = "0.1.0"
+edition = "2021"
+description = "Linux terminal headless Banter streamer for capture/encode debugging (no UI)."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "banter-stream-debug"
+path = "src/main.rs"
+
+[dependencies]
+banter = { path = "../crates/banter" }
+banter-server = { path = "../crates/banter-server" }
+rpassword = "7"
+xcap = "0.9"
