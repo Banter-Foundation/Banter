@@ -1,3 +1,7 @@
+## 2026-11-09 00:35:00 -05:00 [ubuntu] — Version-1-test-13.4 pre-release
+
+Shipped pre-release Version-1-test-13.4 from main after Linux capture stack M0–M4 (#120–#124) and docker testing-debug stub (#123). **Linux assets only** this cut (Win/macOS deferred). Protocol **2**. Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
+
 ## 2026-11-09 00:45:00 -05:00 [ubuntu] — VA-API DMA-BUF hardware encode (M4)
 
 Own PipeWire DMA-BUF FDs and encode via VA-API (PRIME import → VPP NV12 → H.264) so Go Live can skip CPU BGRA→I420 when the path sticks. Prefer DMA-BUF EnumFormat when a render node exists; sticky-fail keeps MemFd/CPU. Metrics: `va_ok` / `va_fail`. Docs: `docs/linux-vaapi-dmabuf.md`. Windows unchanged.
