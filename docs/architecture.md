@@ -66,7 +66,7 @@ Presence (`/v1/presence` and WS `presence` events) includes `custom_status` alon
 Social: friends requests/list, presence, mentions.  
 Servers: create/list, invites, members, nickname, categories, channels, layout.  
 Server rail folders (per user): `/v1/me/server-rail`, `/v1/me/server-folders`, `/v1/me/servers/{id}/folder`.  
-Chat: channel/DM messages, send/edit/delete, attachments. Message `body` is BFMD source (plain text valid); client parses/renders styled runs (`bfmd` / `bfmd_paint`). Spec: [bfmd.md](bfmd.md).  
+Chat: channel/DM messages, send/edit/delete, attachments. Message `body` is BFMD source (plain text valid); client parses/renders styled runs (`bfmd` / `bfmd_paint`). Spec: [bfmd.md](bfmd.md). Text-document attachments get a Discord-style expandable inline preview (`text_preview`); see [text-document-preview.md](text-document-preview.md).  
 Calls: DM call start/accept/decline/end.  
 Voice: join, leave, flags.  
 Realtime: `/v1/ws`.  

@@ -1219,3 +1219,7 @@ Owl: when your window-chrome fix PR is open and green, merge it to main (do not 
 
 Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
 
+
+Coordinator: Build BFMD/chat text document inline preview on Banter. Ask docs/bfmd-code-preview-textblock-ask.md item 2. Discord-style expandable inline preview. No line cap for now. Branch from main, PR, tests, docs. Do not implement code-block highlighting or text-block type. HARD RULE: Do not add Discord-markdown gap features to BFMD without Owl’s explicit approval.
+
+Agent: Implemented BA-121 text document inline preview only — `text_preview` helpers + chat attachment card with Expand/Collapse; no BFMD syntax highlighting, no text-block type, no Discord-markdown gap work. Branch `cursor/text-doc-inline-preview-d350`. Tests in `crates/banter/tests/text_preview.rs` (9 passed). Docs: `docs/text-document-preview.md`.

@@ -946,3 +946,15 @@ Shipped pre-release Version-1-test-11.2 from main after mid-stream quality contr
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-11.2
 - Assets: Banter-windows-version-1-test-11.2.zip, Banter-linux-version-1-test-11.2.zip, Banter-macos-arm-version-1-test-11.2.zip, banter-server.exe, banter-server-linux, banter-server-macos-arm
 
+
+## 2026-11-09 00:51:54 +00:00 [ubuntu] — Text document inline preview
+
+Chat attachments that look like text documents now show a Discord-style expandable inline preview (filename, size, Save, UTF-8 body). No line-count gate refuses preview yet. Code-block highlighting and the text-block message type stay out of scope.
+
+### Changelog
+- New features: Discord-style expandable text-document attachment preview in chat (BA-121)
+- Bug fixes: none
+- Other: `docs/text-document-preview.md`; feature-status / architecture / features updates
+
+- `crates/banter/src/text_preview.rs` + `crates/banter/tests/text_preview.rs`
+- Message attachment rows in `ui.rs` fetch and cache preview bodies lazily
