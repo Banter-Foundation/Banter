@@ -127,6 +127,66 @@ Document defaults (slots empty): theme foreground, theme body size (**16pt**), t
 
 **Emote tokens (not BFMD commands):** message bodies may include stable `:{e:ASSET_ID}:` tokens for custom library emotes. Display size follows the active `{e}` slot (default 22px). Stickers and GIFs are message media, not BFMD tokens.
 
+### 6.1 Timestamps (inline objects — Owl-approved)
+
+Timestamps are **inline objects**, not style slots. They do not stay “on” for following text. A timestamp run carries an absolute Unix instant plus a display style; paint formats it in the **reader’s** local timezone/locale. Canonical storage/serialize form is always the Discord tag.
+
+#### Discord-style
+
+```
+<t:UNIX_SECONDS>
+<t:UNIX_SECONDS:STYLE>
+```
+
+- `UNIX_SECONDS` is a signed integer (UTC epoch seconds). Negative values (pre-1970) are allowed.
+- `STYLE` is one letter. Omitted style means `f`.
+- Supported flags (Discord usual set):
+
+| Flag | Name | Render |
+| --- | --- | --- |
+| `t` | short time | `03:01 PM` |
+| `T` | long time | `03:01:00 PM` |
+| `d` | short date | `11/09/2026` |
+| `D` | long date | `November 09, 2026` |
+| `f` | short date + short time (**default**) | `November 09, 2026 03:01 PM` |
+| `F` | full date + short time | `Monday, November 09, 2026 03:01 PM` |
+| `R` | relative | `in 2 days` / `3 hours ago` |
+
+Malformed tags (`<t:abc>`, unknown style letter, missing `>`) stay **literal text**. Escape with `\<t:…>` to force a literal.
+
+#### Easy plain-text `@t[…]` (Owl)
+
+Designed to be easier to type than Discord tags. **Requires the exact marker `@t[`** (no space between `@t` and `[`) so ordinary sentences never false-match.
+
+```
+easy_timestamp = '@t[' datetime [ ws style ] ']'
+datetime       = date sep time [ ws offset ]
+date           = YYYY '-' MM '-' DD
+sep            = ' ' | 'T'
+time           = HH ':' MM [ ':' SS ]              ; 24-hour
+               | h  ':' MM [ ':' SS ] ws meridiem  ; 12-hour
+meridiem       = 'AM' | 'PM' | 'am' | 'pm' | 'A.M.' | 'P.M.'
+offset         = 'Z' | ('+'|'-') HH [':' MM] | ('+'|'-') HHMM
+style          = 't' | 'T' | 'd' | 'D' | 'f' | 'F' | 'R'
+```
+
+**Examples**
+
+| Source | Meaning |
+| --- | --- |
+| `@t[2026-11-09 13:00]` | 13:00 on that date in the **writer’s local** zone; style `f` |
+| `@t[2026-11-09 1:00 PM R]` | 13:00 local, relative display |
+| `@t[1970-01-01 00:00:00Z]` | Unix 0 (UTC) |
+| `@t[1970-01-01T00:00:00+00:00 t]` | Unix 0, short time |
+| `@t[2026-11-09 12:00 AM -05:00]` | midnight Eastern |
+
+**Ambiguity / false-positive rules**
+
+1. Only `@t[`…`]` is recognized. Bare ISO dates, `owl@test.com`, `@t [spaced]`, `$t[…]`, and `array[1970-01-01]` are literal.
+2. If the brackets are missing/unclosed, or the interior fails the grammar (bad date, bad time, unknown trailing token that is not a style flag), the whole `@t[…]` (or `@t[` prefix) stays literal.
+3. A trailing single-letter token is a style **only** when it is one of `t T d D f F R`. Otherwise the interior is invalid → literal.
+4. When **no offset/`Z`** is given, the datetime is interpreted in the **writer’s local timezone at parse time**, then stored as a Unix instant. Canonical serialize always emits `<t:unix:style>` so later readers are unambiguous.
+
 **Replace**: a new `set` for a name that is already active **closes the previous value and applies the new one**. No history of the old value is kept.
 
 **Unknown name**: skip that command, keep parsing the group, record a diagnostic. Do not abort the file.
@@ -180,6 +240,26 @@ use \<{s:12}> as text
 ```
 
 Runs: one text run `use <{s:12}> as text` with default style.
+
+**Example K** — Discord timestamp:
+
+Source:
+
+```
+see you <t:1700000000:R>
+```
+
+Parsed runs: text `see you `, then a timestamp object (unix `1700000000`, style `R`).
+
+**Example L** — easy `@t[…]` (normalizes on serialize):
+
+Source:
+
+```
+@t[1970-01-01 00:00:00Z R]
+```
+
+Parsed: one timestamp run (unix `0`, style `R`). Canonical serialize: `<t:0:R>`.
 
 **Example E** — `{b}` shorthand and align:
 
@@ -242,6 +322,7 @@ Not in the v1 app cut. Exporters must read this table so the native format does 
 - `{u:t}` `{k:t}` `{c}` `{bg}` `{s}` `{f}` → HTML `<span style="...">` / `<u>` / `<s>` inside the `.md` file (lossy-but-faithful). Plain-md mode may drop these.
 - `{a:c}` / `{a:r}` / `{a:j}` → HTML align on the paragraph.
 - `{hr}` → Markdown `---` / HTML `<hr>` (lossy).
+- `<t:unix:style>` / `@t[…]` → keep Discord `<t:…>` in Markdown export (or render a static locale string in plain-md mode).
 - Command groups themselves are never written to the export.
 
 **DOCX**
@@ -262,9 +343,13 @@ These are **required unit tests**, inputs taken as exact source strings:
 8. `<` not followed by `{` is literal.
 9. Both `{c=0xFFFFFF}` and `{c:#FFFFFF}` yield the same RGB.
 10. `{hr}` / `{hr:t}` then a newline then `{!hr}` → one run whose style has `hr` on; `{!hr}` (or `{hr:f}`) clears the slot for following text.
+11. `<t:0>` → timestamp run, unix 0, style `f`; `<t:1700000000:R>` → relative style.
+12. `@t[1970-01-01 00:00:00Z R]` → unix 0, style `R`; serialize → `<t:0:R>`.
+13. Ordinary `meet on 2026-11-09 at 13:00` has **no** timestamp runs (no `@t[` marker).
 
 ### 13. Out of scope for this format
 
 - Embedded images or board ink (those are **AGWF** documents or future `{img:"..."}` — do not add until specified here).
 - Macros, scripts, or arbitrary command execution. `{...}` is a **closed set of style commands**, not a programming language.
 - Nested / stacked values for the same slot.
+- Other Discord markdown (spoilers `||…||`, lists, quotes, masked links, mentions, etc.) unless Owl explicitly approves that feature. **Timestamps are approved** (Discord `<t:…>` + easy `@t[…]` only).

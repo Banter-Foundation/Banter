@@ -1219,3 +1219,9 @@ Owl: when your window-chrome fix PR is open and green, merge it to main (do not 
 
 Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
 
+---
+
+Owl: Implement BFMD timestamps for Banter. Owl approved on this call. No other Discord markdown. Two syntaxes: (1) Discord `<t:unix:style>` with usual flags t T d D f F R; (2) easy plain-text date/time that BFMD parses (intentionally easier than Discord tags; clear marker; document grammar; avoid false positives). Update docs/bfmd.md. Open PR to Banter main.
+
+Agent: BA-130. Branch `cursor/bfmd-timestamps-cb6b`. Discord tags + easy `@t[datetime]` marker; parse/serialize/format in `bfmd.rs`; muted underlined paint in `bfmd_paint.rs`; docs §6.1/§6.2. Tests written first (32 passed). Timestamps only — no other Discord markdown.
+

@@ -1,3 +1,7 @@
+## 2026-11-09 01:13:31 +00:00 [ubuntu] — BFMD timestamps (Discord + easy @t[])
+
+Owl-approved timestamps only (BA-130). Discord `<t:unix:style>` with flags `t T d D f F R` (default `f`), plus easy plain-text `@t[YYYY-MM-DD HH:MM…]` with clear marker and grammar to avoid false positives. Inline objects (not paint slots); reader-local formatting; relative `R`; canonical serialize always Discord form. Docs: `docs/bfmd.md` §6.1. Tests: 32 bfmd integration passed.
+
 ## 2026-11-08 02:45:00 -05:00 [ubuntu] — OBS-style interactive encode presets
 
 Hardware ffmpeg paths take ultra-low-latency knobs inspired by OBS (NVENC `ull`, rc-lookahead/delay 0, no scenecut/multipass/AQ; QSV async_depth 1; AMF ultralowlatency; x264 scenecut 0). Windows MF sets CodecAPI low-latency + zero B-frames when supported. PipeWire ScreenCast prefers NV12 after I420 and converts semi-planar→I420 without a BGRA detour. Full GPU texture→NVENC remains a follow-up.
