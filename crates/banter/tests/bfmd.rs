@@ -160,3 +160,57 @@ fn emote_token_scan_finds_stable_asset_ids() {
     assert!(bfmd::scan_emote_tokens(":party_parrot:").is_empty());
     assert!(bfmd::scan_emote_tokens(":{e:}:").is_empty());
 }
+
+#[test]
+fn heading_size_table_levels_1_through_6() {
+    // Relative to theme body 16pt: H1=32, H2=24, H3=20, H4=18, H5=16, H6=14.
+    assert_eq!(bfmd::HEADING_SIZE_PT, [32.0, 24.0, 20.0, 18.0, 16.0, 14.0]);
+    assert_eq!(bfmd::heading_size_pt(1), 32.0);
+    assert_eq!(bfmd::heading_size_pt(2), 24.0);
+    assert_eq!(bfmd::heading_size_pt(3), 20.0);
+    assert_eq!(bfmd::heading_size_pt(4), 18.0);
+    assert_eq!(bfmd::heading_size_pt(5), 16.0);
+    assert_eq!(bfmd::heading_size_pt(6), 14.0);
+    for level in 1u8..=6 {
+        let src = format!("<{{h:{level}}}>Title");
+        let runs = bfmd::parse(&src).runs;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].style.heading, Some(level));
+        // Heading does not write the `{s}` slot — effective size comes from the table.
+        assert_eq!(runs[0].style.size, None);
+        assert_eq!(
+            runs[0].style.size_or_default(),
+            bfmd::HEADING_SIZE_PT[(level - 1) as usize]
+        );
+    }
+}
+
+#[test]
+fn heading_effective_size_overridden_by_explicit_s() {
+    let runs = bfmd::parse("<{h:1}>A<{s:28}>B<{!s}>C<{!h}>D").runs;
+    assert_eq!(runs.len(), 4);
+    // `{h:1}` alone → table H1 (32pt); `{s}` slot still empty.
+    assert_eq!(runs[0].style.heading, Some(1));
+    assert_eq!(runs[0].style.size, None);
+    assert_eq!(runs[0].style.size_or_default(), 32.0);
+    // Later explicit `{s:28}` overrides the heading table size.
+    assert_eq!(runs[1].style.heading, Some(1));
+    assert_eq!(runs[1].style.size, Some(28.0));
+    assert_eq!(runs[1].style.size_or_default(), 28.0);
+    // `{!s}` while heading remains → fall back to heading table again.
+    assert_eq!(runs[2].style.heading, Some(1));
+    assert_eq!(runs[2].style.size, None);
+    assert_eq!(runs[2].style.size_or_default(), 32.0);
+    // `{!h}` → theme body default.
+    assert_eq!(runs[3].style.heading, None);
+    assert_eq!(runs[3].style.size, None);
+    assert_eq!(runs[3].style.size_or_default(), bfmd::DEFAULT_SIZE_PT);
+}
+
+#[test]
+fn heading_level_replace_updates_effective_size() {
+    let runs = bfmd::parse("<{h:1}>A<{h:3}>B").runs;
+    assert_eq!(runs[0].style.size_or_default(), 32.0);
+    assert_eq!(runs[1].style.heading, Some(3));
+    assert_eq!(runs[1].style.size_or_default(), 20.0);
+}

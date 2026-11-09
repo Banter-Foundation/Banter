@@ -1,3 +1,7 @@
+## 2026-11-09 00:55:13 +00:00 [ubuntu] — BFMD heading size table (BA-125)
+
+`{h:1}`…`{h:6}` now paint via a fixed point-size table (32/24/20/18/16/14 relative to theme body 16pt). `{h}` does not write the `{s}` slot; explicit `{s}` still overrides; `{!s}` while heading remains falls back to the table. No Discord `#` markers. Spec + conformance tests updated (`docs/bfmd.md`, `crates/banter/src/bfmd.rs`, `crates/banter/tests/bfmd.rs`).
+
 ## 2026-11-08 02:45:00 -05:00 [ubuntu] — OBS-style interactive encode presets
 
 Hardware ffmpeg paths take ultra-low-latency knobs inspired by OBS (NVENC `ull`, rc-lookahead/delay 0, no scenecut/multipass/AQ; QSV async_depth 1; AMF ultralowlatency; x264 scenecut 0). Windows MF sets CodecAPI low-latency + zero B-frames when supported. PipeWire ScreenCast prefers NV12 after I420 and converts semi-planar→I420 without a BGRA detour. Full GPU texture→NVENC remains a follow-up.

@@ -120,7 +120,18 @@ Document defaults (slots empty): theme foreground, theme body size (**16pt**), t
 | `k` | strike | bool | Strikethrough. |
 | `f` | font | ident or quoted | Family override. Unknown names fall back to theme font. |
 | `a` | align | `l` `c` `r` `j` | Paragraph align from this point until next `a` or `{!a}`. Applies to the paragraph containing the command and following paragraphs. |
-| `h` | heading | `1`..`6` | Heading level until `{!h}` or another `h`. Used for title and for export. **Semantic only** — not a font-size preset. Applying `{h}` must not set, replace, or close `{s}`. The renderer does **not** substitute a heading size table; body size is theme `size_note` unless `{s}` is set. |
+| `h` | heading | `1`..`6` | Heading level until `{!h}` or another `h`. Used for title, export, and **chat paint size**. Applying `{h}` does **not** write, replace, or close the `{s}` slot. While `{h}` is set and `{s}` is unset, the renderer applies the **heading size table** below (points relative to theme body **16pt**). An explicit `{s}` after `{h}` overrides the table; `{!s}` while `{h}` remains falls back to the table; `{!h}` restores theme body (unless `{s}` is still set). This is **not** Discord `#` / `##` / `###` line-prefix markers. |
+
+**Heading size table** (effective pt when `{h:n}` is active and `{s}` is unset):
+
+| Level | Command | Size |
+| --- | --- | --- |
+| H1 | `{h:1}` | **32pt** |
+| H2 | `{h:2}` | **24pt** |
+| H3 | `{h:3}` | **20pt** |
+| H4 | `{h:4}` | **18pt** |
+| H5 | `{h:5}` | **16pt** |
+| H6 | `{h:6}` | **14pt** |
 | `hr` | rule | bool | Horizontal rule. `{hr}` == `{hr:t}` (flag; omitted value means `t`). `{hr:f}` is the same as `{!hr}`. While the slot is on, the renderer draws a full-width rule for that paragraph (theme `border`, or the active `{c}` if set). Keep the style-map model; this is not HTML `<hr>`. |
 
 **Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!}` or `{!*}` clears **all** slots.
@@ -181,7 +192,7 @@ use \<{s:12}> as text
 
 Runs: one text run `use <{s:12}> as text` with default style.
 
-**Example E** — `{b}` shorthand and align:
+**Example E** — `{b}` shorthand and align (explicit `{s}` overrides heading table):
 
 Source:
 
@@ -189,6 +200,22 @@ Source:
 <{h:1},{s:28}>Title
 <{!h},{!s},{a:c},{b}>centered bold
 ```
+
+Runs: `Title` has heading 1 and size 28 (explicit `{s}` wins over the H1 table 32pt); following line is centered bold at theme body size.
+
+**Example F** — heading size table without `{s}`:
+
+Source:
+
+```
+<{h:1}>Big <{h:3}>Mid <{!h}>Body
+```
+
+Runs:
+
+1. text `Big ` — heading 1, effective size **32pt** (`{s}` unset)
+2. text `Mid ` — heading 3, effective size **20pt**
+3. text `Body` — no heading, effective size theme body **16pt**
 
 ### 8. Errors and diagnostics
 
@@ -225,7 +252,7 @@ Round-trip of Examples A and B must be semantically identical (same runs). Byte-
 - **Display**: WYSIWYG runs. Command groups are not shown in the viewport unless a future “show codes” view is added (out of v1).
 - **Typing**: inserts text into the current run; inherits the style of the character/run **immediately before** the caret (not after, not document default). At a run boundary or in empty space after text, that is the preceding run. At the start of the document there is no preceding character, so slots are empty (theme default). Example: after a heading, moving the caret to the end of that heading then typing continues as heading until the user clears it (`{!h}` or Body / Normal).
 - **Body / Normal**: editor action that closes heading, size override, alignment, and extra emphasis — `{!h},{!s},{!a}` and typically `{!}` so following text is theme default. Exposed in Format ▾ and the right-click menu (optional shortcut Ctrl+0).
-- **Font size**: `{s:N}` is a free point size (any `N > 0`, including fractions such as `13.5`). The UI exposes a numeric field (not only presets). Headings are a separate control.
+- **Font size**: `{s:N}` is a free point size (any `N > 0`, including fractions such as `13.5`). The UI exposes a numeric field (not only presets). Headings are a separate control: `{h:n}` applies the heading size table for paint when `{s}` is unset; `{s}` still overrides.
 - **Format ▾ / shortcuts**: at the caret or selection, emit the equivalent state change (set/replace/close). Selection that crosses runs must split runs and apply the slot to the selected range (close after the selection if the style after the selection should revert — same as “apply then `{!name}` after the range” when the post-selection slot differed).
 - **Lazy file create**: do not write `untitled.bfmd` until the buffer is dirty.
 - **Title**: first visible text of an `{h:1}` run; else first visible line; else stem.
@@ -262,6 +289,8 @@ These are **required unit tests**, inputs taken as exact source strings:
 8. `<` not followed by `{` is literal.
 9. Both `{c=0xFFFFFF}` and `{c:#FFFFFF}` yield the same RGB.
 10. `{hr}` / `{hr:t}` then a newline then `{!hr}` → one run whose style has `hr` on; `{!hr}` (or `{hr:f}`) clears the slot for following text.
+11. `{h:1}`…`{h:6}` with `{s}` unset → effective sizes 32 / 24 / 20 / 18 / 16 / 14 pt; `{s}` slot remains empty.
+12. `{h:1}` then `{s:28}` then `{!s}` then `{!h}` → effective sizes 32 → 28 → 32 → 16; `{s}` overrides the table and `{!s}` restores the table while heading remains.
 
 ### 13. Out of scope for this format
 

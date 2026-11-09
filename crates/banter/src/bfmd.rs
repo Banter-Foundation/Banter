@@ -7,6 +7,21 @@
 /// Default body size in points when `{s}` is unset (theme body).
 pub const DEFAULT_SIZE_PT: f32 = 16.0;
 
+/// Heading font sizes in points for `{h:1}`…`{h:6}` (index = level − 1).
+///
+/// Relative to theme body (`DEFAULT_SIZE_PT` = 16). Applying `{h}` does **not**
+/// write the `{s}` slot; the renderer uses this table via [`Style::size_or_default`]
+/// until an explicit `{s}` overrides. Not Discord `#` / `##` line-prefix markers.
+pub const HEADING_SIZE_PT: [f32; 6] = [32.0, 24.0, 20.0, 18.0, 16.0, 14.0];
+
+/// Point size for heading level `1`..=`6`. Out-of-range falls back to body.
+pub fn heading_size_pt(level: u8) -> f32 {
+    match level {
+        1..=6 => HEADING_SIZE_PT[(level - 1) as usize],
+        _ => DEFAULT_SIZE_PT,
+    }
+}
+
 /// Default inline emote height in CSS px when `{e}` is unset (Carbon parity).
 pub const DEFAULT_EMOTE_PX: f32 = 22.0;
 
@@ -44,8 +59,17 @@ impl Style {
         self == &Self::default()
     }
 
+    /// Effective font size in points for paint.
+    ///
+    /// Priority: explicit `{s}` → heading size table when `{h}` is set → theme body.
     pub fn size_or_default(&self) -> f32 {
-        self.size.unwrap_or(DEFAULT_SIZE_PT)
+        if let Some(s) = self.size {
+            return s;
+        }
+        if let Some(h) = self.heading {
+            return heading_size_pt(h);
+        }
+        DEFAULT_SIZE_PT
     }
 
     pub fn emote_size_or_default(&self) -> f32 {
