@@ -1219,3 +1219,9 @@ Owl: when your window-chrome fix PR is open and green, merge it to main (do not 
 
 Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
 
+
+## 2026-11-09 BA-127 BFMD Cited Quote
+
+User: Implement a renamed quote feature in BFMD for Banter. Owl approved this on a call. Do NOT call it "block quote". Pick a name that clearly signals "this is a quote of something". Forced italicization; visual quote styling; clickable reply jump. Spec + code + tests; PR to main.
+
+Agent: Chose name **Cited Quote** (`{cq}` / `{cq:MESSAGE_ID}`). Forced italic via `Style::effective_italic`; paint left bar/indent/muted; click sets `scroll_to_message` and expands ancestors. Context menu Cite Quote. Branch `cursor/bfmd-cited-quote-ce1c`.

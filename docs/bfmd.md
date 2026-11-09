@@ -103,9 +103,9 @@ Inside quoted values, `\"` and `\\` are the only required escapes.
 
 ### 6. Commands (v1)
 
-Document defaults (slots empty): theme foreground, theme body size (**16pt**), theme font, not bold/italic/underline/strike, no highlight, align inherit (start), heading none.
+Document defaults (slots empty): theme foreground, theme body size (**16pt**), theme font, not bold/italic/underline/strike, no highlight, align inherit (start), heading none, no Cited Quote.
 
-**Flag commands** (`b`, `i`, `u`, `k`, `hr`): omitted value means `t`. `{b}` == `{b:t}`. `{b:f}` turns the slot off (same as `{!b}`).
+**Flag commands** (`b`, `i`, `u`, `k`, `hr`, `cq`): omitted value means `t`. `{b}` == `{b:t}`. `{b:f}` turns the slot off (same as `{!b}`).
 
 | Name | Slot | Value | Effect |
 | --- | --- | --- | --- |
@@ -122,8 +122,9 @@ Document defaults (slots empty): theme foreground, theme body size (**16pt**), t
 | `a` | align | `l` `c` `r` `j` | Paragraph align from this point until next `a` or `{!a}`. Applies to the paragraph containing the command and following paragraphs. |
 | `h` | heading | `1`..`6` | Heading level until `{!h}` or another `h`. Used for title and for export. **Semantic only** — not a font-size preset. Applying `{h}` must not set, replace, or close `{s}`. The renderer does **not** substitute a heading size table; body size is theme `size_note` unless `{s}` is set. |
 | `hr` | rule | bool | Horizontal rule. `{hr}` == `{hr:t}` (flag; omitted value means `t`). `{hr:f}` is the same as `{!hr}`. While the slot is on, the renderer draws a full-width rule for that paragraph (theme `border`, or the active `{c}` if set). Keep the style-map model; this is not HTML `<hr>`. |
+| `cq` | Cited Quote | bool or message id | **Cited Quote** (chosen name — not “block quote”). Marks the following text as a quote of something (a famous line, or another user’s message). `{cq}` / `{cq:t}` opens a plain Cited Quote; `{cq:MESSAGE_ID}` (positive integer) cites that Banter message id for a Discord-style reply jump; `{cq:f}` / `{!cq}` clears. **Forced italicization:** while `{cq}` is active, italics are always composed on for paint (`Style::effective_italic`); `{!i}` / `{i:f}` cannot turn italics off for Cited Quote content. **Visual:** chat paint draws a left bar, indents the run, and uses muted foreground unless `{c}` overrides. **Clickable reply jump:** when the value is a message id, clicking the Cited Quote scrolls the history to that message (expands collapsed Reddit-thread ancestors first). Discord `>` / `>>>` line prefixes are **not** accepted as source; use BFMD `{cq}`. Helper: `bfmd::cited_quote(id, excerpt)`. |
 
-**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!}` or `{!*}` clears **all** slots.
+**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!cq}` clears Cited Quote. `{!}` or `{!*}` clears **all** slots.
 
 **Emote tokens (not BFMD commands):** message bodies may include stable `:{e:ASSET_ID}:` tokens for custom library emotes. Display size follows the active `{e}` slot (default 22px). Stickers and GIFs are message media, not BFMD tokens.
 
@@ -190,6 +191,22 @@ Source:
 <{!h},{!s},{a:c},{b}>centered bold
 ```
 
+**Example K** — Cited Quote (plain + message jump):
+
+Source:
+
+```
+<{cq}>to be or not to be<{!cq}>
+<{cq:42}>parent snippet<{!cq}>my reply
+```
+
+Parsed runs:
+
+1. text `to be or not to be` — `{cq:Plain}` (effective italic on)
+2. text `\n` — default (between groups if present) / then
+3. text `parent snippet` — `{cq:Message(42)}` (effective italic on; clickable jump to message 42)
+4. text `my reply` — default
+
 ### 8. Errors and diagnostics
 
 The editor **must not refuse to open** a note because of parse errors. Recover:
@@ -242,6 +259,7 @@ Not in the v1 app cut. Exporters must read this table so the native format does 
 - `{u:t}` `{k:t}` `{c}` `{bg}` `{s}` `{f}` → HTML `<span style="...">` / `<u>` / `<s>` inside the `.md` file (lossy-but-faithful). Plain-md mode may drop these.
 - `{a:c}` / `{a:r}` / `{a:j}` → HTML align on the paragraph.
 - `{hr}` → Markdown `---` / HTML `<hr>` (lossy).
+- `{cq}` / `{cq:id}` → Markdown blockquote (`> ` per line) with italics; message-id jump is Banter-only and drops on export.
 - Command groups themselves are never written to the export.
 
 **DOCX**
@@ -262,6 +280,9 @@ These are **required unit tests**, inputs taken as exact source strings:
 8. `<` not followed by `{` is literal.
 9. Both `{c=0xFFFFFF}` and `{c:#FFFFFF}` yield the same RGB.
 10. `{hr}` / `{hr:t}` then a newline then `{!hr}` → one run whose style has `hr` on; `{!hr}` (or `{hr:f}`) clears the slot for following text.
+11. `<{cq}>to be or not to be<{!cq}>plain` → Cited Quote run with `effective_italic`; following `plain` is not a quote.
+12. `<{cq:42}>parent snippet<{!cq}>my reply` → Cited Quote with `cite_message_id() == Some(42)`.
+13. `<{cq}>quoted<{!i}>still quote<{!cq}>after` → `{!i}` cannot clear italic under `{cq}`; quote text stays one effective-italic Cited Quote run.
 
 ### 13. Out of scope for this format
 
