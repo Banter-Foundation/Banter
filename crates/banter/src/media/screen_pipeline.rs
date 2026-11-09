@@ -16,6 +16,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
+use super::capture_metrics;
 use super::encode;
 use super::rtc::{self, PictureSlot};
 use super::Engine;
@@ -61,7 +62,12 @@ impl Inbox {
 
     fn push(&self, job: ConvertJob) {
         let mut slot = self.job.lock().expect("screen convert inbox");
+        let dropped = slot.is_some();
         *slot = Some(job);
+        if dropped {
+            // Latest-wins: a pending convert job was replaced before the worker took it.
+            capture_metrics::note_stale_drop();
+        }
         self.ready.notify_one();
     }
 
@@ -190,12 +196,14 @@ fn convert_loop(
                 keyed = None;
                 seen_gen = live_gen;
             }
+            capture_metrics::note_stale_drop();
             continue;
         }
         if live_gen != seen_gen {
             keyed = None;
             seen_gen = live_gen;
         }
+        let convert_started = Instant::now();
         match job {
             ConvertJob::Rgba {
                 width,
@@ -227,6 +235,9 @@ fn convert_loop(
                 grabbed_at,
                 ..
             } => {
+                // Skip preview pixel work when the local tile is hidden.
+                let want_preview =
+                    want_preview && engine.show_preview.load(Ordering::Relaxed);
                 let Some((width, height, i420, preview)) =
                     screencast::encode_raw_frame(&raw, edge, want_preview)
                 else {
@@ -245,6 +256,7 @@ fn convert_loop(
                 );
             }
         }
+        capture_metrics::note_converted(convert_started.elapsed());
         if stop.load(Ordering::Relaxed) && inbox.job.lock().expect("inbox").is_none() {
             break;
         }
@@ -279,7 +291,8 @@ fn publish_rgba(
     if i420.is_empty() {
         return;
     }
-    let preview = if want_preview {
+    // Preview only when the UI asked for it — never scale twice for a hidden tile.
+    let preview = if want_preview && engine.show_preview.load(Ordering::Relaxed) {
         let (small, preview_w, preview_h) =
             encode::fit_rgba(rgba, width, height, 1280.min(edge.max(2)));
         if preview_w >= 2 && preview_h >= 2 {

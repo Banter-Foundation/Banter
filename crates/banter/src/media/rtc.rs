@@ -440,6 +440,7 @@ fn audio_encode_loop(
         let publishing_screen = control.publishing_screen.load(Ordering::Relaxed);
         if !publishing_screen {
             super::screen_lag::clear_pipeline_lag();
+            super::capture_metrics::clear();
         }
         if ratio > 0.0
             && stream_wanted
@@ -674,6 +675,11 @@ fn publish_qos(
         encode_ms: f32::from_bits(control.encode_ms.load(Ordering::Relaxed)),
         decode_ms: 0.0,
         step: qos.step().label().into(),
+        capture_path: if control.publishing_screen.load(Ordering::Relaxed) {
+            super::capture_metrics::summary_line()
+        } else {
+            String::new()
+        },
     });
     *user_mark = user;
     *stream_mark = stream;
@@ -836,15 +842,21 @@ fn encode_video(
         if let Ok(au) = entry.2.encode(&scaled, width, height, want_key) {
             // Refresh after encode: LayerEncoder may have fallen back to OpenH264.
             *control.backend.lock().expect("backend") = entry.2.backend().label().into();
+            let encode_elapsed = started.elapsed();
             profiler::record_media(
                 if screen {
                     "screen_encode"
                 } else {
                     "camera_encode"
                 },
-                started.elapsed(),
+                encode_elapsed,
                 au.bytes.len(),
             );
+            if screen {
+                let e2e = Duration::from_millis(super::screen_lag::pipeline_lag_ms())
+                    .saturating_add(encode_elapsed);
+                super::capture_metrics::note_encoded(encode_elapsed, Some(e2e));
+            }
             if au.keyframe {
                 control.keyframes.fetch_add(1, Ordering::Relaxed);
                 sent_key = true;

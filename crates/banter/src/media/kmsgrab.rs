@@ -316,13 +316,8 @@ fn read_i420_loop(
         }
         let mut next = vec![0u8; frame_bytes];
         std::mem::swap(&mut buf, &mut next);
-        *latest.lock().expect("kmsgrab frame") = Some(RawFrame {
-            width,
-            height,
-            stride: width as i32,
-            format: VideoFormat::I420,
-            bytes: next,
-        });
+        *latest.lock().expect("kmsgrab frame") =
+            Some(RawFrame::owned(width, height, width as i32, VideoFormat::I420, next));
     }
 }
 

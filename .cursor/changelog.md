@@ -1,3 +1,7 @@
+## 2026-11-08 23:40:00 -05:00 [ubuntu] — Linux capture metrics + CPU buffer pool
+
+Milestone 0/1 of the Linux streaming capture plan: atomic capture/convert/encode p50/p95 metrics (surfaced in `/debugnow` + F3), pooled MemFd/MemPtr frame copies, latest-wins drop counting, richer format/type/stride logs, skip preview convert when the local tile is hidden. DMA-BUF/EGL/VA-API hardware-frame path remains a follow-up. Docs: `docs/linux-capture-metrics.md`.
+
 ## 2026-11-08 22:40:00 -05:00 [ubuntu] — Name PipeWire screencast formats in logs
 
 `banter: screencast format …` now prints `BGRA` / `NV12` / … plus the SPA id. kmsgrab Auto fallback notes that Wayland DRM-master denial is common so the PipeWire/xcap line is less alarming.

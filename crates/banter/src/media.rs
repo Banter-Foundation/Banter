@@ -3,6 +3,7 @@
 //! Device failures stay visible. Nothing here invents a frame when a device is missing.
 //! A stream change is captured on a side thread and cut in only after that frame is encoded.
 
+mod capture_metrics;
 mod encode;
 mod ice_cache;
 #[cfg(windows)]
