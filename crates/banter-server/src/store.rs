@@ -1872,6 +1872,82 @@ impl Store {
     pub fn pool_usage(&self) -> (i64, i64) {
         (self.pool.size() as i64, self.pool.num_idle() as i64)
     }
+
+    /// Create a user-authored game profile (mention target for `<@$GAME_ID>`).
+    pub async fn create_game_profile(
+        &self,
+        user_id: i64,
+        name: &str,
+    ) -> Result<GameProfile, BanterError> {
+        let name = clean_game_profile_name(name)?;
+        let created_at = now_ms();
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO game_profiles (name, created_by, created_at)
+             VALUES ($1, $2, $3)
+             RETURNING id",
+        )
+        .bind(&name)
+        .bind(user_id)
+        .bind(created_at)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(GameProfile {
+            id,
+            name,
+            created_by: user_id,
+            created_at,
+        })
+    }
+
+    pub async fn game_profile(&self, game_id: i64) -> Result<GameProfile, BanterError> {
+        let row = sqlx::query(
+            "SELECT id, name, created_by, created_at FROM game_profiles WHERE id = $1",
+        )
+        .bind(game_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .ok_or(BanterError::NotFound)?;
+        Ok(GameProfile {
+            id: row.get("id"),
+            name: row.get("name"),
+            created_by: row.get("created_by"),
+            created_at: row.get("created_at"),
+        })
+    }
+
+    /// Case-insensitive name prefix/contains search for composer suggest (extensible).
+    pub async fn search_game_profiles(&self, query: &str) -> Result<Vec<GameProfile>, BanterError> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+        if trimmed.chars().count() > MAX_GAME_PROFILE_NAME_CHARS {
+            return Err(BanterError::Invalid);
+        }
+        let pattern = like_pattern(&trimmed.to_lowercase());
+        let rows = sqlx::query(
+            "SELECT id, name, created_by, created_at
+             FROM game_profiles
+             WHERE lower(name) LIKE $1 ESCAPE '\\'
+             ORDER BY lower(name) ASC, id ASC
+             LIMIT 20",
+        )
+        .bind(pattern)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| GameProfile {
+                id: row.get("id"),
+                name: row.get("name"),
+                created_by: row.get("created_by"),
+                created_at: row.get("created_at"),
+            })
+            .collect())
+    }
 }
 
 pub(crate) async fn account_by_id(pool: &PgPool, id: i64) -> Result<Account, BanterError> {
@@ -3508,6 +3584,16 @@ fn clean_label(raw: &str) -> Result<String, BanterError> {
         Ok(name.to_string())
     } else {
         Err(BanterError::InvalidName)
+    }
+}
+
+fn clean_game_profile_name(raw: &str) -> Result<String, BanterError> {
+    let name = raw.trim();
+    let count = name.chars().count();
+    if (1..=MAX_GAME_PROFILE_NAME_CHARS).contains(&count) && !name.chars().any(|c| c.is_control()) {
+        Ok(name.to_string())
+    } else {
+        Err(BanterError::Invalid)
     }
 }
 

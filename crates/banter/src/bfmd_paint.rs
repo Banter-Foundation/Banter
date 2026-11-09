@@ -4,9 +4,10 @@ use dear_imgui_rs::{fonts::FontId, Ui};
 
 use crate::bfmd::{self, Run, Style};
 use crate::skin;
-use crate::theme::{DIVIDER, TEXT_NORMAL};
+use crate::theme::{BLURPLE, BLURPLE_TEXT, DIVIDER, TEXT_NORMAL};
 
 const LINE_GAP: f32 = 4.0;
+const MENTION_PAD_X: f32 = 4.0;
 
 /// Fonts available for BFMD runs. Missing italic falls back to body; bold to bold_font.
 #[derive(Clone, Copy)]
@@ -28,13 +29,28 @@ impl Fonts {
     }
 }
 
+/// Optional game-profile mention paint: resolve display names + click → open profile.
+///
+/// Extensible later for other mention kinds without changing the Discord token form.
+pub struct GameProfilePaint<'a> {
+    pub resolve_name: &'a dyn Fn(i64) -> Option<String>,
+    /// Set to `(game_id, screen_anchor)` when a mention chip is clicked.
+    pub open: &'a mut Option<(i64, [f32; 2])>,
+}
+
 /// Height of wrapped BFMD body (no "(edited)" suffix).
-pub fn measure(ui: &Ui, fonts: Fonts, source: &str, wrap_w: f32) -> f32 {
+pub fn measure(
+    ui: &Ui,
+    fonts: Fonts,
+    source: &str,
+    wrap_w: f32,
+    resolve_game: Option<&dyn Fn(i64) -> Option<String>>,
+) -> f32 {
     let runs = bfmd::parse(source).runs;
     if runs.is_empty() {
         return 0.0;
     }
-    layout(ui, fonts, &runs, wrap_w, None)
+    layout(ui, fonts, &runs, wrap_w, None, resolve_game, None)
 }
 
 /// Draw BFMD body at `origin`; returns height used.
@@ -45,6 +61,7 @@ pub fn draw(
     origin: [f32; 2],
     wrap_w: f32,
     edited_suffix: &str,
+    mut games: Option<GameProfilePaint<'_>>,
 ) -> f32 {
     let mut runs = bfmd::parse(source).runs;
     if !edited_suffix.is_empty() {
@@ -60,19 +77,38 @@ pub fn draw(
     if runs.is_empty() {
         return 0.0;
     }
-    layout(ui, fonts, &runs, wrap_w, Some(origin))
+    match games.as_mut() {
+        Some(g) => layout(
+            ui,
+            fonts,
+            &runs,
+            wrap_w,
+            Some(origin),
+            Some(g.resolve_name),
+            Some(&mut *g.open),
+        ),
+        None => layout(ui, fonts, &runs, wrap_w, Some(origin), None, None),
+    }
 }
 
-fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32; 2]>) -> f32 {
+fn layout(
+    ui: &Ui,
+    fonts: Fonts,
+    runs: &[Run],
+    wrap_w: f32,
+    origin: Option<[f32; 2]>,
+    resolve_game: Option<&dyn Fn(i64) -> Option<String>>,
+    mut open: Option<&mut Option<(i64, [f32; 2])>>,
+) -> f32 {
     let wrap_w = wrap_w.max(8.0);
     let mut x = 0.0f32;
     let mut y = 0.0f32;
     let mut line_h = 0.0f32;
     let mut saw_hr = false;
+    let mut mention_seq = 0u32;
 
     for run in runs {
         if run.style.hr && !saw_hr {
-            // Full-width rule for the paragraph while hr is on.
             if x > 0.0 {
                 y += line_h + LINE_GAP;
                 x = 0.0;
@@ -99,90 +135,169 @@ fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32;
         let size = run.style.size_or_default();
         let color = run.style.color.map(|c| c.to_imgui()).unwrap_or(TEXT_NORMAL);
 
-        // Word-wrap within the run, carrying x across runs on the same line.
-        let mut pending = String::new();
-        let chars: Vec<char> = run.text.chars().collect();
-        let mut i = 0usize;
-        while i < chars.len() {
-            if chars[i] == '\n' {
-                flush_chunk(
-                    ui,
-                    font,
-                    size,
-                    color,
-                    &run.style,
-                    &pending,
-                    origin,
-                    &mut x,
-                    &mut y,
-                    &mut line_h,
-                );
-                pending.clear();
-                y += line_h.max(size) + LINE_GAP;
-                x = 0.0;
-                line_h = 0.0;
-                i += 1;
-                continue;
-            }
-            // Take next word including leading spaces clustered with it.
-            let start = i;
-            if chars[i].is_whitespace() {
-                while i < chars.len() && chars[i].is_whitespace() && chars[i] != '\n' {
-                    i += 1;
+        for piece in split_game_mentions(&run.text) {
+            match piece {
+                TextPiece::Plain(text) => {
+                    flush_plain_wrapped(
+                        ui,
+                        font,
+                        size,
+                        color,
+                        &run.style,
+                        text,
+                        origin,
+                        wrap_w,
+                        &mut x,
+                        &mut y,
+                        &mut line_h,
+                    );
                 }
-            } else {
-                while i < chars.len() && !chars[i].is_whitespace() {
-                    i += 1;
+                TextPiece::Game { id } => {
+                    let name = resolve_game.and_then(|resolve| resolve(id));
+                    let label = bfmd::game_profile_display_label(id, name.as_deref());
+                    let measured = skin::text_size(ui, font, size, &label);
+                    let chip_w = measured[0] + MENTION_PAD_X * 2.0;
+                    let chip_h = measured[1].max(size);
+                    if x > 0.0 && x + chip_w > wrap_w {
+                        y += line_h.max(size) + LINE_GAP;
+                        x = 0.0;
+                        line_h = 0.0;
+                    }
+                    line_h = line_h.max(chip_h);
+                    if let Some(origin) = origin {
+                        let pos = [origin[0] + x, origin[1] + y];
+                        let max = [pos[0] + chip_w, pos[1] + chip_h];
+                        let bg = [BLURPLE[0], BLURPLE[1], BLURPLE[2], 0.28];
+                        ui.get_window_draw_list()
+                            .add_rect(pos, max, bg)
+                            .rounding(3.0)
+                            .filled(true)
+                            .build();
+                        skin::text(
+                            ui,
+                            font,
+                            size,
+                            [pos[0] + MENTION_PAD_X, pos[1]],
+                            BLURPLE_TEXT,
+                            &label,
+                        );
+                        mention_seq = mention_seq.wrapping_add(1);
+                        let hit_id = format!(
+                            "bfmd-game-{}-{}-{}",
+                            id,
+                            mention_seq,
+                            ((pos[0] * 10.0) as i32).wrapping_add((pos[1] * 10.0) as i32)
+                        );
+                        ui.set_cursor_screen_pos(pos);
+                        if ui.invisible_button(&hit_id, [chip_w.max(8.0), chip_h.max(8.0)]) {
+                            if let Some(slot) = open.as_mut() {
+                                **slot = Some((id, [max[0], pos[1]]));
+                            }
+                        }
+                    }
+                    x += chip_w;
                 }
             }
-            let word: String = chars[start..i].iter().collect();
-            let candidate = format!("{pending}{word}");
-            let width = skin::text_size(ui, font, size, &candidate)[0];
-            if x > 0.0
-                && pending.is_empty()
-                && width > wrap_w - x
-                && !word.chars().all(|c| c.is_whitespace())
-            {
-                // Word alone does not fit on remainder — new line first.
-                y += line_h.max(size) + LINE_GAP;
-                x = 0.0;
-                line_h = 0.0;
-            }
-            let width_from_line = skin::text_size(ui, font, size, &format!("{pending}{word}"))[0];
-            if x + width_from_line > wrap_w && !pending.is_empty() {
-                flush_chunk(
-                    ui,
-                    font,
-                    size,
-                    color,
-                    &run.style,
-                    &pending,
-                    origin,
-                    &mut x,
-                    &mut y,
-                    &mut line_h,
-                );
-                pending.clear();
-                y += line_h.max(size) + LINE_GAP;
-                x = 0.0;
-                line_h = 0.0;
-            }
-            pending.push_str(&word);
         }
-        flush_chunk(
-            ui,
-            font,
-            size,
-            color,
-            &run.style,
-            &pending,
-            origin,
-            &mut x,
-            &mut y,
-            &mut line_h,
-        );
     }
     y + line_h.max(0.0)
+}
+
+enum TextPiece<'a> {
+    Plain(&'a str),
+    Game { id: i64 },
+}
+
+fn split_game_mentions(text: &str) -> Vec<TextPiece<'_>> {
+    let hits = bfmd::scan_game_profile_mentions(text);
+    if hits.is_empty() {
+        return if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![TextPiece::Plain(text)]
+        };
+    }
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    for (start, len, id) in hits {
+        if start > cursor {
+            out.push(TextPiece::Plain(&text[cursor..start]));
+        }
+        out.push(TextPiece::Game { id });
+        cursor = start + len;
+    }
+    if cursor < text.len() {
+        out.push(TextPiece::Plain(&text[cursor..]));
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn flush_plain_wrapped(
+    ui: &Ui,
+    font: Option<FontId>,
+    size: f32,
+    color: [f32; 4],
+    style: &Style,
+    text: &str,
+    origin: Option<[f32; 2]>,
+    wrap_w: f32,
+    x: &mut f32,
+    y: &mut f32,
+    line_h: &mut f32,
+) {
+    let mut pending = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i] == '\n' {
+            flush_chunk(
+                ui, font, size, color, style, &pending, origin, x, y, line_h,
+            );
+            pending.clear();
+            *y += (*line_h).max(size) + LINE_GAP;
+            *x = 0.0;
+            *line_h = 0.0;
+            i += 1;
+            continue;
+        }
+        let start = i;
+        if chars[i].is_whitespace() {
+            while i < chars.len() && chars[i].is_whitespace() && chars[i] != '\n' {
+                i += 1;
+            }
+        } else {
+            while i < chars.len() && !chars[i].is_whitespace() {
+                i += 1;
+            }
+        }
+        let word: String = chars[start..i].iter().collect();
+        let candidate = format!("{pending}{word}");
+        let width = skin::text_size(ui, font, size, &candidate)[0];
+        if *x > 0.0
+            && pending.is_empty()
+            && width > wrap_w - *x
+            && !word.chars().all(|c| c.is_whitespace())
+        {
+            *y += (*line_h).max(size) + LINE_GAP;
+            *x = 0.0;
+            *line_h = 0.0;
+        }
+        let width_from_line = skin::text_size(ui, font, size, &format!("{pending}{word}"))[0];
+        if *x + width_from_line > wrap_w && !pending.is_empty() {
+            flush_chunk(
+                ui, font, size, color, style, &pending, origin, x, y, line_h,
+            );
+            pending.clear();
+            *y += (*line_h).max(size) + LINE_GAP;
+            *x = 0.0;
+            *line_h = 0.0;
+        }
+        pending.push_str(&word);
+    }
+    flush_chunk(
+        ui, font, size, color, style, &pending, origin, x, y, line_h,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

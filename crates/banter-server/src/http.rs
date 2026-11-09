@@ -196,6 +196,8 @@ fn router(state: HttpState) -> Router {
         .route("/v1/emote-picker", get(emote_picker))
         .route("/v1/mentions", get(mentions))
         .route("/v1/mentions/{id}/read", post(read_mention))
+        .route("/v1/games", get(search_games).post(create_game))
+        .route("/v1/games/{id}", get(get_game))
         .route("/v1/voice/join", post(join_voice))
         .route("/v1/voice/leave", post(leave_voice))
         .route("/v1/voice/flags", post(set_flags))
@@ -1512,6 +1514,46 @@ async fn read_mention(
 ) -> Result<StatusCode, BanterError> {
     state.store.mark_mention_read(account.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct CreateGameBody {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct SearchGamesQuery {
+    #[serde(default)]
+    q: String,
+}
+
+async fn create_game(
+    State(state): State<HttpState>,
+    Auth(account): Auth,
+    Json(body): Json<CreateGameBody>,
+) -> Result<Json<GameProfile>, BanterError> {
+    Ok(Json(
+        state
+            .store
+            .create_game_profile(account.id, &body.name)
+            .await?,
+    ))
+}
+
+async fn get_game(
+    State(state): State<HttpState>,
+    Auth(_account): Auth,
+    Path(id): Path<i64>,
+) -> Result<Json<GameProfile>, BanterError> {
+    Ok(Json(state.store.game_profile(id).await?))
+}
+
+async fn search_games(
+    State(state): State<HttpState>,
+    Auth(_account): Auth,
+    Query(query): Query<SearchGamesQuery>,
+) -> Result<Json<Vec<GameProfile>>, BanterError> {
+    Ok(Json(state.store.search_game_profiles(&query.q).await?))
 }
 
 #[derive(Deserialize)]

@@ -231,6 +231,61 @@ pub fn emote_token(asset_id: i64) -> String {
     format!(":{{e:{asset_id}}}:")
 }
 
+/// Discord Message Formatting game-profile mention: `<@$GAME_ID>`.
+///
+/// Only this mention form is recognized. User (`<@ID>`), role (`<@&ID>`),
+/// channel (`<#ID>`), slash-command, and guild-nav tokens are intentionally
+/// ignored so they stay literal until separately approved.
+pub fn game_profile_token(game_id: i64) -> String {
+    format!("<@${game_id}>")
+}
+
+/// Find game-profile mention tokens `<@$DIGITS>` in plain/BFMD run text.
+///
+/// Returns `(byte_start, byte_len, game_id)` in source order. Malformed or
+/// non-game mention forms are ignored (they stay literal text).
+pub fn scan_game_profile_mentions(text: &str) -> Vec<(usize, usize, i64)> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    let mut out = Vec::new();
+    while i + 4 < bytes.len() {
+        if bytes[i] == b'<'
+            && bytes.get(i + 1) == Some(&b'@')
+            && bytes.get(i + 2) == Some(&b'$')
+        {
+            let mut j = i + 3;
+            let mut id: i64 = 0;
+            let mut digits = 0usize;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                id = id
+                    .saturating_mul(10)
+                    .saturating_add((bytes[j] - b'0') as i64);
+                digits += 1;
+                j += 1;
+            }
+            if digits > 0 && bytes.get(j) == Some(&b'>') {
+                let len = (j + 1) - i;
+                out.push((i, len, id));
+                i = j + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Visible chat label for a game-profile mention.
+///
+/// When a profile name is known, Discord-style `@Name`. Otherwise `@$GAME_ID`
+/// so the target id stays readable until a name is resolved.
+pub fn game_profile_display_label(game_id: i64, name: Option<&str>) -> String {
+    match name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => format!("@{name}"),
+        None => format!("@${game_id}"),
+    }
+}
+
 /// Serialize runs to canonical BFMD (§9). Empty / default-only → plain text.
 pub fn serialize(runs: &[Run]) -> String {
     let mut out = String::new();

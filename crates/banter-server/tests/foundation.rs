@@ -2095,3 +2095,43 @@ fn command_prefix_validation_rejects_whitespace_and_long_values() {
         BanterError::Invalid
     );
 }
+
+#[tokio::test]
+async fn game_profiles_create_get_and_search_by_name() {
+    let (store, dir) = open_store().await;
+    let ada = store
+        .register("ada_game", "Ada", "password-ada")
+        .await
+        .unwrap();
+    let created = store
+        .create_game_profile(ada.id, "Celeste")
+        .await
+        .unwrap();
+    assert!(created.id > 0);
+    assert_eq!(created.name, "Celeste");
+    assert_eq!(created.created_by, ada.id);
+
+    let fetched = store.game_profile(created.id).await.unwrap();
+    assert_eq!(fetched, created);
+
+    let hits = store.search_game_profiles("cele").await.unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].id, created.id);
+
+    assert_eq!(
+        store.create_game_profile(ada.id, "   ").await.unwrap_err(),
+        BanterError::Invalid
+    );
+    assert_eq!(
+        store
+            .create_game_profile(ada.id, &"x".repeat(101))
+            .await
+            .unwrap_err(),
+        BanterError::Invalid
+    );
+    assert_eq!(
+        store.game_profile(created.id + 999_999).await.unwrap_err(),
+        BanterError::NotFound
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

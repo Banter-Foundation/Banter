@@ -160,3 +160,47 @@ fn emote_token_scan_finds_stable_asset_ids() {
     assert!(bfmd::scan_emote_tokens(":party_parrot:").is_empty());
     assert!(bfmd::scan_emote_tokens(":{e:}:").is_empty());
 }
+
+#[test]
+fn game_profile_mention_token_scan_and_format() {
+    // Discord Message Formatting form: `<@$GAME_ID>`.
+    assert_eq!(bfmd::game_profile_token(1124353632758939688), "<@$1124353632758939688>");
+    let text = "play <@$42> tonight with <@$7>";
+    let hits = bfmd::scan_game_profile_mentions(text);
+    assert_eq!(hits, vec![(5, 6, 42), (25, 5, 7)]);
+    assert_eq!(bfmd::game_profile_display_label(42, Some("Hades")), "@Hades");
+    assert_eq!(bfmd::game_profile_display_label(42, None), "@$42");
+}
+
+#[test]
+fn game_profile_mention_ignores_other_discord_mention_forms() {
+    // Only game-profile mentions (`<@$digits>`) — not user/role/channel/slash/guild-nav.
+    assert!(bfmd::scan_game_profile_mentions("<@123>").is_empty());
+    assert!(bfmd::scan_game_profile_mentions("<@!123>").is_empty());
+    assert!(bfmd::scan_game_profile_mentions("<@&456>").is_empty());
+    assert!(bfmd::scan_game_profile_mentions("<#789>").is_empty());
+    assert!(bfmd::scan_game_profile_mentions("</play:1>").is_empty());
+    assert!(bfmd::scan_game_profile_mentions("<id:browse>").is_empty());
+    assert!(bfmd::scan_game_profile_mentions("<@$ >").is_empty());
+    assert!(bfmd::scan_game_profile_mentions("<@$abc>").is_empty());
+    // BFMD escape `\<` becomes a real `<` in run text; the mention is then visible to paint.
+    let escaped = bfmd::parse(r"see \<@$9>").runs;
+    assert_eq!(escaped[0].text, "see <@$9>");
+    assert_eq!(
+        bfmd::scan_game_profile_mentions(&escaped[0].text),
+        vec![(4, 5, 9)]
+    );
+}
+
+#[test]
+fn game_profile_mention_survives_bfmd_style_groups() {
+    // `<@$id>` is not a BFMD command group (`<` + `{`); styles wrap around the token.
+    let src = "<{b:t}>try <@$99> now<{!b}>";
+    let runs = bfmd::parse(src).runs;
+    assert_eq!(runs.len(), 1);
+    assert!(runs[0].style.bold);
+    assert!(runs[0].text.contains("<@$99>"));
+    let hits = bfmd::scan_game_profile_mentions(&runs[0].text);
+    assert_eq!(hits, vec![(4, 6, 99)]);
+    assert_eq!(bfmd::plain_text(src), "try <@$99> now");
+}

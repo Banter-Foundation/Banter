@@ -1,3 +1,7 @@
+## 2026-11-09 01:22:49 +00:00 [ubuntu] — BFMD game profile mentions (BA-131)
+
+Discord-form `<@$GAME_ID>` mentions in chat: scan/format helpers, mention-chip paint with name resolve, click opens game profile popout. Minimal user-created `game_profiles` table + `POST|GET /v1/games` / `GET /v1/games/{id}`. No user/role/channel/slash/guild-nav mentions. Docs: `docs/bfmd.md`.
+
 ## 2026-11-08 02:45:00 -05:00 [ubuntu] — OBS-style interactive encode presets
 
 Hardware ffmpeg paths take ultra-low-latency knobs inspired by OBS (NVENC `ull`, rc-lookahead/delay 0, no scenecut/multipass/AQ; QSV async_depth 1; AMF ultralowlatency; x264 scenecut 0). Windows MF sets CodecAPI low-latency + zero B-frames when supported. PipeWire ScreenCast prefers NV12 after I420 and converts semi-planar→I420 without a BGRA detour. Full GPU texture→NVENC remains a follow-up.
