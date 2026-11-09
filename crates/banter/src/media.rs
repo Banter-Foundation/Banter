@@ -40,7 +40,7 @@ pub fn set_kmsgrab_ui_preferred(enabled: bool) {
 
 pub use encode::{
     hardware_probe, layer_target_bps, list_available_encoders, list_available_encoders_preferring,
-    openh264_qp_bounds, AvailableEncoder, EncoderPick,
+    openh264_encode_threads, openh264_qp_bounds, AvailableEncoder, EncoderPick,
 };
 pub use ice_cache::{clear as clear_ice_config, store as store_ice_config};
 pub use rtc::{playback_cap_samples, EncodeSettings};

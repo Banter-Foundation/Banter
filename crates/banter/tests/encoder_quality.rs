@@ -2,18 +2,26 @@
 //!
 //! Written before the encoder improvements so the splits, QP floors, probe cache,
 //! and HW-first open stay intentional. Must not undo BA-97 interactive latency
-//! (bitrate RC, Low complexity, single thread, 1 s keyframes, screen AQ/BG off).
+//! (bitrate RC, Low complexity, camera single thread, short GOP, screen AQ/BG off).
 
 use banter::{
-    hardware_encoder_available, hardware_probe, layer_target_bps, openh264_qp_bounds,
-    stream_defaults_keyframe_secs,
+    hardware_encoder_available, hardware_probe, layer_target_bps, openh264_encode_threads,
+    openh264_qp_bounds, stream_defaults_keyframe_secs,
 };
 use banter_server::LayerId;
 
 #[test]
-fn default_keyframe_stays_interactive_one_second() {
-    // BA-97 / PR #85 — do not stretch GOP for archive quality.
-    assert_eq!(stream_defaults_keyframe_secs(), 1);
+fn default_keyframe_stays_interactive_two_seconds() {
+    // BA-97 wanted a short GOP for late join; 2 s still recovers quickly while avoiding
+    // the ~1 Hz OpenH264 screen IDR hitch (macOS has no hardware encoder).
+    assert_eq!(stream_defaults_keyframe_secs(), 2);
+}
+
+#[test]
+fn openh264_camera_stays_single_threaded_screen_may_parallelize() {
+    assert_eq!(openh264_encode_threads(false), 1);
+    let screen = openh264_encode_threads(true);
+    assert!((2..=4).contains(&screen), "screen threads={screen}");
 }
 
 #[test]

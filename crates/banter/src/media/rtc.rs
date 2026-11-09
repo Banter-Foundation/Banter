@@ -164,7 +164,7 @@ impl Default for EncodeSettings {
         Self {
             full_bps: 2_500_000,
             pick: EncoderPick::Auto,
-            keyframe_ms: 1_000,
+            keyframe_ms: 2_000,
             fps: 30,
             cbr: true,
             pref_label: "auto",
@@ -227,7 +227,7 @@ impl Control {
             congested_drops: AtomicU32::new(0),
             full_bps: AtomicU32::new(2_500_000),
             encoder_pick: AtomicU8::new(0),
-            keyframe_ms: AtomicU64::new(1_000),
+            keyframe_ms: AtomicU64::new(2_000),
             encode_fps: AtomicU32::new(30),
             rate_cbr: AtomicBool::new(true),
             encode_gen: AtomicU64::new(0),
@@ -612,9 +612,11 @@ fn video_encode_loop(
         let key_ms = control.keyframe_ms.load(Ordering::Relaxed).max(500);
         // Periodic keys come from encoder GOP / IntraFramePeriod. Only arm force_key
         // here when the GOP is overdue *and* we are on software (HW reopen is reserved
-        // for join/PLI/mesh via control.force_key). Overdue soft keys keep OpenH264
-        // honest if IntraFramePeriod drifts.
-        let periodic_soft = last_keyframe.elapsed() >= Duration::from_millis(key_ms);
+        // for join/PLI/mesh via control.force_key). Wait 1.5× the interval so a healthy
+        // IntraFramePeriod owns the cadence — forcing on the same tick used to pile a
+        // second soft IDR on OpenH264 and amplify the ~1 Hz screen hitch (esp. macOS).
+        let overdue_ms = key_ms.saturating_add(key_ms / 2).max(key_ms + 250);
+        let periodic_soft = last_keyframe.elapsed() >= Duration::from_millis(overdue_ms);
         let mut keyed = false;
         keyed |= encode_video(
             &control,

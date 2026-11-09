@@ -1,3 +1,7 @@
+## 2026-11-09 00:55:00 -05:00 [ubuntu] — macOS ~1 Hz screen-share hitch
+
+OpenH264 soft encode (macOS has no VideoToolbox path yet) was IDRing every 1 s on a single thread — Full-layer ScreenContentRealTime spikes matched the hitch. Default keyframe is now 2 s; screen OpenH264 may use 2–4 worker threads (camera stays 1); soft `force_intra_frame` only arms at 1.5× the GOP so IntraFramePeriod owns the cadence. Capture path (xcap AVCapture, not ScreenCaptureKit) unchanged.
+
 ## 2026-11-09 00:35:00 -05:00 [ubuntu] — Version-1-test-13.4 pre-release
 
 Shipped pre-release Version-1-test-13.4 from main after Linux capture stack M0–M4 (#120–#124) and docker testing-debug stub (#123). **Linux assets only** this cut (Win/macOS deferred). Protocol **2**. Older tags stay. Compose default remains `banter-server:local`. GHCR still serves `version-1-test-8` until a classic PAT with `write:packages` pushes this build.
