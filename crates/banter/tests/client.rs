@@ -1021,10 +1021,11 @@ fn context_menu_height_counts_items_and_separators() {
     let menu = banter::message_context_menu(1, 1, "x", Some(1));
     let height = banter::context_menu_height(&menu);
     assert!(height > banter::theme::MENU_PAD * 2.0);
+    // Own message: Reply, Cite Quote, Edit, Delete, Copy Text, Copy Message ID (+ 2 separators).
     assert_eq!(
         height,
         banter::theme::MENU_PAD * 2.0
-            + 5.0 * (banter::theme::MENU_ITEM_H + 2.0)
+            + 6.0 * (banter::theme::MENU_ITEM_H + 2.0)
             + 2.0 * 9.0
     );
 }
