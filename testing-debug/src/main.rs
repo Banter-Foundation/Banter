@@ -124,8 +124,16 @@ fn run() -> Result<(), String> {
 
     let resolution = default_stream_resolution();
     let fps = default_stream_fps();
+    // Full-layer target bitrate. Default 2500 kbps; set BANTER_BITRATE_KBPS=10000 for 10 Mbps.
+    let bitrate_kbps = std::env::var("BANTER_BITRATE_KBPS")
+        .ok()
+        .and_then(|raw| raw.parse::<u32>().ok())
+        .filter(|kbps| *kbps > 0)
+        .unwrap_or(2_500);
+    let full_bps = bitrate_kbps.saturating_mul(1_000);
+    println!("encode bitrate: {bitrate_kbps} kbps ({full_bps} bps)");
     let encode = EncodeSettings {
-        full_bps: 2_500_000,
+        full_bps,
         pick: EncoderPick::Auto,
         keyframe_ms: 1_000,
         fps: 30,
