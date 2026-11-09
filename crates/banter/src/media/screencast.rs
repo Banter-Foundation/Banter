@@ -140,6 +140,7 @@ struct StreamData {
 
 pub struct CastStream {
     latest: Arc<Mutex<Option<RawFrame>>>,
+    latest_dmabuf: Arc<Mutex<Option<dmabuf::OwnedDmaBufFrame>>>,
     stop: Arc<AtomicBool>,
     fault: Arc<Mutex<Option<String>>>,
     quit: Option<channel::Sender<()>>,
@@ -165,10 +166,12 @@ impl CastStream {
         let fd = cast.pipewire_fd(&session)?;
         cast.attach_session(session);
         let latest = Arc::new(Mutex::new(None));
+        let latest_dmabuf = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
         let fault = Arc::new(Mutex::new(None));
         let (quit_tx, quit_rx) = channel::channel();
         let latest_thread = Arc::clone(&latest);
+        let latest_dmabuf_thread = Arc::clone(&latest_dmabuf);
         let stop_thread = Arc::clone(&stop);
         let fault_thread = Arc::clone(&fault);
         let thread = thread::Builder::new()
@@ -180,6 +183,7 @@ impl CastStream {
                     max_edge,
                     fps.max(1),
                     latest_thread,
+                    latest_dmabuf_thread,
                     stop_thread,
                     fault_thread,
                     quit_rx,
@@ -188,6 +192,7 @@ impl CastStream {
             .map_err(|err| err.to_string())?;
         Ok(Self {
             latest,
+            latest_dmabuf,
             stop,
             fault,
             quit: Some(quit_tx),
@@ -199,6 +204,11 @@ impl CastStream {
     /// True once the compositor has delivered a buffer that has not been taken.
     pub fn has_frame(&self) -> bool {
         self.latest.lock().expect("screencast frame").is_some()
+            || self
+                .latest_dmabuf
+                .lock()
+                .expect("screencast dmabuf")
+                .is_some()
     }
 
     /// Takes the newest raw frame and scales it to RGBA at `edge` on this thread.
@@ -215,6 +225,11 @@ impl CastStream {
     /// The screen convert thread turns this into I420 via [`encode_raw_frame`].
     pub fn take_raw(&self) -> Option<RawFrame> {
         self.latest.lock().expect("screencast frame").take()
+    }
+
+    /// Take a dup'd DMA-BUF frame for VA-API hardware encode (M4).
+    pub fn take_dmabuf(&self) -> Option<dmabuf::OwnedDmaBufFrame> {
+        self.latest_dmabuf.lock().expect("screencast dmabuf").take()
     }
 
     /// One-pass packed→I420 (optional small RGBA preview). Avoids RGBA intermediate
@@ -252,6 +267,7 @@ fn stream_loop(
     max_edge: u32,
     fps: u32,
     latest: Arc<Mutex<Option<RawFrame>>>,
+    latest_dmabuf: Arc<Mutex<Option<dmabuf::OwnedDmaBufFrame>>>,
     stop: Arc<AtomicBool>,
     fault: Arc<Mutex<Option<String>>>,
     quit_rx: channel::Receiver<()>,
@@ -406,8 +422,8 @@ fn stream_loop(
                 );
             }
 
-            // DMA-BUF: parse planes, prove EGL import (M3), do not mmap tiled buffers.
-            // MemFd/MemPtr still feed encode until VA-API hardware frames (M4).
+            // DMA-BUF: parse planes, prove EGL import (M3), dup FDs for VA-API encode (M4).
+            // Do not mmap tiled/compressed buffers. MemFd/MemPtr remain the CPU fallback.
             if chunk_src.type_() == DataType::DmaBuf {
                 let planes = dmabuf::parse_planes(datas);
                 let n = planes.len() as u32;
@@ -428,17 +444,46 @@ fn stream_loop(
                             data.dmabuf_warned = true;
                             eprintln!(
                                 "banter: EGL DMA-BUF import failed ({err}); \
-                                 encode still uses MemFd/MemPtr when offered \
+                                 VA-API encode may still work; MemFd remains fallback \
                                  (set BANTER_DMABUF=0 to advertise MemFd-only)"
                             );
                         }
                     }
                 }
-                if !data.dmabuf_warned && egl_dmabuf::import_ok() > 0 {
+                let mut dropped = false;
+                if super::vaapi_dmabuf::available() {
+                    match dmabuf::OwnedDmaBufFrame::dup_from(&info) {
+                        Ok(owned) => {
+                            let mut slot = latest_dmabuf.lock().expect("screencast dmabuf");
+                            dropped = slot.is_some();
+                            *slot = Some(owned);
+                            // Clear MemFd slot so encode prefers DMA-BUF.
+                            *latest.lock().expect("screencast frame") = None;
+                            if !data.dmabuf_warned {
+                                data.dmabuf_warned = true;
+                                eprintln!(
+                                    "banter: screencast DMA-BUF owned for VA-API ({}x{} planes={} mod={:#x})",
+                                    info.width,
+                                    info.height,
+                                    n.max(1),
+                                    data.modifier
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            if !data.dmabuf_warned {
+                                data.dmabuf_warned = true;
+                                eprintln!(
+                                    "banter: DMA-BUF dup failed ({err}); waiting for MemFd fallback"
+                                );
+                            }
+                        }
+                    }
+                } else if !data.dmabuf_warned {
                     data.dmabuf_warned = true;
                     eprintln!(
-                        "banter: screencast DMA-BUF + EGL import active ({}x{} planes={} mod={:#x}); \
-                         encode path remains MemFd until M4",
+                        "banter: screencast DMA-BUF without VA-API path ({}x{} planes={} mod={:#x}); \
+                         encode needs MemFd/MemPtr (set BANTER_DMABUF=0 if stuck)",
                         info.width,
                         info.height,
                         n.max(1),
@@ -449,7 +494,7 @@ fn stream_loop(
                     callback_started.elapsed(),
                     Duration::ZERO,
                     0,
-                    false,
+                    dropped,
                 );
                 return;
             }
@@ -717,14 +762,14 @@ fn video_framerate_choice(fps: u32) -> pod::Property {
     )
 }
 
-/// Build EnumFormat pods: MemFd (no modifier) first for a working CPU path, then
-/// optional DMA-BUF EnumFormat with VIDEO_modifier (INVALID + LINEAR).
+/// Build EnumFormat pods. When VA-API DMA-BUF encode is available, advertise
+/// DMA-BUF first so the compositor can pick the zero-copy path; otherwise MemFd
+/// stays first so CPU encode keeps working.
 fn format_pods(edge: u32, fps: u32) -> Result<Vec<Vec<u8>>, String> {
     let height = (edge as u64 * 9 / 16).max(2) as u32 & !1;
     let mut out = Vec::new();
 
-    // 1) Shared-memory fallback (no VIDEO_modifier) — preferred until EGL import.
-    let mem = pod::object!(
+    let mem = serialize_object(pod::object!(
         SpaTypes::ObjectParamFormat,
         ParamType::EnumFormat,
         pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
@@ -732,11 +777,9 @@ fn format_pods(edge: u32, fps: u32) -> Result<Vec<Vec<u8>>, String> {
         video_format_choice(),
         video_size_choice(edge, height),
         video_framerate_choice(fps),
-    );
-    out.push(serialize_object(mem)?);
+    ))?;
 
-    // 2) DMA-BUF EnumFormat with modifiers (PipeWire DMA-BUF Sharing docs).
-    if dmabuf::advertise_dmabuf() {
+    let dma = if dmabuf::advertise_dmabuf() {
         let modifier = Property {
             key: FormatProperties::VideoModifier.as_raw(),
             // SPA_POD_PROP_FLAG_MANDATORY | DONT_FIXATE
@@ -752,7 +795,7 @@ fn format_pods(edge: u32, fps: u32) -> Result<Vec<Vec<u8>>, String> {
                 },
             ))),
         };
-        let dma = pod::object!(
+        Some(serialize_object(pod::object!(
             SpaTypes::ObjectParamFormat,
             ParamType::EnumFormat,
             pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
@@ -761,8 +804,21 @@ fn format_pods(edge: u32, fps: u32) -> Result<Vec<Vec<u8>>, String> {
             modifier,
             video_size_choice(edge, height),
             video_framerate_choice(fps),
-        );
-        out.push(serialize_object(dma)?);
+        ))?)
+    } else {
+        None
+    };
+
+    if super::vaapi_dmabuf::prefer_dmabuf_enum() {
+        if let Some(dma) = dma {
+            out.push(dma);
+        }
+        out.push(mem);
+    } else {
+        out.push(mem);
+        if let Some(dma) = dma {
+            out.push(dma);
+        }
     }
     Ok(out)
 }
