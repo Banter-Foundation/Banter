@@ -15,6 +15,7 @@ Banter is a private repo ([SnowedInOwl/Banter](https://github.com/SnowedInOwl/Ba
 - Cloud agents append a stable suffix when required by their run instructions.
 - Keep long-running experiments in separate worktrees with their own `target/` when possible so Cargo locks do not block peers.
 - Do not force-push `main`. Do not move the `Version-1-test-1` release tag for unrelated UI commits.
+- **Permanent platform branches** (`linux`, `windows`, `mac`, `android`, `website`): long-lived lines Owl asked to keep. **Do not delete them.** Details and iOS feasibility: [`docs/permanent-branches.md`](permanent-branches.md).
 
 ## Commits and change notes
 
@@ -54,6 +55,7 @@ Never commit:
 | `docs/feature-status.md` | What works vs deferred |
 | `docs/foundation.md` | Chosen foundation + deferred list |
 | `docs/contributing.md` | This file |
+| `docs/permanent-branches.md` | Permanent platform branches + iOS note |
 | `docs/current-build.md` | Live observation notes |
 | `docs/ui-theme-layout.md` | Theme/layout module boundaries and shell regions |
 | `docs/modding/` | Mods, plugins, and bots specification (`modding.md`, `mods.md`, `plugins.md`, `bots.md`) |
