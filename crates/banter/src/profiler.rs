@@ -57,6 +57,8 @@ pub struct QosView {
     pub keyframe_secs: u32,
     /// Latest remote video tile summary (empty when nobody is sending video).
     pub remote_stream: String,
+    /// Screen capture pipeline line (FPS / drops / stage p95). Empty when idle.
+    pub capture_path: String,
 }
 
 impl Default for QosView {
@@ -88,6 +90,7 @@ impl Default for QosView {
             rate_control: "cbr".into(),
             keyframe_secs: 1,
             remote_stream: String::new(),
+            capture_path: String::new(),
         }
     }
 }

@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use super::capture_metrics;
+
 use pipewire::{
     channel,
     context::ContextRc,
@@ -42,12 +44,61 @@ struct Latest {
 }
 
 /// Unscaled copy of one PipeWire buffer. The convert thread scales it.
+///
+/// `bytes` may come from a bounded recycle pool so the PipeWire callback avoids
+/// a fresh heap allocation every frame (plan §3.1). Drop returns the buffer.
 pub struct RawFrame {
     pub width: u32,
     pub height: u32,
     pub stride: i32,
     pub format: VideoFormat,
     pub bytes: Vec<u8>,
+    recycle: Option<Arc<Mutex<Vec<Vec<u8>>>>>,
+}
+
+impl RawFrame {
+    /// Owned CPU frame with no recycle pool (kmsgrab / tests).
+    pub fn owned(width: u32, height: u32, stride: i32, format: VideoFormat, bytes: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            stride,
+            format,
+            bytes,
+            recycle: None,
+        }
+    }
+}
+
+impl Drop for RawFrame {
+    fn drop(&mut self) {
+        let Some(pool) = self.recycle.take() else {
+            return;
+        };
+        let mut buf = std::mem::take(&mut self.bytes);
+        if buf.capacity() == 0 {
+            return;
+        }
+        buf.clear();
+        if let Ok(mut free) = pool.lock() {
+            // Bound the pool so a format change cannot grow memory forever.
+            if free.len() < 4 {
+                free.push(buf);
+            }
+        };
+    }
+}
+
+fn take_pooled(pool: &Arc<Mutex<Vec<Vec<u8>>>>, need: usize) -> Vec<u8> {
+    if let Ok(mut free) = pool.lock() {
+        while let Some(mut buf) = free.pop() {
+            if buf.capacity() >= need {
+                buf.clear();
+                return buf;
+            }
+        }
+    }
+    Vec::with_capacity(need)
 }
 
 /// Convert a pending Cast frame to encode-sized I420 (optional preview).
@@ -70,6 +121,10 @@ pub fn encode_raw_frame(
 struct StreamData {
     format: VideoInfoRaw,
     logged: bool,
+    /// Reusable CPU slots for MemFd/MemPtr copies (not DMA-BUF import).
+    pool: Arc<Mutex<Vec<Vec<u8>>>>,
+    /// Last observed spa_data type name for the format log line.
+    data_type: &'static str,
 }
 
 pub struct CastStream {
@@ -235,6 +290,8 @@ fn stream_loop(
     let data = StreamData {
         format: VideoInfoRaw::new(),
         logged: false,
+        pool: Arc::new(Mutex::new(Vec::with_capacity(4))),
+        data_type: "unknown",
     };
     let callback_loop = main_loop.clone();
     let fault_state = Arc::clone(&fault);
@@ -265,20 +322,11 @@ fn stream_loop(
             if data.format.parse(param).is_err() {
                 return;
             }
-            if !data.logged {
-                data.logged = true;
-                let size = data.format.size();
-                let fmt = data.format.format();
-                eprintln!(
-                    "banter: screencast format {} ({}) {}x{}",
-                    format_name(fmt),
-                    fmt.0,
-                    size.width,
-                    size.height
-                );
-            }
+            // Re-log on renegotiation so format/size changes are visible in the journal.
+            data.logged = false;
         })
         .process(move |stream, data| {
+            let callback_started = Instant::now();
             if stop_loop.load(Ordering::Relaxed) {
                 callback_loop.quit();
                 return;
@@ -287,9 +335,12 @@ fn stream_loop(
                 return;
             };
             let datas = buffer.datas_mut();
+            let plane_count = datas.len();
             let Some(chunk_src) = datas.first_mut() else {
                 return;
             };
+            let data_type = spa_data_type_name(chunk_src.type_());
+            data.data_type = data_type;
             let (offset, chunk_size, stride, corrupted) = {
                 let chunk = chunk_src.chunk();
                 (
@@ -302,15 +353,57 @@ fn stream_loop(
             if corrupted {
                 return;
             }
+            if !data.logged {
+                data.logged = true;
+                let size = data.format.size();
+                let fmt = data.format.format();
+                eprintln!(
+                    "banter: screencast format {} ({}) {}x{} stride={} type={} planes={}",
+                    format_name(fmt),
+                    fmt.0,
+                    size.width,
+                    size.height,
+                    stride,
+                    data_type,
+                    plane_count
+                );
+            }
+            let copy_started = Instant::now();
+            // DMA-BUF EGL import is Milestone 2+. Prefer an existing CPU mapping; never
+            // mmap a DMA-BUF as a linear pixel array (tiled/compressed modifiers).
             let frame = if let Some(bytes) = chunk_src.data() {
-                copy_frame(bytes, offset, chunk_size, stride, &data.format)
+                data.data_type = "MemPtr";
+                copy_frame(
+                    bytes,
+                    offset,
+                    chunk_size,
+                    stride,
+                    &data.format,
+                    &data.pool,
+                )
+            } else if chunk_src.type_() == DataType::DmaBuf {
+                None
             } else if let Some(mapped) = map_memfd(chunk_src) {
-                copy_frame(mapped.bytes(), offset, chunk_size, stride, &data.format)
+                data.data_type = "MemFd";
+                copy_frame(
+                    mapped.bytes(),
+                    offset,
+                    chunk_size,
+                    stride,
+                    &data.format,
+                    &data.pool,
+                )
             } else {
                 None
             };
+            let copy_elapsed = copy_started.elapsed();
             if let Some(frame) = frame {
-                *latest.lock().expect("screencast frame") = Some(frame);
+                let bytes = frame.bytes.len() as u64;
+                let mut slot = latest.lock().expect("screencast frame");
+                let dropped = slot.is_some();
+                *slot = Some(frame);
+                drop(slot);
+                capture_metrics::note_received(callback_started.elapsed(), copy_elapsed, bytes, dropped);
             }
         })
         .register();
@@ -383,12 +476,25 @@ impl Drop for Mmap {
     }
 }
 
+fn spa_data_type_name(kind: DataType) -> &'static str {
+    if kind == DataType::MemPtr {
+        "MemPtr"
+    } else if kind == DataType::MemFd {
+        "MemFd"
+    } else if kind == DataType::DmaBuf {
+        "DmaBuf"
+    } else {
+        "other"
+    }
+}
+
 fn copy_frame(
     bytes: &[u8],
     offset: usize,
     chunk_size: usize,
     stride: i32,
     format: &VideoInfoRaw,
+    pool: &Arc<Mutex<Vec<Vec<u8>>>>,
 ) -> Option<RawFrame> {
     let size = if chunk_size == 0 {
         bytes.len().saturating_sub(offset)
@@ -403,12 +509,17 @@ fn copy_frame(
     if dim.width < 2 || dim.height < 2 {
         return None;
     }
+    let need = end - offset;
+    let mut buf = take_pooled(pool, need);
+    buf.clear();
+    buf.extend_from_slice(&bytes[offset..end]);
     Some(RawFrame {
         width: dim.width,
         height: dim.height,
         stride,
         format: format.format(),
-        bytes: bytes[offset..end].to_vec(),
+        bytes: buf,
+        recycle: Some(Arc::clone(pool)),
     })
 }
 

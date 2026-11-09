@@ -9179,6 +9179,9 @@ impl App {
                 "encode {:.1} ms   keyframes {}   layers {}",
                 qos.encode_ms, qos.keyframes, qos.layers
             ));
+            if !qos.capture_path.is_empty() {
+                ui.text(&qos.capture_path);
+            }
         }
         if remote_live {
             if local_live {
@@ -16539,6 +16542,9 @@ impl App {
                     qos.camera_kbps, qos.screen_kbps, qos.encode_ms, qos.decode_ms
                 ));
                 ui.text(format!("keyframes {}", qos.keyframes));
+                if !qos.capture_path.is_empty() {
+                    ui.text(&qos.capture_path);
+                }
                 if !qos.remote_stream.is_empty() {
                     ui.text(format!("remote {}", qos.remote_stream));
                 }
