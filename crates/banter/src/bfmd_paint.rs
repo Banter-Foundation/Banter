@@ -2,9 +2,11 @@
 
 use dear_imgui_rs::{fonts::FontId, Ui};
 
+use chrono::Local;
+
 use crate::bfmd::{self, Run, Style};
 use crate::skin;
-use crate::theme::{DIVIDER, TEXT_NORMAL};
+use crate::theme::{DIVIDER, MUTED, TEXT_NORMAL};
 
 const LINE_GAP: f32 = 4.0;
 
@@ -54,6 +56,7 @@ pub fn draw(
             runs.push(Run {
                 text: edited_suffix.to_string(),
                 style: Style::default(),
+                timestamp: None,
             });
         }
     }
@@ -70,6 +73,7 @@ fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32;
     let mut line_h = 0.0f32;
     let mut saw_hr = false;
 
+    let now_unix = Local::now().timestamp();
     for run in runs {
         if run.style.hr && !saw_hr {
             // Full-width rule for the paragraph while hr is on.
@@ -97,7 +101,44 @@ fn layout(ui: &Ui, fonts: Fonts, runs: &[Run], wrap_w: f32, origin: Option<[f32;
 
         let font = fonts.pick(&run.style);
         let size = run.style.size_or_default();
-        let color = run.style.color.map(|c| c.to_imgui()).unwrap_or(TEXT_NORMAL);
+        // Timestamps use muted link-like color when no explicit `{c}` is set.
+        let color = run
+            .style
+            .color
+            .map(|c| c.to_imgui())
+            .unwrap_or(if run.timestamp.is_some() {
+                MUTED
+            } else {
+                TEXT_NORMAL
+            });
+
+        // Inline timestamp object → format for the reader, then paint as one chunk.
+        if let Some(ts) = run.timestamp {
+            let label = bfmd::format_timestamp(&ts, now_unix);
+            flush_chunk(
+                ui,
+                font,
+                size,
+                color,
+                &run.style,
+                &label,
+                origin,
+                &mut x,
+                &mut y,
+                &mut line_h,
+            );
+            // Discord-ish underline cue that this is a live timestamp.
+            if let Some(origin) = origin {
+                let measured = skin::text_size(ui, font, size, &label);
+                let pos = [origin[0] + x - measured[0], origin[1] + y];
+                let uy = pos[1] + measured[1] - 2.0;
+                ui.get_window_draw_list()
+                    .add_line([pos[0], uy], [pos[0] + measured[0], uy], color)
+                    .thickness(1.0)
+                    .build();
+            }
+            continue;
+        }
 
         // Word-wrap within the run, carrying x across runs on the same line.
         let mut pending = String::new();

@@ -4,6 +4,8 @@
 //! language, not CommonMark. Messages store BFMD source in `body`; plain text
 //! with no command groups is valid BFMD and round-trips unchanged.
 
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveTime, TimeZone, Timelike};
+
 /// Default body size in points when `{s}` is unset (theme body).
 pub const DEFAULT_SIZE_PT: f32 = 16.0;
 
@@ -14,11 +16,68 @@ pub const DEFAULT_EMOTE_PX: f32 = 22.0;
 pub const EMOTE_PX_MIN: f32 = 16.0;
 pub const EMOTE_PX_MAX: f32 = 128.0;
 
+/// Discord-compatible timestamp display style (`t` / `T` / `d` / `D` / `f` / `F` / `R`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TimestampStyle {
+    /// `t` — short time
+    ShortTime,
+    /// `T` — long time
+    LongTime,
+    /// `d` — short date
+    ShortDate,
+    /// `D` — long date
+    LongDate,
+    /// `f` — short date + short time (Discord default)
+    #[default]
+    ShortDateTime,
+    /// `F` — full date + short time
+    LongDateTime,
+    /// `R` — relative to now
+    Relative,
+}
+
+impl TimestampStyle {
+    pub fn from_flag(c: char) -> Option<Self> {
+        match c {
+            't' => Some(Self::ShortTime),
+            'T' => Some(Self::LongTime),
+            'd' => Some(Self::ShortDate),
+            'D' => Some(Self::LongDate),
+            'f' => Some(Self::ShortDateTime),
+            'F' => Some(Self::LongDateTime),
+            'R' => Some(Self::Relative),
+            _ => None,
+        }
+    }
+
+    pub fn flag(self) -> char {
+        match self {
+            Self::ShortTime => 't',
+            Self::LongTime => 'T',
+            Self::ShortDate => 'd',
+            Self::LongDate => 'D',
+            Self::ShortDateTime => 'f',
+            Self::LongDateTime => 'F',
+            Self::Relative => 'R',
+        }
+    }
+}
+
+/// Inline timestamp object (absolute instant + display style). Not a paint slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Timestamp {
+    pub unix_secs: i64,
+    pub style: TimestampStyle,
+}
+
 /// One styled text span produced by the parser.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Run {
     pub text: String,
     pub style: Style,
+    /// When set, this run is an inline timestamp object. `text` is empty; paint
+    /// formats via [`format_timestamp`]. Canonical serialize is `<t:unix:style>`.
+    pub timestamp: Option<Timestamp>,
 }
 
 /// Active style map for a run (empty slots = document / theme defaults).
@@ -117,6 +176,7 @@ pub fn parse(source: &str) -> ParseResult {
         runs.push(Run {
             text: std::mem::take(text),
             style: style.clone(),
+            timestamp: None,
         });
     };
 
@@ -173,6 +233,34 @@ pub fn parse(source: &str) -> ParseResult {
             }
             continue;
         }
+        // Discord `<t:unix[:style]>` — only when `<` is not a BFMD `{` group.
+        if c == b'<' {
+            if let Some((next, ts)) = try_parse_discord_timestamp(bytes, i) {
+                flush(&mut text, &style, &mut runs);
+                runs.push(Run {
+                    text: String::new(),
+                    style: style.clone(),
+                    timestamp: Some(ts),
+                });
+                i = next;
+                first_group = false;
+                continue;
+            }
+        }
+        // Easy plain-text `@t[...]` (Owl): clear marker, no ordinary-sentence hits.
+        if c == b'@' {
+            if let Some((next, ts)) = try_parse_easy_timestamp(bytes, i) {
+                flush(&mut text, &style, &mut runs);
+                runs.push(Run {
+                    text: String::new(),
+                    style: style.clone(),
+                    timestamp: Some(ts),
+                });
+                i = next;
+                first_group = false;
+                continue;
+            }
+        }
         // Literal `<` or any other byte as UTF-8 char.
         let ch = source[i..].chars().next().unwrap();
         text.push(ch);
@@ -187,9 +275,102 @@ pub fn parse(source: &str) -> ParseResult {
     }
 }
 
-/// Plain visible text (commands stripped). Useful for search previews / mentions.
+/// Plain visible text (commands stripped). Timestamps become formatted display.
 pub fn plain_text(source: &str) -> String {
-    parse(source).runs.into_iter().map(|r| r.text).collect()
+    let now = Local::now().timestamp();
+    parse(source)
+        .runs
+        .into_iter()
+        .map(|r| {
+            if let Some(ts) = r.timestamp {
+                format_timestamp(&ts, now)
+            } else {
+                r.text
+            }
+        })
+        .collect()
+}
+
+/// Render a timestamp for the reader's locale/timezone.
+///
+/// Absolute styles ignore `now_unix_secs`. Relative (`R`) uses it.
+pub fn format_timestamp(ts: &Timestamp, now_unix_secs: i64) -> String {
+    if ts.style == TimestampStyle::Relative {
+        return format_relative(ts.unix_secs, now_unix_secs);
+    }
+    let Some(utc) = DateTime::from_timestamp(ts.unix_secs, 0) else {
+        return format!("<t:{}:{}>", ts.unix_secs, ts.style.flag());
+    };
+    let local = utc.with_timezone(&Local);
+    match ts.style {
+        TimestampStyle::ShortTime => local.format("%I:%M %p").to_string(),
+        TimestampStyle::LongTime => local.format("%I:%M:%S %p").to_string(),
+        TimestampStyle::ShortDate => local.format("%m/%d/%Y").to_string(),
+        TimestampStyle::LongDate => local.format("%B %d, %Y").to_string(),
+        TimestampStyle::ShortDateTime => local.format("%B %d, %Y %I:%M %p").to_string(),
+        TimestampStyle::LongDateTime => local.format("%A, %B %d, %Y %I:%M %p").to_string(),
+        TimestampStyle::Relative => unreachable!(),
+    }
+}
+
+fn format_relative(unix_secs: i64, now_unix_secs: i64) -> String {
+    let delta = unix_secs.saturating_sub(now_unix_secs);
+    let past = delta < 0;
+    let secs = delta.unsigned_abs();
+    let (n, unit) = if secs < 45 {
+        return if past {
+            "a few seconds ago".into()
+        } else if secs < 5 {
+            "now".into()
+        } else {
+            "in a few seconds".into()
+        };
+    } else if secs < 90 {
+        (1u64, "minute")
+    } else if secs < 45 * 60 {
+        (secs / 60, "minute")
+    } else if secs < 90 * 60 {
+        (1, "hour")
+    } else if secs < 36 * 3600 {
+        (secs / 3600, "hour")
+    } else if secs < 60 * 86400 {
+        // up to ~2 months use days
+        let days = secs / 86400;
+        if days < 2 {
+            (1, "day")
+        } else {
+            (days, "day")
+        }
+    } else if secs < 365 * 86400 {
+        let months = secs / (30 * 86400);
+        if months < 2 {
+            (1, "month")
+        } else {
+            (months.max(1), "month")
+        }
+    } else {
+        let years = secs / (365 * 86400);
+        if years < 2 {
+            (1, "year")
+        } else {
+            (years, "year")
+        }
+    };
+    let noun = if n == 1 {
+        unit.to_string()
+    } else {
+        format!("{unit}s")
+    };
+    let amount = if n == 1 {
+        format!("a {noun}")
+    } else {
+        format!("{n} {noun}")
+    };
+    if past {
+        format!("{amount} ago")
+    } else {
+        format!("in {amount}")
+    }
 }
 
 /// Find stable emote tokens `:{e:ASSET_ID}:` in plain/BFMD text.
@@ -232,18 +413,23 @@ pub fn emote_token(asset_id: i64) -> String {
 }
 
 /// Serialize runs to canonical BFMD (§9). Empty / default-only → plain text.
+/// Timestamp runs always emit Discord `<t:unix:style>` (easy `@t[...]` normalizes).
 pub fn serialize(runs: &[Run]) -> String {
     let mut out = String::new();
     let mut current = Style::default();
     for run in runs {
-        if run.text.is_empty() {
+        if run.text.is_empty() && run.timestamp.is_none() {
             continue;
         }
         if run.style != current {
             out.push_str(&diff_group(&current, &run.style));
             current = run.style.clone();
         }
-        escape_text_into(&run.text, &mut out);
+        if let Some(ts) = run.timestamp {
+            out.push_str(&format!("<t:{}:{}>", ts.unix_secs, ts.style.flag()));
+        } else {
+            escape_text_into(&run.text, &mut out);
+        }
     }
     out
 }
@@ -270,7 +456,7 @@ pub fn apply_flag(
     runs = split_runs_at_plain(&runs, end);
     let mut offset = 0usize;
     for run in &mut runs {
-        let len = run.text.len();
+        let len = run_plain_len(run);
         let run_start = offset;
         let run_end = offset + len;
         offset = run_end;
@@ -351,10 +537,6 @@ fn flag_value(style: &Style, flag: Flag) -> bool {
     }
 }
 
-fn plain_len(runs: &[Run]) -> usize {
-    runs.iter().map(|r| r.text.len()).sum()
-}
-
 fn ordered_range(a: usize, b: usize, max: usize) -> (usize, usize) {
     let a = a.min(max);
     let b = b.min(max);
@@ -369,7 +551,7 @@ fn range_all_flag(runs: &[Run], start: usize, end: usize, flag: Flag) -> bool {
     let mut offset = 0usize;
     let mut any = false;
     for run in runs {
-        let len = run.text.len();
+        let len = run_plain_len(run);
         let run_start = offset;
         let run_end = offset + len;
         offset = run_end;
@@ -387,7 +569,7 @@ fn range_all_flag(runs: &[Run], start: usize, end: usize, flag: Flag) -> bool {
 fn flag_at(runs: &[Run], plain_index: usize, flag: Flag) -> bool {
     let mut offset = 0usize;
     for run in runs {
-        let len = run.text.len();
+        let len = run_plain_len(run);
         if plain_index < offset + len {
             return flag_value(&run.style, flag);
         }
@@ -402,18 +584,21 @@ fn split_runs_at_plain(runs: &[Run], at: usize) -> Vec<Run> {
     let mut out = Vec::new();
     let mut offset = 0usize;
     for run in runs {
-        let len = run.text.len();
+        let len = run_plain_len(run);
         let run_start = offset;
         let run_end = offset + len;
-        if at > run_start && at < run_end {
+        // Timestamp objects are atomic — never split mid-token.
+        if run.timestamp.is_none() && at > run_start && at < run_end {
             let local = at - run_start;
             out.push(Run {
                 text: run.text[..local].to_string(),
                 style: run.style.clone(),
+                timestamp: None,
             });
             out.push(Run {
                 text: run.text[local..].to_string(),
                 style: run.style.clone(),
+                timestamp: None,
             });
         } else {
             out.push(run.clone());
@@ -426,11 +611,16 @@ fn split_runs_at_plain(runs: &[Run], at: usize) -> Vec<Run> {
 fn compact_runs(runs: Vec<Run>) -> Vec<Run> {
     let mut out: Vec<Run> = Vec::new();
     for run in runs {
-        if run.text.is_empty() {
+        if run.text.is_empty() && run.timestamp.is_none() {
+            continue;
+        }
+        // Timestamp objects never merge with neighbors.
+        if run.timestamp.is_some() {
+            out.push(run);
             continue;
         }
         if let Some(last) = out.last_mut() {
-            if last.style == run.style {
+            if last.timestamp.is_none() && last.style == run.style {
                 last.text.push_str(&run.text);
                 continue;
             }
@@ -438,6 +628,19 @@ fn compact_runs(runs: Vec<Run>) -> Vec<Run> {
         out.push(run);
     }
     out
+}
+
+fn run_plain_len(run: &Run) -> usize {
+    if let Some(ts) = run.timestamp {
+        // Match `plain_text` display length (absolute/relative at "now").
+        format_timestamp(&ts, Local::now().timestamp()).len()
+    } else {
+        run.text.len()
+    }
+}
+
+fn plain_len(runs: &[Run]) -> usize {
+    runs.iter().map(run_plain_len).sum()
 }
 
 fn strip_bom(source: &str) -> &str {
@@ -453,6 +656,233 @@ fn group_starts_at(bytes: &[u8], i: usize) -> bool {
         j += 1;
     }
     bytes.get(j) == Some(&b'{')
+}
+
+/// Discord `<t:UNIX>` / `<t:UNIX:STYLE>`. STYLE ∈ t T d D f F R. Default style `f`.
+fn try_parse_discord_timestamp(bytes: &[u8], i: usize) -> Option<(usize, Timestamp)> {
+    if bytes.get(i) != Some(&b'<')
+        || bytes.get(i + 1) != Some(&b't')
+        || bytes.get(i + 2) != Some(&b':')
+    {
+        return None;
+    }
+    let mut j = i + 3;
+    let neg = if bytes.get(j) == Some(&b'-') {
+        j += 1;
+        true
+    } else {
+        false
+    };
+    if j >= bytes.len() || !bytes[j].is_ascii_digit() {
+        return None;
+    }
+    let mut unix: i64 = 0;
+    while j < bytes.len() && bytes[j].is_ascii_digit() {
+        unix = unix
+            .checked_mul(10)?
+            .checked_add((bytes[j] - b'0') as i64)?;
+        j += 1;
+    }
+    if neg {
+        unix = -unix;
+    }
+    let style = if bytes.get(j) == Some(&b':') {
+        j += 1;
+        let flag = *bytes.get(j)? as char;
+        j += 1;
+        TimestampStyle::from_flag(flag)?
+    } else {
+        TimestampStyle::ShortDateTime
+    };
+    if bytes.get(j) != Some(&b'>') {
+        return None;
+    }
+    Some((
+        j + 1,
+        Timestamp {
+            unix_secs: unix,
+            style,
+        },
+    ))
+}
+
+/// Easy plain-text `@t[datetime]` (Owl). See `docs/bfmd.md` §6.2.
+///
+/// Marker is exactly `@t[` (no space). Invalid interiors stay literal.
+fn try_parse_easy_timestamp(bytes: &[u8], i: usize) -> Option<(usize, Timestamp)> {
+    if bytes.get(i) != Some(&b'@')
+        || bytes.get(i + 1) != Some(&b't')
+        || bytes.get(i + 2) != Some(&b'[')
+    {
+        return None;
+    }
+    let mut j = i + 3;
+    let start = j;
+    while j < bytes.len() && bytes[j] != b']' {
+        j += 1;
+    }
+    if j >= bytes.len() {
+        return None; // unclosed — leave `@t[` as literal progressively
+    }
+    let inner = std::str::from_utf8(&bytes[start..j]).ok()?;
+    let ts = parse_easy_timestamp_inner(inner)?;
+    Some((j + 1, ts))
+}
+
+fn parse_easy_timestamp_inner(inner: &str) -> Option<Timestamp> {
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return None;
+    }
+    // Optional trailing style flag: last whitespace-separated single known letter.
+    let (datetime_part, style) = {
+        let mut parts = inner.split_whitespace().collect::<Vec<_>>();
+        if parts.len() >= 2 {
+            let last = *parts.last().unwrap();
+            if last.len() == 1 {
+                if let Some(style) = TimestampStyle::from_flag(last.chars().next().unwrap()) {
+                    parts.pop();
+                    (parts.join(" "), style)
+                } else {
+                    (inner.to_string(), TimestampStyle::ShortDateTime)
+                }
+            } else {
+                (inner.to_string(), TimestampStyle::ShortDateTime)
+            }
+        } else {
+            (inner.to_string(), TimestampStyle::ShortDateTime)
+        }
+    };
+    let unix = parse_easy_datetime(&datetime_part)?;
+    Some(Timestamp {
+        unix_secs: unix,
+        style,
+    })
+}
+
+fn parse_easy_datetime(raw: &str) -> Option<i64> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    // Split date and rest. Accept `YYYY-MM-DDTHH:MM...` or `YYYY-MM-DD HH:MM...`.
+    let (date_str, time_and_tz) = if let Some(pos) = raw.find('T') {
+        (&raw[..pos], &raw[pos + 1..])
+    } else {
+        let mut sp = raw.splitn(2, char::is_whitespace);
+        let d = sp.next()?;
+        let rest = sp.next()?;
+        (d, rest.trim())
+    };
+    let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
+
+    // Offset: trailing Z / +HH:MM / -HH:MM / +HHMM / -HHMM
+    let (time_part, offset) = split_time_and_offset(time_and_tz)?;
+    let (naive_time, _had_ampm) = parse_easy_time(&time_part)?;
+    let naive = date.and_time(naive_time);
+
+    let unix = if let Some(off) = offset {
+        off.from_local_datetime(&naive).single()?.timestamp()
+    } else {
+        // No zone → writer's local timezone at parse time.
+        Local.from_local_datetime(&naive).single()?.timestamp()
+    };
+    Some(unix)
+}
+
+fn split_time_and_offset(s: &str) -> Option<(String, Option<FixedOffset>)> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // Zulu
+    if let Some(rest) = s.strip_suffix('Z').or_else(|| s.strip_suffix('z')) {
+        return Some((rest.trim().to_string(), Some(FixedOffset::east_opt(0)?)));
+    }
+    // Find last + or - that looks like a timezone (not part of time)
+    // Time looks like `HH:MM` or `H:MM AM`; offset at end: `+00:00` / `-0530`
+    for (idx, ch) in s.char_indices().rev() {
+        if ch != '+' && ch != '-' {
+            continue;
+        }
+        // Must not be the start of the string's time (first char of time_part)
+        if idx == 0 {
+            continue;
+        }
+        let before = s[..idx].trim_end();
+        let after = &s[idx..];
+        if let Some(off) = parse_offset_token(after) {
+            // Ensure `before` still has a time (digit)
+            if before.chars().any(|c| c.is_ascii_digit()) {
+                return Some((before.to_string(), Some(off)));
+            }
+        }
+    }
+    Some((s.to_string(), None))
+}
+
+fn parse_offset_token(tok: &str) -> Option<FixedOffset> {
+    let tok = tok.trim();
+    let (sign, rest) = match tok.chars().next()? {
+        '+' => (1i32, &tok[1..]),
+        '-' => (-1i32, &tok[1..]),
+        _ => return None,
+    };
+    let rest = rest.trim();
+    let (hh, mm) = if rest.len() == 5 && rest.as_bytes().get(2) == Some(&b':') {
+        (rest[..2].parse::<i32>().ok()?, rest[3..].parse::<i32>().ok()?)
+    } else if rest.len() == 4 && rest.bytes().all(|b| b.is_ascii_digit()) {
+        (rest[..2].parse::<i32>().ok()?, rest[2..].parse::<i32>().ok()?)
+    } else if rest.len() == 2 && rest.bytes().all(|b| b.is_ascii_digit()) {
+        (rest.parse::<i32>().ok()?, 0)
+    } else {
+        return None;
+    };
+    if !(0..=23).contains(&hh) || !(0..=59).contains(&mm) {
+        return None;
+    }
+    FixedOffset::east_opt(sign * (hh * 3600 + mm * 60))
+}
+
+fn parse_easy_time(raw: &str) -> Option<(NaiveTime, bool)> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let lower = raw.to_ascii_lowercase();
+    let (core, is_pm) = if let Some(rest) = lower.strip_suffix("a.m.") {
+        (rest.trim(), Some(false))
+    } else if let Some(rest) = lower.strip_suffix("p.m.") {
+        (rest.trim(), Some(true))
+    } else if let Some(rest) = lower.strip_suffix("am") {
+        (rest.trim(), Some(false))
+    } else if let Some(rest) = lower.strip_suffix("pm") {
+        (rest.trim(), Some(true))
+    } else {
+        (lower.as_str(), None)
+    };
+
+    let naive = NaiveTime::parse_from_str(core, "%H:%M:%S")
+        .or_else(|_| NaiveTime::parse_from_str(core, "%H:%M"))
+        .ok()?;
+
+    if let Some(pm) = is_pm {
+        let mut hour = naive.hour();
+        if hour > 12 {
+            return None;
+        }
+        if pm {
+            if hour != 12 {
+                hour += 12;
+            }
+        } else if hour == 12 {
+            hour = 0;
+        }
+        let t = NaiveTime::from_hms_opt(hour, naive.minute(), naive.second())?;
+        Some((t, true))
+    } else {
+        Some((naive, false))
+    }
 }
 
 fn parse_text_escape(bytes: &[u8], i: usize) -> (char, usize, Option<Diagnostic>) {
