@@ -71,6 +71,62 @@ impl PictureSlot {
     }
 }
 
+/// Latest-wins DMA-BUF frame for Linux VA-API hardware encode (M4).
+#[cfg(target_os = "linux")]
+pub struct HwPictureSlot {
+    frame: Mutex<Option<(super::dmabuf::OwnedDmaBufFrame, u32)>>,
+    generation: AtomicU64,
+}
+
+#[cfg(target_os = "linux")]
+impl HwPictureSlot {
+    pub fn new() -> Self {
+        Self {
+            frame: Mutex::new(None),
+            generation: AtomicU64::new(0),
+        }
+    }
+
+    pub fn store(&self, frame: super::dmabuf::OwnedDmaBufFrame, edge: u32) {
+        *self.frame.lock().expect("hw picture") = Some((frame, edge));
+        self.generation.fetch_add(1, Ordering::Release);
+    }
+
+    pub fn clear(&self) {
+        *self.frame.lock().expect("hw picture") = None;
+        self.generation.fetch_add(1, Ordering::Release);
+    }
+
+    fn take_since(
+        &self,
+        seen: u64,
+    ) -> Option<(u64, super::dmabuf::OwnedDmaBufFrame, u32)> {
+        let generation = self.generation.load(Ordering::Acquire);
+        if generation == 0 || generation == seen {
+            return None;
+        }
+        let (frame, edge) = self.frame.lock().expect("hw picture").take()?;
+        Some((self.generation.load(Ordering::Acquire), frame, edge))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn screen_hw_slot() -> &'static HwPictureSlot {
+    use std::sync::OnceLock;
+    static SLOT: OnceLock<HwPictureSlot> = OnceLock::new();
+    SLOT.get_or_init(HwPictureSlot::new)
+}
+
+#[cfg(target_os = "linux")]
+pub fn store_screen_dmabuf(frame: super::dmabuf::OwnedDmaBufFrame, edge: u32) {
+    screen_hw_slot().store(frame, edge);
+}
+
+#[cfg(target_os = "linux")]
+pub fn clear_screen_dmabuf() {
+    screen_hw_slot().clear();
+}
+
 impl Clone for RawPicture {
     fn clone(&self) -> Self {
         Self {
@@ -761,6 +817,94 @@ fn can_take_join_key(layers: &[LayerId]) -> bool {
     !layers.is_empty()
 }
 
+/// Try VA-API DMA-BUF encode for screen. Returns `Some(keyed)` when a HW frame
+/// was consumed (success or sticky-fail after attempt). `None` means fall through
+/// to the CPU `PictureSlot` path.
+#[cfg(target_os = "linux")]
+fn encode_screen_dmabuf(
+    control: &Control,
+    tx: &tokio::sync::mpsc::Sender<Outgoing>,
+    layers: &[LayerId],
+) -> Option<bool> {
+    if !super::vaapi_dmabuf::available() {
+        return None;
+    }
+    // Separate from PictureSlot `seen` so MemFd and DMA-BUF gens do not collide.
+    static HW_SEEN: AtomicU64 = AtomicU64::new(0);
+    let seen = HW_SEEN.load(Ordering::Relaxed);
+    let Some((generation, frame, edge)) = screen_hw_slot().take_since(seen) else {
+        return None;
+    };
+    if generation == seen {
+        return None;
+    }
+    HW_SEEN.store(generation, Ordering::Relaxed);
+    let (full_w, full_h) = super::encode::even_fit(frame.width, frame.height, edge.max(2));
+    if full_w < 128 || full_h < 128 {
+        return Some(false);
+    }
+    let fps = control.encode_fps.load(Ordering::Relaxed).max(1) as f32;
+    let keyframe_ms = control.keyframe_ms.load(Ordering::Relaxed).max(500);
+    let join_key = control.force_key.swap(false, Ordering::Relaxed);
+    let mut specs: Vec<(LayerId, u32, u32, u32)> = Vec::new();
+    for &layer in layers {
+        let div = match layer {
+            LayerId::Full => 1u32,
+            LayerId::Half => 2,
+            LayerId::Quarter => 4,
+            LayerId::Off => continue,
+        };
+        let w = (full_w / div) & !1;
+        let h = (full_h / div) & !1;
+        if w < 128 || h < 128 {
+            continue;
+        }
+        specs.push((layer, w, h, control.layer_bps(layer)));
+    }
+    if specs.is_empty() {
+        return Some(false);
+    }
+    let layer_dims: Vec<(u32, u32, u32)> = specs.iter().map(|(_, w, h, b)| (*w, *h, *b)).collect();
+    let started = Instant::now();
+    match super::vaapi_dmabuf::encode_owned_frame(&frame, &layer_dims, fps, keyframe_ms, join_key)
+    {
+        Ok(aus) => {
+            *control.backend.lock().expect("backend") = "vaapi-dmabuf".into();
+            control.encode_w.store(full_w, Ordering::Relaxed);
+            control.encode_h.store(full_h, Ordering::Relaxed);
+            let encode_elapsed = started.elapsed();
+            let e2e = Duration::from_millis(super::screen_lag::pipeline_lag_ms())
+                .saturating_add(encode_elapsed);
+            super::capture_metrics::note_encoded(encode_elapsed, Some(e2e));
+            profiler::record_media("screen_encode", encode_elapsed, aus.iter().map(|a| a.bytes.len()).sum());
+            let mut sent_key = false;
+            for ((layer, _, _, _), au) in specs.into_iter().zip(aus.into_iter()) {
+                if au.keyframe {
+                    control.keyframes.fetch_add(1, Ordering::Relaxed);
+                    sent_key = true;
+                }
+                control
+                    .screen_bytes
+                    .fetch_add(au.bytes.len() as u64, Ordering::Relaxed);
+                offer_video(
+                    tx,
+                    control,
+                    Outgoing::Video {
+                        kind: MediaKind::Screen,
+                        layer,
+                        bytes: au.bytes,
+                    },
+                );
+            }
+            Some(sent_key)
+        }
+        Err(_) => {
+            // Sticky disable already logged; CPU MemFd path will take over next frames.
+            Some(false)
+        }
+    }
+}
+
 fn encode_video(
     control: &Control,
     tx: &tokio::sync::mpsc::Sender<Outgoing>,
@@ -774,6 +918,12 @@ fn encode_video(
 ) -> bool {
     if !can_take_join_key(layers) {
         return false;
+    }
+    #[cfg(target_os = "linux")]
+    if screen {
+        if let Some(sent) = encode_screen_dmabuf(control, tx, layers) {
+            return sent;
+        }
     }
     let Some((generation, picture)) = slot.load_since(*seen) else {
         return false;

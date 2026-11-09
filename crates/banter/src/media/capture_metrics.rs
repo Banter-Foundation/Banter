@@ -21,6 +21,8 @@ pub struct CaptureSnapshot {
     pub mem_frames: u64,
     pub egl_import_ok: u64,
     pub egl_import_fail: u64,
+    pub vaapi_hw_ok: u64,
+    pub vaapi_hw_fail: u64,
     pub last_modifier: u64,
     pub last_dmabuf_planes: u32,
     pub callback_p50_us: u64,
@@ -111,6 +113,8 @@ struct CaptureMetrics {
     mem_frames: AtomicU64,
     egl_import_ok: AtomicU64,
     egl_import_fail: AtomicU64,
+    vaapi_hw_ok: AtomicU64,
+    vaapi_hw_fail: AtomicU64,
     last_modifier: AtomicU64,
     last_dmabuf_planes: AtomicU64,
     last_receive_ns: AtomicU64,
@@ -137,6 +141,8 @@ impl CaptureMetrics {
             mem_frames: AtomicU64::new(0),
             egl_import_ok: AtomicU64::new(0),
             egl_import_fail: AtomicU64::new(0),
+            vaapi_hw_ok: AtomicU64::new(0),
+            vaapi_hw_fail: AtomicU64::new(0),
             last_modifier: AtomicU64::new(0),
             last_dmabuf_planes: AtomicU64::new(0),
             last_receive_ns: AtomicU64::new(0),
@@ -237,6 +243,16 @@ pub fn note_egl_import_fail() {
     global().egl_import_fail.fetch_add(1, Ordering::Relaxed);
 }
 
+/// VA-API DMA-BUF hardware-frame encode produced an AU.
+pub fn note_vaapi_hw_ok() {
+    global().vaapi_hw_ok.fetch_add(1, Ordering::Relaxed);
+}
+
+/// VA-API DMA-BUF path failed (sticky disable in vaapi_dmabuf).
+pub fn note_vaapi_hw_fail() {
+    global().vaapi_hw_fail.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Convert thread published an I420 frame to the encoder slot.
 pub fn note_converted(convert: Duration) {
     let m = global();
@@ -269,10 +285,16 @@ pub fn clear() {
     m.mem_frames.store(0, Ordering::Relaxed);
     m.egl_import_ok.store(0, Ordering::Relaxed);
     m.egl_import_fail.store(0, Ordering::Relaxed);
+    m.vaapi_hw_ok.store(0, Ordering::Relaxed);
+    m.vaapi_hw_fail.store(0, Ordering::Relaxed);
     m.last_modifier.store(0, Ordering::Relaxed);
     m.last_dmabuf_planes.store(0, Ordering::Relaxed);
     #[cfg(target_os = "linux")]
     super::egl_dmabuf::clear_counters();
+    #[cfg(target_os = "linux")]
+    super::vaapi_dmabuf::clear_counters();
+    #[cfg(target_os = "linux")]
+    super::rtc::clear_screen_dmabuf();
     m.last_receive_ns.store(0, Ordering::Relaxed);
     m.receive_interval_sum_ns.store(0, Ordering::Relaxed);
     m.receive_interval_count.store(0, Ordering::Relaxed);
@@ -312,6 +334,8 @@ pub fn snapshot() -> CaptureSnapshot {
         mem_frames: m.mem_frames.load(Ordering::Relaxed),
         egl_import_ok: m.egl_import_ok.load(Ordering::Relaxed),
         egl_import_fail: m.egl_import_fail.load(Ordering::Relaxed),
+        vaapi_hw_ok: m.vaapi_hw_ok.load(Ordering::Relaxed),
+        vaapi_hw_fail: m.vaapi_hw_fail.load(Ordering::Relaxed),
         last_modifier: m.last_modifier.load(Ordering::Relaxed),
         last_dmabuf_planes: m.last_dmabuf_planes.load(Ordering::Relaxed) as u32,
         callback_p50_us,
@@ -342,22 +366,26 @@ pub fn summary_line() -> String {
     };
     let buf_kind = if s.dmabuf_frames > 0 && s.mem_frames == 0 {
         format!(
-            "dmabuf×{} planes={} mod={:#x} egl_ok={} egl_fail={}",
+            "dmabuf×{} planes={} mod={:#x} egl_ok={} egl_fail={} va_ok={} va_fail={}",
             s.dmabuf_frames,
             s.last_dmabuf_planes,
             s.last_modifier,
             s.egl_import_ok,
-            s.egl_import_fail
+            s.egl_import_fail,
+            s.vaapi_hw_ok,
+            s.vaapi_hw_fail
         )
     } else if s.dmabuf_frames > 0 {
         format!(
-            "mem={} dmabuf={} planes={} mod={:#x} egl_ok={} egl_fail={}",
+            "mem={} dmabuf={} planes={} mod={:#x} egl_ok={} egl_fail={} va_ok={} va_fail={}",
             s.mem_frames,
             s.dmabuf_frames,
             s.last_dmabuf_planes,
             s.last_modifier,
             s.egl_import_ok,
-            s.egl_import_fail
+            s.egl_import_fail,
+            s.vaapi_hw_ok,
+            s.vaapi_hw_fail
         )
     } else {
         format!("mem={}", s.mem_frames)

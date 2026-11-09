@@ -45,6 +45,14 @@ enum ConvertJob {
         grabbed_at: Instant,
         generation: u64,
     },
+    /// Wayland Cast DMA-BUF: hand off to VA-API hardware encode (skip CPU convert).
+    #[cfg(target_os = "linux")]
+    CastDmabuf {
+        frame: super::dmabuf::OwnedDmaBufFrame,
+        edge: u32,
+        grabbed_at: Instant,
+        generation: u64,
+    },
 }
 
 struct Inbox {
@@ -144,6 +152,21 @@ impl ScreenConvertTx {
             raw,
             edge,
             want_preview,
+            grabbed_at,
+            generation: self.generation.load(Ordering::Relaxed),
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn push_dmabuf(
+        &self,
+        frame: super::dmabuf::OwnedDmaBufFrame,
+        edge: u32,
+        grabbed_at: Instant,
+    ) {
+        self.inbox.push(ConvertJob::CastDmabuf {
+            frame,
+            edge,
             grabbed_at,
             generation: self.generation.load(Ordering::Relaxed),
         });
@@ -255,6 +278,17 @@ fn convert_loop(
                     grabbed_at,
                 );
             }
+            #[cfg(target_os = "linux")]
+            ConvertJob::CastDmabuf {
+                frame,
+                edge,
+                grabbed_at,
+                ..
+            } => {
+                // No CPU convert — encode thread imports DMA-BUF into VA-API.
+                let _ = grabbed_at;
+                super::rtc::store_screen_dmabuf(frame, edge);
+            }
         }
         capture_metrics::note_converted(convert_started.elapsed());
         if stop.load(Ordering::Relaxed) && inbox.job.lock().expect("inbox").is_none() {
@@ -268,6 +302,8 @@ fn job_generation(job: &ConvertJob) -> u64 {
         ConvertJob::Rgba { generation, .. } => *generation,
         #[cfg(target_os = "linux")]
         ConvertJob::Cast { generation, .. } => *generation,
+        #[cfg(target_os = "linux")]
+        ConvertJob::CastDmabuf { generation, .. } => *generation,
     }
 }
 
@@ -395,7 +431,7 @@ mod tests {
                 assert_eq!((width, height), (4, 4));
             }
             #[cfg(target_os = "linux")]
-            ConvertJob::Cast { .. } => panic!("expected rgba"),
+            ConvertJob::Cast { .. } | ConvertJob::CastDmabuf { .. } => panic!("expected rgba"),
         }
         assert!(inbox.take_wait(&AtomicBool::new(true)).is_none());
     }

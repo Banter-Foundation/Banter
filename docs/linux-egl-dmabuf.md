@@ -11,12 +11,10 @@ Stacked on DMA-BUF negotiate (`docs/linux-dmabuf-negotiate.md`). Proves `EGL_EXT
 - Journal: `banter: EGL DMA-BUF ready …`, `import ok …`, or `init/import failed …`
 - `BANTER_DMABUF=0` still advertises MemFd-only
 
-## Deferred (M4)
+## Deferred / follow-up
 
-- Keep EGLImage / GL textures across frames
-- GPU scale/convert to NV12
-- VA-API `AVHWFramesContext` without GPU→CPU readback
-- Feeding hardware frames into the encode path
+- Keep EGLImage / GL textures across frames (optional GL path)
+- **M4 VA-API hardware-frame encode:** `docs/linux-vaapi-dmabuf.md`
 
 ## Measure
 

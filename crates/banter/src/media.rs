@@ -26,6 +26,8 @@ mod egl_dmabuf;
 mod kmsgrab;
 #[cfg(target_os = "linux")]
 mod screencast;
+#[cfg(target_os = "linux")]
+mod vaapi_dmabuf;
 
 /// Experimental UI / `experimental.json` → prefer Linux kmsgrab (auto + fallback).
 /// No-op on Windows/macOS. Env `BANTER_KMSGRAB` / `BANTER_SCREEN_CAPTURE` still override.
@@ -1793,6 +1795,12 @@ fn screen_loop(
             #[cfg(target_os = "linux")]
             Feed::Cast(cast) => {
                 let grabbed_at = Instant::now();
+                // Prefer owned DMA-BUF → VA-API HW encode (M4); MemFd stays CPU path.
+                if let Some(dmabuf) = cast.take_dmabuf() {
+                    next_encode = Instant::now() + Duration::from_millis(interval);
+                    convert.push_dmabuf(dmabuf, edge, grabbed_at);
+                    continue;
+                }
                 let Some(raw) = cast.take_raw() else {
                     thread::sleep(Duration::from_millis(2));
                     continue;

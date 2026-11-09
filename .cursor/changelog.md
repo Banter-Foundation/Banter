@@ -1,3 +1,7 @@
+## 2026-11-09 00:45:00 -05:00 [ubuntu] — VA-API DMA-BUF hardware encode (M4)
+
+Own PipeWire DMA-BUF FDs and encode via VA-API (PRIME import → VPP NV12 → H.264) so Go Live can skip CPU BGRA→I420 when the path sticks. Prefer DMA-BUF EnumFormat when a render node exists; sticky-fail keeps MemFd/CPU. Metrics: `va_ok` / `va_fail`. Docs: `docs/linux-vaapi-dmabuf.md`. Windows unchanged.
+
 ## 2026-11-09 00:10:00 -05:00 [ubuntu] — EGL DMA-BUF import proof (M3)
 
 Headless EGL/GBM session imports PipeWire DMA-BUF planes via `eglCreateImageKHR` (destroy immediately). Sticky fail keeps MemFd encode working without GPU. Capture metrics expose `egl_ok` / `egl_fail`. Docs: `docs/linux-egl-dmabuf.md`. VA-API hardware frames remain M4.

@@ -1,14 +1,16 @@
 //! PipeWire DMA-BUF plane parsing and negotiation helpers (Linux Wayland).
 //!
 //! Milestone 2 of the capture plan: advertise DMA-BUF + MemFd, parse per-plane
-//! descriptors and modifiers, keep MemFd/MemPtr as the encode path until EGL
-//! import (M3) and VA-API hardware frames (M4) land.
+//! descriptors and modifiers. M3 proves EGL import; M4 owns DMA-BUF FDs for
+//! VA-API hardware-frame encode (`vaapi_dmabuf`) with MemFd/CPU fallback.
 //!
 //! Do **not** `mmap` a DMA-BUF as a linear pixel array unless the producer set
 //! `SPA_DATA_FLAG_MAPPABLE` and the modifier is known-linear — tiled/compressed
 //! modifiers are common on AMD/Intel.
 
 #![cfg(target_os = "linux")]
+
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
 use pipewire::spa::buffer::{Data, DataType};
 use pipewire::spa::param::video::VideoFormat;
@@ -25,7 +27,6 @@ pub const SPA_DATA_FLAG_MAPPABLE: u32 = 1 << 3;
 pub const PARAM_BUFFERS_DATA_TYPE: u32 = 6;
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // Held for EGL import (M3) / VA-API (M4) follow-ups.
 pub struct DmaBufPlane {
     pub fd: i32,
     pub offset: u32,
@@ -35,13 +36,66 @@ pub struct DmaBufPlane {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // Held for EGL import (M3) / VA-API (M4) follow-ups.
 pub struct DmaBufInfo {
     pub width: u32,
     pub height: u32,
     pub format: VideoFormat,
     pub modifier: u64,
     pub planes: Vec<DmaBufPlane>,
+}
+
+/// DMA-BUF planes with `dup`'d FDs so PipeWire can requeue the source buffer.
+pub struct OwnedDmaBufFrame {
+    pub width: u32,
+    pub height: u32,
+    pub format: VideoFormat,
+    pub modifier: u64,
+    pub planes: Vec<OwnedDmaBufPlane>,
+}
+
+pub struct OwnedDmaBufPlane {
+    pub fd: OwnedFd,
+    pub offset: u32,
+    pub stride: i32,
+    pub size: u32,
+    pub flags: u32,
+}
+
+impl OwnedDmaBufFrame {
+    /// Duplicate plane FDs from a PipeWire-owned [`DmaBufInfo`].
+    pub fn dup_from(info: &DmaBufInfo) -> Result<Self, String> {
+        if info.planes.is_empty() {
+            return Err("DMA-BUF has no planes".into());
+        }
+        let mut planes = Vec::with_capacity(info.planes.len());
+        for p in &info.planes {
+            if p.fd < 0 {
+                return Err("DMA-BUF plane fd is invalid".into());
+            }
+            let dup = unsafe { libc::dup(p.fd) };
+            if dup < 0 {
+                return Err("dup(DMA-BUF fd) failed".into());
+            }
+            planes.push(OwnedDmaBufPlane {
+                fd: unsafe { OwnedFd::from_raw_fd(dup) },
+                offset: p.offset,
+                stride: p.stride,
+                size: p.size,
+                flags: p.flags,
+            });
+        }
+        Ok(Self {
+            width: info.width,
+            height: info.height,
+            format: info.format,
+            modifier: info.modifier,
+            planes,
+        })
+    }
+
+    pub fn plane_raw_fds(&self) -> Vec<i32> {
+        self.planes.iter().map(|p| p.fd.as_raw_fd()).collect()
+    }
 }
 
 impl DmaBufInfo {
