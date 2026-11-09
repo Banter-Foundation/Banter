@@ -103,7 +103,7 @@ Inside quoted values, `\"` and `\\` are the only required escapes.
 
 ### 6. Commands (v1)
 
-Document defaults (slots empty): theme foreground, theme body size (**16pt**), theme font, not bold/italic/underline/strike, no highlight, align inherit (start), heading none.
+Document defaults (slots empty): theme foreground, theme body size (**16pt**), theme font, not bold/italic/underline/strike, no highlight, align inherit (start), heading none, list kind unset, list depth unset.
 
 **Flag commands** (`b`, `i`, `u`, `k`, `hr`): omitted value means `t`. `{b}` == `{b:t}`. `{b:f}` turns the slot off (same as `{!b}`).
 
@@ -122,8 +122,49 @@ Document defaults (slots empty): theme foreground, theme body size (**16pt**), t
 | `a` | align | `l` `c` `r` `j` | Paragraph align from this point until next `a` or `{!a}`. Applies to the paragraph containing the command and following paragraphs. |
 | `h` | heading | `1`..`6` | Heading level until `{!h}` or another `h`. Used for title and for export. **Semantic only** — not a font-size preset. Applying `{h}` must not set, replace, or close `{s}`. The renderer does **not** substitute a heading size table; body size is theme `size_note` unless `{s}` is set. |
 | `hr` | rule | bool | Horizontal rule. `{hr}` == `{hr:t}` (flag; omitted value means `t`). `{hr:f}` is the same as `{!hr}`. While the slot is on, the renderer draws a full-width rule for that paragraph (theme `border`, or the active `{c}` if set). Keep the style-map model; this is not HTML `<hr>`. |
+| `lk` | list kind | `u` \| `o` | List item kind until `{!lk}` or `{!}`. `u` = unordered (bullet). `o` = ordered (numbered). While set, each non-empty line in the following text is a list item of that kind. Replacing `lk` switches kind for following items. |
+| `ld` | list depth | integer `1`..`8` | Nesting depth for list items. When `lk` is set and `ld` is unset, depth is **1**. `{ld:2}` nests under depth-1 items. Changing `ld` does not change `lk`. Bad values (`0`, `9`, …) are skipped with a diagnostic. `{!ld}` restores the default depth (1) while `lk` remains. `{!lk}` clears **both** kind and depth. |
 
-**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!}` or `{!*}` clears **all** slots.
+**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!lk}` clears list kind and depth. `{!}` or `{!*}` clears **all** slots.
+
+### 6.1 Lists (BFMD-native + flat Markdown bullets)
+
+Lists are style-map slots (`lk` / `ld`), not Discord line-prefix nesting.
+
+**BFMD authoring (bullets, numbers, nesting)**
+
+```
+<{lk:u}>Milk
+Eggs
+<{ld:2}>Free-range
+<{ld:1},{lk:o}>First
+Second
+<{lk:u},{ld:2}>Note under second
+<{!lk}>
+```
+
+- Renderer draws a bullet (`•`) for `{lk:u}` and auto-numbers consecutive `{lk:o}` items **per depth** (restarts when depth or kind changes, or after a non-list line).
+- Indentation is `(depth - 1) ×` theme list step (implementation: 20px). Depth max **8**.
+- Mixed nesting is allowed: ordered under unordered and the reverse, via `{lk}` + `{ld}` only.
+- Blank lines while `lk` is on do not draw a marker and do not advance the ordered counter.
+
+**Flat Markdown bullets (convenience, fixed)**
+
+At **column 0** only (start of document or after `\n`, with **no** leading spaces/tabs), these markers are accepted and stripped from visible text:
+
+| Marker | Result |
+| --- | --- |
+| `- ` | unordered item, depth 1 |
+| `* ` | unordered item, depth 1 |
+| `+ ` | unordered item, depth 1 |
+
+Rules:
+
+1. Markdown list syntax produces a **normal bulleted list only**. The bullet style is a fixed default (dot / `-` semantics) and **cannot be changed** via Markdown.
+2. Markdown **never** produces a numbered list. A line like `1. item` stays **literal text**. Numbered lists use `{lk:o}` only.
+3. Markdown **never** nests. Leading whitespace before `-`/`*`/`+` does **not** create a nested item (unlike Discord’s 2-space indent). Those lines stay literal, including the marker characters.
+4. If BFMD `{lk}` is already active on the line, Markdown markers are **literal** (BFMD wins; no double-processing).
+5. Canonical serialize emits `{lk:u}` / `{lk:o}` / `{ld:N}` for list runs — not Markdown prefixes.
 
 **Emote tokens (not BFMD commands):** message bodies may include stable `:{e:ASSET_ID}:` tokens for custom library emotes. Display size follows the active `{e}` slot (default 22px). Stickers and GIFs are message media, not BFMD tokens.
 
@@ -190,6 +231,31 @@ Source:
 <{!h},{!s},{a:c},{b}>centered bold
 ```
 
+**Example F** — BFMD nested lists (mixed kind):
+
+Source:
+
+```
+<{lk:o}>Parent
+<{lk:u},{ld:2}>Child bullet
+<{lk:o},{ld:2}>Child number
+<{!lk}>
+```
+
+Runs: three list runs — ordered depth 1, unordered depth 2, ordered depth 2 — then list slots clear at `{!lk}` (EOF also clears).
+
+**Example G** — flat Markdown bullets (depth 1 only):
+
+Source:
+
+```
+- Milk
+* Eggs
++ Bread
+```
+
+Parsed: three unordered depth-1 items; markers stripped from run text (`Milk`, `Eggs`, `Bread`). `1. Flour` would **not** be a list item.
+
 ### 8. Errors and diagnostics
 
 The editor **must not refuse to open** a note because of parse errors. Recover:
@@ -242,6 +308,7 @@ Not in the v1 app cut. Exporters must read this table so the native format does 
 - `{u:t}` `{k:t}` `{c}` `{bg}` `{s}` `{f}` → HTML `<span style="...">` / `<u>` / `<s>` inside the `.md` file (lossy-but-faithful). Plain-md mode may drop these.
 - `{a:c}` / `{a:r}` / `{a:j}` → HTML align on the paragraph.
 - `{hr}` → Markdown `---` / HTML `<hr>` (lossy).
+- `{lk:u}` / depth → Markdown `- ` with 2 spaces × `(depth - 1)` indent on export only (lossy convenience). `{lk:o}` → `1. ` / `2. ` … at that indent. Export indent is **not** the authoring path for nesting in Banter chat.
 - Command groups themselves are never written to the export.
 
 **DOCX**
@@ -262,9 +329,11 @@ These are **required unit tests**, inputs taken as exact source strings:
 8. `<` not followed by `{` is literal.
 9. Both `{c=0xFFFFFF}` and `{c:#FFFFFF}` yield the same RGB.
 10. `{hr}` / `{hr:t}` then a newline then `{!hr}` → one run whose style has `hr` on; `{!hr}` (or `{hr:f}`) clears the slot for following text.
+11. `{lk:u}` / `{lk:o}` / `{ld:N}` set list kind and depth; `{!lk}` clears both; Markdown `- ` / `* ` / `+ ` at column 0 become unordered depth 1; `1. ` stays literal; indented `- ` does not nest.
 
 ### 13. Out of scope for this format
 
 - Embedded images or board ink (those are **AGWF** documents or future `{img:"..."}` — do not add until specified here).
 - Macros, scripts, or arbitrary command execution. `{...}` is a **closed set of style commands**, not a programming language.
-- Nested / stacked values for the same slot.
+- Nested / stacked values for the same slot (a new `{ld:N}` **replaces** depth; there is no depth stack to pop beyond `{!ld}` / `{!lk}`).
+- Discord list parity: Discord `1.` markers, Discord 2-space indent nesting, and Discord header/spoiler/subtext/quote/code markdown are **not** part of BFMD unless separately approved.
