@@ -57,10 +57,9 @@ Prefer a toolbox/dev environment for builds. Same diagnostics (`vainfo`, `pw-cli
 - Skip preview conversion when the local preview is hidden
 - Callback stays copy-only (convert on `banter-screen-convert`)
 
-**Deferred (stacked follow-ups):**
+**Follow-ups:**
 
-- PipeWire DMA-BUF negotiation + EGL import (`EGL_EXT_image_dma_buf_import`)
-- GPU scale/convert → VA-API hardware surfaces (no GPU→CPU readback)
-- Full modifier / multi-plane import path
+- M2 DMA-BUF negotiate/parse: `docs/linux-dmabuf-negotiate.md`
+- M3/M4: EGL import + VA-API hardware frames (still deferred)
 
 Windows DXGI/GDI and macOS paths are unchanged aside from shared convert timing counters when those feeds publish.
