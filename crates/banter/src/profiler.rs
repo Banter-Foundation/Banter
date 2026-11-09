@@ -88,7 +88,7 @@ impl Default for QosView {
             encode_fps: 0,
             encoder_pref: "auto".into(),
             rate_control: "cbr".into(),
-            keyframe_secs: 1,
+            keyframe_secs: 2,
             remote_stream: String::new(),
             capture_path: String::new(),
         }

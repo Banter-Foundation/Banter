@@ -29,6 +29,6 @@ fn pcm_backlog_is_two_hundred_ms_not_a_full_second() {
 }
 
 #[test]
-fn default_keyframe_interval_is_one_second() {
-    assert_eq!(stream_defaults_keyframe_secs(), 1);
+fn default_keyframe_interval_is_two_seconds() {
+    assert_eq!(stream_defaults_keyframe_secs(), 2);
 }

@@ -135,7 +135,7 @@ fn run() -> Result<(), String> {
     let encode = EncodeSettings {
         full_bps,
         pick: EncoderPick::Auto,
-        keyframe_ms: 1_000,
+        keyframe_ms: 2_000,
         fps: 30,
         cbr: true,
         pref_label: "auto",

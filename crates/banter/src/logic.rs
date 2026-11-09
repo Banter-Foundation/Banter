@@ -1261,7 +1261,7 @@ mod stream_encoder_settings_tests {
         .expect("legacy stream.json");
         assert_eq!(view.encoder, "auto");
         assert_eq!(view.rate_control, "cbr");
-        assert_eq!(view.keyframe_secs, 1);
+        assert_eq!(view.keyframe_secs, 2);
         assert_eq!(view.bitrate_kbps, 4000);
         assert!(!view.bitrate_auto);
     }
@@ -1432,7 +1432,8 @@ pub struct StreamDefaults {
     pub bitrate_auto: bool,
     pub bitrate_kbps: u32,
     /// Force an IDR about this often while Go Live is up (1–10s).
-    /// Default is 1 s so late join / loss recovers without waiting a long GOP.
+    /// Default is 2 s: late join still recovers quickly, but OpenH264 screen IDRs
+    /// (esp. macOS, which has no hardware encoder) no longer hitch at ~1 Hz.
     pub keyframe_secs: u32,
     pub show_cursor: bool,
     pub show_preview: bool,
@@ -1449,7 +1450,7 @@ impl Default for StreamDefaults {
             rate_control: "cbr".into(),
             bitrate_auto: true,
             bitrate_kbps: 2500,
-            keyframe_secs: 1,
+            keyframe_secs: 2,
             show_cursor: true,
             show_preview: true,
             sources: Vec::new(),

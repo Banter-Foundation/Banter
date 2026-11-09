@@ -1127,8 +1127,11 @@ fn build_openh264(screen: bool, fps: f32, bps: u32, keyframe_ms: u64) -> Result<
     };
     let gop = gop_frames(fps, keyframe_ms);
     let (qp_min, qp_max) = openh264_qp_bounds(screen);
-    // Bitrate RC + single thread + Low complexity favor interactive delay over archive quality
-    // (BA-97 / PR #85). QP floors improve quality-per-bitrate without raising complexity.
+    let threads = openh264_encode_threads(screen);
+    // Bitrate RC + Low complexity favor interactive delay over archive quality (BA-97 / PR #85).
+    // Camera stays single-threaded for lowest frame delay. Screen uses a few worker threads so
+    // periodic ScreenContentRealTime IDRs do not stall `banter-video` for tens of ms once per
+    // GOP — that was the ~1 Hz hitch on macOS (OpenH264-only, no VideoToolbox yet).
     // ScreenContentRealTime rejects AdaptiveQuant / BackgroundDetection (harmless ParamValidation
     // warnings) — turn those off for screen so the encoder stays on the validated path.
     let mut config = EncoderConfig::new()
@@ -1138,7 +1141,7 @@ fn build_openh264(screen: bool, fps: f32, bps: u32, keyframe_ms: u64) -> Result<
         .usage_type(usage)
         .rate_control_mode(RateControlMode::Bitrate)
         .complexity(Complexity::Low)
-        .num_threads(1)
+        .num_threads(threads)
         .long_term_reference(false)
         .qp(QpRange::new(qp_min, qp_max))
         .intra_frame_period(IntraFramePeriod::from_num_frames(gop));
@@ -1150,6 +1153,22 @@ fn build_openh264(screen: bool, fps: f32, bps: u32, keyframe_ms: u64) -> Result<
             .background_detection(false);
     }
     Encoder::with_api_config(OpenH264API::from_source(), config).map_err(|err| err.to_string())
+}
+
+/// OpenH264 worker threads for camera vs screen.
+///
+/// Camera keeps 1 (BA-97 interactive delay). Screen spreads IDR cost across a few cores
+/// (capped) so software Go Live — especially macOS — does not hitch every GOP.
+pub fn openh264_encode_threads(screen: bool) -> u16 {
+    if !screen {
+        return 1;
+    }
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+    // 2..=4: enough to cut Full-layer screen IDR wall time without turning OpenH264 into a
+    // thread farm on big machines.
+    cores.clamp(2, 4) as u16
 }
 
 /// Frames between IDRs from the stream keyframe interval and encode FPS.
@@ -2269,6 +2288,13 @@ mod tests {
         assert_eq!(gop_frames(30.0, 2_000), 60);
         assert_eq!(gop_frames(60.0, 1_000), 60);
         assert_eq!(gop_frames(30.0, 500), 15);
+    }
+
+    #[test]
+    fn openh264_threads_keep_camera_serial_screen_parallel() {
+        assert_eq!(openh264_encode_threads(false), 1);
+        let screen = openh264_encode_threads(true);
+        assert!((2..=4).contains(&screen), "screen threads={screen}");
     }
 
     #[cfg(target_os = "linux")]

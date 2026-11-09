@@ -34,7 +34,7 @@ jobs:
           libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev
           libgl1-mesa-dev libglu1-mesa-dev libgbm-dev libegl1-mesa-dev libglfw3-dev
           libwayland-dev libxkbcommon-dev
-          libpipewire-0.3-dev libv4l-dev
+          libpipewire-0.3-dev libv4l-dev libva-dev
       - name: server
         run: cargo test -p banter-server
       - name: client
