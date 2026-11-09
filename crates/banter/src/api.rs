@@ -9,8 +9,8 @@ use banter_server::{
     format_banter_notice, Account, BanterVersionReport, CallSnapshot, Category, CategoryLayout,
     Channel, ChannelKind, ChatTarget, CommandAlias, CosmeticItem, DirectChat, EmoteAsset,
     EmoteAssetKind, EmotePack, EmotePackOwner, EmotePackVisibility, EmotePickerSource, Friend,
-    FriendRequest, GuildRole, Mention, Message, PluginInfo, Presence, ProfilePatch, ServerDebug,
-    ServerCommandSettings, ServerFolder, ServerFolderPatch, ServerHome, ServerRail,
+    FriendRequest, GameProfile, GuildRole, Mention, Message, PluginInfo, Presence, ProfilePatch,
+    ServerDebug, ServerCommandSettings, ServerFolder, ServerFolderPatch, ServerHome, ServerRail,
     ServerRailServer, ServerSummary, Session, UserProfile, VoiceFlags, VoiceMember, VoiceRoster,
     ERR_HTTP_PARSE, ERR_HTTP_STATUS, ERR_HTTP_TRANSPORT, ERR_VC_FLAGS, ERR_VC_JOIN, ERR_VC_LEAVE,
 };
@@ -243,6 +243,33 @@ impl Client {
             None => format!("/v1/users/{user_id}"),
         };
         self.get_json(&path)
+    }
+
+    pub fn game_profile(&self, game_id: i64) -> Result<GameProfile, ApiError> {
+        self.get_json(&format!("/v1/games/{game_id}"))
+    }
+
+    pub fn create_game_profile(&self, name: &str) -> Result<GameProfile, ApiError> {
+        self.send_json(
+            self.auth(http().post(&self.url("/v1/games"))),
+            serde_json::json!({ "name": name }),
+        )
+    }
+
+    pub fn search_game_profiles(&self, query: &str) -> Result<Vec<GameProfile>, ApiError> {
+        let path = "/v1/games";
+        let start = Instant::now();
+        let response = self
+            .auth(http().get(&self.url(path)))
+            .query("q", query.trim())
+            .call()
+            .map_err(|err| self.http_error("GET", path, err))?;
+        let resp_hint = content_length(&response);
+        let value = response
+            .into_json()
+            .map_err(|err| ApiError::new(err.to_string()))?;
+        profiler::record_http("GET", path, start.elapsed(), 0, resp_hint);
+        Ok(value)
     }
 
     pub fn set_display_name(&self, display_name: &str) -> Result<Account, ApiError> {

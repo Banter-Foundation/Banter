@@ -127,6 +127,8 @@ Document defaults (slots empty): theme foreground, theme body size (**16pt**), t
 
 **Emote tokens (not BFMD commands):** message bodies may include stable `:{e:ASSET_ID}:` tokens for custom library emotes. Display size follows the active `{e}` slot (default 22px). Stickers and GIFs are message media, not BFMD tokens.
 
+**Game profile mentions (not BFMD commands; Owl-approved):** Discord Message Formatting form `<@$GAME_ID>` (digits only). Stored/targeted by game id. When a Banter game profile exists, chat paint shows `@Name`; otherwise `@$GAME_ID`. Clicking the chip opens that game’s profile popout. User (`<@ID>`), role (`<@&ID>`), channel (`<#ID>`), slash-command, and guild-nav mention forms are **not** recognized (stay literal). Create/lookup via `POST|GET /v1/games` / `GET /v1/games/{id}`.
+
 **Replace**: a new `set` for a name that is already active **closes the previous value and applies the new one**. No history of the old value is kept.
 
 **Unknown name**: skip that command, keep parsing the group, record a diagnostic. Do not abort the file.
@@ -268,3 +270,4 @@ These are **required unit tests**, inputs taken as exact source strings:
 - Embedded images or board ink (those are **AGWF** documents or future `{img:"..."}` — do not add until specified here).
 - Macros, scripts, or arbitrary command execution. `{...}` is a **closed set of style commands**, not a programming language.
 - Nested / stacked values for the same slot.
+- Other Discord mention types (user, role, channel, slash command, guild navigation) — game profile `<@$GAME_ID>` only unless separately approved.

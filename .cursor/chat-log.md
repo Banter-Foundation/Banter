@@ -1219,3 +1219,18 @@ Owl: when your window-chrome fix PR is open and green, merge it to main (do not 
 
 Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
 
+
+## User
+
+Implement BFMD **game profile mentions** only. Owl approved on this call. Do NOT add user/role/channel/slash/guild-nav mentions in this PR.
+
+## Feature
+Discord game profile mention syntax. Per Discord Message Formatting / Project gaps doc: `<@$GAME_ID>`. Owl also described it as “at-symbol plus a game name, pulling up that game’s profile” — support the Discord token form; if Banter has game profiles with names, resolve display name while storing/targeting the game id. Opening/showing the game’s profile on click is required for “pulling up that game’s profile.”
+
+## Important
+Owl said “when building this” and **trailed off** — they may send more requirements. Implement the **core** feature now; keep the design easy to extend; in the final report explicitly note that Owl had more to say about build requirements and may follow up.
+
+## Summary
+
+BA-131 core shipped on branch `cursor/bfmd-game-profile-mentions-7979`: Discord token `<@$GAME_ID>` only; `@Name` display when resolved; click opens game profile popout; user-created game profiles via `/v1/games`. Owl trailed off on further build requirements — may follow up. Reasoning: keep mention token + paint + profile popout + thin registry extensible without inventing other Discord mention kinds.
+

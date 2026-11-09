@@ -2599,6 +2599,16 @@ pub fn insert_mention(composer: &mut String, username: &str) {
     composer.push(' ');
 }
 
+/// Insert a Discord-form game-profile mention token `<@$GAME_ID>` into the composer.
+pub fn insert_game_profile_mention(composer: &mut String, game_id: i64) {
+    let mention = crate::bfmd::game_profile_token(game_id);
+    if !composer.is_empty() && !composer.ends_with(' ') {
+        composer.push(' ');
+    }
+    composer.push_str(&mention);
+    composer.push(' ');
+}
+
 /// Labels only, skipping separators. Used by tests and UI smoke checks.
 pub fn context_menu_labels(entries: &[ContextMenuEntry]) -> Vec<&'static str> {
     entries

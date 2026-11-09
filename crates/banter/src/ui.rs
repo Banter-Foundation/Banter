@@ -13,7 +13,7 @@ use banter_server::{
     has_permission, top_hoisted_role, top_role_color, Account, BadgeItem, CallPhase, CallSnapshot,
     CategoryLayout, Channel, ChannelKind, ChatTarget, ClientSignal, CommandAlias, CosmeticItem,
     CosmeticKind, DirectChat, Friend, FriendRequest, GuildRole, LayerId, LayerPreferences,
-    MediaKind, MediaPlace, Mention, Message, Presence, ProfileActivityInput,
+    GameProfile, MediaKind, MediaPlace, Mention, Message, Presence, ProfileActivityInput,
     ProfileConnectionInput, ProfilePatch, ProfileWidgetInput, ProfileWidgetKind,
     ProfileWishlistInput, ServerCommandSettings, ServerDebug, ServerFolderPatch, ServerRail,
     ServerSummary, UserProfile, VoiceFlags, VoiceMember, CHANNEL_ICON_CHOICES, MAX_AVATAR_BYTES,
@@ -221,6 +221,15 @@ struct OpenContextMenu {
     entries: Vec<ContextMenuEntry>,
     pos: [f32; 2],
     /// Skips the opening click so the same right-click does not dismiss the menu.
+    frames: u32,
+}
+
+/// Popout opened by clicking a `<@$GAME_ID>` mention in chat.
+struct GameProfileOpen {
+    id: i64,
+    /// `None` when the id is unknown / deleted — card still opens with the id.
+    profile: Option<GameProfile>,
+    anchor: [f32; 2],
     frames: u32,
 }
 
@@ -522,6 +531,12 @@ pub(crate) struct App {
     profile_editor_slot: Option<ProfileEditorSlot>,
     /// Frames the profile card has been open (skips the opening click for dismiss).
     profile_frames: u32,
+    /// Cached game profiles for `<@$GAME_ID>` mention name resolution.
+    game_profiles: HashMap<i64, GameProfile>,
+    /// Game ids that failed lookup (avoid refetch thrash).
+    game_profile_miss: HashSet<i64>,
+    /// Open game-profile popout from a chat mention click (`None` profile = unknown id).
+    game_profile_open: Option<GameProfileOpen>,
     /// Discord-style right-click menu for messages, members, and channels.
     context_menu: Option<OpenContextMenu>,
     /// Height of the drawn message history last frame; pads short histories down to the composer.
@@ -810,6 +825,9 @@ impl App {
             profile_draft_avatar: ProfileMediaDraft::Unchanged,
             profile_editor_slot: None,
             profile_frames: 0,
+            game_profiles: HashMap::new(),
+            game_profile_miss: HashSet::new(),
+            game_profile_open: None,
             context_menu: None,
             history_h: 0.0,
             chat_jump: false,
@@ -1174,6 +1192,7 @@ impl App {
             self.draw_stream_menu(ui);
         }
         self.draw_profile_card(ui);
+        self.draw_game_profile_card(ui);
         self.draw_profiler(ui);
         self.draw_server_debug(ui);
         if (self.stream_popout || self.stream_fullscreen) && !self.has_live_stream() {
@@ -5353,15 +5372,26 @@ impl App {
             };
             let body_h = if message.body.is_empty() {
                 0.0
-            } else if edited.is_empty() {
-                bfmd_paint::measure(ui, self.bfmd_fonts(), &message.body, text_w)
             } else {
-                bfmd_paint::measure(
-                    ui,
-                    self.bfmd_fonts(),
-                    &format!("{}{edited}", message.body),
-                    text_w,
-                )
+                self.ensure_game_profiles_for_body(&message.body);
+                let resolve = self.game_profile_name_resolver();
+                if edited.is_empty() {
+                    bfmd_paint::measure(
+                        ui,
+                        self.bfmd_fonts(),
+                        &message.body,
+                        text_w,
+                        Some(&resolve),
+                    )
+                } else {
+                    bfmd_paint::measure(
+                        ui,
+                        self.bfmd_fonts(),
+                        &format!("{}{edited}", message.body),
+                        text_w,
+                        Some(&resolve),
+                    )
+                }
             };
             let collapsed_note_h = if row.collapsed && row.child_count > 0 {
                 18.0
@@ -5516,14 +5546,27 @@ impl App {
             }
             if !message.body.is_empty() {
                 let body_origin = [origin[0] + text_x, origin[1] + 22.0];
-                bfmd_paint::draw(
-                    ui,
-                    self.bfmd_fonts(),
-                    &message.body,
-                    body_origin,
-                    text_w,
-                    edited,
-                );
+                self.ensure_game_profiles_for_body(&message.body);
+                let resolve = self.game_profile_name_resolver();
+                let mut open_game: Option<(i64, [f32; 2])> = None;
+                {
+                    let games = bfmd_paint::GameProfilePaint {
+                        resolve_name: &resolve,
+                        open: &mut open_game,
+                    };
+                    bfmd_paint::draw(
+                        ui,
+                        self.bfmd_fonts(),
+                        &message.body,
+                        body_origin,
+                        text_w,
+                        edited,
+                        Some(games),
+                    );
+                }
+                if let Some((game_id, anchor)) = open_game {
+                    self.open_game_profile(game_id, anchor);
+                }
             }
             if row.collapsed && row.child_count > 0 {
                 let note_y = origin[1] + 22.0 + body_h.max(20.0);
@@ -10531,6 +10574,7 @@ impl App {
         };
         match self.client.user_profile(user_id, server_id) {
             Ok(view) => {
+                self.game_profile_open = None;
                 self.profile.open(user_id, kind);
                 self.profile.set_anchor(anchor);
                 self.profile.set_server_id(server_id);
@@ -10541,6 +10585,145 @@ impl App {
                 self.status = err.to_string();
                 self.close_profile();
             }
+        }
+    }
+
+    fn game_profile_name_resolver(&self) -> impl Fn(i64) -> Option<String> {
+        let names: HashMap<i64, String> = self
+            .game_profiles
+            .iter()
+            .map(|(id, profile)| (*id, profile.name.clone()))
+            .collect();
+        move |id| names.get(&id).cloned()
+    }
+
+    fn ensure_game_profiles_for_body(&mut self, body: &str) {
+        for (_, _, game_id) in bfmd::scan_game_profile_mentions(body) {
+            if self.game_profiles.contains_key(&game_id) || self.game_profile_miss.contains(&game_id)
+            {
+                continue;
+            }
+            match self.client.game_profile(game_id) {
+                Ok(profile) => {
+                    self.game_profiles.insert(game_id, profile);
+                }
+                Err(_) => {
+                    self.game_profile_miss.insert(game_id);
+                }
+            }
+        }
+    }
+
+    fn open_game_profile(&mut self, game_id: i64, anchor: [f32; 2]) {
+        self.close_profile();
+        let profile = if let Some(cached) = self.game_profiles.get(&game_id).cloned() {
+            Some(cached)
+        } else {
+            match self.client.game_profile(game_id) {
+                Ok(profile) => {
+                    self.game_profiles.insert(game_id, profile.clone());
+                    self.game_profile_miss.remove(&game_id);
+                    Some(profile)
+                }
+                Err(err) => {
+                    self.game_profile_miss.insert(game_id);
+                    self.status = err.to_string();
+                    None
+                }
+            }
+        };
+        self.game_profile_open = Some(GameProfileOpen {
+            id: game_id,
+            profile,
+            anchor,
+            frames: 0,
+        });
+    }
+
+    fn draw_game_profile_card(&mut self, ui: &Ui) {
+        let Some(open) = self.game_profile_open.as_ref() else {
+            return;
+        };
+        let id = open.id;
+        let name = open
+            .profile
+            .as_ref()
+            .map(|p| p.name.clone())
+            .filter(|n| !n.trim().is_empty());
+        let anchor = open.anchor;
+        let frames = open.frames;
+        let display = ui.io().display_size();
+        let card_w = 280.0;
+        let card_h = 120.0;
+        let margin = 8.0;
+        let mut min = [anchor[0] + 8.0, anchor[1]];
+        if min[0] + card_w > display[0] - margin {
+            min[0] = (anchor[0] - card_w - 8.0).max(margin);
+        }
+        if min[1] + card_h > display[1] - margin {
+            min[1] = (display[1] - card_h - margin).max(margin);
+        }
+        let max = [min[0] + card_w, min[1] + card_h];
+        let title = bfmd::game_profile_display_label(id, name.as_deref());
+        let mut close = false;
+
+        let flags = WindowFlags::NO_DECORATION
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_DOCKING
+            | WindowFlags::NO_SCROLLBAR;
+        let _pad = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let _round = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        let _bg = ui.push_style_color(StyleColor::WindowBg, skin::CLEAR);
+        let token = bfmd::game_profile_token(id);
+        ui.window("##game-profile")
+            .flags(flags)
+            .position([0.0, 0.0], Condition::Always)
+            .size(display, Condition::Always)
+            .build(|| {
+                let draw = ui.get_window_draw_list();
+                draw.add_rect(min, max, FLOATING_BG)
+                    .rounding(8.0)
+                    .filled(true)
+                    .build();
+                draw.add_rect(min, max, DIVIDER)
+                    .rounding(8.0)
+                    .thickness(1.0)
+                    .build();
+                {
+                    let _bold = ui.push_font_with_size(self.bold_font, 18.0);
+                    draw.add_text([min[0] + 16.0, min[1] + 16.0], TEXT, &title);
+                }
+                let subtitle = if name.is_some() {
+                    format!("Game profile · id {id}")
+                } else {
+                    format!("Unknown game profile · id {id}")
+                };
+                draw.add_text([min[0] + 16.0, min[1] + 44.0], MUTED, &subtitle);
+                draw.add_text(
+                    [min[0] + 16.0, min[1] + 72.0],
+                    MUTED,
+                    &format!("Mention token: {token}"),
+                );
+                // Outside-click dismiss after the opening frame.
+                if frames > 0 && ui.is_mouse_clicked(MouseButton::Left) {
+                    let mouse = ui.io().mouse_pos();
+                    let inside = mouse[0] >= min[0]
+                        && mouse[0] <= max[0]
+                        && mouse[1] >= min[1]
+                        && mouse[1] <= max[1];
+                    if !inside {
+                        close = true;
+                    }
+                }
+            });
+        if let Some(open) = self.game_profile_open.as_mut() {
+            open.frames = open.frames.saturating_add(1);
+        }
+        if close {
+            self.game_profile_open = None;
         }
     }
 

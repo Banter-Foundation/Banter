@@ -15,6 +15,7 @@ pub const MAX_PROFILE_WIDGETS: usize = 8;
 pub const MAX_PROFILE_CONNECTIONS: usize = 10;
 pub const MAX_PROFILE_ACTIVITY: usize = 20;
 pub const MAX_PROFILE_WISHLIST: usize = 20;
+pub const MAX_GAME_PROFILE_NAME_CHARS: usize = 100;
 pub const IDLE_AFTER_MS: i64 = 5 * 60 * 1000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -564,6 +565,18 @@ pub struct Mention {
     pub dm_id: Option<i64>,
     pub from_username: String,
     pub body: String,
+}
+
+/// Named game profile targeted by Discord-style `<@$GAME_ID>` chat mentions.
+///
+/// Stored/targeted by `id`. Display resolves `name` when the profile exists.
+/// Extend later (cover art, links, …) without changing the mention token form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GameProfile {
+    pub id: i64,
+    pub name: String,
+    pub created_by: i64,
+    pub created_at: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
