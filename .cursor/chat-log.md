@@ -1228,3 +1228,4 @@ Agent: Implemented BFMD `{l:"https://…"}` + Discord sugar `[label](url)`; clic
 
 ### Summary
 - Masked links only (Owl-approved). Mandatory URL confirm popup before open.
+Agent: PR https://github.com/Banter-Foundation/Banter/pull/114 opened on cursor/bfmd-masked-links-6317.
