@@ -1,3 +1,7 @@
+## 2026-11-09 01:09:02 +00:00 [ubuntu] — BFMD masked links + mandatory URL popup (BA-129)
+
+Owl-approved Discord-style masked links only: BFMD `{l:"https://…"}` plus chat sugar `[label](url)`. Clicking a link never navigates immediately — ImGui opens `Modal::OpenMaskedLink` showing the real destination with Cancel / Open. Parser rejects non-http(s). Docs: `docs/bfmd.md`. Tests: `cargo test -p banter --test bfmd` (25 passed). No other Discord markdown added.
+
 ## 2026-11-08 02:45:00 -05:00 [ubuntu] — OBS-style interactive encode presets
 
 Hardware ffmpeg paths take ultra-low-latency knobs inspired by OBS (NVENC `ull`, rc-lookahead/delay 0, no scenecut/multipass/AQ; QSV async_depth 1; AMF ultralowlatency; x264 scenecut 0). Windows MF sets CodecAPI low-latency + zero B-frames when supported. PipeWire ScreenCast prefers NV12 after I420 and converts semi-planar→I420 without a BGRA detour. Full GPU texture→NVENC remains a follow-up.

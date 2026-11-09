@@ -37,6 +37,9 @@ pub struct Style {
     pub align: Option<Align>,
     pub heading: Option<u8>,
     pub hr: bool,
+    /// Masked-link destination (`{l:"https://…"}` / Discord `[label](url)` sugar).
+    /// Display text is the run's `text`; the URL is never shown as the label.
+    pub link: Option<String>,
 }
 
 impl Style {
@@ -173,6 +176,21 @@ pub fn parse(source: &str) -> ParseResult {
             }
             continue;
         }
+        // Discord-style masked link sugar: `[label](http(s)://…)` (Owl-approved).
+        if c == b'[' {
+            if let Some((label, url, next)) = try_parse_masked_link_sugar(bytes, i) {
+                flush(&mut text, &style, &mut runs);
+                let mut link_style = style.clone();
+                link_style.link = Some(url);
+                runs.push(Run {
+                    text: label,
+                    style: link_style,
+                });
+                i = next;
+                first_group = false;
+                continue;
+            }
+        }
         // Literal `<` or any other byte as UTF-8 char.
         let ch = source[i..].chars().next().unwrap();
         text.push(ch);
@@ -190,6 +208,29 @@ pub fn parse(source: &str) -> ParseResult {
 /// Plain visible text (commands stripped). Useful for search previews / mentions.
 pub fn plain_text(source: &str) -> String {
     parse(source).runs.into_iter().map(|r| r.text).collect()
+}
+
+/// True only for `http://` / `https://` destinations (masked-link allow-list).
+pub fn is_allowed_link_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    (trimmed.starts_with("https://") || trimmed.starts_with("http://"))
+        && !trimmed.chars().any(|c| c.is_control() || c == ' ' || c == '\n' || c == '\r')
+}
+
+/// Clicking a masked link **must** show a confirm popup with this URL before open.
+/// Returns `None` when the URL is not an allowed http(s) destination.
+pub fn pending_masked_link_open(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if is_allowed_link_url(trimmed) {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
+/// Product rule: navigation is never immediate — UI shows the real URL first.
+pub fn masked_link_requires_confirm_popup(url: &str) -> bool {
+    is_allowed_link_url(url)
 }
 
 /// Find stable emote tokens `:{e:ASSET_ID}:` in plain/BFMD text.
@@ -845,7 +886,7 @@ fn apply_commands(
     }
 }
 
-const KNOWN_NAMES: &[&str] = &["v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr"];
+const KNOWN_NAMES: &[&str] = &["v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr", "l"];
 
 fn close_slot(style: &mut Style, name: &str) {
     match name {
@@ -861,6 +902,7 @@ fn close_slot(style: &mut Style, name: &str) {
         "a" => style.align = None,
         "h" => style.heading = None,
         "hr" => style.hr = false,
+        "l" => style.link = None,
         "v" => {}
         _ => {}
     }
@@ -962,6 +1004,17 @@ fn apply_set(style: &mut Style, name: &str, value: Option<&Value>) -> bool {
             }
             _ => false,
         },
+        "l" => match value {
+            Some(Value::Quoted(s)) | Some(Value::Ident(s)) => {
+                if is_allowed_link_url(s) {
+                    style.link = Some(s.trim().to_string());
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        },
         _ => false, // unknown name — skip
     }
 }
@@ -1004,6 +1057,9 @@ fn diff_group(from: &Style, to: &Style) -> String {
     }
     if from.hr && !to.hr {
         parts.push("{!hr}".into());
+    }
+    if from.link.is_some() && to.link.is_none() {
+        parts.push("{!l}".into());
     }
 
     if to.size != from.size {
@@ -1071,12 +1127,65 @@ fn diff_group(from: &Style, to: &Style) -> String {
     if to.hr && !from.hr {
         parts.push("{hr:t}".into());
     }
+    if to.link != from.link {
+        if let Some(url) = &to.link {
+            parts.push(format!(
+                "{{l:\"{}\"}}",
+                url.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
+        }
+    }
 
     if parts.is_empty() {
         String::new()
     } else {
         format!("<{}>", parts.join(","))
     }
+}
+
+/// Discord `[label](url)` sugar. Label must be non-empty; URL must be http(s).
+/// Returns `(label, url, byte_index_after_closing_paren)`.
+fn try_parse_masked_link_sugar(bytes: &[u8], start: usize) -> Option<(String, String, usize)> {
+    if bytes.get(start) != Some(&b'[') {
+        return None;
+    }
+    let mut i = start + 1;
+    let label_start = i;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b']' {
+            break;
+        }
+        // Labels stay on one line; `[` inside the label is allowed as literal text.
+        if b == b'\n' || b == b'\r' {
+            return None;
+        }
+        i += 1;
+    }
+    if i >= bytes.len() || i == label_start {
+        return None;
+    }
+    let label = std::str::from_utf8(&bytes[label_start..i]).ok()?.to_string();
+    i += 1; // ]
+    if bytes.get(i) != Some(&b'(') {
+        return None;
+    }
+    i += 1;
+    let url_start = i;
+    while i < bytes.len() && bytes[i] != b')' {
+        if bytes[i] == b'\n' || bytes[i] == b'\r' || bytes[i] == b' ' {
+            return None;
+        }
+        i += 1;
+    }
+    if i >= bytes.len() || i == url_start {
+        return None;
+    }
+    let url = std::str::from_utf8(&bytes[url_start..i]).ok()?.to_string();
+    if !is_allowed_link_url(&url) {
+        return None;
+    }
+    Some((label, url, i + 1))
 }
 
 fn format_hex(c: Rgba) -> String {
