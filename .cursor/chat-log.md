@@ -1219,3 +1219,12 @@ Owl: when your window-chrome fix PR is open and green, merge it to main (do not 
 
 Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
 
+
+## 2026-11-09 BA-124 BFMD spoilers + sized subtext
+
+Owl: Implement TWO Owl-approved BFMD features only — spoilers (`{sp}` style-map) and sized subtext with required `-#;<size>` (not Discord bare `-# `). No lists/quotes/headers/timestamps. Branch from main, open PR, update docs/bfmd.md + store copy.
+
+Agent: Branch `cursor/bfmd-spoilers-subtext-fba0`. Spoiler `{sp}` / `{sp:t}` hide-until-click in `bfmd_paint`; subtext `{st:N}` + line-prefix `-#;N`. Tests 24 passed in `crates/banter/tests/bfmd.rs`. Docs updated in repo + store `docs/bfmd.md`.
+
+### Summary
+Spoilers + sized subtext only; other Discord markdown gaps still Owl-gated.

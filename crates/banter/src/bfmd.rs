@@ -37,6 +37,10 @@ pub struct Style {
     pub align: Option<Align>,
     pub heading: Option<u8>,
     pub hr: bool,
+    /// Spoiler / reveal flag (`{sp}`). Paint hides until click.
+    pub spoiler: bool,
+    /// Subtext size in points (`{st:N}` / line-prefix `-#;N`). `None` = not subtext.
+    pub subtext: Option<f32>,
 }
 
 impl Style {
@@ -45,11 +49,17 @@ impl Style {
     }
 
     pub fn size_or_default(&self) -> f32 {
-        self.size.unwrap_or(DEFAULT_SIZE_PT)
+        // Active subtext size wins over a free `{s}` override while `{st}` is set.
+        self.subtext.or(self.size).unwrap_or(DEFAULT_SIZE_PT)
     }
 
     pub fn emote_size_or_default(&self) -> f32 {
         self.emote_size.unwrap_or(DEFAULT_EMOTE_PX)
+    }
+
+    /// True when this run is Banter subtext (sized + dimmed in paint).
+    pub fn is_subtext(&self) -> bool {
+        self.subtext.is_some()
     }
 }
 
@@ -98,6 +108,9 @@ pub struct ParseResult {
 }
 
 /// Parse BFMD source into styled runs. Never refuses; recovers per §8.
+///
+/// Also recognizes the Banter chat **subtext line-prefix** `-#;<size>` at the
+/// start of a line (Owl). Discord’s bare `-# ` is not subtext and stays literal.
 pub fn parse(source: &str) -> ParseResult {
     let source = strip_bom(source);
     let bytes = source.as_bytes();
@@ -109,6 +122,9 @@ pub fn parse(source: &str) -> ParseResult {
     let mut version = 1u32;
     let mut saw_version = false;
     let mut first_group = true;
+    let mut at_line_start = true;
+    // Subtext opened by `-#;N` (auto-clears at the next newline).
+    let mut line_prefix_st = false;
 
     let flush = |text: &mut String, style: &Style, runs: &mut Vec<Run>| {
         if text.is_empty() {
@@ -122,6 +138,17 @@ pub fn parse(source: &str) -> ParseResult {
 
     while i < bytes.len() {
         let c = bytes[i];
+        if at_line_start {
+            if let Some((next, size)) = match_subtext_line_prefix(bytes, i) {
+                flush(&mut text, &style, &mut runs);
+                style.subtext = Some(size);
+                line_prefix_st = true;
+                i = next;
+                at_line_start = false;
+                first_group = false;
+                continue;
+            }
+        }
         if c == b'\\' {
             let (ch, next, diag) = parse_text_escape(bytes, i);
             if let Some(d) = diag {
@@ -129,6 +156,13 @@ pub fn parse(source: &str) -> ParseResult {
             }
             text.push(ch);
             i = next;
+            at_line_start = ch == '\n';
+            if ch == '\n' && line_prefix_st {
+                flush(&mut text, &style, &mut runs);
+                style.subtext = None;
+                line_prefix_st = false;
+            }
+            first_group = false;
             continue;
         }
         if c == b'<' && group_starts_at(bytes, i) {
@@ -158,7 +192,10 @@ pub fn parse(source: &str) -> ParseResult {
                         first_group = false;
                     }
                     apply_commands(&cmds, &mut style, &mut diagnostics, i);
+                    // A command group on a line means the line-prefix slot no longer
+                    // applies at this position; keep any `{st}` the group just set.
                     i = next;
+                    at_line_start = false;
                 }
                 Err(next) => {
                     // Unclosed group: treat from `<` as literal (§8).
@@ -168,6 +205,8 @@ pub fn parse(source: &str) -> ParseResult {
                     });
                     text.push('<');
                     i = i + 1;
+                    at_line_start = false;
+                    first_group = false;
                     let _ = next;
                 }
             }
@@ -178,6 +217,16 @@ pub fn parse(source: &str) -> ParseResult {
         text.push(ch);
         i += ch.len_utf8();
         first_group = false;
+        if ch == '\n' {
+            if line_prefix_st {
+                flush(&mut text, &style, &mut runs);
+                style.subtext = None;
+                line_prefix_st = false;
+            }
+            at_line_start = true;
+        } else {
+            at_line_start = false;
+        }
     }
     flush(&mut text, &style, &mut runs);
     ParseResult {
@@ -185,6 +234,46 @@ pub fn parse(source: &str) -> ParseResult {
         diagnostics,
         version,
     }
+}
+
+/// Line-start Banter subtext marker: `-#;<size>` then optional horizontal whitespace.
+///
+/// `size` must parse as a BFMD number and be `> 0`. Returns the index after the
+/// consumed marker (spaces included) and the size in points.
+fn match_subtext_line_prefix(bytes: &[u8], i: usize) -> Option<(usize, f32)> {
+    if bytes.len().saturating_sub(i) < 4 {
+        return None;
+    }
+    if bytes[i] != b'-' || bytes[i + 1] != b'#' || bytes[i + 2] != b';' {
+        return None;
+    }
+    let mut j = i + 3;
+    if j >= bytes.len() || !bytes[j].is_ascii_digit() {
+        return None;
+    }
+    let num_start = j;
+    while j < bytes.len() && bytes[j].is_ascii_digit() {
+        j += 1;
+    }
+    if j < bytes.len() && bytes[j] == b'.' {
+        j += 1;
+        let frac = j;
+        while j < bytes.len() && bytes[j].is_ascii_digit() {
+            j += 1;
+        }
+        if j == frac {
+            return None;
+        }
+    }
+    let raw = std::str::from_utf8(&bytes[num_start..j]).ok()?;
+    let n: f32 = raw.parse().ok()?;
+    if n <= 0.0 {
+        return None;
+    }
+    while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+        j += 1;
+    }
+    Some((j, n))
 }
 
 /// Plain visible text (commands stripped). Useful for search previews / mentions.
@@ -845,7 +934,9 @@ fn apply_commands(
     }
 }
 
-const KNOWN_NAMES: &[&str] = &["v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr"];
+const KNOWN_NAMES: &[&str] = &[
+    "v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr", "sp", "st",
+];
 
 fn close_slot(style: &mut Style, name: &str) {
     match name {
@@ -861,6 +952,8 @@ fn close_slot(style: &mut Style, name: &str) {
         "a" => style.align = None,
         "h" => style.heading = None,
         "hr" => style.hr = false,
+        "sp" => style.spoiler = false,
+        "st" => style.subtext = None,
         "v" => {}
         _ => {}
     }
@@ -897,7 +990,7 @@ fn apply_set(style: &mut Style, name: &str, value: Option<&Value>) -> bool {
             }
             _ => false,
         },
-        "b" | "i" | "u" | "k" | "hr" => {
+        "b" | "i" | "u" | "k" | "hr" | "sp" => {
             let on = match value {
                 None => true,
                 Some(Value::Bool(b)) => *b,
@@ -917,10 +1010,18 @@ fn apply_set(style: &mut Style, name: &str, value: Option<&Value>) -> bool {
                 "u" => style.underline = on,
                 "k" => style.strike = on,
                 "hr" => style.hr = on,
+                "sp" => style.spoiler = on,
                 _ => {}
             }
             true
         }
+        "st" => match value {
+            Some(Value::Number(n)) if *n > 0.0 => {
+                style.subtext = Some(*n);
+                true
+            }
+            _ => false,
+        },
         "f" => match value {
             Some(Value::Ident(s)) | Some(Value::Quoted(s)) => {
                 style.font = Some(s.clone());
@@ -1005,6 +1106,12 @@ fn diff_group(from: &Style, to: &Style) -> String {
     if from.hr && !to.hr {
         parts.push("{!hr}".into());
     }
+    if from.spoiler && !to.spoiler {
+        parts.push("{!sp}".into());
+    }
+    if from.subtext.is_some() && to.subtext.is_none() {
+        parts.push("{!st}".into());
+    }
 
     if to.size != from.size {
         if let Some(s) = to.size {
@@ -1070,6 +1177,14 @@ fn diff_group(from: &Style, to: &Style) -> String {
     }
     if to.hr && !from.hr {
         parts.push("{hr:t}".into());
+    }
+    if to.spoiler && !from.spoiler {
+        parts.push("{sp:t}".into());
+    }
+    if to.subtext != from.subtext {
+        if let Some(n) = to.subtext {
+            parts.push(format!("{{st:{n}}}"));
+        }
     }
 
     if parts.is_empty() {

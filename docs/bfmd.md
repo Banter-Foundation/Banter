@@ -103,9 +103,9 @@ Inside quoted values, `\"` and `\\` are the only required escapes.
 
 ### 6. Commands (v1)
 
-Document defaults (slots empty): theme foreground, theme body size (**16pt**), theme font, not bold/italic/underline/strike, no highlight, align inherit (start), heading none.
+Document defaults (slots empty): theme foreground, theme body size (**16pt**), theme font, not bold/italic/underline/strike, no highlight, align inherit (start), heading none, not spoiler, not subtext.
 
-**Flag commands** (`b`, `i`, `u`, `k`, `hr`): omitted value means `t`. `{b}` == `{b:t}`. `{b:f}` turns the slot off (same as `{!b}`).
+**Flag commands** (`b`, `i`, `u`, `k`, `hr`, `sp`): omitted value means `t`. `{b}` == `{b:t}`. `{b:f}` turns the slot off (same as `{!b}`).
 
 | Name | Slot | Value | Effect |
 | --- | --- | --- | --- |
@@ -122,10 +122,21 @@ Document defaults (slots empty): theme foreground, theme body size (**16pt**), t
 | `a` | align | `l` `c` `r` `j` | Paragraph align from this point until next `a` or `{!a}`. Applies to the paragraph containing the command and following paragraphs. |
 | `h` | heading | `1`..`6` | Heading level until `{!h}` or another `h`. Used for title and for export. **Semantic only** — not a font-size preset. Applying `{h}` must not set, replace, or close `{s}`. The renderer does **not** substitute a heading size table; body size is theme `size_note` unless `{s}` is set. |
 | `hr` | rule | bool | Horizontal rule. `{hr}` == `{hr:t}` (flag; omitted value means `t`). `{hr:f}` is the same as `{!hr}`. While the slot is on, the renderer draws a full-width rule for that paragraph (theme `border`, or the active `{c}` if set). Keep the style-map model; this is not HTML `<hr>`. |
+| `sp` | spoiler | bool | Spoiler / reveal. `{sp}` == `{sp:t}` (flag). `{sp:f}` is the same as `{!sp}`. While the slot is on, message paint **hides** the run behind a clickable cover until the reader reveals it (session-local). Discord’s `\|\|…\|\|` is not accepted as source; use BFMD `{sp}`. |
+| `st` | subtext | number | Subtext size in **points**. Must be `> 0`. `{st:12}` → subtext at 12pt (smaller/dimmed in chat paint). Size is **required** — `{st}` with no value is a bad value (skipped). `{!st}` clears subtext. While `{st}` is set, effective paint size is the subtext size (wins over `{s}` until `{!st}`). |
 
-**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!}` or `{!*}` clears **all** slots.
+**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!sp}` clears spoiler. `{!st}` clears subtext. `{!}` or `{!*}` clears **all** slots.
 
 **Emote tokens (not BFMD commands):** message bodies may include stable `:{e:ASSET_ID}:` tokens for custom library emotes. Display size follows the active `{e}` slot (default 22px). Stickers and GIFs are message media, not BFMD tokens.
+
+**Subtext line-prefix (Banter chat sugar, Owl):** At the **start of a line** (beginning of the document or immediately after a newline), the marker `-#;<size>` opens subtext for the rest of that line. Exact form:
+
+- `-#;` (ASCII hyphen-minus, hash, semicolon)
+- then a BFMD number `size` with `size > 0` (e.g. `12` or `12.5`)
+- then optional horizontal whitespace (` ` / tab), which is consumed and not shown
+- then the line body
+
+Example source line: `-#;12 this is subtext` → visible text `this is subtext` with `{st:12}` for that line only. The next line is normal unless it also starts with `-#;<size>`. **Discord’s bare `-# ` (no semicolon + size) is not subtext** and stays literal. Mid-line `-#;12` is literal. Canonical serialize of a subtext run uses `<{st:N}>…` groups, not the line-prefix.
 
 **Replace**: a new `set` for a name that is already active **closes the previous value and applies the new one**. No history of the old value is kept.
 
@@ -190,6 +201,48 @@ Source:
 <{!h},{!s},{a:c},{b}>centered bold
 ```
 
+**Example F** — spoiler flag:
+
+Source:
+
+```
+<{sp}>secret<{!sp}>visible
+```
+
+Parsed runs:
+
+1. text `secret` — `{sp:true}`
+2. text `visible` — default (spoiler off)
+
+**Example G** — subtext BFMD slot:
+
+Source:
+
+```
+<{st:12}>caption<{!st}>body
+```
+
+Parsed runs:
+
+1. text `caption` — `{st:12}` (effective size 12pt, dimmed in chat paint)
+2. text `body` — default
+
+**Example H** — subtext line-prefix `-#;<size>` (Owl; size required):
+
+Source:
+
+```
+-#;12 quiet line
+normal
+```
+
+Parsed runs (line-prefix auto-clears at the newline):
+
+1. text `quiet line\n` — `{st:12}`
+2. text `normal` — default
+
+Bare Discord `-# bare` (no `;` + size) is **not** subtext and remains literal text.
+
 ### 8. Errors and diagnostics
 
 The editor **must not refuse to open** a note because of parse errors. Recover:
@@ -242,6 +295,8 @@ Not in the v1 app cut. Exporters must read this table so the native format does 
 - `{u:t}` `{k:t}` `{c}` `{bg}` `{s}` `{f}` → HTML `<span style="...">` / `<u>` / `<s>` inside the `.md` file (lossy-but-faithful). Plain-md mode may drop these.
 - `{a:c}` / `{a:r}` / `{a:j}` → HTML align on the paragraph.
 - `{hr}` → Markdown `---` / HTML `<hr>` (lossy).
+- `{sp}` → Discord-style `||…||` or HTML spoiler span (lossy).
+- `{st:n}` → smaller muted text / HTML `<small>`-like span at `n` pt (lossy). Line-prefix `-#;n` is Banter-only on read.
 - Command groups themselves are never written to the export.
 
 **DOCX**
@@ -262,6 +317,9 @@ These are **required unit tests**, inputs taken as exact source strings:
 8. `<` not followed by `{` is literal.
 9. Both `{c=0xFFFFFF}` and `{c:#FFFFFF}` yield the same RGB.
 10. `{hr}` / `{hr:t}` then a newline then `{!hr}` → one run whose style has `hr` on; `{!hr}` (or `{hr:f}`) clears the slot for following text.
+11. `{sp}` / `{sp:t}` then `{!sp}` → spoiler on then off; `{sp:f}` clears; `{!}` clears spoiler with other slots.
+12. `{st:12}` then `{!st}` → subtext size 12 then default; `{st}` / `{st:0}` are bad values (slot unchanged).
+13. Line-prefix `-#;12 quiet\nnormal` → first run subtext 12 with visible `quiet\n`; second run default `normal`. Bare `-# bare` stays literal.
 
 ### 13. Out of scope for this format
 

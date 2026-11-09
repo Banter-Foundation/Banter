@@ -160,3 +160,108 @@ fn emote_token_scan_finds_stable_asset_ids() {
     assert!(bfmd::scan_emote_tokens(":party_parrot:").is_empty());
     assert!(bfmd::scan_emote_tokens(":{e:}:").is_empty());
 }
+
+#[test]
+fn spoiler_flag_then_clear() {
+    let runs = bfmd::parse("<{sp}>secret<{!sp}>visible").runs;
+    assert_eq!(runs.len(), 2);
+    assert!(runs[0].style.spoiler);
+    assert_eq!(runs[0].text, "secret");
+    assert!(!runs[1].style.spoiler);
+    assert_eq!(runs[1].text, "visible");
+    // Flag shorthand / explicit bool / close-via-false.
+    assert!(bfmd::parse("<{sp:t}>x").runs[0].style.spoiler);
+    assert!(!bfmd::parse("<{sp}>x<{sp:f}>y").runs[1].style.spoiler);
+}
+
+#[test]
+fn spoiler_survives_other_closes_until_sp_or_close_all() {
+    let runs = bfmd::parse("<{sp},{b:t}>x<{!b}>y<{!}>z").runs;
+    assert!(runs[0].style.spoiler && runs[0].style.bold);
+    assert!(runs[1].style.spoiler && !runs[1].style.bold);
+    assert!(runs[2].style.is_default());
+}
+
+#[test]
+fn spoiler_round_trip_serialize() {
+    let src = "<{sp:t}>hidden<{!sp}>out";
+    let runs = bfmd::parse(src).runs;
+    let again = bfmd::serialize(&runs);
+    let reruns = bfmd::parse(&again).runs;
+    assert_eq!(reruns[0].text, "hidden");
+    assert!(reruns[0].style.spoiler);
+    assert_eq!(reruns[1].text, "out");
+    assert!(!reruns[1].style.spoiler);
+}
+
+#[test]
+fn subtext_bfmd_slot_requires_size() {
+    let runs = bfmd::parse("<{st:12}>caption<{!st}>body").runs;
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].style.subtext, Some(12.0));
+    assert_eq!(runs[0].style.size_or_default(), 12.0);
+    assert_eq!(runs[0].text, "caption");
+    assert_eq!(runs[1].style.subtext, None);
+    assert_eq!(runs[1].text, "body");
+    // Missing / non-positive size is a bad value — slot stays off.
+    assert_eq!(bfmd::parse("<{st}>x").runs[0].style.subtext, None);
+    assert_eq!(bfmd::parse("<{st:0}>x").runs[0].style.subtext, None);
+    assert_eq!(bfmd::parse("<{st:-3}>x").runs[0].style.subtext, None);
+}
+
+#[test]
+fn subtext_line_prefix_negative_hash_semicolon_size() {
+    // Owl-required chat syntax: `-#;<size>` at line start (size mandatory).
+    let runs = bfmd::parse("-#;12 quiet line\nnormal").runs;
+    assert!(runs.len() >= 2);
+    assert_eq!(runs[0].style.subtext, Some(12.0));
+    assert_eq!(runs[0].style.size_or_default(), 12.0);
+    assert_eq!(runs[0].text, "quiet line\n");
+    let last = runs.last().unwrap();
+    assert_eq!(last.style.subtext, None);
+    assert_eq!(last.text, "normal");
+    // Marker is not visible plain text.
+    assert_eq!(bfmd::plain_text("-#;12 quiet"), "quiet");
+}
+
+#[test]
+fn subtext_line_prefix_rejects_discord_bare_dash_hash() {
+    // Discord `-# ` (no semicolon+size) must stay literal — not Banter subtext.
+    let runs = bfmd::parse("-# bare discord").runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "-# bare discord");
+    assert_eq!(runs[0].style.subtext, None);
+}
+
+#[test]
+fn subtext_line_prefix_not_mid_line() {
+    let runs = bfmd::parse("xx -#;12 no").runs;
+    assert_eq!(runs[0].text, "xx -#;12 no");
+    assert_eq!(runs[0].style.subtext, None);
+}
+
+#[test]
+fn subtext_line_prefix_each_line_independent() {
+    let runs = bfmd::parse("-#;10 one\n-#;14 two\nthree").runs;
+    let sub: Vec<_> = runs
+        .iter()
+        .filter(|r| r.style.subtext.is_some())
+        .collect();
+    assert_eq!(sub.len(), 2);
+    assert_eq!(sub[0].style.subtext, Some(10.0));
+    assert!(sub[0].text.starts_with("one"));
+    assert_eq!(sub[1].style.subtext, Some(14.0));
+    assert!(sub[1].text.starts_with("two"));
+    assert_eq!(runs.last().unwrap().style.subtext, None);
+    assert_eq!(runs.last().unwrap().text, "three");
+}
+
+#[test]
+fn subtext_slot_round_trip_serialize() {
+    let src = "<{st:11}>note<{!st}>";
+    let runs = bfmd::parse(src).runs;
+    let again = bfmd::serialize(&runs);
+    let reruns = bfmd::parse(&again).runs;
+    assert_eq!(reruns[0].style.subtext, Some(11.0));
+    assert_eq!(reruns[0].text, "note");
+}
