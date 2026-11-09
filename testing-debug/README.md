@@ -15,10 +15,11 @@ From this folder (on Linux):
 ./banter-stream-debug
 ```
 
-Optional:
+Optional env:
 
 ```bash
 BANTER_BASE=http://127.0.0.1:3970 ./banter-stream-debug
+BANTER_BITRATE_KBPS=10000 ./banter-stream-debug   # 10 Mbps (default 2500)
 ```
 
 Ctrl+C stops. On Wayland you will get the system ScreenCast picker.
