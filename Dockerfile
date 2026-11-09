@@ -18,6 +18,11 @@ COPY crates/banter/Cargo.toml crates/banter/Cargo.toml
 RUN mkdir -p crates/banter/src \
     && printf 'pub fn desktop_not_in_this_image() {}\n' > crates/banter/src/lib.rs
 
+# Workspace member stub: testing-debug is listed in Cargo.toml but is not built here.
+COPY testing-debug/Cargo.toml testing-debug/Cargo.toml
+RUN mkdir -p testing-debug/src \
+    && printf 'fn main() {}\n' > testing-debug/src/main.rs
+
 COPY crates/banter-server crates/banter-server
 RUN cargo build -p banter-server --release
 

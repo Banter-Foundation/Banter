@@ -1,6 +1,10 @@
 /target/
 /target-*/
 /worktrees/
+testing-debug/banter-stream-debug
+testing-debug/src/
+testing-debug/build.sh
+testing-debug/README.md
 .git
 .cursor
 .agent
