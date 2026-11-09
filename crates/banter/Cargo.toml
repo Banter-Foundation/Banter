@@ -36,7 +36,8 @@ yuv = { version = "0.8", default-features = true, features = ["fast_mode"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
-pipewire = "0.10"
+# v0_3_65: VideoModifier / DONT_FIXATE for DMA-BUF EnumFormat negotiation (M2).
+pipewire = { version = "0.10", features = ["v0_3_65"] }
 zbus = "5"
 
 [dev-dependencies]

@@ -17,6 +17,10 @@ pub struct CaptureSnapshot {
     pub frames_dropped: u64,
     pub frames_submitted: u64,
     pub bytes_copied: u64,
+    pub dmabuf_frames: u64,
+    pub mem_frames: u64,
+    pub last_modifier: u64,
+    pub last_dmabuf_planes: u32,
     pub callback_p50_us: u64,
     pub callback_p95_us: u64,
     pub copy_p50_us: u64,
@@ -101,6 +105,10 @@ struct CaptureMetrics {
     frames_dropped: AtomicU64,
     frames_submitted: AtomicU64,
     bytes_copied: AtomicU64,
+    dmabuf_frames: AtomicU64,
+    mem_frames: AtomicU64,
+    last_modifier: AtomicU64,
+    last_dmabuf_planes: AtomicU64,
     last_receive_ns: AtomicU64,
     receive_interval_sum_ns: AtomicU64,
     receive_interval_count: AtomicU64,
@@ -121,6 +129,10 @@ impl CaptureMetrics {
             frames_dropped: AtomicU64::new(0),
             frames_submitted: AtomicU64::new(0),
             bytes_copied: AtomicU64::new(0),
+            dmabuf_frames: AtomicU64::new(0),
+            mem_frames: AtomicU64::new(0),
+            last_modifier: AtomicU64::new(0),
+            last_dmabuf_planes: AtomicU64::new(0),
             last_receive_ns: AtomicU64::new(0),
             receive_interval_sum_ns: AtomicU64::new(0),
             receive_interval_count: AtomicU64::new(0),
@@ -196,6 +208,19 @@ pub fn note_stale_drop() {
     global().frames_dropped.fetch_add(1, Ordering::Relaxed);
 }
 
+/// PipeWire delivered a DMA-BUF buffer (parsed; may not yet be imported).
+pub fn note_dmabuf(planes: u32, modifier: u64) {
+    let m = global();
+    m.dmabuf_frames.fetch_add(1, Ordering::Relaxed);
+    m.last_dmabuf_planes.store(planes as u64, Ordering::Relaxed);
+    m.last_modifier.store(modifier, Ordering::Relaxed);
+}
+
+/// PipeWire delivered a MemFd/MemPtr CPU buffer that was copied.
+pub fn note_mem_frame() {
+    global().mem_frames.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Convert thread published an I420 frame to the encoder slot.
 pub fn note_converted(convert: Duration) {
     let m = global();
@@ -224,6 +249,10 @@ pub fn clear() {
     m.frames_dropped.store(0, Ordering::Relaxed);
     m.frames_submitted.store(0, Ordering::Relaxed);
     m.bytes_copied.store(0, Ordering::Relaxed);
+    m.dmabuf_frames.store(0, Ordering::Relaxed);
+    m.mem_frames.store(0, Ordering::Relaxed);
+    m.last_modifier.store(0, Ordering::Relaxed);
+    m.last_dmabuf_planes.store(0, Ordering::Relaxed);
     m.last_receive_ns.store(0, Ordering::Relaxed);
     m.receive_interval_sum_ns.store(0, Ordering::Relaxed);
     m.receive_interval_count.store(0, Ordering::Relaxed);
@@ -259,6 +288,10 @@ pub fn snapshot() -> CaptureSnapshot {
         frames_dropped: m.frames_dropped.load(Ordering::Relaxed),
         frames_submitted: m.frames_submitted.load(Ordering::Relaxed),
         bytes_copied: m.bytes_copied.load(Ordering::Relaxed),
+        dmabuf_frames: m.dmabuf_frames.load(Ordering::Relaxed),
+        mem_frames: m.mem_frames.load(Ordering::Relaxed),
+        last_modifier: m.last_modifier.load(Ordering::Relaxed),
+        last_dmabuf_planes: m.last_dmabuf_planes.load(Ordering::Relaxed) as u32,
         callback_p50_us,
         callback_p95_us,
         copy_p50_us,
@@ -285,8 +318,18 @@ pub fn summary_line() -> String {
     } else {
         (s.frames_dropped as f64) * 100.0 / (s.frames_received as f64)
     };
+    let buf_kind = if s.dmabuf_frames > 0 && s.mem_frames == 0 {
+        format!("dmabuf×{} planes={} mod={:#x}", s.dmabuf_frames, s.last_dmabuf_planes, s.last_modifier)
+    } else if s.dmabuf_frames > 0 {
+        format!(
+            "mem={} dmabuf={} planes={} mod={:#x}",
+            s.mem_frames, s.dmabuf_frames, s.last_dmabuf_planes, s.last_modifier
+        )
+    } else {
+        format!("mem={}", s.mem_frames)
+    };
     format!(
-        "capture {:.0}/{:.0} fps  drop {:.1}%  cb p95 {:.2}ms  copy p95 {:.2}ms  convert p95 {:.2}ms  encode p95 {:.2}ms  e2e p95 {:.2}ms  copied {}",
+        "capture {:.0}/{:.0} fps  drop {:.1}%  {buf_kind}  cb p95 {:.2}ms  copy p95 {:.2}ms  convert p95 {:.2}ms  encode p95 {:.2}ms  e2e p95 {:.2}ms  copied {}",
         s.capture_fps,
         s.submit_fps,
         drop_pct,

@@ -27,14 +27,18 @@ use pipewire::{
             video::{VideoFormat, VideoInfoRaw},
             ParamType,
         },
-        pod::{self, serialize::PodSerializer, Pod},
-        utils::{Direction, Fraction, Rectangle, SpaTypes},
+        pod::{
+            self, serialize::PodSerializer, ChoiceValue, Pod, Property, PropertyFlags,
+            Value as PodValue,
+        },
+        utils::{Choice, ChoiceEnum, ChoiceFlags, Direction, Fraction, Id, Rectangle, SpaTypes},
     },
     stream::{StreamFlags, StreamRc, StreamState},
 };
 use zbus::blocking::Proxy;
 use zbus::zvariant::{DeserializeDict, OwnedObjectPath, OwnedValue, Type, Value};
 
+use super::dmabuf::{self, DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, PARAM_BUFFERS_DATA_TYPE};
 use super::encode::{self, even_fit, PackedOrder};
 
 struct Latest {
@@ -125,6 +129,12 @@ struct StreamData {
     pool: Arc<Mutex<Vec<Vec<u8>>>>,
     /// Last observed spa_data type name for the format log line.
     data_type: &'static str,
+    /// Negotiated DRM modifier when the EnumFormat carried VIDEO_modifier.
+    modifier: u64,
+    /// True when the fixated format included a VIDEO_modifier property.
+    has_modifier: bool,
+    /// Logged once when DMA-BUF arrives but EGL import is not wired yet.
+    dmabuf_warned: bool,
 }
 
 pub struct CastStream {
@@ -292,6 +302,9 @@ fn stream_loop(
         logged: false,
         pool: Arc::new(Mutex::new(Vec::with_capacity(4))),
         data_type: "unknown",
+        modifier: DRM_FORMAT_MOD_INVALID,
+        has_modifier: false,
+        dmabuf_warned: false,
     };
     let callback_loop = main_loop.clone();
     let fault_state = Arc::clone(&fault);
@@ -308,7 +321,7 @@ fn stream_loop(
                 fail(&fault_state, detail);
             }
         })
-        .param_changed(|_, data, id, param| {
+        .param_changed(|stream, data, id, param| {
             let Some(param) = param else { return };
             if id != ParamType::Format.as_raw() {
                 return;
@@ -322,8 +335,29 @@ fn stream_loop(
             if data.format.parse(param).is_err() {
                 return;
             }
-            // Re-log on renegotiation so format/size changes are visible in the journal.
+            // PipeWire DMA-BUF docs: if VIDEO_modifier was negotiated, ask for
+            // SPA_DATA_DmaBuf; otherwise MemFd/MemPtr. Always allow MemFd fallback.
+            let has_mod = param_has_video_modifier(param);
+            data.has_modifier = has_mod;
+            data.modifier = if has_mod {
+                data.format.modifier()
+            } else {
+                DRM_FORMAT_MOD_INVALID
+            };
+            let mask = if has_mod {
+                dmabuf::data_type_mask_all()
+            } else {
+                dmabuf::data_type_mask_mem()
+            };
+            if let Ok(bytes) = buffers_pod(mask) {
+                if let Some(pod) = Pod::from_bytes(&bytes) {
+                    let mut params = [pod];
+                    let _ = stream.update_params(&mut params);
+                }
+            }
+            // Re-log on renegotiation so format/size/modifier changes are visible.
             data.logged = false;
+            data.dmabuf_warned = false;
         })
         .process(move |stream, data| {
             let callback_started = Instant::now();
@@ -358,19 +392,48 @@ fn stream_loop(
                 let size = data.format.size();
                 let fmt = data.format.format();
                 eprintln!(
-                    "banter: screencast format {} ({}) {}x{} stride={} type={} planes={}",
+                    "banter: screencast format {} ({}) {}x{} stride={} type={} planes={} modifier={:#x} has_mod={}",
                     format_name(fmt),
                     fmt.0,
                     size.width,
                     size.height,
                     stride,
                     data_type,
-                    plane_count
+                    plane_count,
+                    data.modifier,
+                    data.has_modifier
                 );
             }
+
+            // DMA-BUF: parse planes + metrics. EGL import (M3) is not wired yet —
+            // do not mmap tiled/compressed buffers. MemFd/MemPtr still feed encode.
+            if chunk_src.type_() == DataType::DmaBuf {
+                let planes = dmabuf::parse_planes(datas);
+                let n = planes.len() as u32;
+                capture_metrics::note_dmabuf(n.max(1), data.modifier);
+                capture_metrics::note_received(
+                    callback_started.elapsed(),
+                    Duration::ZERO,
+                    0,
+                    false,
+                );
+                if !data.dmabuf_warned {
+                    data.dmabuf_warned = true;
+                    let mappable = planes
+                        .iter()
+                        .all(|p| p.flags & dmabuf::SPA_DATA_FLAG_MAPPABLE != 0);
+                    eprintln!(
+                        "banter: screencast DMA-BUF frame (planes={} mod={:#x} mappable={mappable}); \
+                         EGL import deferred — encode still uses MemFd/MemPtr when offered \
+                         (set BANTER_DMABUF=0 to advertise MemFd-only)",
+                        n.max(1),
+                        data.modifier
+                    );
+                }
+                return;
+            }
+
             let copy_started = Instant::now();
-            // DMA-BUF EGL import is Milestone 2+. Prefer an existing CPU mapping; never
-            // mmap a DMA-BUF as a linear pixel array (tiled/compressed modifiers).
             let frame = if let Some(bytes) = chunk_src.data() {
                 data.data_type = "MemPtr";
                 copy_frame(
@@ -381,8 +444,6 @@ fn stream_loop(
                     &data.format,
                     &data.pool,
                 )
-            } else if chunk_src.type_() == DataType::DmaBuf {
-                None
             } else if let Some(mapped) = map_memfd(chunk_src) {
                 data.data_type = "MemFd";
                 copy_frame(
@@ -403,7 +464,13 @@ fn stream_loop(
                 let dropped = slot.is_some();
                 *slot = Some(frame);
                 drop(slot);
-                capture_metrics::note_received(callback_started.elapsed(), copy_elapsed, bytes, dropped);
+                capture_metrics::note_mem_frame();
+                capture_metrics::note_received(
+                    callback_started.elapsed(),
+                    copy_elapsed,
+                    bytes,
+                    dropped,
+                );
             }
         })
         .register();
@@ -415,23 +482,34 @@ fn stream_loop(
         }
     };
 
-    let pod = match format_pod(edge, fps) {
-        Ok(pod) => pod,
+    let mut owned = match format_pods(edge, fps) {
+        Ok(pods) => pods,
         Err(err) => {
             fail(&fault, err);
             return;
         }
     };
-    let Some(pod) = Pod::from_bytes(&pod) else {
-        fail(&fault, "screencast format was rejected".into());
-        return;
+    // Initial buffers param: allow DMA-BUF + MemFd/MemPtr until Format fixates.
+    match buffers_pod(dmabuf::data_type_mask_all()) {
+        Ok(b) => owned.push(b),
+        Err(err) => {
+            fail(&fault, err);
+            return;
+        }
     };
-    let mut params = [pod];
+    let mut refs: Vec<&Pod> = Vec::with_capacity(owned.len());
+    for bytes in &owned {
+        let Some(pod) = Pod::from_bytes(bytes) else {
+            fail(&fault, "screencast format/buffers param was rejected".into());
+            return;
+        };
+        refs.push(pod);
+    }
     if let Err(err) = stream.connect(
         Direction::Input,
         Some(node),
         StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS,
-        &mut params,
+        &mut refs,
     ) {
         fail(&fault, format!("screencast start: {err}"));
         return;
@@ -554,67 +632,139 @@ fn capture_edge(max_edge: u32) -> u32 {
     (edge.clamp(640, 1920)) & !1
 }
 
-fn format_pod(edge: u32, fps: u32) -> Result<Vec<u8>, String> {
+fn serialize_object(obj: pod::Object) -> Result<Vec<u8>, String> {
+    let (cursor, _) =
+        PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &PodValue::Object(obj))
+            .map_err(|err| err.to_string())?;
+    Ok(cursor.into_inner())
+}
+
+fn video_format_choice() -> pod::Property {
+    // Prefer planar I420 / NV12 when the compositor offers them — skips a full
+    // BT.601 packed→YUV walk. Packed BGRA/RGBA remain the common KWin/Mutter fallback.
+    pod::property!(
+        FormatProperties::VideoFormat,
+        Choice,
+        Enum,
+        Id,
+        VideoFormat::I420,
+        VideoFormat::I420,
+        VideoFormat::NV12,
+        VideoFormat::BGRA,
+        VideoFormat::BGRx,
+        VideoFormat::RGBA,
+        VideoFormat::RGBx,
+        VideoFormat::RGB,
+        VideoFormat::BGR
+    )
+}
+
+fn video_size_choice(edge: u32, height: u32) -> pod::Property {
+    pod::property!(
+        FormatProperties::VideoSize,
+        Choice,
+        Range,
+        Rectangle,
+        Rectangle {
+            width: edge,
+            height
+        },
+        Rectangle {
+            width: 2,
+            height: 2
+        },
+        Rectangle {
+            width: 4096,
+            height: 4096
+        }
+    )
+}
+
+fn video_framerate_choice(fps: u32) -> pod::Property {
+    // KWin offers 0/1 here, meaning the compositor picks the rate. A minimum of 1 rejects that offer.
+    pod::property!(
+        FormatProperties::VideoFramerate,
+        Choice,
+        Range,
+        Fraction,
+        Fraction { num: fps, denom: 1 },
+        Fraction { num: 0, denom: 1 },
+        Fraction {
+            num: fps.max(1),
+            denom: 1
+        }
+    )
+}
+
+/// Build EnumFormat pods: MemFd (no modifier) first for a working CPU path, then
+/// optional DMA-BUF EnumFormat with VIDEO_modifier (INVALID + LINEAR).
+fn format_pods(edge: u32, fps: u32) -> Result<Vec<Vec<u8>>, String> {
     let height = (edge as u64 * 9 / 16).max(2) as u32 & !1;
-    let obj = pod::object!(
+    let mut out = Vec::new();
+
+    // 1) Shared-memory fallback (no VIDEO_modifier) — preferred until EGL import.
+    let mem = pod::object!(
         SpaTypes::ObjectParamFormat,
         ParamType::EnumFormat,
         pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
         pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
-        // Prefer planar I420 / NV12 when the compositor offers them — skips a full
-        // BT.601 packed→YUV walk (OBS PipeWire path also prefers DMA/planar).
-        // Packed BGRA/RGBA remain the common fallback on KWin/Mutter.
-        pod::property!(
-            FormatProperties::VideoFormat,
-            Choice,
-            Enum,
-            Id,
-            VideoFormat::I420,
-            VideoFormat::I420,
-            VideoFormat::NV12,
-            VideoFormat::BGRA,
-            VideoFormat::BGRx,
-            VideoFormat::RGBA,
-            VideoFormat::RGBx,
-            VideoFormat::RGB,
-            VideoFormat::BGR
-        ),
-        pod::property!(
-            FormatProperties::VideoSize,
-            Choice,
-            Range,
-            Rectangle,
-            Rectangle {
-                width: edge,
-                height
-            },
-            Rectangle {
-                width: 2,
-                height: 2
-            },
-            Rectangle {
-                width: 4096,
-                height: 4096
-            }
-        ),
-        // KWin offers 0/1 here, meaning the compositor picks the rate. A minimum of 1 rejects that offer.
-        pod::property!(
-            FormatProperties::VideoFramerate,
-            Choice,
-            Range,
-            Fraction,
-            Fraction { num: fps, denom: 1 },
-            Fraction { num: 0, denom: 1 },
-            Fraction {
-                num: fps.max(1),
-                denom: 1
-            }
-        ),
+        video_format_choice(),
+        video_size_choice(edge, height),
+        video_framerate_choice(fps),
     );
-    let (cursor, _) =
-        PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &pod::Value::Object(obj))
-            .map_err(|err| err.to_string())?;
-    Ok(cursor.into_inner())
+    out.push(serialize_object(mem)?);
+
+    // 2) DMA-BUF EnumFormat with modifiers (PipeWire DMA-BUF Sharing docs).
+    if dmabuf::advertise_dmabuf() {
+        let modifier = Property {
+            key: FormatProperties::VideoModifier.as_raw(),
+            // SPA_POD_PROP_FLAG_MANDATORY | DONT_FIXATE
+            flags: PropertyFlags::from_bits_retain((1 << 3) | (1 << 4)),
+            value: PodValue::Choice(ChoiceValue::Long(Choice(
+                ChoiceFlags::empty(),
+                ChoiceEnum::Enum {
+                    default: DRM_FORMAT_MOD_INVALID as i64,
+                    alternatives: vec![
+                        DRM_FORMAT_MOD_INVALID as i64,
+                        DRM_FORMAT_MOD_LINEAR as i64,
+                    ],
+                },
+            ))),
+        };
+        let dma = pod::object!(
+            SpaTypes::ObjectParamFormat,
+            ParamType::EnumFormat,
+            pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
+            pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
+            video_format_choice(),
+            modifier,
+            video_size_choice(edge, height),
+            video_framerate_choice(fps),
+        );
+        out.push(serialize_object(dma)?);
+    }
+    Ok(out)
+}
+
+fn buffers_pod(data_type_mask: i32) -> Result<Vec<u8>, String> {
+    let obj = pod::Object {
+        type_: SpaTypes::ObjectParamBuffers.as_raw(),
+        id: ParamType::Buffers.as_raw(),
+        properties: vec![Property {
+            key: PARAM_BUFFERS_DATA_TYPE,
+            flags: PropertyFlags::empty(),
+            value: PodValue::Int(data_type_mask),
+        }],
+    };
+    serialize_object(obj)
+}
+
+fn param_has_video_modifier(param: &Pod) -> bool {
+    let Ok(obj) = param.as_object() else {
+        return false;
+    };
+    obj.find_prop(Id(FormatProperties::VideoModifier.as_raw()))
+        .is_some()
 }
 
 fn sample_frame(

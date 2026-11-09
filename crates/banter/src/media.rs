@@ -19,6 +19,8 @@ mod rtc;
 mod screen_lag;
 mod screen_pipeline;
 #[cfg(target_os = "linux")]
+mod dmabuf;
+#[cfg(target_os = "linux")]
 mod kmsgrab;
 #[cfg(target_os = "linux")]
 mod screencast;
