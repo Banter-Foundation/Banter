@@ -1,0 +1,29 @@
+# Temporary: workflow_dispatch on macos-arm-release is 403 for the installation token.
+# Push-trigger scratch to build Banter.app for Version-1-test-13.4; remove after upload.
+name: macos-arm-scratch
+
+on:
+  push:
+    branches:
+      - "cursor/macos-13-4-scratch-af41"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Package Banter.app release
+        run: |
+          set -euo pipefail
+          ./scripts/build-macos-release.sh version-1-test-13-4 dist/macos
+          file dist/macos/Banter.app/Contents/MacOS/banter
+          lipo -archs dist/macos/Banter.app/Contents/MacOS/banter
+          unzip -l dist/macos/Banter-macos-arm-version-1-test-13-4.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm
+          path: |
+            dist/macos/Banter-macos-arm-version-1-test-13-4.zip
+            dist/macos/banter-server-macos-arm
