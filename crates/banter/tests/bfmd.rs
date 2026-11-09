@@ -160,3 +160,116 @@ fn emote_token_scan_finds_stable_asset_ids() {
     assert!(bfmd::scan_emote_tokens(":party_parrot:").is_empty());
     assert!(bfmd::scan_emote_tokens(":{e:}:").is_empty());
 }
+
+// --- Masked links (Owl-approved Discord sugar + BFMD `{l}`; mandatory URL popup) ---
+
+#[test]
+fn masked_link_bfmd_command_sets_url_on_label_run() {
+    let src = r#"<{l:"https://example.com"}>Banter<{!l}> after"#;
+    let runs = bfmd::parse(src).runs;
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].text, "Banter");
+    assert_eq!(
+        runs[0].style.link.as_deref(),
+        Some("https://example.com")
+    );
+    assert_eq!(runs[1].text, " after");
+    assert_eq!(runs[1].style.link, None);
+}
+
+#[test]
+fn masked_link_discord_sugar_parses_to_link_run() {
+    let src = "[Banter](https://example.com)";
+    let runs = bfmd::parse(src).runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "Banter");
+    assert_eq!(
+        runs[0].style.link.as_deref(),
+        Some("https://example.com")
+    );
+    assert_eq!(bfmd::plain_text(src), "Banter");
+}
+
+#[test]
+fn masked_link_discord_sugar_mid_text_and_http() {
+    let src = "see [docs](http://example.com/path?q=1) please";
+    let runs = bfmd::parse(src).runs;
+    assert_eq!(runs.len(), 3);
+    assert_eq!(runs[0].text, "see ");
+    assert_eq!(runs[0].style.link, None);
+    assert_eq!(runs[1].text, "docs");
+    assert_eq!(
+        runs[1].style.link.as_deref(),
+        Some("http://example.com/path?q=1")
+    );
+    assert_eq!(runs[2].text, " please");
+    assert_eq!(runs[2].style.link, None);
+}
+
+#[test]
+fn masked_link_non_http_sugar_stays_literal() {
+    let src = "[evil](javascript:alert(1))";
+    let runs = bfmd::parse(src).runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "[evil](javascript:alert(1))");
+    assert_eq!(runs[0].style.link, None);
+}
+
+#[test]
+fn masked_link_incomplete_brackets_stay_literal() {
+    assert_eq!(bfmd::parse("[not a link]").runs[0].text, "[not a link]");
+    assert_eq!(
+        bfmd::parse("[missing](https://example.com").runs[0].text,
+        "[missing](https://example.com"
+    );
+    assert_eq!(bfmd::parse("[](https://example.com)").runs[0].text, "[](https://example.com)");
+}
+
+#[test]
+fn masked_link_close_all_clears_link() {
+    let runs = bfmd::parse(r#"<{l:"https://a.test"}>x<{!}>y"#).runs;
+    assert_eq!(runs[0].style.link.as_deref(), Some("https://a.test"));
+    assert!(runs[1].style.is_default());
+}
+
+#[test]
+fn masked_link_bad_bfmd_value_skipped() {
+    let runs = bfmd::parse("<{l:javascript:x}>nope").runs;
+    assert_eq!(runs[0].text, "nope");
+    assert_eq!(runs[0].style.link, None);
+}
+
+#[test]
+fn masked_link_serialize_round_trip() {
+    let src = r#"<{l:"https://example.com"}>Banter<{!l}>"#;
+    let runs = bfmd::parse(src).runs;
+    let again = bfmd::serialize(&runs);
+    let reruns = bfmd::parse(&again).runs;
+    assert_eq!(reruns.len(), 1);
+    assert_eq!(reruns[0].text, "Banter");
+    assert_eq!(
+        reruns[0].style.link.as_deref(),
+        Some("https://example.com")
+    );
+}
+
+#[test]
+fn masked_link_combines_with_bold() {
+    let runs = bfmd::parse(r#"<{b:t},{l:"https://x.test"}>hi<{!}>"#).runs;
+    assert_eq!(runs[0].text, "hi");
+    assert!(runs[0].style.bold);
+    assert_eq!(runs[0].style.link.as_deref(), Some("https://x.test"));
+}
+
+#[test]
+fn masked_link_click_always_requires_confirm_popup() {
+    // Paint/UI must never open the destination without a confirm step that shows
+    // the real URL. This helper is the only allowed click→navigate gate.
+    let url = "https://example.com/hidden";
+    let pending = bfmd::pending_masked_link_open(url).expect("http(s) ok");
+    assert_eq!(pending, url);
+    assert!(bfmd::masked_link_requires_confirm_popup(&pending));
+    assert!(bfmd::pending_masked_link_open("javascript:alert(1)").is_none());
+    assert!(bfmd::pending_masked_link_open("ftp://files").is_none());
+    assert!(!bfmd::masked_link_requires_confirm_popup("not-a-url"));
+}

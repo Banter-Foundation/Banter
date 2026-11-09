@@ -1219,3 +1219,13 @@ Owl: when your window-chrome fix PR is open and green, merge it to main (do not 
 
 Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
 
+
+## 2026-11-09 BA-129 BFMD masked links
+
+Owl: Implement BFMD masked links for Banter. Discord-style [label](url). Before the link opens, REQUIRED to display a pop-up showing the actual URL. Mandatory, not optional. This feature only. No other Discord markdown. Open PR to Banter main.
+
+Agent: Implemented BFMD `{l:"https://…"}` + Discord sugar `[label](url)`; click opens Modal::OpenMaskedLink with real URL + Cancel/Open; no other Discord markdown. Branch cursor/bfmd-masked-links-6317. Tests 25 passed (`cargo test -p banter --test bfmd`).
+
+### Summary
+- Masked links only (Owl-approved). Mandatory URL confirm popup before open.
+Agent: PR https://github.com/Banter-Foundation/Banter/pull/114 opened on cursor/bfmd-masked-links-6317.

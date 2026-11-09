@@ -188,6 +188,8 @@ enum Modal {
     PluginAllow,
     /// Edit this guild's command prefix and aliases (BA-104).
     ChatCommands,
+    /// Masked-link confirm: shows the real destination URL before any open.
+    OpenMaskedLink,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -452,6 +454,8 @@ pub(crate) struct App {
     bold_italic_font: Option<FontId>,
     modal: Option<Modal>,
     modal_frames: u32,
+    /// Destination shown in [`Modal::OpenMaskedLink`] (mandatory confirm before open).
+    pending_masked_link: Option<String>,
     server_menu: bool,
     collapsed: HashSet<i64>,
     channel_category: Option<i64>,
@@ -760,6 +764,7 @@ impl App {
             bold_italic_font: None,
             modal: None,
             modal_frames: 0,
+            pending_masked_link: None,
             server_menu: false,
             collapsed: HashSet::new(),
             channel_category: None,
@@ -1195,6 +1200,7 @@ impl App {
                 self.close_profile();
             } else if self.modal.is_some() {
                 self.modal = None;
+                self.pending_masked_link = None;
             } else if self.server_menu {
                 self.server_menu = false;
             } else if self.context_menu.is_some() {
@@ -2563,6 +2569,16 @@ impl App {
     fn open_modal(&mut self, modal: Modal) {
         self.modal = Some(modal);
         self.modal_frames = 0;
+    }
+
+    /// Click path for BFMD masked links: store the real URL and open the confirm popup.
+    /// Navigation happens only after the user presses Open in that popup.
+    fn open_masked_link_confirm(&mut self, url: String) {
+        let Some(pending) = crate::bfmd::pending_masked_link_open(&url) else {
+            return;
+        };
+        self.pending_masked_link = Some(pending);
+        self.open_modal(Modal::OpenMaskedLink);
     }
 
     fn open_context_menu(&mut self, ui: &Ui, entries: Vec<ContextMenuEntry>, anchor: [f32; 2]) {
@@ -5516,14 +5532,19 @@ impl App {
             }
             if !message.body.is_empty() {
                 let body_origin = [origin[0] + text_x, origin[1] + 22.0];
-                bfmd_paint::draw(
+                let painted = bfmd_paint::draw(
                     ui,
                     self.bfmd_fonts(),
                     &message.body,
                     body_origin,
                     text_w,
                     edited,
+                    message.id,
                 );
+                // Mandatory: never open from paint — show the real URL in a popup first.
+                if let Some(url) = painted.clicked_link {
+                    self.open_masked_link_confirm(url);
+                }
             }
             if row.collapsed && row.child_count > 0 {
                 let note_y = origin[1] + 22.0 + body_h.max(20.0);
@@ -7042,6 +7063,7 @@ impl App {
                     Modal::AddPlugin => self.modal_add_plugin(ui, display),
                     Modal::PluginAllow => self.modal_plugin_allow(ui, display),
                     Modal::ChatCommands => self.modal_chat_commands(ui, display),
+                    Modal::OpenMaskedLink => self.modal_open_masked_link(ui, display),
                 };
                 if self.modal_frames > 0 && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
                     let mouse = ui.mouse_pos();
@@ -7057,6 +7079,11 @@ impl App {
         // A dialog opened during this frame starts counting next frame, so it gets focus once.
         if self.modal == Some(kind) {
             self.modal_frames = self.modal_frames.saturating_add(1);
+        }
+        // Drop the staged URL whenever the confirm popup is not the active modal
+        // (X, outside click, Escape, or another dialog replaced it).
+        if self.modal != Some(Modal::OpenMaskedLink) {
+            self.pending_masked_link = None;
         }
     }
 
@@ -7755,6 +7782,40 @@ impl App {
         let (dismiss, ok) = self.modal_footer(ui, max, min[0], "Dismiss", "OK", Tone::Brand, true);
         if dismiss || ok {
             self.modal = None;
+        }
+        (min, max)
+    }
+
+    /// Mandatory masked-link gate: show the real destination URL; Open/Cancel only.
+    fn modal_open_masked_link(&mut self, ui: &Ui, display: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let url = self
+            .pending_masked_link
+            .clone()
+            .unwrap_or_else(|| "(missing url)".into());
+        let (body, min, max) = self.modal_frame(
+            ui,
+            display,
+            "Open link?",
+            Some("This masked link points to the URL below. Confirm before Banter opens it."),
+            true,
+            48.0,
+            MODAL_FOOTER_H,
+        );
+        // Always show the actual destination — never the display label alone.
+        skin::text(ui, self.semibold_font, FONT_SM, [body[0], body[1]], LINK, &url);
+        let (cancel, open) =
+            self.modal_footer(ui, max, min[0], "Cancel", "Open", Tone::Brand, true);
+        if cancel {
+            self.pending_masked_link = None;
+            self.modal = None;
+        } else if open {
+            let destination = self.pending_masked_link.take();
+            self.modal = None;
+            if let Some(destination) = destination {
+                if let Err(err) = open_http_url(&destination) {
+                    self.status = err;
+                }
+            }
         }
         (min, max)
     }

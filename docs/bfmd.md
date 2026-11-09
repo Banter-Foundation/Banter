@@ -122,8 +122,13 @@ Document defaults (slots empty): theme foreground, theme body size (**16pt**), t
 | `a` | align | `l` `c` `r` `j` | Paragraph align from this point until next `a` or `{!a}`. Applies to the paragraph containing the command and following paragraphs. |
 | `h` | heading | `1`..`6` | Heading level until `{!h}` or another `h`. Used for title and for export. **Semantic only** — not a font-size preset. Applying `{h}` must not set, replace, or close `{s}`. The renderer does **not** substitute a heading size table; body size is theme `size_note` unless `{s}` is set. |
 | `hr` | rule | bool | Horizontal rule. `{hr}` == `{hr:t}` (flag; omitted value means `t`). `{hr:f}` is the same as `{!hr}`. While the slot is on, the renderer draws a full-width rule for that paragraph (theme `border`, or the active `{c}` if set). Keep the style-map model; this is not HTML `<hr>`. |
+| `l` | link | quoted URL | **Masked link.** `{l:"https://example.com"}` sets the destination URL for following text until `{!l}` / `{!}` / a replacing `{l}`. The run **text** is the display label; the URL is not shown as the label. Only `http://` and `https://` are accepted (bad values skipped). Canonical write always quotes the URL. |
 
-**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!}` or `{!*}` clears **all** slots.
+**Close**: `{!s}` removes slot `s` (revert that property to default). `{!e}` restores the 22px emote default. `{!l}` clears the masked-link destination. `{!}` or `{!*}` clears **all** slots.
+
+**Masked-link sugar (Banter chat, Owl-approved):** Discord-style `[label](url)` is accepted in message bodies. Label must be non-empty and single-line; URL must be `http://` or `https://` with no spaces. Example: `[Banter](https://example.com)` → one run with text `Banter` and link `https://example.com`. Incomplete or non-http forms stay literal text. Canonical serialize uses `<{l:"…"}>…<{!l}>`.
+
+**Mandatory URL confirm (product rule):** Clicking a masked link **must not** open the destination immediately. Banter shows a confirm popup that displays the **actual destination URL**, with Cancel / Open. Navigation happens only after Open. This is required for both BFMD `{l}` and Discord sugar forms.
 
 **Emote tokens (not BFMD commands):** message bodies may include stable `:{e:ASSET_ID}:` tokens for custom library emotes. Display size follows the active `{e}` slot (default 22px). Stickers and GIFs are message media, not BFMD tokens.
 
@@ -190,6 +195,33 @@ Source:
 <{!h},{!s},{a:c},{b}>centered bold
 ```
 
+**Example F** — masked link (BFMD command):
+
+Source:
+
+```
+<{l:"https://example.com"}>Banter<{!l}> site
+```
+
+Parsed runs:
+
+1. text `Banter` — `{l:"https://example.com"}`
+2. text ` site` — default (link off)
+
+**Example G** — masked link (Discord sugar):
+
+Source:
+
+```
+see [docs](https://example.com/docs) now
+```
+
+Parsed runs:
+
+1. text `see ` — default
+2. text `docs` — `{l:"https://example.com/docs"}`
+3. text ` now` — default
+
 ### 8. Errors and diagnostics
 
 The editor **must not refuse to open** a note because of parse errors. Recover:
@@ -242,6 +274,7 @@ Not in the v1 app cut. Exporters must read this table so the native format does 
 - `{u:t}` `{k:t}` `{c}` `{bg}` `{s}` `{f}` → HTML `<span style="...">` / `<u>` / `<s>` inside the `.md` file (lossy-but-faithful). Plain-md mode may drop these.
 - `{a:c}` / `{a:r}` / `{a:j}` → HTML align on the paragraph.
 - `{hr}` → Markdown `---` / HTML `<hr>` (lossy).
+- `{l:"url"}` → Markdown `[label](url)` using the run text as label (lossy if URL had BFMD escapes).
 - Command groups themselves are never written to the export.
 
 **DOCX**
@@ -262,9 +295,13 @@ These are **required unit tests**, inputs taken as exact source strings:
 8. `<` not followed by `{` is literal.
 9. Both `{c=0xFFFFFF}` and `{c:#FFFFFF}` yield the same RGB.
 10. `{hr}` / `{hr:t}` then a newline then `{!hr}` → one run whose style has `hr` on; `{!hr}` (or `{hr:f}`) clears the slot for following text.
+11. `<{l:"https://example.com"}>Banter<{!l}>` → one link run (`Banter` + URL) then default text after close.
+12. `[Banter](https://example.com)` sugar → same link run as (11); `[x](javascript:1)` stays literal.
+13. Clicking a masked link requires a confirm popup that shows the real URL before any open (product rule; UI).
 
 ### 13. Out of scope for this format
 
 - Embedded images or board ink (those are **AGWF** documents or future `{img:"..."}` — do not add until specified here).
 - Macros, scripts, or arbitrary command execution. `{...}` is a **closed set of style commands**, not a programming language.
 - Nested / stacked values for the same slot.
+- Other Discord markdown gap features (spoilers, subtext, lists, quotes, fences, timestamps, …) unless Owl explicitly approves them.

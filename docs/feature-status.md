@@ -56,7 +56,8 @@ Honest snapshot of the Discord-like **foundation** vs what still waits. The auth
 | --- | --- |
 | BFMD parse / serialize (v1 commands) | Working — `crates/banter/src/bfmd.rs` + tests |
 | Persist BFMD in message `body` | Working — plain text unchanged |
-| Message-row ImGui render (runs) | Working — bold/italic/underline/strike/size/color/bg/hr/`{e}` |
+| Message-row ImGui render (runs) | Working — bold/italic/underline/strike/size/color/bg/hr/`{e}`/masked links |
+| Masked links (`{l}` / `[label](url)`) | Working — click shows mandatory confirm popup with real URL before open (BA-129) |
 | Composer B/I/U/S toolbar | Removed (BA-94) — chrome only; paste/typed BFMD still parses and renders |
 | Emote Library (packs, upload, subscribe, picker, Model A stickers, GIF 15s) | Working vertical slice — see [emote-library.md](emote-library.md) (BA-83); inline image decode / Library page polish follow |
 
