@@ -129,6 +129,78 @@ fn render_plain_helper_strips_commands() {
     );
 }
 
+/// Cited Quote (`{cq}`): named quote feature — not "block quote".
+#[test]
+fn cited_quote_flag_forces_effective_italic() {
+    let runs = bfmd::parse("<{cq}>to be or not to be<{!cq}>plain").runs;
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].text, "to be or not to be");
+    assert!(runs[0].style.cited_quote.is_some());
+    assert!(runs[0].style.effective_italic());
+    // Underlying `{i}` slot may stay off; italic is composed on by the quote.
+    assert!(!runs[0].style.italic);
+    assert_eq!(runs[1].text, "plain");
+    assert!(runs[1].style.cited_quote.is_none());
+    assert!(!runs[1].style.effective_italic());
+}
+
+#[test]
+fn cited_quote_cannot_turn_italics_off_while_active() {
+    let runs = bfmd::parse("<{cq}>quoted<{!i}>still quote<{!cq}>after").runs;
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].text, "quotedstill quote");
+    assert!(runs[0].style.cited_quote.is_some());
+    assert!(runs[0].style.effective_italic());
+    assert_eq!(runs[1].text, "after");
+    assert!(!runs[1].style.effective_italic());
+}
+
+#[test]
+fn cited_quote_with_message_id_for_reply_jump() {
+    let runs = bfmd::parse("<{cq:42}>parent snippet<{!cq}>my reply").runs;
+    assert_eq!(runs.len(), 2);
+    assert_eq!(
+        runs[0].style.cited_quote,
+        Some(bfmd::CitedQuote::Message(42))
+    );
+    assert_eq!(runs[0].style.cite_message_id(), Some(42));
+    assert!(runs[0].style.effective_italic());
+    assert_eq!(runs[1].style.cite_message_id(), None);
+}
+
+#[test]
+fn cited_quote_plain_and_false_clear() {
+    let on = bfmd::parse("<{cq:t}>line").runs;
+    assert_eq!(on[0].style.cited_quote, Some(bfmd::CitedQuote::Plain));
+    let off = bfmd::parse("<{cq}>a<{cq:f}>b").runs;
+    assert!(off[0].style.cited_quote.is_some());
+    assert!(off[1].style.cited_quote.is_none());
+}
+
+#[test]
+fn cited_quote_round_trips_canonical() {
+    let src = "<{cq:7}>famous line<{!cq}>ok";
+    let runs = bfmd::parse(src).runs;
+    let again = bfmd::serialize(&runs);
+    let reruns = bfmd::parse(&again).runs;
+    assert_eq!(runs, reruns);
+    assert!(again.contains("{cq:7}"));
+    assert!(again.contains("{!cq}"));
+}
+
+#[test]
+fn cited_quote_helper_wraps_message_excerpt() {
+    let src = bfmd::cited_quote(99, "hello <world>");
+    let runs = bfmd::parse(&src).runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "hello <world>");
+    assert_eq!(
+        runs[0].style.cited_quote,
+        Some(bfmd::CitedQuote::Message(99))
+    );
+    assert!(runs[0].style.effective_italic());
+}
+
 #[test]
 fn emote_size_slot_defaults_and_clamps() {
     assert_eq!(bfmd::DEFAULT_EMOTE_PX, 22.0);

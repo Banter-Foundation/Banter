@@ -21,6 +21,16 @@ pub struct Run {
     pub style: Style,
 }
 
+/// Cited Quote slot (`{cq}`) — a named quote of something (famous line or another message).
+/// Not called "block quote". Optional message id enables Discord-style reply jump.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CitedQuote {
+    /// Quote with no jump target (e.g. a famous line).
+    Plain,
+    /// Quote of another channel/DM message; paint is clickable and scrolls to `message_id`.
+    Message(i64),
+}
+
 /// Active style map for a run (empty slots = document / theme defaults).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Style {
@@ -37,6 +47,8 @@ pub struct Style {
     pub align: Option<Align>,
     pub heading: Option<u8>,
     pub hr: bool,
+    /// Cited Quote (`{cq}`). While set, italics are always composed on for paint.
+    pub cited_quote: Option<CitedQuote>,
 }
 
 impl Style {
@@ -50,6 +62,19 @@ impl Style {
 
     pub fn emote_size_or_default(&self) -> f32 {
         self.emote_size.unwrap_or(DEFAULT_EMOTE_PX)
+    }
+
+    /// Italic used for paint/fonts: forced on while a Cited Quote is active.
+    pub fn effective_italic(&self) -> bool {
+        self.italic || self.cited_quote.is_some()
+    }
+
+    /// Message id to scroll to when the Cited Quote is clicked, if any.
+    pub fn cite_message_id(&self) -> Option<i64> {
+        match self.cited_quote {
+            Some(CitedQuote::Message(id)) => Some(id),
+            _ => None,
+        }
     }
 }
 
@@ -181,7 +206,8 @@ pub fn parse(source: &str) -> ParseResult {
     }
     flush(&mut text, &style, &mut runs);
     ParseResult {
-        runs,
+        // Merge adjacent runs with identical style (e.g. `{!i}` no-op under `{cq}`).
+        runs: compact_runs(runs),
         diagnostics,
         version,
     }
@@ -229,6 +255,22 @@ pub fn scan_emote_tokens(text: &str) -> Vec<(usize, usize, i64)> {
 /// Format a stored emote token for message body / composer insert.
 pub fn emote_token(asset_id: i64) -> String {
     format!(":{{e:{asset_id}}}:")
+}
+
+/// Wrap `excerpt` as a Cited Quote of `message_id` (clickable reply jump in chat paint).
+pub fn cited_quote(message_id: i64, excerpt: &str) -> String {
+    let mut out = format!("<{{cq:{message_id}}}>");
+    escape_text_into(excerpt, &mut out);
+    out.push_str("<{!cq}>");
+    out
+}
+
+/// Wrap `excerpt` as a plain Cited Quote (no message jump target).
+pub fn cited_quote_plain(excerpt: &str) -> String {
+    let mut out = String::from("<{cq}>");
+    escape_text_into(excerpt, &mut out);
+    out.push_str("<{!cq}>");
+    out
 }
 
 /// Serialize runs to canonical BFMD (§9). Empty / default-only → plain text.
@@ -336,7 +378,13 @@ pub enum Flag {
 fn set_flag(style: &mut Style, flag: Flag, on: bool) {
     match flag {
         Flag::Bold => style.bold = on,
-        Flag::Italic => style.italic = on,
+        Flag::Italic => {
+            // Cited Quote forces italic; users cannot turn it off while `{cq}` is active.
+            if !on && style.cited_quote.is_some() {
+                return;
+            }
+            style.italic = on;
+        }
         Flag::Underline => style.underline = on,
         Flag::Strike => style.strike = on,
     }
@@ -345,7 +393,7 @@ fn set_flag(style: &mut Style, flag: Flag, on: bool) {
 fn flag_value(style: &Style, flag: Flag) -> bool {
     match flag {
         Flag::Bold => style.bold,
-        Flag::Italic => style.italic,
+        Flag::Italic => style.effective_italic(),
         Flag::Underline => style.underline,
         Flag::Strike => style.strike,
     }
@@ -845,7 +893,9 @@ fn apply_commands(
     }
 }
 
-const KNOWN_NAMES: &[&str] = &["v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr"];
+const KNOWN_NAMES: &[&str] = &[
+    "v", "s", "e", "c", "bg", "b", "i", "u", "k", "f", "a", "h", "hr", "cq",
+];
 
 fn close_slot(style: &mut Style, name: &str) {
     match name {
@@ -854,13 +904,19 @@ fn close_slot(style: &mut Style, name: &str) {
         "c" => style.color = None,
         "bg" => style.background = None,
         "b" => style.bold = false,
-        "i" => style.italic = false,
+        "i" => {
+            // Forced italic while Cited Quote is active — `{!i}` is a no-op.
+            if style.cited_quote.is_none() {
+                style.italic = false;
+            }
+        }
         "u" => style.underline = false,
         "k" => style.strike = false,
         "f" => style.font = None,
         "a" => style.align = None,
         "h" => style.heading = None,
         "hr" => style.hr = false,
+        "cq" => style.cited_quote = None,
         "v" => {}
         _ => {}
     }
@@ -913,13 +969,67 @@ fn apply_set(style: &mut Style, name: &str, value: Option<&Value>) -> bool {
                         style.bold = false;
                     }
                 }
-                "i" => style.italic = on,
+                "i" => {
+                    if !on && style.cited_quote.is_some() {
+                        // Forced italic — cannot turn off under `{cq}`.
+                    } else {
+                        style.italic = on;
+                    }
+                }
                 "u" => style.underline = on,
                 "k" => style.strike = on,
                 "hr" => style.hr = on,
                 _ => {}
             }
             true
+        }
+        "cq" => {
+            // Cited Quote: omitted/`t` → Plain; `f` → off; positive number → Message(id).
+            match value {
+                None => {
+                    style.cited_quote = Some(CitedQuote::Plain);
+                    true
+                }
+                Some(Value::Bool(b)) => {
+                    style.cited_quote = if *b {
+                        Some(CitedQuote::Plain)
+                    } else {
+                        None
+                    };
+                    true
+                }
+                Some(Value::Number(n)) => {
+                    if *n == 0.0 {
+                        style.cited_quote = None;
+                        true
+                    } else if *n > 0.0 && n.fract() == 0.0 {
+                        style.cited_quote = Some(CitedQuote::Message(*n as i64));
+                        true
+                    } else {
+                        false
+                    }
+                }
+                Some(Value::Ident(s)) => match parse_bool(s) {
+                    Some(true) => {
+                        style.cited_quote = Some(CitedQuote::Plain);
+                        true
+                    }
+                    Some(false) => {
+                        style.cited_quote = None;
+                        true
+                    }
+                    None => {
+                        if let Ok(id) = s.parse::<i64>() {
+                            if id > 0 {
+                                style.cited_quote = Some(CitedQuote::Message(id));
+                                return true;
+                            }
+                        }
+                        false
+                    }
+                },
+                _ => false,
+            }
         }
         "f" => match value {
             Some(Value::Ident(s)) | Some(Value::Quoted(s)) => {
@@ -1005,6 +1115,9 @@ fn diff_group(from: &Style, to: &Style) -> String {
     if from.hr && !to.hr {
         parts.push("{!hr}".into());
     }
+    if from.cited_quote.is_some() && to.cited_quote.is_none() {
+        parts.push("{!cq}".into());
+    }
 
     if to.size != from.size {
         if let Some(s) = to.size {
@@ -1070,6 +1183,13 @@ fn diff_group(from: &Style, to: &Style) -> String {
     }
     if to.hr && !from.hr {
         parts.push("{hr:t}".into());
+    }
+    if to.cited_quote != from.cited_quote {
+        match to.cited_quote {
+            Some(CitedQuote::Plain) => parts.push("{cq:t}".into()),
+            Some(CitedQuote::Message(id)) => parts.push(format!("{{cq:{id}}}")),
+            None => {}
+        }
     }
 
     if parts.is_empty() {

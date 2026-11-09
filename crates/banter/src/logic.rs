@@ -236,6 +236,24 @@ pub fn toggle_comment_collapsed(collapsed: &mut HashSet<i64>, id: i64) {
     }
 }
 
+/// Expand every collapsed ancestor so `target_id` is visible (Cited Quote reply jump).
+pub fn expand_ancestors_for_message(
+    messages: &[Message],
+    collapsed: &mut HashSet<i64>,
+    target_id: i64,
+) {
+    let by_parent: HashMap<i64, Option<i64>> =
+        messages.iter().map(|m| (m.id, m.reply_to)).collect();
+    let mut cur = target_id;
+    for _ in 0..64 {
+        let Some(parent) = by_parent.get(&cur).copied().flatten() else {
+            break;
+        };
+        collapsed.remove(&parent);
+        cur = parent;
+    }
+}
+
 /// Remembers mute across deafen. Deafen forces mute, then restores the earlier choice.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MuteMemory {
@@ -2191,6 +2209,10 @@ pub enum ContextMenuAction {
     Reply {
         message_id: i64,
     },
+    /// Insert a BFMD Cited Quote (`{cq:id}`) of this message into the composer.
+    CiteQuote {
+        message_id: i64,
+    },
     Edit {
         message_id: i64,
     },
@@ -2280,12 +2302,20 @@ pub fn message_context_menu(
     body: &str,
     mine: Option<i64>,
 ) -> Vec<ContextMenuEntry> {
-    let mut entries = vec![menu_item(
-        "ctx-reply",
-        "Reply",
-        ContextMenuTone::Normal,
-        ContextMenuAction::Reply { message_id },
-    )];
+    let mut entries = vec![
+        menu_item(
+            "ctx-reply",
+            "Reply",
+            ContextMenuTone::Normal,
+            ContextMenuAction::Reply { message_id },
+        ),
+        menu_item(
+            "ctx-cite-quote",
+            "Cite Quote",
+            ContextMenuTone::Normal,
+            ContextMenuAction::CiteQuote { message_id },
+        ),
+    ];
     if mine == Some(author_id) {
         entries.push(ContextMenuEntry::Separator);
         entries.push(menu_item(

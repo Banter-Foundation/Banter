@@ -41,6 +41,7 @@ use crate::logic::{
     api_base_for, apply_voice_roster, camera_preview_mirrored, capture_voice_rejoin_intent,
     channel_context_menu, channel_default_icon, channel_display_icon, chat_date_separator,
     chat_time_hover, chat_time_label, clamp_context_menu_pos, clamp_window_size, comment_tree_rows,
+    expand_ancestors_for_message,
     context_menu_height, crop_avatar_rgba, crop_window, default_stream_fps,
     default_stream_resolution, dismiss_stream_overlays, encode_jpeg_rgba, folder_context_menu,
     encoder_availability_note, encoder_mode_from_key, encoder_mode_key, fps_block, fps_from_key,
@@ -528,6 +529,8 @@ pub(crate) struct App {
     history_h: f32,
     /// Set after sending so the list jumps to the newest message even when scrolled up.
     chat_jump: bool,
+    /// Cited Quote click: scroll the history so this message id is in view (Discord-style jump).
+    scroll_to_message: Option<i64>,
     copy_message: Option<String>,
     local_camera: Option<Shot>,
     local_screen: Option<Shot>,
@@ -813,6 +816,7 @@ impl App {
             context_menu: None,
             history_h: 0.0,
             chat_jump: false,
+            scroll_to_message: None,
             copy_message: None,
             local_camera: None,
             local_screen: None,
@@ -2583,6 +2587,7 @@ impl App {
     fn context_menu_icon(&self, id: &str) -> Option<ManagedTextureId> {
         let name = match id {
             "ctx-reply" => "reply",
+            "ctx-cite-quote" => "file-text",
             "ctx-edit" | "ctx-rename-folder" => "pencil",
             "ctx-delete" | "ctx-delete-folder" => "trash-2",
             "ctx-message" => "message-circle",
@@ -2694,6 +2699,29 @@ impl App {
                 self.editing = None;
                 self.reply_to = Some(message_id);
                 self.reply_draft.clear();
+            }
+            ContextMenuAction::CiteQuote { message_id } => {
+                if let Some(message) = self.messages.iter().find(|m| m.id == message_id) {
+                    let excerpt = bfmd::plain_text(&message.body);
+                    let excerpt = excerpt.trim();
+                    let excerpt = if excerpt.chars().count() > 240 {
+                        let truncated: String = excerpt.chars().take(240).collect();
+                        format!("{truncated}…")
+                    } else {
+                        excerpt.to_string()
+                    };
+                    let snippet = bfmd::cited_quote(message_id, &excerpt);
+                    if self.composer.is_empty() {
+                        self.composer = snippet;
+                    } else if self.composer.ends_with('\n') {
+                        self.composer.push_str(&snippet);
+                    } else {
+                        self.composer.push('\n');
+                        self.composer.push_str(&snippet);
+                    }
+                    self.composer.push('\n');
+                    self.editing = None;
+                }
             }
             ContextMenuAction::Edit { message_id } => {
                 if let Some(message) = self
@@ -5514,8 +5542,22 @@ impl App {
             if pointer_in(ui, stamp_pos, [stamp_pos[0] + stamp_w, stamp_pos[1] + 16.0]) {
                 ui.tooltip_text(chat_time_hover(message.created_at, offset));
             }
+            if self.scroll_to_message == Some(message.id) {
+                ui.set_scroll_here_y(0.25);
+                // Brief highlight so the jump target is obvious (Discord-style).
+                ui.get_window_draw_list()
+                    .add_rect(
+                        [origin[0] + 4.0, origin[1]],
+                        [origin[0] + width - 4.0, origin[1] + row_h],
+                        with_alpha(BLURPLE, 0.16),
+                    )
+                    .filled(true)
+                    .build();
+                self.scroll_to_message = None;
+            }
             if !message.body.is_empty() {
                 let body_origin = [origin[0] + text_x, origin[1] + 22.0];
+                let mut quote_jump = None;
                 bfmd_paint::draw(
                     ui,
                     self.bfmd_fonts(),
@@ -5523,7 +5565,16 @@ impl App {
                     body_origin,
                     text_w,
                     edited,
+                    &mut quote_jump,
                 );
+                if let Some(target) = quote_jump {
+                    expand_ancestors_for_message(
+                        &messages,
+                        &mut self.collapsed_comments,
+                        target,
+                    );
+                    self.scroll_to_message = Some(target);
+                }
             }
             if row.collapsed && row.child_count > 0 {
                 let note_y = origin[1] + 22.0 + body_h.max(20.0);

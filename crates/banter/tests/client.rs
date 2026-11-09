@@ -862,9 +862,12 @@ fn message_context_menu_lists_reply_copy_and_own_actions() {
     let other = banter::message_context_menu(10, 2, "hello", Some(1));
     assert_eq!(
         banter::context_menu_labels(&other),
-        ["Reply", "Copy Text", "Copy Message ID"]
+        ["Reply", "Cite Quote", "Copy Text", "Copy Message ID"]
     );
     assert!(banter::context_menu_actions(&other).contains(&banter::ContextMenuAction::Reply { message_id: 10 }));
+    assert!(banter::context_menu_actions(&other).contains(
+        &banter::ContextMenuAction::CiteQuote { message_id: 10 }
+    ));
     assert!(banter::context_menu_actions(&other).contains(&banter::ContextMenuAction::CopyText {
         text: "hello".into()
     }));
@@ -879,7 +882,14 @@ fn message_context_menu_lists_reply_copy_and_own_actions() {
     let own = banter::message_context_menu(11, 1, "mine", Some(1));
     assert_eq!(
         banter::context_menu_labels(&own),
-        ["Reply", "Edit Message", "Delete Message", "Copy Text", "Copy Message ID"]
+        [
+            "Reply",
+            "Cite Quote",
+            "Edit Message",
+            "Delete Message",
+            "Copy Text",
+            "Copy Message ID"
+        ]
     );
     assert!(banter::context_menu_actions(&own).contains(&banter::ContextMenuAction::Edit { message_id: 11 }));
     assert!(banter::context_menu_actions(&own).contains(&banter::ContextMenuAction::Delete { message_id: 11 }));
@@ -1011,10 +1021,11 @@ fn context_menu_height_counts_items_and_separators() {
     let menu = banter::message_context_menu(1, 1, "x", Some(1));
     let height = banter::context_menu_height(&menu);
     assert!(height > banter::theme::MENU_PAD * 2.0);
+    // Own message: Reply, Cite Quote, Edit, Delete, Copy Text, Copy Message ID (+ 2 separators).
     assert_eq!(
         height,
         banter::theme::MENU_PAD * 2.0
-            + 5.0 * (banter::theme::MENU_ITEM_H + 2.0)
+            + 6.0 * (banter::theme::MENU_ITEM_H + 2.0)
             + 2.0 * 9.0
     );
 }

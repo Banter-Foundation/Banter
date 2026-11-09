@@ -1,3 +1,7 @@
+## 2026-11-09 01:08:00 +00:00 [ubuntu] — BFMD Cited Quote with reply jump (BA-127)
+
+Adds **Cited Quote** (not “block quote”): BFMD `{cq}` / `{cq:MESSAGE_ID}` with forced italic paint, left bar + indent + muted color, and clickable jump to the cited message id (expands collapsed thread ancestors). Context menu **Cite Quote** inserts `bfmd::cited_quote` into the composer. Spec + conformance tests in `docs/bfmd.md` / `crates/banter/tests/bfmd.rs`. No other Discord markdown.
+
 ## 2026-11-08 02:45:00 -05:00 [ubuntu] — OBS-style interactive encode presets
 
 Hardware ffmpeg paths take ultra-low-latency knobs inspired by OBS (NVENC `ull`, rc-lookahead/delay 0, no scenecut/multipass/AQ; QSV async_depth 1; AMF ultralowlatency; x264 scenecut 0). Windows MF sets CodecAPI low-latency + zero B-frames when supported. PipeWire ScreenCast prefers NV12 after I420 and converts semi-planar→I420 without a BGRA detour. Full GPU texture→NVENC remains a follow-up.
