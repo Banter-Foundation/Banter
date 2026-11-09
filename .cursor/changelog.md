@@ -946,3 +946,12 @@ Shipped pre-release Version-1-test-11.2 from main after mid-stream quality contr
 - Release: https://github.com/Banter-Foundation/Banter/releases/tag/Version-1-test-11.2
 - Assets: Banter-windows-version-1-test-11.2.zip, Banter-linux-version-1-test-11.2.zip, Banter-macos-arm-version-1-test-11.2.zip, banter-server.exe, banter-server-linux, banter-server-macos-arm
 
+
+## 2026-11-09 01:01:05 +0000 [ubuntu] — BFMD spoilers and sized subtext
+
+Owl-approved BFMD only: spoiler slot `{sp}` (click-to-reveal in message paint) and sized subtext via `{st:N}` plus line-prefix `-#;N` (size required; Discord bare `-# ` stays literal). Tests in `crates/banter/tests/bfmd.rs`; docs in `docs/bfmd.md`.
+
+### Changelog
+- New features: BFMD `{sp}` spoilers; BFMD `{st:N}` / `-#;N` sized subtext
+- Bug fixes: none
+- Other: none

@@ -478,6 +478,8 @@ pub(crate) struct App {
     reply_draft: String,
     /// Locally collapsed comment threads (Reddit fold); not persisted.
     collapsed_comments: HashSet<i64>,
+    /// Session-local BFMD spoiler reveals: `(message_id, spoiler_run_index)`.
+    revealed_spoilers: HashSet<(i64, u32)>,
     editing: Option<i64>,
     pending_file: Option<(String, Vec<u8>)>,
     avatars: HashMap<i64, Shot>,
@@ -780,6 +782,7 @@ impl App {
             reply_to: None,
             reply_draft: String::new(),
             collapsed_comments: HashSet::new(),
+            revealed_spoilers: HashSet::new(),
             editing: None,
             pending_file: None,
             avatars: HashMap::new(),
@@ -5523,6 +5526,10 @@ impl App {
                     body_origin,
                     text_w,
                     edited,
+                    Some(bfmd_paint::SpoilerInteraction {
+                        message_id: message.id,
+                        revealed: &mut self.revealed_spoilers,
+                    }),
                 );
             }
             if row.collapsed && row.child_count > 0 {
