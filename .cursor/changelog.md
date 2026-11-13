@@ -1,3 +1,7 @@
+## 2026-11-13 18:13:21 +00:00 [ubuntu] — README reshaped like a normal OSS app
+
+Rewrote root `README.md` into a conventional open-source layout: badges, product intro, Features, Supported platforms, Download, Quick start, Building from source, Project layout, Documentation, Development/CI, Contributing, Status notes, License (MIT OR Apache-2.0 from crate manifests). Dropped the Users/Developers split in favor of standard section names.
+
 ## 2026-11-13 18:10:51 +00:00 [ubuntu] — README app introduction
 
 Added a dedicated **Introduction** section to the root README: product pitch (local-first chat/voice you run yourself), client vs server pieces, Local/Remote default, temporary Discord-like skin, foundation vs longer-term direction. Softened the opening blurb and renamed “What you get” to “What you can do”.
