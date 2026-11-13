@@ -1,3 +1,19 @@
+## 2026-11-13 18:16:01 +00:00 [ubuntu] — README order: intro → different → features
+
+Reordered the top of the root README to **Introduction**, then **What makes it different** (local-first, your data, native client+server, foundation/temporary skin, BFMD), then **Features**. Rest of the OSS sections unchanged.
+
+## 2026-11-13 18:13:21 +00:00 [ubuntu] — README reshaped like a normal OSS app
+
+Rewrote root `README.md` into a conventional open-source layout: badges, product intro, Features, Supported platforms, Download, Quick start, Building from source, Project layout, Documentation, Development/CI, Contributing, Status notes, License (MIT OR Apache-2.0 from crate manifests). Dropped the Users/Developers split in favor of standard section names.
+
+## 2026-11-13 18:10:51 +00:00 [ubuntu] — README app introduction
+
+Added a dedicated **Introduction** section to the root README: product pitch (local-first chat/voice you run yourself), client vs server pieces, Local/Remote default, temporary Discord-like skin, foundation vs longer-term direction. Softened the opening blurb and renamed “What you get” to “What you can do”.
+
+## 2026-11-13 18:09:08 +00:00 [ubuntu] — GitHub README for users and developers (BA-135)
+
+Replaced the root `README.md` with a clearer user + developer front door: what Banter is, platforms, pre-release download notes (Version-1-test-13.4 assets; Windows via 13.3 or source), Postgres/data expectations, clone/build/run, workspace layout, docs index, contributing/CI pointers. Links into `docs/` instead of duplicating long guides. No App Store / paid Apple claims.
+
 ## 2026-11-09 00:55:00 -05:00 [ubuntu] — macOS ~1 Hz screen-share hitch
 
 OpenH264 soft encode (macOS has no VideoToolbox path yet) was IDRing every 1 s on a single thread — Full-layer ScreenContentRealTime spikes matched the hitch. Default keyframe is now 2 s; screen OpenH264 may use 2–4 worker threads (camera stays 1); soft `force_intra_frame` only arms at 1.5× the GOP so IntraFramePeriod owns the cadence. Capture path (xcap AVCapture, not ScreenCaptureKit) unchanged.

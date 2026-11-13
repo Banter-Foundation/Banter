@@ -1219,3 +1219,21 @@ Owl: when your window-chrome fix PR is open and green, merge it to main (do not 
 
 Agent: Root cause — BA-105 `Decorated(false)` makes GLFW ignore `RESIZABLE` (no OS edge resize) and often birth at (0,0); full-bleed ImGui hosts covered the caption hit strip. Fix centers windows, keeps Linux system Decorated+Resizable chrome, adds Windows client edge-resize + caption-safe hosts. Branch `cursor/window-chrome-fix-328f`.
 
+
+## 2026-11-13 BA-135 GitHub README for users and developers
+
+Owl: Owl asked for a proper GitHub README aimed at both normal users and developers for Banter (https://github.com/Banter-Foundation/Banter). Task: BA-135 — GitHub README for users and developers. Requirements: Replace/update the repo root README.md with a clear, professional document that serves normal users and developers. Do not invent features, claims, ports, or install paths. Ground everything in the current repo and Project store context. Preferences: Banter lives under D:\Projects\Project Banter on Owl’s machine. Open a PR against the repo default branch. Ask Owl nothing unless blocked. Return: PR URL, short summary of README sections, any gaps left as links-only.
+
+Agent: Rewrote root README.md on branch `cursor/github-readme-users-devs-9818` from repo truth (overview/build-and-run/docker-setup/feature-status/CI/releases). User section covers what Banter is, platforms, Version-1-test-13.4 / 13.3 download notes, Local/Remote + Postgres expectations. Dev section covers clone, D:\Projects\Project Banter, prerequisites, build/run, compose, workspace layout, tests/CI, docs index, contributing pointers. No App Store / paid Apple / iOS sideload in README. Changelog entry appended.
+
+Owl: Make sure to write a app introduction
+
+Agent: Added dedicated Introduction section to root README (product pitch, client vs server table, Local/Remote, temporary skin, foundation vs longer-term TeamSpeak/Matrix direction). Pushed follow-up on cursor/github-readme-users-devs-9818 / PR #127.
+
+Owl: Please make sure to build a readme that is like any normal open source app
+
+Agent: Reshaped root README into conventional OSS layout (badges, Features, Download, Quick start, Building from source, Project layout, Documentation, Development, Contributing, Status, License). Pushed on PR #127 branch cursor/github-readme-users-devs-9818.
+
+Owl: It should be intro then what makes it different and then the features
+
+Agent: Reordered README top to Introduction → What makes it different → Features. Pushed on PR #127.
