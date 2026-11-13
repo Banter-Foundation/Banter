@@ -1,23 +1,38 @@
 # Banter
 
-Banter is a local-first desktop chat app with a Discord-like layout (temporary skin). A Rust client (GLFW, OpenGL 3.3, Dear ImGui docking) talks to a Rust `banter-server` over HTTP and WebSocket. Accounts, servers, channels, and messages live in **PostgreSQL**; uploaded files stay under `BANTER_DATA`. Voice membership, calls, and presence are in memory and reset when the server process stops.
+**Banter** is a local-first desktop chat and voice app you can run yourself. Sign in, join or create servers, talk in text and voice channels, call friends over DMs, and share your camera or screen — without depending on a hosted cloud product for day-to-day use.
 
-This README is a short front door for **users** and **developers**. Longer guides live under [`docs/`](docs/).
+This README is the front door for **users** (what Banter is and how to get a build) and **developers** (how to clone, build, and run). Longer guides live under [`docs/`](docs/).
+
+---
+
+## Introduction
+
+Banter is built as a **foundation**: a working desktop client plus a local API server that keep accounts, servers, channels, and messages on your machine (or on a server you control). The look today copies a familiar Discord-like shell so the layout is easy to navigate — that skin is **temporary**, not final Banter branding, and it does not use Discord’s logo.
+
+| Piece | What it is |
+| --- | --- |
+| **Desktop app** (`banter`) | Native window (GLFW + OpenGL 3.3 + Dear ImGui). Chat UI, voice/camera/screen share, friends, DMs, settings. |
+| **Server** (`banter-server`) | Local HTTP + WebSocket API. Chat and accounts in **PostgreSQL**; file bytes under `BANTER_DATA`; voice, calls, and presence in memory (reset when the process stops). |
+
+By default the client uses **Local** mode at `http://127.0.0.1:3970`. You can also point **User Settings → Developer** at a **Remote** host. The foundation slice already includes profiles, guild roles, threaded replies, BFMD-formatted chat, drawing-board channels, and an emote library — see [`docs/feature-status.md`](docs/feature-status.md) for an honest working vs deferred list, and [`docs/overview.md`](docs/overview.md) for stack and paths.
+
+Longer term, Banter is meant to grow toward TeamSpeak- and Matrix-inspired ideas on top of this same local-first base. What ships today is the foundation, not that full vision.
 
 ---
 
 ## For users
 
-### What you get
+### What you can do
 
 - Register / sign in with a local username and password
-- Servers, invites, text and voice channels, friends, and 1:1 DMs / calls
-- Mute, deafen, push-to-talk, camera, and screen share (Go Live)
-- Chat text uses **BFMD** (not CommonMark) — see [`docs/bfmd.md`](docs/bfmd.md)
+- Create or join servers (invites), organize text and voice channels, use a customizable Home landing
+- Friends list, 1:1 DMs, and DM calls
+- Drop-in voice: mute, deafen, push-to-talk, camera, and screen share (Go Live)
+- Chat with **BFMD** formatting (not CommonMark) — see [`docs/bfmd.md`](docs/bfmd.md)
+- User profiles, guild roles, Reddit-style reply threads, and more listed in feature status
 
 Honest “what works / what’s deferred”: [`docs/feature-status.md`](docs/feature-status.md) and [`docs/foundation.md`](docs/foundation.md).
-
-The Discord-like chrome is a temporary skin — not final Banter branding, and no Discord logos.
 
 ### Platforms
 

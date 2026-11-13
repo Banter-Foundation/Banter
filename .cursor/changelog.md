@@ -1,3 +1,7 @@
+## 2026-11-13 18:10:51 +00:00 [ubuntu] — README app introduction
+
+Added a dedicated **Introduction** section to the root README: product pitch (local-first chat/voice you run yourself), client vs server pieces, Local/Remote default, temporary Discord-like skin, foundation vs longer-term direction. Softened the opening blurb and renamed “What you get” to “What you can do”.
+
 ## 2026-11-13 18:09:08 +00:00 [ubuntu] — GitHub README for users and developers (BA-135)
 
 Replaced the root `README.md` with a clearer user + developer front door: what Banter is, platforms, pre-release download notes (Version-1-test-13.4 assets; Windows via 13.3 or source), Postgres/data expectations, clone/build/run, workspace layout, docs index, contributing/CI pointers. Links into `docs/` instead of duplicating long guides. No App Store / paid Apple claims.
