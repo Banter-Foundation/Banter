@@ -1233,3 +1233,7 @@ Agent: Added dedicated Introduction section to root README (product pitch, clien
 Owl: Please make sure to build a readme that is like any normal open source app
 
 Agent: Reshaped root README into conventional OSS layout (badges, Features, Download, Quick start, Building from source, Project layout, Documentation, Development, Contributing, Status, License). Pushed on PR #127 branch cursor/github-readme-users-devs-9818.
+
+Owl: It should be intro then what makes it different and then the features
+
+Agent: Reordered README top to Introduction → What makes it different → Features. Pushed on PR #127.

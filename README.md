@@ -4,11 +4,19 @@
 [![Latest release](https://img.shields.io/github/v/release/Banter-Foundation/Banter?include_prereleases)](https://github.com/Banter-Foundation/Banter/releases)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
+## Introduction
+
 **Banter** is a local-first desktop chat and voice app. Sign in, create or join servers, talk in text and voice channels, call friends over DMs, and share your camera or screen — on a stack you can run yourself.
 
 It ships as two pieces: a native desktop client (`banter`) and a local API server (`banter-server`). Chat history and accounts live in **PostgreSQL**; uploaded files stay under `BANTER_DATA`. Voice membership, calls, and presence are in memory and reset when the server process stops.
 
-The UI currently uses a Discord-like layout as a temporary skin (not final Banter branding; no Discord logos). Longer term, Banter is meant to grow toward TeamSpeak- and Matrix-inspired ideas on the same local-first base. What ships today is the **foundation** — see [Feature status](docs/feature-status.md).
+## What makes it different
+
+- **You run it.** Day-to-day use does not wait on a hosted cloud product. Run the client against a local `banter-server`, or point **User Settings → Developer** at a **Remote** host you control.
+- **Your data stays with you.** Accounts, servers, channels, and messages live in PostgreSQL you operate; file bytes sit under `BANTER_DATA` on disk.
+- **Native desktop + local API.** A Rust GLFW / OpenGL / Dear ImGui client talks HTTP and WebSocket to a Rust Axum server — not a web wrapper around someone else’s backend.
+- **Built as a foundation.** The Discord-like layout is a temporary skin (not final Banter branding; no Discord logos) so the product can grow toward TeamSpeak- and Matrix-inspired ideas later. What ships today is that foundation — [feature status](docs/feature-status.md).
+- **Its own chat format.** Messages use **BFMD** (a style-command language), not CommonMark — [docs/bfmd.md](docs/bfmd.md).
 
 ## Features
 
@@ -17,7 +25,7 @@ The UI currently uses a Discord-like layout as a temporary skin (not final Bante
 - Text and voice channels in categories (plus drawing-board channels)
 - Friends, 1:1 DMs, and DM calls
 - Voice: mute, deafen, push-to-talk, camera, and screen share (Go Live)
-- BFMD chat formatting (not CommonMark) — [docs/bfmd.md](docs/bfmd.md)
+- BFMD chat formatting — [docs/bfmd.md](docs/bfmd.md)
 - Profiles, threaded replies, emote library, slash/prefix commands, compose autosuggest
 - Local (`127.0.0.1:3970`) or Remote API target in **User Settings → Developer**
 

@@ -1,3 +1,7 @@
+## 2026-11-13 18:16:01 +00:00 [ubuntu] — README order: intro → different → features
+
+Reordered the top of the root README to **Introduction**, then **What makes it different** (local-first, your data, native client+server, foundation/temporary skin, BFMD), then **Features**. Rest of the OSS sections unchanged.
+
 ## 2026-11-13 18:13:21 +00:00 [ubuntu] — README reshaped like a normal OSS app
 
 Rewrote root `README.md` into a conventional open-source layout: badges, product intro, Features, Supported platforms, Download, Quick start, Building from source, Project layout, Documentation, Development/CI, Contributing, Status notes, License (MIT OR Apache-2.0 from crate manifests). Dropped the Users/Developers split in favor of standard section names.
